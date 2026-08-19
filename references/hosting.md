@@ -192,7 +192,9 @@ HEALTHCHECKS_URL=https://hc-ping.com/<your-uuid>
 
 The distinction matters. `vercel env pull` regenerates `deploy/.env.local` from the Vercel project and silently discards anything added by hand, which is exactly how the first ping URL disappeared. That file belongs to Vercel. Settings that belong to this machine go in `~/.job-application/config.env`, which nothing overwrites, and which wins when both define the same key.
 
-Set the period to a few minutes and the grace to about ten. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
+Set **period 5 minutes, grace 10 minutes**.
+
+The watcher pings every 30 seconds when idle and immediately on any real event, so a 5 minute period means ten consecutive pings would have to vanish before the grace clock even starts: a network blip never raises a false alarm, and a genuinely dead watcher is caught inside 15 minutes. A 1 hour grace is worth avoiding, since an hour of silence is roughly the length of the outage this was added to catch. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
 
 ### Recovering lost requests
 

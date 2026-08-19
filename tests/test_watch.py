@@ -239,3 +239,36 @@ class BrowserConfigTests(unittest.TestCase):
         self.assertTrue(first.exists())
         first.write_text('{"marker": true}')
         self.assertEqual(json.loads(self.browser.config_path().read_text()), {"marker": True})
+
+
+class HeartbeatTests(unittest.TestCase):
+    """When the watcher tells healthchecks it is alive.
+
+    The first version assigned last_line before comparing against it, so the
+    change test was permanently false and only the timer ever pinged. A real
+    event produced no ping at all, which is the one moment you most want one.
+    """
+
+    def test_a_new_event_pings_immediately(self):
+        self.assertTrue(watch.heartbeat_due('{"applyStarted": 1}', "", 0))
+
+    def test_a_changed_event_pings_immediately(self):
+        self.assertTrue(watch.heartbeat_due('{"b": 2}', '{"a": 1}', 0))
+
+    def test_the_same_standing_condition_does_not_ping_every_tick(self):
+        line = '{"waitingOnAuth": "..."}'
+        self.assertFalse(watch.heartbeat_due(line, line, 5))
+
+    def test_a_standing_condition_still_pings_on_the_heartbeat(self):
+        line = '{"running": "acme-pm"}'
+        self.assertTrue(watch.heartbeat_due(line, line, watch.HEARTBEAT_SECONDS + 1))
+
+    def test_an_idle_watcher_still_pings_on_the_heartbeat(self):
+        self.assertFalse(watch.heartbeat_due("", "", 5))
+        self.assertTrue(watch.heartbeat_due("", "", watch.HEARTBEAT_SECONDS + 1))
+
+    def test_the_heartbeat_leaves_room_under_a_one_minute_period(self):
+        # healthchecks alerts when pings stop arriving. The interval must be
+        # comfortably shorter than the configured period, or a single dropped
+        # ping reads as death.
+        self.assertLessEqual(watch.HEARTBEAT_SECONDS, 30)

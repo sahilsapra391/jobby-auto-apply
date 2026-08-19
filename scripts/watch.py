@@ -60,6 +60,9 @@ DEFAULT_INTERVAL = 2
 # Publishing shells out to vercel, so it is debounced behind an actual change,
 # with a floor so a long quiet stretch still refreshes eventually.
 PUBLISH_FLOOR_SECONDS = 900
+# How often to tell healthchecks we are alive when nothing is happening. Well
+# inside any sane period setting, so a single dropped ping never reads as death.
+HEARTBEAT_SECONDS = 30
 # An apply that has not reported a phase in this long is not coming back.
 STUCK_AFTER_SECONDS = 75 * 60
 
@@ -326,6 +329,18 @@ def tick(force_publish=False):
     return changed
 
 
+def heartbeat_due(line, last_line, since_last_ping):
+    """Should this tick ping healthchecks?
+
+    Ping when something actually changed, and otherwise on a steady heartbeat so
+    liveness is reported without flooding. Kept separate from the loop because
+    the first version compared `line` against `last_line` after already
+    assigning it, which made the change test permanently false: only the timer
+    ever fired, and a real event never pinged at all.
+    """
+    return (bool(line) and line != last_line) or since_last_ping > HEARTBEAT_SECONDS
+
+
 def status():
     out = {"queues": None, "locks": {}, "health": bool(config().get("HEALTHCHECKS_URL"))}
     try:
@@ -424,22 +439,16 @@ def main():
                 print(f"{now_stamp()} recovered after {consecutive_failures} failed ticks",
                       flush=True)
             consecutive_failures = 0
-            if changed:
-                line = json.dumps(changed, sort_keys=True)
-                # A standing condition (waiting on auth, an agent still running)
-                # repeats every tick. Log it when it changes, not thirty times a
-                # minute, or the log stops being readable exactly when it matters.
-                if line != last_line:
-                    print(f"{now_stamp()} {line}", flush=True)
-                    last_line = line
-                # Ping on change, and otherwise at a steady heartbeat, so
-                # healthchecks sees liveness without being flooded.
-                if line != last_line or time.time() - last_ping > 60:
-                    ping_health("", line[:2000])
-                    last_ping = time.time()
-            elif time.time() - last_ping > 60:
-                last_line = ""
-                ping_health("", "idle")
+            line = json.dumps(changed, sort_keys=True) if changed else ""
+            # A standing condition (waiting on auth, an agent still running)
+            # repeats every tick. Log it when it changes, not thirty times a
+            # minute, or the log stops being readable exactly when it matters.
+            prev_line = last_line
+            if line and line != prev_line:
+                print(f"{now_stamp()} {line}", flush=True)
+            last_line = line
+            if heartbeat_due(line, prev_line, time.time() - last_ping):
+                ping_health("", (line or "idle")[:2000])
                 last_ping = time.time()
         except (TickError, subprocess.TimeoutExpired) as exc:
             consecutive_failures += 1
