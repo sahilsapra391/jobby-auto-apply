@@ -102,7 +102,13 @@ def main():
     claimed = queue("claim")
     # A user clicking twice must not log two submissions, and anything already
     # submitted is a no-op rather than a duplicate history entry.
-    history = json.loads(store(["history-list"]).stdout or "[]")
+    hist = store(["history-list"])
+    if hist.returncode != 0:
+        # Without history there is no duplicate check, and a mark would be
+        # logged a second time. Better to leave the queue claimed-but-unapplied
+        # than to write a submission twice.
+        raise SystemExit(f"apply_marks: cannot read history: {(hist.stderr or '').strip()[:200]}")
+    history = json.loads(hist.stdout or "[]")
     already = {e.get("applicationId") for e in history if e.get("event") == "completed"}
     seen, applied, skipped = set(), [], []
     for mark in claimed:

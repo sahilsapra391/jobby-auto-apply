@@ -30,6 +30,12 @@ STORE = REPO / "scripts" / "store.py"
 LOG_DIR = Path.home() / ".job-application" / "logs"
 # A single application, browser work included, needs real headroom.
 TIMEOUT_SECONDS = 45 * 60
+# acceptEdits auto-approves file edits only, not Bash. Without an explicit
+# allowlist every python3 call in the prompt came back "requires approval", and
+# because the session is non-interactive that approval could never be granted:
+# the agent could not read the watch entry, report a phase, verify a PDF or log
+# an event. It reported the blockage and exited 0, so nothing looked wrong.
+APPLY_TOOLS = "Bash(python3:*),Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
 
 
 def blob_env():
@@ -59,12 +65,16 @@ def store(args):
     return subprocess.run([sys.executable, str(STORE)] + args, capture_output=True, text=True)
 
 
+# The interpreter is passed in explicitly rather than written as `python3`. Under
+# launchd, bare `python3` resolves to /usr/bin/python3 (3.9), which does not have
+# pymupdf, so resume verification failed with ModuleNotFoundError for a package
+# that is in fact installed under the interpreter everything else runs on.
 PROMPT = """Use the job-application skill and apply to exactly ONE job, end to end, then stop.
 
 APPLICATION ID: {aid}
 
 REPORT YOUR PHASE as you go, after finishing each stage, so the board shows live progress:
-   python3 "{repo}/scripts/phase.py" --id {aid} --phase "<stage>" --detail "<short detail>"
+   "{py}" "{repo}/scripts/phase.py" --id {aid} --phase "<stage>" --detail "<short detail>"
 Use exactly these stage names, in order:
    "Building documents"   after you start tailoring
    "Documents ready"      once both PDFs verify against the base
@@ -75,7 +85,7 @@ The role is already marked in flight, so it has left Watching. Do not set it bac
 unless you park it for the user.
 
 Do this and nothing else:
-1. Read the watch entry: python3 "{repo}/scripts/store.py" session-load --id {aid}
+1. Read the watch entry: "{py}" "{repo}/scripts/store.py" session-load --id {aid}
    It carries the company, role, url, region, ats and an `extraction` summarising the posting.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
 2. Build the tailored resume and cover letter for this role, following references/tailoring.md:
@@ -84,10 +94,17 @@ Do this and nothing else:
    the answer store or the story bank. Verify with scripts/resume_pdf.py verify before using them.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
-3. Fill the application in the user's Chrome, verifying values by reading them back from the
-   page rather than trusting your own plan.
+3. Check whether you actually have browser tools (mcp__claude-in-chrome__* or an equivalent).
+   A spawned session often does not: the Chrome extension attaches to one session at a time,
+   so the browser may belong to somebody else right now.
+   If you have NO browser: stop here and hand off cleanly. Do not pretend, do not improvise
+   another browser. Save the session with status "review", a pendingFields entry saying
+   "documents are built and filed; this needs a browser session to fill and submit", and run
+   sync_board.py. The documents you just built are the valuable part and they are kept.
+   If you DO have a browser: fill the application, verifying values by reading them back from
+   the page rather than trusting your own plan.
 4. Before you submit, confirm this is not a second application to the same job:
-   python3 "{repo}/scripts/dupe_check.py" --guard {aid}
+   "{py}" "{repo}/scripts/dupe_check.py" --guard {aid}
    If it reports duplicate, stop without submitting and say so.
 5. If every required field is answerable truthfully, log a write-ahead `submitting` event,
    submit once, then verify. Log `completed` ONLY with the exact confirmation you observed,
@@ -97,7 +114,7 @@ Do this and nothing else:
    or a binding legal agreement such as an arbitration clause or a background-check
    authorisation), do NOT submit. Save the session with status "review"
    and pendingFields naming the blocker, so it lands in Needs you.
-7. Run: python3 "{repo}/scripts/sync_board.py"
+7. Run: "{py}" "{repo}/scripts/sync_board.py"
 
 Never solve a CAPTCHA, create an account, type a password, enter an OTP, or agree to a binding
 legal document (arbitration, class-action waiver, background-check authorisation).
@@ -150,7 +167,7 @@ def main():
         print(json.dumps({"skipped": aid, "duplicate": True, "why": why}, indent=2))
         return 1
 
-    prompt = PROMPT.format(aid=aid, repo=str(REPO))
+    prompt = PROMPT.format(aid=aid, repo=str(REPO), py=sys.executable)
     if args.dry_run:
         print(prompt)
         return 0
@@ -179,7 +196,8 @@ def main():
     with open(log, "a") as fh:
         fh.write(f"\n=== {aid} ===\n")
         proc = subprocess.run(
-            [toolpath.claude(), "-p", prompt, "--permission-mode", "acceptEdits"],
+            [toolpath.claude(), "-p", prompt, "--permission-mode", "acceptEdits",
+             "--allowedTools", APPLY_TOOLS],
             cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
             env=toolpath.enriched_env())
 

@@ -25,13 +25,32 @@ def run(args):
                           capture_output=True, text=True)
 
 
+def read(args):
+    """Read from the store, or fail loudly.
+
+    store.py exits 2 with a message on stderr and nothing on stdout, so
+    `json.loads(run(args).stdout or "[]")` turns any store failure into a
+    convincing empty result. One corrupt session file is enough to trigger it,
+    and reasoning about the board from empty data is how a real state gets
+    quietly overwritten by a wrong one.
+    """
+    r = run(args)
+    if r.returncode != 0:
+        raise SystemExit(f"sync_board: store {' '.join(args)} failed: "
+                         f"{(r.stderr or '').strip()[:300]}")
+    try:
+        return json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        raise SystemExit(f"sync_board: store {' '.join(args)} returned junk")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Sync the board with submitted applications.")
     ap.add_argument("--no-publish", action="store_true", help="tidy the store, do not deploy")
     args = ap.parse_args()
 
-    sessions = json.loads(run(["session-list"]).stdout or "[]")
-    history = json.loads(run(["history-list"]).stdout or "[]")
+    sessions = read(["session-list"])
+    history = read(["history-list"])
     # Latest event wins. A `completed` retracted by a later `abandoned` is not a
     # submission, and retiring it here would drop the role off the board
     # entirely: gone from Watching, and correctly absent from Submitted.

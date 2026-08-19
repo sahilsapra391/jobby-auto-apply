@@ -58,6 +58,12 @@ def vercel_cmd():
 def run(cmd, **kw):
     kw.setdefault("cwd", DEPLOY)
     kw.setdefault("text", True)
+    # The Vercel CLI is a `#!/usr/bin/env node` script, not a binary, so running
+    # it by absolute path is not enough: the kernel execs `/usr/bin/env node`
+    # and env resolves node against THIS child's PATH. Under launchd that PATH
+    # is /usr/bin:/bin:/usr/sbin:/sbin, node is invisible, and every publish
+    # died with exit 127 while the watcher reported a healthy cycle.
+    kw.setdefault("env", toolpath.enriched_env())
     return subprocess.run(cmd, **kw)
 
 
@@ -134,16 +140,31 @@ def build_documents(root):
 
 
 def logged_in(base):
+    """(ok, why). Distinguishes 'not signed in' from 'could not run at all'.
+
+    A bare returncode check reported exit 127, which is the node shim failing to
+    find its interpreter, as a Vercel login problem, and sent the user off to run
+    `vercel login` for a fault that had nothing to do with their account.
+    """
     proc = run(base + ["whoami"], capture_output=True)
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        return True, ""
+    blob = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode == 127 or "No such file or directory" in blob:
+        return False, f"could not run the Vercel CLI at all: {blob[:200]}"
+    return False, ""
 
 
 def require_login(base):
-    if not logged_in(base):
-        raise PublishError(
-            "not signed in to Vercel. Run `vercel login` in your terminal first "
-            "(it opens a browser), then re-run this."
-        )
+    ok, why = logged_in(base)
+    if ok:
+        return
+    if why:
+        raise PublishError(why)
+    raise PublishError(
+        "not signed in to Vercel. Run `vercel login` in your terminal first "
+        "(it opens a browser), then re-run this."
+    )
 
 
 def cmd_setup(args, base):
