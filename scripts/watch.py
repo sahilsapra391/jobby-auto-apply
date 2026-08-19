@@ -94,15 +94,13 @@ def blocked_message():
 
 
 def config():
-    """Settings that are secrets or machine-specific, kept out of the repo."""
-    out = {}
-    envfile = DEPLOY / ".env.local"
-    if envfile.exists():
-        for line in envfile.read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+    """Settings that are secrets or machine-specific, kept out of the repo.
+
+    Reads deploy/.env.local and ~/.job-application/config.env, the latter
+    winning, because `vercel env pull` regenerates the former and throws away
+    anything hand-added.
+    """
+    return toolpath.settings()
 
 
 # --- health -----------------------------------------------------------------

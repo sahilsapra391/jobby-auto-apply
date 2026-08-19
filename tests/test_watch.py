@@ -112,16 +112,51 @@ class LockTests(unittest.TestCase):
 
 
 class TickErrorTests(unittest.TestCase):
-    def test_a_broken_queue_read_raises_rather_than_looking_empty(self):
+    def test_unconfigured_queue_raises_rather_than_looking_empty(self):
         # The original defect. poll_queues must never return {} on failure,
         # because an empty dict is indistinguishable from a quiet system.
-        original = watch.config
-        watch.config = lambda: {}
+        original = watch.toolpath.queue_env
+
+        def unconfigured(env=None):
+            raise SystemExit("the board queue is not configured")
+
+        watch.toolpath.queue_env = unconfigured
         try:
             with self.assertRaises(watch.TickError):
                 watch.poll_queues()
         finally:
-            watch.config = original
+            watch.toolpath.queue_env = original
+
+    def test_a_failed_queue_read_raises_rather_than_looking_empty(self):
+        # A node process that exits non-zero is a failure, never an empty queue.
+        original = watch.subprocess.run
+
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "KV read failed: 500"
+
+        watch.subprocess.run = lambda *a, **k: R()
+        try:
+            with self.assertRaises(watch.TickError):
+                watch.poll_queues()
+        finally:
+            watch.subprocess.run = original
+
+    def test_settings_prefer_the_machine_local_file(self):
+        # `vercel env pull` regenerates deploy/.env.local and discards anything
+        # added by hand, which is how a healthchecks ping URL was lost.
+        import tempfile as _tf
+        original = watch.toolpath.LOCAL_CONFIG
+        with _tf.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+            f.write("HEALTHCHECKS_URL=https://hc-ping.com/local-wins\n")
+            watch.toolpath.LOCAL_CONFIG = pathlib.Path(f.name)
+        try:
+            self.assertEqual(watch.toolpath.settings()["HEALTHCHECKS_URL"],
+                             "https://hc-ping.com/local-wins")
+        finally:
+            os.unlink(watch.toolpath.LOCAL_CONFIG)
+            watch.toolpath.LOCAL_CONFIG = original
 
     def test_blocked_message_reads_the_json_not_the_raw_stdout(self):
         original = watch.store

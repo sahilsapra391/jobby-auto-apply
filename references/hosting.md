@@ -184,11 +184,13 @@ The practical consequence is that most Greenhouse, Lever and Ashby forms go end 
 
 The watcher pings [healthchecks.io](https://healthchecks.io) on every meaningful tick, and `/fail` with the error when a tick cannot do its job. The point is the silence: if the process dies or every tick starts failing, healthchecks notices the pings stopped and alerts. That is precisely the failure that went unnoticed for hours, and no amount of logging catches it, because the logs looked healthy.
 
-Add the ping URL to `deploy/.env.local`:
+Add the ping URL to `~/.job-application/config.env`, **not** to `deploy/.env.local`:
 
 ```
 HEALTHCHECKS_URL=https://hc-ping.com/<your-uuid>
 ```
+
+The distinction matters. `vercel env pull` regenerates `deploy/.env.local` from the Vercel project and silently discards anything added by hand, which is exactly how the first ping URL disappeared. That file belongs to Vercel. Settings that belong to this machine go in `~/.job-application/config.env`, which nothing overwrites, and which wins when both define the same key.
 
 Set the period to a few minutes and the grace to about ten. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
 
