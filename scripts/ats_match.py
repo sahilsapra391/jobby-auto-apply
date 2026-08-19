@@ -111,22 +111,158 @@ def contains(haystack_tokens, phrase):
     return phrase in joined
 
 
+# Pairs that mean the same thing on a resume. The left side is how a posting
+# tends to say it; the right side is how the base resume or the story bank
+# already says it. A match here licenses rewriting the resume into the posting's
+# words, because the underlying fact is already the candidate's.
+#
+# This is the whole point of the aggressive pass, and also its limit: a term with
+# no evidence on the right is a term he cannot claim, however much the posting
+# wants it.
+EQUIVALENTS = [
+    ("microservice", "monolith decomposition service extraction"),
+    ("service decomposition", "monolith microservice migration"),
+    ("experimentation", "a/b test split test feature flag launchdarkly"),
+    ("feature flag", "launchdarkly release toggle rollout"),
+    ("observability", "monitoring logging tracing metric dashboard"),
+    ("stakeholder management", "cross functional partner alignment"),
+    ("roadmap", "prioritisation prioritization backlog planning"),
+    ("discovery", "user research interview customer conversation"),
+    ("llm", "language model gpt claude genai generative"),
+    ("rag", "retrieval augmented retrieval-augmented vector embedding"),
+    ("eval", "evaluation golden set benchmark accuracy measurement"),
+    ("prompt engineering", "prompt design prompt tuning"),
+    ("agentic", "agent autonomous workflow orchestration"),
+    ("api design", "endpoint contract sdk interface"),
+    ("developer experience", "developer tooling dx self serve"),
+    ("platform", "infrastructure internal tooling shared service"),
+    ("data pipeline", "etl ingestion warehouse"),
+    ("sql", "query database analytics"),
+    ("go to market", "gtm launch positioning"),
+    ("b2b saas", "enterprise saas subscription"),
+    ("churn", "retention renewal attrition"),
+    ("onboarding", "activation first run time to value"),
+    ("technical product manager", "product manager engineering background"),
+    ("ci/cd", "continuous integration deployment pipeline release"),
+    ("qa", "quality assurance testing test automation"),
+    ("migration", "replatform cutover port"),
+    ("latency", "performance response time p95 p99"),
+    ("scalability", "scale throughput load"),
+    ("compliance", "audit governance policy soc2 gdpr"),
+    ("mentorship", "mentor coaching managing report"),
+]
+
+
+def evidence_for(term, source_tokens):
+    """Where the base resume or story bank already supports this term.
+
+    Returns the matching evidence, or None. Direct presence counts, and so does
+    a known equivalent: the candidate having done the thing under a different
+    name is exactly the case worth rewriting into the posting's vocabulary.
+    """
+    if contains(source_tokens, term):
+        return term
+    haystack = " ".join(source_tokens)
+    for posting_word, mine in EQUIVALENTS:
+        if term == posting_word or term in posting_word.split():
+            for alt in mine.split():
+                if alt in haystack:
+                    return alt
+        # and the other direction, for a posting using the candidate's word
+        if term in mine.split() and posting_word in haystack:
+            return posting_word
+    # A bigram whose halves are both evidenced is evidenced.
+    parts = term.split()
+    if len(parts) == 2 and all(contains(source_tokens, x) for x in parts):
+        return " + ".join(parts)
+    return None
+
+
+# Words that pass the stop list but carry no ATS signal. Weaving "four" or
+# "gaps" into Areas of Expertise makes the resume worse, not more matched.
+NOISE = set("""
+four five six seven eight nine ten first second third next last full part high low big small
+fit gap gaps ask asks down drag entirely expect fatal background thing things area areas
+lot lots way ways day days week weeks month months time times point points level levels
+""".split())
+
+
+def useful(term):
+    """Is this worth weaving into a resume at all?"""
+    if any(part in NOISE for part in term.split()):
+        return False
+    if len(term) < 4 and " " not in term:
+        return False
+    if term.isdigit():
+        return False
+    return True
+
+
+def suggest(jd_text, resume_text, base_text, facts_text, limit):
+    """What the resume could honestly say in the posting's words, and cannot.
+
+    `rewritable` is the aggressive half: terms the posting uses, the resume does
+    not, and the base resume or story bank already supports. Those are a rewrite,
+    not a claim. `notClaimable` is the residue, and it stays missing.
+    """
+    jd_terms = [t for t in keywords(jd_text, limit * 2) if useful(t)][:limit]
+    resume_tokens = tokens(resume_text)
+    source_tokens = tokens(base_text) + tokens(facts_text or "")
+    rewritable, not_claimable, already = [], [], []
+    for term in jd_terms:
+        if contains(resume_tokens, term):
+            already.append(term)
+            continue
+        found = evidence_for(term, source_tokens)
+        if found:
+            rewritable.append({"term": term, "evidence": found})
+        else:
+            not_claimable.append(term)
+    reachable = len(already) + len(rewritable)
+    return {
+        "postingTerms": len(jd_terms),
+        "alreadyCovered": already,
+        "rewritable": rewritable,
+        "notClaimable": not_claimable,
+        "coverageNow": round(100 * len(already) / max(1, len(jd_terms))),
+        "coverageIfRewritten": round(100 * reachable / max(1, len(jd_terms))),
+        "honestCeiling": round(100 * reachable / max(1, len(jd_terms))),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="Keyword coverage, and what it cost in truth.")
     ap.add_argument("--jd", required=True, help="job description text file")
-    ap.add_argument("--resume", required=True, help="tailored resume PDF")
+    ap.add_argument("--resume", help="tailored resume PDF (not needed with --suggest)")
     ap.add_argument("--base", required=True, help="base resume PDF, the source of truth")
     ap.add_argument("--facts", help="optional text file of confirmed story facts")
     ap.add_argument("--limit", type=int, default=60, help="how many JD keywords to score")
+    ap.add_argument("--suggest", action="store_true",
+                    help="before writing: which posting terms the base resume already "
+                         "supports under a different name, and are therefore a rewrite "
+                         "rather than a claim")
     args = ap.parse_args()
+    if not args.suggest and not args.resume:
+        ap.error("--resume is required unless you are running --suggest")
 
     jd = Path(args.jd).expanduser().read_text(encoding="utf-8", errors="replace")
-    tailored_text = pdf_text(args.resume)
+    # --suggest runs BEFORE the tailored resume exists; that is the point of it.
+    tailored_text = pdf_text(args.resume) if args.resume else ""
     base_text = pdf_text(args.base)
     facts_text = Path(args.facts).expanduser().read_text(encoding="utf-8", errors="replace") if args.facts else ""
 
     kws = keywords(jd, args.limit)
     tail_tok = tokens(tailored_text)
+    if args.suggest:
+        out = suggest(jd, tailored_text, base_text, facts_text, args.limit)
+        out["howToUse"] = (
+            "Rewrite Areas of Expertise, Technical Proficiencies and bullet wording into "
+            "the posting's words for every entry in `rewritable`: the fact is already his, "
+            "only the vocabulary changes. Never add anything from `notClaimable`."
+        )
+        print(json.dumps(out, indent=2))
+        return 0
+
     matched = [k for k in kws if contains(tail_tok, k)]
     missing = [k for k in kws if k not in matched]
 

@@ -1342,6 +1342,7 @@ def main():
 
     print(json.dumps({
         "written": str(out),
+        "greeting": state["profile"].get("firstName") or "there",
         "blocked": len([s for s in state["sessions"] if s.get("status") in ("active", "review")]),
         "inflight": len([s for s in state["sessions"] if s.get("status") == "inflight"]),
         "submitted": len([e for e in state["history"]

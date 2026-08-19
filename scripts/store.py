@@ -17,6 +17,7 @@ Design notes:
 import argparse
 import json
 import os
+import tempfile
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -66,14 +67,27 @@ def paths(root):
 
 
 def write_private(path, payload):
-    """Write JSON with owner-only permissions, atomically."""
+    """Write JSON with owner-only permissions, atomically.
+
+    The temp file gets a unique name. It used to be `<name>.tmp`, shared by
+    every writer, which is only atomic while there is one: with three
+    applications running at once, one process truncated the temp file while
+    another was still writing it, and the replace then moved a half-written file
+    into place. roles.json is rewritten on every event, so it took the brunt.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def read_json(path, default):

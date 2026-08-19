@@ -173,3 +173,50 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DegradedRenderGuardTests(unittest.TestCase):
+    """The board must never lose data the store still has.
+
+    Three applications running at once meant three processes publishing, and a
+    render that caught the store mid-write produced a board with no profile name
+    and an empty Submitted tab. It overwrote a good board, and thirty-four
+    submitted applications appeared to vanish while every one was still on disk.
+    """
+
+    def test_a_render_with_fewer_submitted_than_the_store_is_refused(self):
+        original = publish.expected_counts
+        publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
+        try:
+            with self.assertRaises(publish.PublishError) as ctx:
+                publish.guard_render({"submitted": 0, "greeting": "Sahil"}, None)
+            self.assertIn("mid-write", str(ctx.exception))
+        finally:
+            publish.expected_counts = original
+
+    def test_a_render_with_no_profile_name_is_refused(self):
+        original = publish.expected_counts
+        publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
+        try:
+            with self.assertRaises(publish.PublishError) as ctx:
+                publish.guard_render({"submitted": 34, "greeting": "there"}, None)
+            self.assertIn("no profile name", str(ctx.exception))
+        finally:
+            publish.expected_counts = original
+
+    def test_a_healthy_render_passes(self):
+        original = publish.expected_counts
+        publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
+        try:
+            publish.guard_render({"submitted": 34, "greeting": "Sahil"}, None)
+        finally:
+            publish.expected_counts = original
+
+    def test_more_submitted_than_expected_is_fine(self):
+        # An application completing between the two reads is normal, not a fault.
+        original = publish.expected_counts
+        publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
+        try:
+            publish.guard_render({"submitted": 35, "greeting": "Sahil"}, None)
+        finally:
+            publish.expected_counts = original

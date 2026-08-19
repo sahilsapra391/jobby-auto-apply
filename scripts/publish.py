@@ -213,6 +213,48 @@ def current_url(root):
         return ""
 
 
+def expected_counts(root):
+    """What the store itself says, as the authority a render is checked against."""
+    store = [sys.executable, str(REPO / "scripts" / "store.py")]
+    if root:
+        store += ["--root", root]
+    hist = subprocess.run(store + ["history-list"], capture_output=True, text=True)
+    if hist.returncode != 0:
+        raise PublishError(f"cannot read history to check the render: {(hist.stderr or '')[:200]}")
+    latest = {}
+    for e in sorted(json.loads(hist.stdout or "[]"), key=lambda e: e.get("at") or ""):
+        if e.get("applicationId"):
+            latest[e["applicationId"]] = e
+    prof = subprocess.run(store + ["profile-get"], capture_output=True, text=True)
+    profile = json.loads(prof.stdout or "{}") if prof.returncode == 0 else {}
+    return {
+        "submitted": sum(1 for e in latest.values() if e.get("event") == "completed"),
+        "hasProfile": bool(profile.get("firstName")),
+    }
+
+
+def guard_render(summary, root):
+    """Refuse a board that lost data the store still has.
+
+    Three applications running at once meant three processes publishing, and a
+    render that caught the store mid-write produced a board with no profile name
+    and an empty Submitted tab. It then overwrote a perfectly good board, so
+    thirty-four submitted applications appeared to vanish while every one of them
+    was still on disk. The store is the authority; a render that disagrees with
+    it is the thing that is wrong.
+    """
+    expected = expected_counts(root)
+    if summary["submitted"] < expected["submitted"]:
+        raise PublishError(
+            f"refusing to publish: the render shows {summary['submitted']} submitted but the "
+            f"store has {expected['submitted']}. Something read the store mid-write. "
+            "The published board is untouched; run this again.")
+    if expected["hasProfile"] and summary.get("greeting") == "there":
+        raise PublishError(
+            "refusing to publish: the render has no profile name, which means it read an "
+            "empty or half-written store. The published board is untouched.")
+
+
 def push_content(html, docs):
     """Write the rendered board and the documents into KV.
 
@@ -247,6 +289,8 @@ def cmd_publish(args, base):
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
           f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
+
+    guard_render(summary, args.root)
 
     result = push_content(summary.pop("html"), docs.pop("docs"))
     print(f"Board written to KV: {result['board']['bytes'] / 1024:.0f} KB, "
