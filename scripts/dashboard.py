@@ -583,6 +583,35 @@ def build(state, generated):
     position:relative; top:-1px; }}
   .heromark {{ width:72px; height:72px; display:block; margin:0 auto 1.15rem;
     overflow:visible; }}
+  /* Hover the mark and it becomes the mascot. Two beats: the silhouette draws
+     itself with a dashoffset on a pathLength="1" contour, then the interior ink
+     wipes in top to bottom. The badge scales up and fades under it, so the one
+     turns into the other rather than swapping. */
+  .jb-morph {{ position:relative; width:72px; height:72px; margin:0 auto 1.15rem;
+    cursor:pointer; -webkit-tap-highlight-color:transparent; outline:none; }}
+  .jb-morph .heromark {{ position:absolute; inset:0; width:100%; height:100%;
+    margin:0; transition:transform .45s cubic-bezier(.34,1.4,.5,1), opacity .25s ease; }}
+  /* 128px, not the 176 the pack suggests: at 176 the mascot hangs over the
+     headline underneath it. */
+  .jb-mascot2 {{ position:absolute; left:50%; top:50%; height:128px; width:auto;
+    color:var(--ink); pointer-events:none;
+    transform:translate(-50%,-54%) scale(.6); opacity:0;
+    transition:transform .5s cubic-bezier(.34,1.4,.5,1), opacity .3s ease; }}
+  .jb-mascot2 .jm2-contour {{ stroke-dasharray:1; stroke-dashoffset:1;
+    transition:stroke-dashoffset .1s linear; }}
+  .jb-mascot2 .jm2-ink {{ clip-path:inset(0 0 100% 0); opacity:0;
+    transition:clip-path .1s linear, opacity .1s linear; }}
+  .jb-morph:hover .heromark, .jb-morph:focus-visible .heromark {{
+    transform:scale(1.5); opacity:0; }}
+  .jb-morph:hover .jb-mascot2, .jb-morph:focus-visible .jb-mascot2 {{
+    transform:translate(-50%,-54%) scale(1); opacity:1; }}
+  .jb-morph:hover .jm2-contour, .jb-morph:focus-visible .jm2-contour {{
+    stroke-dashoffset:0; transition:stroke-dashoffset .55s ease .05s; }}
+  .jb-morph:hover .jm2-ink, .jb-morph:focus-visible .jm2-ink {{
+    clip-path:inset(0 0 0 0); opacity:1;
+    transition:clip-path .85s ease .38s, opacity .2s ease .34s; }}
+  @media (prefers-reduced-motion:reduce) {{
+    .jb-morph .heromark, .jb-mascot2, .jb-mascot2 * {{ transition-duration:.01ms !important; }} }}
 
   .themeseg {{ display:inline-flex; background:var(--seg); border-radius:100px;
     padding:3px; gap:2px; flex:none; }}
@@ -596,7 +625,8 @@ def build(state, generated):
     box-shadow:0 1px 3px rgba(0,0,0,.12); }}
   .themebtn:focus-visible {{ outline:3px solid var(--blue); outline-offset:2px; }}
   @media (max-width:600px) {{ .lockup {{ height:1.4rem; }}
-    .heromark {{ width:60px; height:60px; }} }}
+    .jb-morph, .jb-morph .heromark {{ width:60px; height:60px; }}
+    .jb-mascot2 {{ height:108px; }} }}
 
   .top {{ text-align:center; margin-bottom:2rem; }}
   h1 {{ font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
@@ -807,7 +837,10 @@ def build(state, generated):
 
 <div class="wrap">
   <div class="top">
-    {brand.icon(cls="heromark", label="")}
+    <div class="jb-morph" tabindex="0" role="img" aria-label="Jobby">
+      {brand.icon(cls="heromark jb-badge", label="")}
+      {brand.mascot()}
+    </div>
     <h1>Jobby is a free agent!</h1>
     <p class="lede">{f"{len(blocked)} waiting on you" if blocked else "Nothing blocked"}{f" &middot; {len(inflight)} in flight" if inflight else ""}</p>
     <p class="stamp">{esc(name)} &middot; {esc(generated)}</p>

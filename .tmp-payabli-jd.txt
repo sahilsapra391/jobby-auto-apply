@@ -1,0 +1,22 @@
+Payabli — Senior Product Manager, Platform
+Location: Remote (US). Company based in Miami, Florida. Full time.
+
+Payabli is an embedded payments infrastructure and monetization platform for vertical SaaS companies, backed by QED, Fika, TTV and Bling, hiring a Senior Product Manager to own the foundational services every other Payabli product depends on.
+
+Six named areas of ownership:
+- Identity and access management, including SSO and multi-tenant permission models
+- Embedded components and a creator suite of white-labeled UI and drop-in workflows
+- A cross-cutting tokenization layer
+- Communications and compliance, covering notifications, SMS and 10DLC
+- Logging and observability, plus data dashboard foundations
+- The API ecosystem: API design, versioning, governance and documentation
+
+Requirements:
+- 5+ years in product management with deep platform, infrastructure or developer-facing experience
+- Shipped API-first multi-tenant B2B SaaS
+- Knowledge of OAuth, SSO and RBAC/ABAC
+- Regulated-industry exposure in fintech, payments or banking, including PCI
+
+Core skills: API-first multi-tenant B2B SaaS; OAuth, SSO, RBAC/ABAC; platform and infrastructure product management; API design, versioning, governance; observability and logging; fintech/payments PCI exposure.
+
+This is framed as a run-to-the-fire ownership role rather than a coordination seat.

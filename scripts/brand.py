@@ -116,6 +116,19 @@ def icon(cls="icon", label="Jobby"):
     )
 
 
+def mascot(cls="jb-mascot2"):
+    """The line-art mascot, for the hover morph on the hero mark.
+
+    Two layers, and the hover animation depends on both. `jm2-contour` is a
+    single silhouette path with pathLength="1" that draws itself by running
+    stroke-dashoffset from 1 to 0. `jm2-ink` is the filled linework underneath,
+    revealed a beat later by a clip-path wipe. Drawn on a 1260x1628 canvas, so
+    keep it around 176px tall or the linework stops being crisp.
+    """
+    svg = _read("06-mascot/jobby-mascot-lineart.svg")
+    return svg.replace('class="jb-mascot2"', f'class="{cls}"', 1)
+
+
 # The pack ships favicon.svg with a dark-chrome flip built in. Jobby shows one
 # mark everywhere, so the flip is stripped and the ink circle stays put.
 _DARK_FLIP = re.compile(

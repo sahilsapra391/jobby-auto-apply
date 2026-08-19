@@ -1,0 +1,11 @@
+[
+  "Name",
+  "Email",
+  "Phone",
+  "Location",
+  "LinkedIn profile URL",
+  "Do you have hands-on experience building and maintaining foundational platform services, such as identity/auth, APIs, SDKs, notification systems?",
+  "Experience with authentication and authorization systems (OAuth, SSO, RBAC/ABAC, API key management)",
+  "Are you legally authorized to work in the United States?",
+  "Will you now or in the future require sponsorship to work in the United States?"
+]
