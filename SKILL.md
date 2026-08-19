@@ -176,7 +176,13 @@ If tailoring or verification cannot be satisfied, upload the base resume, skip t
 
 **Free-text answers are a different craft from fields.** Screening questions, cover letters and referral messages follow `references/tailoring.md`: drafted in the user's voice from their writing samples, every claim traceable to the resume, the answer store, or the conversation, and built from the story bank rather than invented.
 
-**Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status and conflicts of interest belong to the user.
+**Legal declarations** are answered from the answer store, never inferred. Three categories carry a standing **No** from the user and should not be parked:
+
+- **Post-employment restrictions.** Non-compete, non-solicitation, non-dealing, garden leave, restrictive covenants, "any agreement limiting your ability to perform this role".
+- **Political contributions.** Any lookback window, to officials, candidates, parties, PACs or political organisations. Finance and investment-advisory firms ask this to satisfy pay-to-play rules, so it is on most of their forms.
+- **Relationships and conflicts of interest.** Related to or closely associated with a client's director, officer or senior employee, a government official, a regulator, an employee of the hiring company, or a competitor.
+
+Everything else still belongs to the user: auditor independence, criminal history, anything not squarely in those three. Check the answer store first, since it holds the exact wording and the boundary of each.
 
 **Accuracy attestations** ("I certify the information provided is true and accurate to the best of my knowledge") are standing-authorised by the user and may be ticked, but only when every answer on the form came from the profile, the answer store or the story bank. If any field holds something you inferred, guessed or composed beyond those sources, do not tick it: that is certifying your guess as their fact. Park it instead.
 

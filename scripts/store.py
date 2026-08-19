@@ -208,6 +208,46 @@ def cmd_answer_put(args):
     return {"key": key, "state": state, "stored": entry.get("value") is not None}
 
 
+# Some questions are recognisable by a phrase rather than by overall wording.
+# A form asks about a non-compete in a paragraph of legalese, and overlap scoring
+# against a stored question cannot see past the surrounding words: measured, a
+# real Vanguard question scored under the 0.75 bar against the stored one and
+# resolved to nothing.
+#
+# Only phrases specific enough to be unambiguous belong here, and only for
+# questions the user has given a standing answer to. "conflict of interest" is
+# in; "employment" is not.
+TOPIC_MARKERS = [
+    ("post-employment-obligations", (
+        "non-compete", "noncompete", "non compete",
+        "non-solicitation", "nonsolicitation", "non solicitation",
+        "non-dealing", "restrictive covenant", "post-employment obligation",
+        "post employment obligation", "garden leave",
+    )),
+    ("political-contributions", (
+        "political contribution", "political contributions",
+        "political action committee", "contribution to any political",
+    )),
+    ("relationships-conflicts", (
+        "close associate", "conflict of interest", "conflicts of interest",
+        "related to, by birth", "related by birth", "birth, adoption or marriage",
+        "immediate family member employed", "relative employed by",
+    )),
+]
+
+
+def topic_answer(answers, question):
+    """A standing answer recognised by a distinctive phrase, or None."""
+    text = (question or "").lower()
+    for topic, markers in TOPIC_MARKERS:
+        if not any(m in text for m in markers):
+            continue
+        for entry in answers.values():
+            if topic in (entry.get("tags") or []):
+                return {"match": "topic", "topic": topic, **entry}
+    return None
+
+
 def find_answer(answers, question):
     key = answer_key(question)
     if key in answers:
@@ -231,6 +271,12 @@ def find_answer(answers, question):
         # near-miss field is the worst mis-fill this store can produce.
         if score >= 0.75 and entry.get("state") != "sensitive":
             return {"match": "fuzzy", "score": round(score, 2), **entry}
+    # Before giving up, try recognising the question by a distinctive phrase.
+    # Overlap scoring cannot see a non-compete clause buried in a paragraph.
+    topical = topic_answer(answers, question)
+    if topical is not None:
+        return topical
+
     # Candidates carry the stored question, never the value; to use one,
     # confirm it means the same thing, then look it up by its own question.
     candidates = [
