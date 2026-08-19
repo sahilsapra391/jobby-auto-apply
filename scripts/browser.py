@@ -30,6 +30,7 @@ import toolpath  # noqa: E402
 STATE = Path.home() / ".job-application"
 PROFILE = STATE / "browser-profile"
 CONFIG = STATE / "browser-mcp.json"
+ARTIFACTS = STATE / "browser-artifacts"
 # Pinned rather than @latest: an unattended pipeline should not change the tool
 # that fills application forms because a release happened overnight.
 PACKAGE = "@playwright/mcp@0.0.79"
@@ -38,8 +39,9 @@ SERVER = "browser"
 
 def write_config():
     """MCP config with absolute paths, because launchd gives children no PATH."""
-    PROFILE.mkdir(parents=True, exist_ok=True)
-    PROFILE.chmod(0o700)
+    for d in (PROFILE, ARTIFACTS):
+        d.mkdir(parents=True, exist_ok=True)
+        d.chmod(0o700)
     npx = toolpath.find("npx")
     cfg = {
         "mcpServers": {
@@ -48,9 +50,14 @@ def write_config():
                 # No --isolated: that flag is presence-only and throws away the
                 # profile on exit, which would mean signing in to every ATS on
                 # every single run.
+                # --output-dir keeps Playwright's traces, console logs and page
+                # snapshots out of the repo. They default to .playwright-mcp/ in
+                # the working directory, and a snapshot of a filled application
+                # form holds the user's name, phone and home address.
                 "args": ["-y", PACKAGE,
                          "--browser", "chrome",
-                         "--user-data-dir", str(PROFILE)],
+                         "--user-data-dir", str(PROFILE),
+                         "--output-dir", str(ARTIFACTS)],
                 "env": {"PATH": toolpath.search_path()},
             }
         }

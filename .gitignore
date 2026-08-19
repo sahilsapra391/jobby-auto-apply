@@ -19,3 +19,8 @@ deploy/.vercel/
 deploy/.env*.local
 node_modules/
 deploy/node_modules/
+
+# Playwright drops traces and page snapshots here. A snapshot of a filled
+# application form holds name, phone and home address, so this must never be
+# committed even though browser.py now writes them outside the repo.
+.playwright-mcp/
