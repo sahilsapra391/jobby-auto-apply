@@ -362,18 +362,47 @@ def build(state, generated):
     )
 
 
-    def filter_bar(key, options):
-        """Search box, plus a select only when there is something to select."""
+    def filter_bar(key, options, count=1, wide=False):
+        """Search box, plus a select only when there is something to select.
+
+        Nothing at all when the lane is empty: a search box over no rows is an
+        invitation to search an empty set. `wide` breaks the bar out to the full
+        page width, which suits the table lanes; the card lanes leave it in the
+        wrap so it lines up with the cards rather than spanning past them.
+        """
+        if not count:
+            return ""
         sel = ""
         if options:
             opts = "".join(f'<option value="{esc(v)}">{esc(label)}</option>'
                            for v, label in options)
             sel = (f'<select data-filter="{esc(key)}">'
                    f'<option value="">All</option>{opts}</select>')
-        return (f'<div class="filters" data-scope="{esc(key)}">'
+        return (f'<div class="filters{" wide" if wide else ""}" data-scope="{esc(key)}">'
                 f'<input type="search" data-search="{esc(key)}" '
                 f'placeholder="Search company, role, skill, location...">'
                 f'{sel}<span class="fcount" data-count="{esc(key)}"></span></div>')
+
+    # What each lane says when it holds nothing. A blank panel reads as broken;
+    # saying which button fills it is more use than "no results".
+    EMPTY = {
+        "act": ("Nothing needs you.",
+                "Every application is either done or running. Press Apply on "
+                "something in Watching if you want more here."),
+        "flight": ("Nothing in flight.",
+                   "What are you doing? Go apply for more jobs."),
+        "watch": ("Nothing on the watch list.",
+                  "Press Scan for new jobs and it will go looking."),
+        "done": ("Nothing submitted yet.",
+                 "The first one has to start somewhere."),
+        "dropped": ("Nothing dropped.",
+                    "Roles you say no to end up here, with how far they had got."),
+    }
+
+    def empty_state(key):
+        head, sub = EMPTY[key]
+        return (f'<p class="empty"><strong>{esc(head)}</strong>'
+                f'<span>{esc(sub)}</span></p>')
 
     sub_states = sorted({e.get("event") for e in submitted if e.get("event")})
     regions = sorted({s.get("region") for s in watch if s.get("region")})
@@ -467,7 +496,10 @@ def build(state, generated):
   .panel .sheet {{ max-width:none; width:min(1800px, calc(100vw - 2.5rem));
     margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
     margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }}
-  .panel .filters {{ width:min(1800px, calc(100vw - 2.5rem));
+  /* Only the table lanes break the filter bar out to the full page. The card
+     lanes keep it in the wrap, so it lines up with the cards instead of
+     spanning half a screen past them. */
+  .panel .filters.wide {{ width:min(1800px, calc(100vw - 2.5rem));
     margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
     margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }}
 
@@ -653,7 +685,10 @@ def build(state, generated):
   .note ul {{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.3rem;
     font-size:.9rem; }}
   .empty {{ text-align:center; color:var(--ink-2); font-size:1.05rem; padding:3.5rem 1.5rem;
-    background:var(--card); border-radius:20px; box-shadow:var(--sh); letter-spacing:-.018em; }}
+    background:var(--card); border-radius:20px; box-shadow:var(--sh); letter-spacing:-.018em;
+    display:flex; flex-direction:column; gap:.45rem; }}
+  .empty strong {{ color:var(--ink); font-size:1.15rem; font-weight:620; }}
+  .empty span {{ font-size:.95rem; }}
   .muted {{ color:var(--ink-3); }}
   @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{
     transition:none !important; animation:none !important; }} }}
@@ -684,7 +719,7 @@ def build(state, generated):
      control floating past the arrow instead of sitting under it. Shrink-wrapped
      to the link, the row is exactly as wide as "View posting" and its arrow. */
   .rowacts {{ display:inline-flex; flex-direction:column; align-items:stretch;
-    gap:.45rem; white-space:nowrap; }}
+    gap:.45rem; white-space:nowrap; margin-left:1.4rem; }}
   .rowacts-btns {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; }}
   .chip.lane {{ background:var(--sunk); color:var(--ink-2); font-weight:520; }}
   tr.dropping {{ opacity:.4; }}
@@ -721,50 +756,49 @@ def build(state, generated):
   <div class="segwrap"><div class="seg" role="tablist">{tabnav}</div></div>
 
   <div class="panel on" id="p-act" role="tabpanel">
-    <p class="hint">Each opens straight to where it is blocked.</p>
-    {filter_bar("act", [("ready", "Ready to submit"), ("hold", "Still blocked")])}
-    {f'<div class="grid">{"".join(cards)}</div>' if cards else '<p class="empty">Nothing blocked right now.</p>'}
+    {'<p class="hint">Each opens straight to where it is blocked.</p>' if cards else ''}
+    {filter_bar("act", [("ready", "Ready to submit"), ("hold", "Still blocked")], len(cards))}
+    {f'<div class="grid">{"".join(cards)}</div>' if cards else empty_state("act")}
     {unconfirmed_block}
   </div>
 
   <div class="panel" id="p-flight" role="tabpanel">
-    <p class="hint">Applications being worked on right now. Updates as each stage completes.</p>
-    {filter_bar("flight", [])}
-    {f'<div class="grid">{"".join(flight_cards)}</div>' if flight_cards else '<p class="empty">Nothing in flight. Press Apply on a role in Watching.</p>'}
+    {'<p class="hint">Applications being worked on right now. Updates as each stage completes.</p>' if flight_cards else ''}
+    {filter_bar("flight", [], len(flight_cards))}
+    {f'<div class="grid">{"".join(flight_cards)}</div>' if flight_cards else empty_state("flight")}
   </div>
 
   <div class="panel" id="p-done" role="tabpanel">
-    <p class="hint">Already out. Check here before applying again.</p>
-    {filter_bar("done", [(o, o.title()) for o in sub_states])}
-    <div class="sheet"><div class="tablewrap"><table>
+    {'<p class="hint">Already out. Check here before applying again.</p>' if submitted else ''}
+    {filter_bar("done", [(o, o.title()) for o in sub_states], len(submitted), wide=True)}
+    {f'''<div class="sheet"><div class="tablewrap"><table>
       <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>When</th><th>Posting</th><th>Proof</th><th>Resume</th><th>Cover letter</th></tr></thead>
-      <tbody>{sub_rows}</tbody></table></div></div>
+      <tbody>{sub_rows}</tbody></table></div></div>''' if submitted else empty_state("done")}
   </div>
 
   <div class="panel watch" id="p-watch" role="tabpanel">
-    <p class="hint">Newest first. Search or filter to narrow.</p>
-    {filter_bar("watch", watch_filters)}
-    <div class="sheet"><div class="tablewrap"><table>
+    {'<p class="hint">Newest first. Search or filter to narrow.</p>' if watch else ''}
+    {filter_bar("watch", watch_filters, len(watch), wide=True)}
+    {f'''<div class="sheet"><div class="tablewrap"><table>
       <colgroup>
         <col style="width:17%"><col style="width:7%"><col style="width:8%">
         <col style="width:12%"><col style="width:18%"><col style="width:26%">
         <col style="width:12%">
       </colgroup>
       <thead><tr><th>Role</th><th>Posted</th><th>Experience</th><th>Location</th><th>Core skills</th><th>How you line up</th><th></th></tr></thead>
-      <tbody>{watch_rows}</tbody></table></div></div>
+      <tbody>{watch_rows}</tbody></table></div></div>''' if watch else empty_state("watch")}
   </div>
 
   <div class="panel watch" id="p-dropped" role="tabpanel">
-    <p class="hint">Roles you decided against. Kept so they are not re-found and offered again.</p>
-    {filter_bar("dropped", [(l, l) for l in dropped_lanes])}
-    <div class="sheet"><div class="tablewrap"><table>
+    {'<p class="hint">Roles you decided against. Kept so they are not re-found and offered again.</p>' if dropped else ''}
+    {filter_bar("dropped", [(l, l) for l in dropped_lanes], len(dropped), wide=True)}
+    {f'''<div class="sheet"><div class="tablewrap"><table>
       <colgroup>
         <col style="width:26%"><col style="width:12%"><col style="width:38%">
         <col style="width:11%"><col style="width:13%">
       </colgroup>
       <thead><tr><th>Role</th><th>Dropped from</th><th>Where it had got to</th><th>When</th><th></th></tr></thead>
-      <tbody>{dropped_rows}</tbody></table></div></div>
-    {'' if dropped else '<p class="empty">Nothing dropped yet.</p>'}
+      <tbody>{dropped_rows}</tbody></table></div></div>''' if dropped else empty_state("dropped")}
   </div>
 </div>
 
