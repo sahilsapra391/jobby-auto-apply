@@ -51,6 +51,8 @@ def paths(root):
         "answers": str(root / "answers.json"),
         "history": str(root / "applications.jsonl"),
         "sessions": str(root / "sessions"),
+        "resumes": str(root / "resumes"),
+        "coverLetters": str(root / "cover-letters"),
         "meta": str(root / "meta.json"),
     }
 
@@ -110,7 +112,11 @@ def cmd_init(args):
     root = root_dir(args.root)
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
-    (root / "sessions").mkdir(exist_ok=True)
+    # 0700 throughout: sessions name the companies applied to, and the document
+    # directories hold the files sent out under the user's name.
+    for sub in ("sessions", "resumes", "cover-letters"):
+        (root / sub).mkdir(exist_ok=True)
+        os.chmod(root / sub, 0o700)
     p = paths(root)
     if not Path(p["profile"]).exists():
         write_private(p["profile"], {})

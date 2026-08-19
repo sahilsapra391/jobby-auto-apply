@@ -44,6 +44,18 @@ class DashboardTest(unittest.TestCase):
         html = build(history=[{"event": "submitting", "company": "C", "role": "PM", "at": "2026-08-15"}])
         self.assertIn("submission attempted, interrupted", html)
 
+    def test_page_declares_utf8(self):
+        # Without this, a server that omits charset renders every non-ASCII
+        # character in the store as mojibake.
+        self.assertTrue(build().lstrip().startswith('<meta charset="utf-8">'))
+
+    def test_non_ascii_store_data_survives_a_round_trip(self):
+        html = build(sessions=[{"company": "Renée & Cie", "role": "PM — Agents",
+                                "status": "active", "pendingFields": []}])
+        self.assertIn("Renée", html)
+        self.assertIn("PM — Agents", html)
+        self.assertEqual(html, html.encode("utf-8").decode("utf-8"))
+
     def test_completed_not_flagged_as_unconfirmed(self):
         html = build(history=[{"event": "completed", "company": "C", "role": "PM", "at": "2026-08-15"}])
         self.assertNotIn("Not confirmed submitted", html)
