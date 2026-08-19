@@ -105,13 +105,26 @@ Do this and nothing else:
    every run and signed in to whatever the user has signed it in to. Check before assuming:
    LinkedIn in particular is usually signed in, and an Easy Apply flow needs that session.
 
-   If the posting is behind a sign-in the profile does not have, or an account is required,
-   or a CAPTCHA appears, do NOT try to get past it and do NOT create an account. Park it:
-   save the session with status "review" and a pendingFields entry naming what is needed and
-   how to do it, for example
-     "needs a LinkedIn sign-in. Press Open & finish to bring up the agent's browser, sign in
-      once, then press Retry. Every later application inherits that session."
-   then run sync_board.py and stop. The tailored documents are the valuable part and they are
+   If the posting needs an account, a password, an OTP, or a CAPTCHA, do NOT try to get past
+   it: you never create an account, type a password, read a one-time code, or solve a CAPTCHA.
+   Park it, and write the pendingFields entry so it can be acted on without thinking.
+
+   Before you park, LEAVE THE TAB ON THE EXACT PAGE the user needs, the signup form or the
+   sign-in page, not the job description. They arrive by pressing "Open & finish", which
+   raises this tab. Then say what to do and what it buys them, for example
+
+     Workday account: "Press Open & finish. The Workday signup page for <Company> is up. Create
+      the account and let Chrome save the password. Press Retry and I take it from there. This
+      is once per company, not once per application: the browser keeps the session and the
+      saved password for every later <Company> role."
+
+     LinkedIn: "Press Open & finish, sign in to LinkedIn once, press Retry. Every later Easy
+      Apply inherits that session."
+
+     CAPTCHA: "Press Open & finish. Everything is filled and checked. Clear the CAPTCHA and
+      press Submit."
+
+   Then run sync_board.py and stop. The tailored documents are the valuable part and they are
    already kept, so a park is a decent outcome, not a failure.
    If no browser tool is available at all, park the same way and say so.
 
