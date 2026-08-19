@@ -126,6 +126,26 @@ python3 scripts/agent.py --check
 
 If that fails, run `claude login` in a terminal. The watcher re-checks on its own and clears the banner.
 
+## The browser a spawned agent gets
+
+A `claude -p` session started by the watcher has no MCP servers at all, so by default it has no browser. The Claude for Chrome extension attaches to one session at a time, and that one belongs to whoever is at the keyboard. Left alone, the daemon could tailor an application's documents and then had nowhere to put them.
+
+So spawned agents get their own: `@playwright/mcp`, pinned, driving Chrome against a persistent profile at `~/.job-application/browser-profile`.
+
+```bash
+python3 scripts/browser.py --check
+```
+
+Persistent matters. The `--isolated` flag throws the profile away on exit, which would mean signing in to every ATS on every run. With a profile that survives, a sign-in done once is a sign-in every later run inherits. To do that sign-in by hand, in the same profile the agents use:
+
+```bash
+python3 scripts/browser.py --login https://www.linkedin.com
+```
+
+It is deliberately not the everyday Chrome. Playwright cannot attach to a browser that is already running, and driving a signed-in personal profile unattended is not something to do quietly.
+
+The practical consequence is that most Greenhouse, Lever and Ashby forms go end to end unattended, because they need no account. Anything behind a sign-in parks in **Needs you** with the tailored documents already built and filed, which is a decent outcome rather than a failure: the expensive part is done and what is left is a click.
+
 ## Knowing when it breaks again
 
 The watcher pings [healthchecks.io](https://healthchecks.io) on every meaningful tick, and `/fail` with the error when a tick cannot do its job. The point is the silence: if the process dies or every tick starts failing, healthchecks notices the pings stopped and alerts. That is precisely the failure that went unnoticed for hours, and no amount of logging catches it, because the logs looked healthy.

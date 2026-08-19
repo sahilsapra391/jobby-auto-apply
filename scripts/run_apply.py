@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent  # noqa: E402
+import browser  # noqa: E402
 import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ TIMEOUT_SECONDS = 45 * 60
 # because the session is non-interactive that approval could never be granted:
 # the agent could not read the watch entry, report a phase, verify a PDF or log
 # an event. It reported the blockage and exited 0, so nothing looked wrong.
-APPLY_TOOLS = "Bash(python3:*),Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
+APPLY_TOOLS = "Bash(python3:*),Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,mcp__browser"
 
 
 def blob_env():
@@ -94,15 +95,18 @@ Do this and nothing else:
    the answer store or the story bank. Verify with scripts/resume_pdf.py verify before using them.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
-3. Check whether you actually have browser tools (mcp__claude-in-chrome__* or an equivalent).
-   A spawned session often does not: the Chrome extension attaches to one session at a time,
-   so the browser may belong to somebody else right now.
-   If you have NO browser: stop here and hand off cleanly. Do not pretend, do not improvise
-   another browser. Save the session with status "review", a pendingFields entry saying
-   "documents are built and filed; this needs a browser session to fill and submit", and run
-   sync_board.py. The documents you just built are the valuable part and they are kept.
-   If you DO have a browser: fill the application, verifying values by reading them back from
-   the page rather than trusting your own plan.
+3. Open the posting with the `mcp__browser__*` tools and fill the application, verifying
+   values by reading them back from the page rather than trusting your own plan.
+
+   That browser runs a profile of its own at ~/.job-application/browser-profile. It is NOT
+   the user's everyday Chrome, so it is signed in to very little. If the posting is behind a
+   sign-in, or an account is required, or a CAPTCHA appears, do NOT try to get past it and do
+   NOT create an account. Park it: save the session with status "review" and a pendingFields
+   entry naming what is needed, for example
+     "documents are built and filed; needs a sign-in to <site> before it can be submitted"
+   then run sync_board.py and stop. The tailored documents are the valuable part and they are
+   already kept, so a park is a decent outcome, not a failure.
+   If no browser tool is available at all, park the same way and say so.
 4. Before you submit, confirm this is not a second application to the same job:
    "{py}" "{repo}/scripts/dupe_check.py" --guard {aid}
    If it reports duplicate, stop without submitting and say so.
@@ -197,7 +201,8 @@ def main():
         fh.write(f"\n=== {aid} ===\n")
         proc = subprocess.run(
             [toolpath.claude(), "-p", prompt, "--permission-mode", "acceptEdits",
-             "--allowedTools", APPLY_TOOLS],
+             "--allowedTools", APPLY_TOOLS,
+             "--mcp-config", str(browser.config_path())],
             cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
             env=toolpath.enriched_env())
 

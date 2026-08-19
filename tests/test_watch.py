@@ -152,3 +152,55 @@ class TickErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrowserConfigTests(unittest.TestCase):
+    """The browser given to spawned agents.
+
+    A `claude -p` session has no MCP servers, so without this it has no browser
+    at all and an application can only ever be half done.
+    """
+
+    def setUp(self):
+        self.browser = load("browser")
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.browser.STATE = root
+        self.browser.PROFILE = root / "browser-profile"
+        self.browser.CONFIG = root / "browser-mcp.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_config_names_the_server_the_allowlist_expects(self):
+        cfg = json.loads(self.browser.write_config().read_text())
+        self.assertIn("browser", cfg["mcpServers"])
+
+    def test_command_is_absolute_because_launchd_gives_no_path(self):
+        cfg = json.loads(self.browser.write_config().read_text())
+        self.assertTrue(cfg["mcpServers"]["browser"]["command"].startswith("/"))
+
+    def test_the_server_inherits_a_path_that_can_see_node(self):
+        # npx is a node shim, so an absolute path alone is not enough: env
+        # resolves node against the child's own PATH.
+        cfg = json.loads(self.browser.write_config().read_text())
+        self.assertIn("/opt/homebrew/bin", cfg["mcpServers"]["browser"]["env"]["PATH"])
+
+    def test_the_profile_persists_rather_than_being_isolated(self):
+        # --isolated throws the profile away on exit, which would mean signing
+        # in to every ATS on every run.
+        args = json.loads(self.browser.write_config().read_text())["mcpServers"]["browser"]["args"]
+        self.assertIn("--user-data-dir", args)
+        self.assertFalse(any(a.startswith("--isolated") for a in args))
+
+    def test_the_playwright_version_is_pinned(self):
+        args = json.loads(self.browser.write_config().read_text())["mcpServers"]["browser"]["args"]
+        pkg = next(a for a in args if a.startswith("@playwright/mcp"))
+        self.assertIn("@", pkg.replace("@playwright/mcp", ""))
+        self.assertNotIn("latest", pkg)
+
+    def test_config_path_writes_when_absent_and_reuses_when_present(self):
+        first = self.browser.config_path()
+        self.assertTrue(first.exists())
+        first.write_text('{"marker": true}')
+        self.assertEqual(json.loads(self.browser.config_path().read_text()), {"marker": True})
