@@ -1,22 +1,22 @@
 <div align="center">
 
-<img src="docs/needs-you.png" alt="The Jobby board" width="820">
-
-# Jobby
+<img src="docs/logo.png" alt="Jobby" width="720">
 
 **I stopped applying to jobs myself. A Claude agent does it now.**
 
 One tailored resume and cover letter per posting. Forms filled and submitted end to end.
 A board that tells me the truth about what is actually happening.
 
+`MIT` · `Claude Skill` · `macOS`
+
 </div>
 
 ---
 
 Jobby is a [Claude Skill](https://docs.claude.com/en/docs/claude-code/skills) plus a small
-daemon. You press **Apply** on a role and, about three seconds later, an agent is building a
-resume for that specific posting, opening the form in a browser, filling it, and submitting it.
-When something genuinely needs you, it stops and says exactly what and why.
+daemon. Press **Apply** on a role and, about three seconds later, an agent is building a resume
+for that specific posting, opening the form in a browser, filling it, and submitting it. When
+something genuinely needs a person, it stops and says exactly what and why.
 
 It does not invent anything. Every claim on a generated resume has to trace back to a resume you
 wrote, an answer you gave, or a story you told it. Where it cannot answer honestly, it stops.
@@ -27,41 +27,41 @@ Five lanes. Four are work; the fifth is a record of decisions.
 
 ### Needs you
 
-<img src="docs/needs-you.png" alt="Needs you" width="820">
-
 Applications that hit something only a person can do: creating an account, typing a password,
-clearing a CAPTCHA. Each card says what to do, and what doing it buys you. Creating one Workday
+clearing a CAPTCHA. Each card says what to do and what doing it buys you. Creating one Workday
 account unblocks every future role at that company, because the agent's browser keeps the session
 and the saved password.
 
-**Retry** re-runs the agent once you have cleared the blocker. It reuses the documents already
+<img src="docs/needs-you.png" alt="Needs you" width="900">
+
+**Retry** re-runs the agent once you have cleared the blocker: it reuses the documents already
 built and picks up at the form. **Open & finish** raises the tab the agent left behind, with the
 form still filled, rather than opening a fresh copy of the application.
 
 ### Watching
 
-<img src="docs/watching.png" alt="Watching" width="820">
-
 Roles it found, newest first, with the experience bar, the location, the core skills, and an
 honest read on how you line up, including where you fall short. **Apply** starts the pipeline.
 The **×** drops the role.
 
-### Submitted
+<img src="docs/watching.png" alt="Watching" width="900">
 
-<img src="docs/submitted.png" alt="Submitted" width="820">
+### Submitted
 
 What actually went out, with the exact resume and cover letter each employer received. Nothing
 reaches this lane without a confirmation quoted off the page after submitting. Not "the click
 succeeded", the words the site showed.
 
-### In flight and Dropped
+<img src="docs/submitted.png" alt="Submitted" width="900">
 
-<img src="docs/dropped.png" alt="Dropped" width="820">
+### In flight, and Dropped
 
-**In flight** shows live progress through building documents, filling, submitting, verifying, and
-lets you **Stop** a run mid-form. **Dropped** is what you said no to, and it records the lane it
-came from and how far it had got: *not started*, *waiting on you: create a Workday account*, or
+**In flight** shows live progress through building documents, filling, submitting and verifying,
+and lets you **Stop** a run mid-form. **Dropped** is what you said no to, and it records the lane
+it came from and how far it had got: *not started*, *waiting on you: create a Workday account*, or
 *Filling the form (14 of 18 fields)*.
+
+<img src="docs/dropped.png" alt="Dropped" width="900">
 
 ## What makes it different
 
@@ -72,16 +72,16 @@ colour, or a font size with no counterpart. Content is checked separately: emplo
 titles and numbers all have to trace back to your real resume.
 
 **One application per job description, enforced.** Not audited afterwards, blocked before the
-browser opens. The same posting reaches a watch list under different ids depending on where it
-was found, so the guard matches on application id, on normalised company and role, and on the
-posting URL with tracking stripped.
+browser opens. The same posting reaches a watch list under different ids depending on where it was
+found, so the guard matches on application id, on normalised company and role, and on the posting
+URL with tracking stripped.
 
 **It stops rather than guesses.** No account creation, no passwords, no one-time codes, no
-CAPTCHAs, no ticking a truth attestation on a form where anything was inferred. Those land in
+CAPTCHAs, and no ticking a truth attestation on a form where anything was inferred. Those land in
 Needs you with the exact clause quoted.
 
 **Region-aware.** Indian postings get the India resume and phone; US postings get the US ones.
-Your street address goes into application forms when they ask and never onto a resume header.
+Your street address goes into application forms when they ask, and never onto a resume header.
 
 ## Setting it up
 
@@ -128,8 +128,8 @@ Spawned CLI sessions have no browser of their own, so they attach over CDP to a 
 with a persistent profile. That is what makes a parked application resumable: form values live in
 the page, not the profile, so a browser that dies with its run takes every filled field with it.
 
-Everything the watcher does is reported to [healthchecks.io](https://healthchecks.io), including
-failures. The point is the silence. If the process dies, the pings stop and you hear about it.
+Everything the watcher does is reported to [healthchecks.io](https://healthchecks.io), failures
+included. The point is the silence. If the process dies, the pings stop and you hear about it.
 
 ## Things it learned the hard way
 
@@ -138,7 +138,7 @@ Each of these is a comment in the code, because each cost real time:
 - launchd gives an agent `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. Homebrew is
   invisible. Every queue read died for hours while the watcher logged healthy cycles, because a
   crashed check and an empty queue both exit non-zero.
-- `vercel` and `npx` are `#!/usr/bin/env node` scripts. An absolute path does not save you; `env`
+- `vercel` and `npx` are `#!/usr/bin/env node` scripts. An absolute path does not save you: `env`
   resolves `node` against the child's PATH.
 - Free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows
   100,000 reads a day and 1,000 list requests, so the whole queue lives under one key.
@@ -159,7 +159,5 @@ authorised. Invent an answer to a required field.
 python3 -m pytest tests/ -q
 ```
 
----
-
-MIT. Built on top of [apply-for-me](https://github.com/YoursSarcastically/apply-for-me), which is
-also MIT; see `LICENSE`.
+101 tests, including `node --test` coverage of the queue logic run from inside the Python suite,
+so the JavaScript cannot drift.
