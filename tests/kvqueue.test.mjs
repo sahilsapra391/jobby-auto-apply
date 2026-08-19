@@ -37,7 +37,7 @@ test('missing configuration is detected rather than guessed at', () => {
 
 test('a key that was never written is an empty queue, not an error', async () => {
   fakeKV({ body: null });
-  assert.deepEqual(await readQueue(ENV), { apply: [], scan: [], marked: [] });
+  assert.deepEqual(await readQueue(ENV), { apply: [], scan: [], marked: [], drop: [], restore: [] });
 });
 
 test('a failed read raises instead of looking empty', async () => {
@@ -48,7 +48,7 @@ test('a failed read raises instead of looking empty', async () => {
 });
 
 test('a failed write raises rather than silently dropping the click', async () => {
-  fakeKV({ body: { apply: [], scan: [], marked: [] }, failWrite: true });
+  fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] }, failWrite: true });
   await assert.rejects(() => writeQueue(ENV, { apply: [] }), /KV write failed: 403/);
 });
 
@@ -59,7 +59,7 @@ test('one poll costs exactly one read', async () => {
 });
 
 test('enqueue dedupes by application id', async () => {
-  fakeKV({ body: { apply: [], scan: [], marked: [] } });
+  fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] } });
   assert.equal((await enqueue(ENV, 'apply', 'acme-pm')).deduped, undefined);
   const second = await enqueue(ENV, 'apply', 'acme-pm');
   assert.equal(second.deduped, true);
@@ -69,7 +69,7 @@ test('enqueue dedupes by application id', async () => {
 test('claim-one takes the oldest and leaves the rest', async () => {
   // The bug this replaces: claim deleted the whole queue after running one
   // item, destroying fourteen clicks that had never been touched.
-  fakeKV({ body: { apply: [], scan: [], marked: [] } });
+  fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] } });
   await enqueue(ENV, 'apply', 'first');
   await enqueue(ENV, 'apply', 'second');
   await enqueue(ENV, 'apply', 'third');
@@ -81,13 +81,13 @@ test('claim-one takes the oldest and leaves the rest', async () => {
 });
 
 test('claim-one on an empty queue is a no-op, not a write', async () => {
-  const kv = fakeKV({ body: { apply: [], scan: [], marked: [] } });
+  const kv = fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] } });
   assert.deepEqual(await claimOne(ENV, 'apply'), []);
   assert.equal(kv.writes, 0);
 });
 
 test('claim takes everything in that queue and nothing from the others', async () => {
-  fakeKV({ body: { apply: [], scan: [], marked: [] } });
+  fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] } });
   await enqueue(ENV, 'marked', 'one');
   await enqueue(ENV, 'marked', 'two');
   await enqueue(ENV, 'apply', 'untouched');
@@ -95,4 +95,24 @@ test('claim takes everything in that queue and nothing from the others', async (
   const after = await readQueue(ENV);
   assert.deepEqual(after.marked, []);
   assert.equal(after.apply.length, 1);
+});
+
+test('a queue added later is present even for a value written before it existed', async () => {
+  // readQueue merges over a fresh shape, so an old value that predates the drop
+  // queue does not make drop undefined and crash the watcher.
+  fakeKV({ body: { apply: [{ applicationId: 'a' }], scan: [], marked: [] } });
+  const q = await readQueue(ENV);
+  assert.deepEqual(q.drop, []);
+  assert.equal(q.apply.length, 1);
+});
+
+test('dropping does not disturb the other queues', async () => {
+  fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [] } });
+  await enqueue(ENV, 'apply', 'still-running');
+  await enqueue(ENV, 'drop', 'give-up-on-this');
+  const claimed = await claimAll(ENV, 'drop');
+  assert.equal(claimed.length, 1);
+  const after = await readQueue(ENV);
+  assert.deepEqual(after.drop, []);
+  assert.equal(after.apply.length, 1, 'a drop must not touch the apply queue');
 });

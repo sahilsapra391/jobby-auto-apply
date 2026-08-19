@@ -76,6 +76,26 @@ The path, end to end, is the same for all three:
 
 Two seconds is the whole lag. A click reaches a running agent almost immediately.
 
+### Retry, Drop and the Dropped lane
+
+**Retry**, on a Needs you card, is the apply queue again. When the user has done the thing that was blocking an application (created the account, cleared the CAPTCHA, accepted a legal agreement), Retry re-runs the agent, which reuses the documents already built and picks up from the form rather than starting over. There is no separate retry queue because retrying and applying are the same operation.
+
+**Drop** says the user has decided against a role. It is available in three places: an `x` on each Watching row, a Drop button on a Needs you card, and Stop on an In flight card. Dropping something in flight also kills the runner: the runner is spawned in its own session, so the whole process group is signalled, or the `claude` session under it keeps driving the browser. `drop.py` checks the note on the lock before signalling anything, since by the time a drop is claimed the lock may be held by a different application and killing the wrong run is worse than not killing at all.
+
+Dropped is deliberately not the same as `abandoned`. Abandoned records that a submission attempt failed or was logged in error; dropped records a decision. So the session is kept rather than deleted, which also stops the next sweep re-finding the role and offering it again.
+
+Each dropped row keeps where the application had got to, because "dropped while it sat in Watching" and "dropped halfway through filling a form" are different facts:
+
+| Dropped from | Where it had got to |
+| --- | --- |
+| Watching | not started |
+| Needs you | waiting on you: *the first blocker*, and a count of the rest |
+| In flight | the phase it reached, e.g. *Filling the form (14 of 18 fields)* |
+
+**Restore** puts a row back in Watching, for the misclick that an `x` in a dense table invites.
+
+The lane sits apart from the other four in the tab bar. Nothing in it is waiting on anyone, so it should not read as a queue.
+
 ### One at a time, and never blocking
 
 An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.

@@ -75,7 +75,12 @@ import { DOCUMENTS } from './_documents.js';
 // queue now lives in Cloudflare Workers KV under a single key, because KV
 // allows 100,000 key reads a day but only 1,000 list requests: a queue you have
 // to list to read is unusable at any poll rate worth having. See kvqueue.mjs.
-const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/submitted': 'marked' };
+// /api/retry is deliberately the apply queue: re-running the agent after the
+// user has cleared a blocker is the same operation as applying, and the
+// runner already reuses documents rather than rebuilding them.
+const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/retry': 'apply',
+                 '/api/submitted': 'marked', '/api/drop': 'drop',
+                 '/api/restore': 'restore' };
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },

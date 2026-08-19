@@ -78,6 +78,11 @@ The role is already marked in flight, so it has left Watching. Do not set it bac
 unless you park it for the user.
 
 Do this and nothing else:
+0. If this role carries `pendingFields`, this is a RETRY: the user has just done
+   the thing that was blocking it (created the account, cleared the CAPTCHA, ticked the
+   legal agreement). Re-open the form, confirm what is already filled, and carry on from
+   there rather than starting over.
+
 1. Read the watch entry: "{py}" "{repo}/scripts/store.py" session-load --id {aid}
    It carries the company, role, url, region, ats and an `extraction` summarising the posting.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
@@ -105,7 +110,12 @@ Do this and nothing else:
    then run sync_board.py and stop. The tailored documents are the valuable part and they are
    already kept, so a park is a decent outcome, not a failure.
    If no browser tool is available at all, park the same way and say so.
-4. Before you submit, confirm this is not a second application to the same job:
+4. Before you submit, re-read the session:
+     "{py}" "{repo}/scripts/store.py" session-load --id {aid}
+   If its status is now "dropped", the user cancelled this application while you were
+   working. Stop immediately. Do not submit, do not change the status back.
+
+   Then confirm this is not a second application to the same job:
    "{py}" "{repo}/scripts/dupe_check.py" --guard {aid}
    If it reports duplicate, stop without submitting and say so.
 5. If every required field is answerable truthfully, log a write-ahead `submitting` event,

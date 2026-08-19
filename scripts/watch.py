@@ -266,6 +266,40 @@ def tick(force_publish=False):
     changed = {}
     q = poll_queues()
 
+    # Drops first, and before anything is spawned. A drop can be the user
+    # stopping a run that is happening right now, so acting on it late means the
+    # agent keeps filling a form the user has already said no to.
+    if q.get("drop"):
+        claimed = json.loads(subprocess.run(
+            [toolpath.node(), "queue.mjs", "claim", "drop/"], cwd=DEPLOY,
+            capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
+        ).stdout or "[]")
+        dropped = []
+        for item in claimed:
+            aid = item.get("applicationId")
+            if not aid:
+                continue
+            r = run([sys.executable, str(REPO / "scripts" / "drop.py"),
+                     "--id", aid, "--no-publish"])
+            if r.returncode == 0:
+                dropped.append(aid)
+        if dropped:
+            changed["dropped"] = dropped
+
+    if q.get("restore"):
+        claimed = json.loads(subprocess.run(
+            [toolpath.node(), "queue.mjs", "claim", "restore/"], cwd=DEPLOY,
+            capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
+        ).stdout or "[]")
+        back = []
+        for item in claimed:
+            aid = item.get("applicationId")
+            if aid and run([sys.executable, str(REPO / "scripts" / "drop.py"),
+                            "--id", aid, "--restore", "--no-publish"]).returncode == 0:
+                back.append(aid)
+        if back:
+            changed["restored"] = back
+
     if q.get("marked"):
         r = run([sys.executable, str(REPO / "scripts" / "apply_marks.py"), "--no-publish"])
         if r.returncode != 0:

@@ -16,9 +16,9 @@
 // it remembers, and enqueue dedupes by application id.
 
 const KEY = 'jobby:queue';
-export const QUEUES = ['apply', 'scan', 'marked'];
+export const QUEUES = ['apply', 'scan', 'marked', 'drop', 'restore'];
 
-const empty = () => ({ apply: [], scan: [], marked: [] });
+const empty = () => ({ apply: [], scan: [], marked: [], drop: [], restore: [] });
 
 function conf(env) {
   const account = env.CF_ACCOUNT_ID;

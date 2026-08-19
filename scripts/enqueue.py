@@ -24,7 +24,8 @@ import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
-PREFIXES = {"apply": "apply/", "scan": "scan/", "marked": "marked/"}
+PREFIXES = {"apply": "apply/", "scan": "scan/", "marked": "marked/",
+            "drop": "drop/", "restore": "restore/"}
 
 
 def blob_env():

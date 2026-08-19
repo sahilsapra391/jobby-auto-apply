@@ -26,7 +26,8 @@ SCHEMA_VERSION = 1
 ANSWER_STATES = {"confirmed", "inferred", "missing", "sensitive"}
 # "inflight" means an Apply run is under way: the role has left the watch
 # list but nothing has been submitted yet.
-SESSION_STATUSES = {"watch", "inflight", "active", "review", "completed", "abandoned"}
+SESSION_STATUSES = {"watch", "inflight", "active", "review", "completed",
+                    "abandoned", "dropped"}
 # Pre-submission lifecycle, then post-submission outcomes reported by the user.
 HISTORY_EVENTS = {"started", "reviewed", "submitting", "completed", "abandoned",
                   "response", "interview", "offer", "rejected"}

@@ -24,3 +24,6 @@ deploy/node_modules/
 # application form holds name, phone and home address, so this must never be
 # committed even though browser.py now writes them outside the repo.
 .playwright-mcp/
+
+# Local board render used for browser-testing the dashboard JS.
+.board-preview.html

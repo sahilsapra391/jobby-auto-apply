@@ -128,6 +128,11 @@ def build(state, generated):
 
     inflight = [s for s in sessions if s.get("status") == "inflight"]
     watch = [s for s in sessions if s.get("status") == "watch"]
+    # Roles the user said no to. Kept rather than deleted, because "we decided
+    # against this one" is a fact worth being able to look up later, and because
+    # without it a dropped role would simply reappear on the next sweep.
+    dropped = sorted((s for s in sessions if s.get("status") == "dropped"),
+                     key=lambda x: x.get("droppedAt") or "", reverse=True)
     # An application whose latest event is a post-submission outcome is still
     # submitted; it must not vanish from the board when an outcome is logged.
     OUTCOMES = ("response", "interview", "offer", "rejected")
@@ -171,8 +176,13 @@ def build(state, generated):
           <ul class="todo">{render_pending(pending)}</ul>
           <p class="stub">&#10003; Marked submitted <button class="undo" data-id="{esc(aid)}">Undo</button></p>
           <div class="act">
-            <a class="btn" href="{esc(safe_url(posting_url(s)))}" target="_blank" rel="noopener">Open &amp; finish</a>
+            <button class="btn retry" data-id="{esc(aid)}"
+                    data-company="{esc(s.get('company',''))}"
+                    data-role="{esc(s.get('role',''))}"
+                    title="I have done the blocked step; let the agent finish">Retry</button>
+            <a class="btn ghost" href="{esc(safe_url(posting_url(s)))}" target="_blank" rel="noopener">Open &amp; finish</a>
             <button class="btn ghost mark" data-id="{esc(aid)}">Mark submitted</button>
+            <button class="btn drop" data-id="{esc(aid)}" title="Do not pursue this one">Drop</button>
             <span class="ats">{esc(s.get('ats', ''))}</span>
           </div>
         </article>""")
@@ -190,7 +200,7 @@ def build(state, generated):
             f'<span class="step{" on" if i <= idx else ""}" title="{esc(st)}"></span>'
             for i, st in enumerate(steps))
         return f"""
-        <article class="card flight">
+        <article class="card flight" data-id="{esc(entry.get('applicationId',''))}">
           <header>
             <div>
               <h3>{esc(entry.get('company', ''))}</h3>
@@ -202,6 +212,8 @@ def build(state, generated):
           <p class="phase">{esc(phase)}{f' <span class="why">{esc(detail)}</span>' if detail else ''}</p>
           <div class="act">
             <a class="btn ghost" href="{esc(safe_url(posting_url(entry)))}" target="_blank" rel="noopener">Posting</a>
+            <button class="btn drop" data-id="{esc(entry.get('applicationId',''))}"
+                    title="Stop the agent and drop this application">Stop</button>
             <span class="ats">{esc(at + ' UTC' if at else '')}</span>
           </div>
         </article>"""
@@ -303,6 +315,30 @@ def build(state, generated):
     watch.sort(key=lambda s: (
         s.get("postedDays") if isinstance(s.get("postedDays"), int) else 10**6,
         -(s.get("fitScore") or 0)))
+    def dropped_row(entry):
+        when = (entry.get("droppedAt") or "")[:10]
+        stage = entry.get("droppedStage") or ""
+        lane = entry.get("droppedFrom") or "unknown"
+        reason = entry.get("droppedReason") or ""
+        aid = entry.get("applicationId", "")
+        hay = " ".join(str(x) for x in [entry.get("company"), entry.get("role"),
+                                        lane, stage, reason] if x)
+        return (
+            f'<tr data-hay="{esc(hay)}" data-state="{esc(lane)}" data-id="{esc(aid)}">'
+            f'<td><strong>{esc(entry.get("company", ""))}</strong><br>'
+            f'<span class="muted">{esc(entry.get("role", ""))}</span></td>'
+            f'<td><span class="chip lane">{esc(lane)}</span></td>'
+            f'<td class="note-cell">{esc(stage)}'
+            f'{f"<br><span class=\'muted\'>{esc(reason)}</span>" if reason else ""}</td>'
+            f'<td class="when">{esc(when)}</td>'
+            f'<td>{link(posting_url(entry), "View")}'
+            f'<button class="btn ghost undrop" data-id="{esc(aid)}" '
+            f'title="Put this back in Watching">Restore</button></td></tr>'
+        )
+
+    dropped_rows = "\n".join(dropped_row(d) for d in dropped)
+    dropped_lanes = sorted({d.get("droppedFrom") or "unknown" for d in dropped})
+
     watch_rows = "\n".join(
         f"<tr data-hay=\"{esc(' '.join(str(x) for x in [s.get('company'), s.get('role'), s.get('location') or s.get('realLocation'), ' '.join(s.get('coreSkills') or []), s.get('alignment') or ''] if x))}\" "
         f"data-fresh=\"{'1' if isinstance(s.get('postedDays'), int) and s.get('postedDays') <= 7 else '0'}\" "
@@ -316,7 +352,10 @@ def build(state, generated):
         f"<td class='note-cell'>{esc(s.get('alignment') or s.get('step',''))}</td>"
         f"<td>{link(posting_url(s), 'View')}"
         f"<button class='btn apply' data-id=\"{esc(s.get('applicationId',''))}\" "
-        f"data-company=\"{esc(s.get('company',''))}\">Apply</button></td></tr>" for s in watch
+        f"data-company=\"{esc(s.get('company',''))}\">Apply</button>"
+        f"<button class='xbtn drop' data-id=\"{esc(s.get('applicationId',''))}\" "
+        f"title='Drop this role' aria-label='Drop {esc(s.get('company',''))}'>&#215;</button>"
+        f"</td></tr>" for s in watch
     )
 
 
@@ -347,6 +386,9 @@ def build(state, generated):
         ("done", "Submitted", len(submitted)),
         ("watch", "Watching", len(watch)),
         ("flight", "In flight", len(inflight)),
+        # Set apart from the four working lanes: nothing here is waiting on
+        # anyone, it is a record of decisions already made.
+        ("dropped", "Dropped", len(dropped)),
     ]
 
     stopped = str((state.get("meta") or {}).get("blocked") or "").strip()
@@ -356,7 +398,7 @@ def build(state, generated):
     ) if stopped else ""
 
     tabnav = "".join(
-        f'<button class="tab{" on" if i == 0 else ""}" data-tab="{k}" role="tab" '
+        f'<button class="tab{" on" if i == 0 else ""}{" aside" if k == "dropped" else ""}" data-tab="{k}" role="tab" '
         f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="p-{k}">'
         f'{esc(label)}<span class="n">{n}</span></button>'
         for i, (k, label, n) in enumerate(tabs)
@@ -386,7 +428,7 @@ def build(state, generated):
     --bg:#f5f5f7; --card:#fff; --sunk:#f0f0f2; --seg:#e8e8ed;
     --ink:#1d1d1f; --ink-2:#6e6e73; --ink-3:#8e8e93;
     --hair:rgba(0,0,0,.07);
-    --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9;
+    --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9; --red:#b3261e;
     --t-o:rgba(234,88,12,.08); --t-g:rgba(5,150,105,.08); --t-p:rgba(109,40,217,.07);
     --sh:0 1px 3px rgba(0,0,0,.05), 0 6px 20px rgba(0,0,0,.05);
     /* Logo inverts with the theme. An ink circle on a near-black page has
@@ -398,7 +440,7 @@ def build(state, generated):
       --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
       --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
       --hair:rgba(255,255,255,.1);
-      --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2;
+      --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#ff6961;
       --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
       --sh:0 1px 3px rgba(0,0,0,.5);
     --brand-bg:#F8F8F8; --brand-fg:#2B2D2C;
@@ -408,7 +450,7 @@ def build(state, generated):
     --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
     --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
     --hair:rgba(255,255,255,.1);
-    --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2;
+    --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#ff6961;
     --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
     --sh:0 1px 3px rgba(0,0,0,.5);
     --brand-bg:#F8F8F8; --brand-fg:#2B2D2C;
@@ -610,6 +652,18 @@ def build(state, generated):
     .watch th:nth-child(4), .watch td:nth-child(4),
     .watch th:nth-child(5), .watch td:nth-child(5) {{ display:none; }}
     .watch th, .watch td {{ padding:.65rem .5rem; font-size:.86rem; }} }}
+  /* Dropped sits apart from the four working lanes: nothing in it is waiting
+     on anyone, so it should not read as a queue. */
+  .tab.aside {{ margin-left:auto; opacity:.72; }}
+  .tab.aside.on {{ opacity:1; }}
+  .xbtn {{ appearance:none; border:1px solid var(--hair); background:transparent;
+    color:var(--ink-2); border-radius:6px; cursor:pointer; line-height:1;
+    font-size:1rem; padding:.15rem .4rem; margin-left:.35rem; }}
+  .xbtn:hover {{ color:var(--red); border-color:var(--red); }}
+  .btn.drop {{ color:var(--red); }}
+  .btn.drop:hover {{ background:var(--red); color:#fff; border-color:var(--red); }}
+  .chip.lane {{ background:var(--sunk); color:var(--ink-2); font-weight:520; }}
+  tr.dropping {{ opacity:.4; }}
   .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
     line-height:1.45; text-align:center; }}
   .sysbanner strong {{ font-weight:650; }}
@@ -674,6 +728,19 @@ def build(state, generated):
       </colgroup>
       <thead><tr><th>Role</th><th>Posted</th><th>Experience</th><th>Location</th><th>Core skills</th><th>How you line up</th><th></th></tr></thead>
       <tbody>{watch_rows}</tbody></table></div></div>
+  </div>
+
+  <div class="panel watch" id="p-dropped" role="tabpanel">
+    <p class="hint">Roles you decided against. Kept so they are not re-found and offered again.</p>
+    {filter_bar("dropped", [(l, l) for l in dropped_lanes])}
+    <div class="sheet"><div class="tablewrap"><table>
+      <colgroup>
+        <col style="width:26%"><col style="width:12%"><col style="width:38%">
+        <col style="width:11%"><col style="width:13%">
+      </colgroup>
+      <thead><tr><th>Role</th><th>Dropped from</th><th>Where it had got to</th><th>When</th><th></th></tr></thead>
+      <tbody>{dropped_rows}</tbody></table></div></div>
+    {'' if dropped else '<p class="empty">Nothing dropped yet.</p>'}
   </div>
 </div>
 
@@ -937,6 +1004,173 @@ def build(state, generated):
         }});
     }});
   }});
+
+  // Drop, retry and restore. Each is a queue request the local watcher claims,
+  // so the board can only ever ask; it changes the row optimistically and
+  // remembers the ask, because the round trip takes a few seconds and a reload
+  // inside that window used to make the click look like it had failed.
+  var DROP_KEY = 'jobby.dropping';
+  function readIds(k) {{
+    try {{ return JSON.parse(localStorage.getItem(k) || '[]'); }} catch (e) {{ return []; }}
+  }}
+  function writeIds(k, v) {{
+    try {{ localStorage.setItem(k, JSON.stringify(v)); }} catch (e) {{}}
+  }}
+  function post(path, id) {{
+    return fetch(path, {{
+      method: 'POST',
+      headers: {{ 'content-type': 'application/json' }},
+      body: JSON.stringify({{ applicationId: id }}),
+    }}).then(function (r) {{ return r.json().catch(function () {{ return {{}}; }}); }});
+  }}
+  function tabOf(el) {{
+    var panel = el.closest ? el.closest('.panel') : null;
+    return panel ? panel.id.replace('p-', '') : '';
+  }}
+  var LANE_LABEL = {{ watch: 'Watching', act: 'Needs you', flight: 'In flight' }};
+  // What the server will record about this drop, worked out from the lane the
+  // item is sitting in. Only used to draw the placeholder row; the real values
+  // come back on the next republish.
+  function dropFacts(el) {{
+    var from = tabOf(el);
+    var node = el.closest('tr') || el.closest('.card');
+    var facts = {{ lane: LANE_LABEL[from] || from, company: '', role: '', stage: '' }};
+    if (!node) return facts;
+    if (node.tagName === 'TR') {{
+      var strong = node.querySelector('strong');
+      var muted = node.querySelector('.muted');
+      facts.company = strong ? strong.textContent : '';
+      facts.role = muted ? muted.textContent : '';
+      facts.stage = 'not started';
+    }} else {{
+      var h3 = node.querySelector('h3');
+      var role = node.querySelector('.role');
+      facts.company = node.getAttribute('data-company') || (h3 ? h3.textContent : '');
+      facts.role = node.getAttribute('data-role') || (role ? role.textContent : '');
+      var phase = node.querySelector('.phase');
+      var todo = node.querySelector('.todo li');
+      facts.stage = phase ? phase.textContent.trim()
+                  : (todo ? 'waiting on you: ' + todo.textContent.trim() : '');
+    }}
+    return facts;
+  }}
+  // Draw the dropped row straight away. Bumping the tab count without adding the
+  // row left the count and the table disagreeing until the next republish, which
+  // reads as the click having half worked.
+  function placeholderDropped(facts, url) {{
+    var tbody = document.querySelector('#p-dropped tbody');
+    if (!tbody) return;
+    var empty = document.querySelector('#p-dropped .empty');
+    if (empty) empty.remove();
+    var tr = document.createElement('tr');
+    tr.setAttribute('data-hay', (facts.company + ' ' + facts.role + ' ' + facts.lane).toLowerCase());
+    tr.setAttribute('data-state', facts.lane);
+    var c1 = document.createElement('td');
+    var st = document.createElement('strong'); st.textContent = facts.company;
+    var sp = document.createElement('span'); sp.className = 'muted'; sp.textContent = facts.role;
+    c1.appendChild(st); c1.appendChild(document.createElement('br')); c1.appendChild(sp);
+    var c2 = document.createElement('td');
+    var chip = document.createElement('span'); chip.className = 'chip lane';
+    chip.textContent = facts.lane; c2.appendChild(chip);
+    var c3 = document.createElement('td'); c3.className = 'note-cell'; c3.textContent = facts.stage;
+    var c4 = document.createElement('td'); c4.className = 'when';
+    c4.textContent = new Date().toISOString().slice(0, 10);
+    var c5 = document.createElement('td');
+    if (url) {{
+      var a = document.createElement('a');
+      a.className = 'go'; a.href = url; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = 'View';
+      c5.appendChild(a);
+    }}
+    [c1, c2, c3, c4, c5].forEach(function (c) {{ tr.appendChild(c); }});
+    tbody.insertBefore(tr, tbody.firstChild);
+  }}
+  // Remove whatever represents this application in its current lane, wherever
+  // it is: a table row in Watching, a card in Needs you or In flight.
+  function removeItem(el) {{
+    var from = tabOf(el);
+    var node = el.closest('tr') || el.closest('.card');
+    if (!node) return from;
+    node.remove();
+    if (from) tabCount(from, -1);
+    return from;
+  }}
+
+  document.querySelectorAll('.drop').forEach(function (b) {{
+    b.addEventListener('click', function () {{
+      var id = b.dataset.id;
+      if (!id) return;
+      b.disabled = true;
+      var ids = readIds(DROP_KEY);
+      if (ids.indexOf(id) === -1) ids.push(id);
+      writeIds(DROP_KEY, ids);
+      var facts = dropFacts(b);
+      var node = b.closest('tr') || b.closest('.card');
+      var link = node ? node.querySelector('a.go, a[href^="http"]') : null;
+      removeItem(b);
+      tabCount('dropped', 1);
+      placeholderDropped(facts, link ? link.href : '');
+      post('/api/drop', id).catch(function () {{}});
+    }});
+  }});
+
+  document.querySelectorAll('.btn.retry').forEach(function (b) {{
+    b.addEventListener('click', function () {{
+      var id = b.dataset.id;
+      if (!id) return;
+      b.disabled = true;
+      b.textContent = 'Queued...';
+      // Retry is the apply queue: the runner reuses the documents already built
+      // and picks up from whatever the user has just unblocked.
+      var ids = readApplying();
+      if (ids.indexOf(id) === -1) ids.push(id);
+      writeApplying(ids);
+      post('/api/retry', id).then(function (res) {{
+        if (res && res.ok) {{
+          removeItem(b);
+          tabCount('flight', 1);
+          placeholderCard(b.dataset.company || '', b.dataset.role || '');
+        }} else {{
+          b.disabled = false; b.textContent = 'Retry';
+        }}
+      }}).catch(function () {{ b.disabled = false; b.textContent = 'Retry'; }});
+    }});
+  }});
+
+  document.querySelectorAll('.undrop').forEach(function (b) {{
+    b.addEventListener('click', function () {{
+      var id = b.dataset.id;
+      if (!id) return;
+      b.disabled = true;
+      b.textContent = 'Restoring...';
+      var row = b.closest('tr');
+      if (row) row.classList.add('dropping');
+      post('/api/restore', id).catch(function () {{}});
+      // Forget the local memory, or the replay below would immediately re-drop it.
+      writeIds(DROP_KEY, readIds(DROP_KEY).filter(function (x) {{ return x !== id; }}));
+    }});
+  }});
+
+  // On load, hide anything dropped that the store has not caught up with, and
+  // re-send the request. /api/drop is idempotent per application id.
+  (function replayDropping() {{
+    var ids = readIds(DROP_KEY);
+    if (!ids.length) return;
+    var still = [];
+    ids.forEach(function (id) {{
+      var el = document.querySelector('.drop[data-id="' + id.replace(/"/g, '') + '"]');
+      if (!el) return;                       // the server already moved it
+      still.push(id);
+      var facts = dropFacts(el);
+      var node = el.closest('tr') || el.closest('.card');
+      var link = node ? node.querySelector('a.go, a[href^="http"]') : null;
+      removeItem(el);
+      tabCount('dropped', 1);
+      placeholderDropped(facts, link ? link.href : '');
+      post('/api/drop', id).catch(function () {{}});
+    }});
+    writeIds(DROP_KEY, still);
+  }})();
 
   // Search and filter, per panel. Rows and cards carry a data-hay haystack and
   // whatever facets their panel offers; everything here is plain substring and
