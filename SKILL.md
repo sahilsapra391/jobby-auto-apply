@@ -14,7 +14,7 @@ That framing changes the default behaviour in specific ways:
 - **Act without being told.** Inside a cycle, sweep, triage, fill and park without checking in. The intake exists precisely so you can.
 - **Judge, do not just execute.** If the user asks for more roles when what they actually need is to send three referral messages, say so. An agent that optimises the requested action over the underlying goal is doing the wrong job politely.
 - **Report like a colleague.** Short, factual, what changed. Quiet cycles get one line.
-- **Know your limits and name them.** Credentials, CAPTCHAs, legal attestations, and anything you would have to invent. Stopping and saying why is part of the job, not a failure of it.
+- **Know your limits and name them.** Credentials, CAPTCHAs, binding legal agreements, and anything you would have to invent. Stopping and saying why is part of the job, not a failure of it.
 
 Applications go out under someone's real name and cannot be recalled. A wrong salary figure, an overstated year count, or a legal declaration answered carelessly follows them into interviews and offer negotiations.
 
@@ -60,7 +60,7 @@ Run this before the first application. It is what makes everything afterwards lo
 
 Ask for the resume path. Read it, extract the fields listed in `references/storage.md`, and **show the user what you extracted before saving.** PDF extraction is lossy and an error here propagates into every future application.
 
-Save that path in the profile as `resumePath`. It is the base document every tailored resume is cloned from, and it is never edited in place.
+Save it in the profile's `resumes` list. **One base per region**, each with its own `identity` block (phone and location), exactly one marked `default`. Ask whether the user has a separate resume for other markets; a single resume rarely serves both a US and an Indian application, and the contact details differ. These base documents are never edited in place.
 
 ### The intake interview
 
@@ -72,7 +72,7 @@ Resumes systematically omit things application forms demand. Ask these together,
 
 **Work authorization, per country.** Not a single yes or no. Which countries can they work in without sponsorship? Would they require sponsorship elsewhere? Forms ask "authorized to work in [country]" and the honest answer varies by country.
 
-**Relocation** — willing to relocate at all, and if so where. Postings routinely bury a relocation requirement in the body while listing a different city.
+**Relocation** — willing to relocate at all, and if so where. When the answer is an unconditional yes, record it as a standing answer so relocation questions resolve automatically instead of interrupting every application. Postings routinely bury a relocation requirement in the body while listing a different city.
 
 **Work setup** — comfortable with on-site, hybrid, fully remote. How many office days is acceptable.
 
@@ -156,9 +156,11 @@ When the options don't include an accurate answer, pick the closest truthful one
 
 **Every application gets a fresh resume and a fresh cover letter.** Not one per role family, not a reused file: one pair per posting, built from that posting's own description. Build them **before filling, not after**, because most forms take the resume early and some parse it to prefill later fields, so a swap afterwards is either impossible or leaves the form disagreeing with the document.
 
-Delegate the pair to a **subagent running Claude Fable 5** (`claude-fable-5`), one per application, invoking the **`resume-tailor` skill** with the profile's `resumePath` and the posting extraction already stored in the watch entry. Do not re-open the posting: a body is read exactly once per role, ever. The subagent carries the PDF work and returns two file paths plus what it changed, never page dumps.
+Select the base resume by the posting's real country, then use that entry's `identity` block for the cover letter and for the form's own phone and address fields. Delegate the pair to a **subagent running Claude Opus 5** (`claude-opus-5`), one per application, invoking the **`resume-tailor` skill** with the selected base and the posting extraction already stored in the watch entry. Do not re-open the posting: a body is read exactly once per role, ever. The subagent carries the PDF work and returns two file paths plus what it changed, never page dumps.
 
-Write the resume to `~/.job-application/resumes/` and the cover letter to `~/.job-application/cover-letters/`, keeping the skill's naming (`<First>_<Last>_<Company-or-Role>_Resume.pdf`). Ignore the `/mnt/user-data/` paths in that skill's own docs; they are a Linux sandbox convention and do not exist here.
+Write both documents to `<skill-dir>/applications/<Company>/`, one folder per company, gitignored. Name them `Sahil_Sapra_<Company>_Resume.pdf` and `..._CoverLetter.pdf`, inserting the role when that company has more than one open role, since company-only names collide. Ignore the `/mnt/user-data/` paths in that skill's own docs; they are a Linux sandbox convention and do not exist here.
+
+Speak the posting's vocabulary wherever the underlying fact is already true, since ATS ranking is partly keyword overlap. Rewording true work in the employer's language is free; asserting work that did not happen is not. Target 95% coverage **of the keywords the candidate can truthfully claim**, and report the rest rather than closing the gap. Measure with `scripts/ats_match.py`, and treat its `unsourcedTerms` list as the gate: it must be empty. Consider adding **Skeptic** to Entrepreneurial Ventures when the posting is finance, fintech, trading or frugality-flavoured; leave it out otherwise.
 
 Then verify both, because rewording next to a job description is exactly the operation that invents things. Every skill, number, employment title, employer and date must trace to the base resume, the answer store, or something the user said, and a term that arrived only from the posting gets cut. One deliberate exception: the **profile title** at the top is meant to adapt toward the role, while **employment titles inside the experience section are frozen**. Check them separately. Then verify the format holds:
 
@@ -168,11 +170,19 @@ python3 "<skill-dir>/scripts/resume_pdf.py" verify --pdf <tailored>.pdf --agains
 
 It exits non-zero and names what drifted. `references/tailoring.md` has the full checklist. Record both filenames on the `completed` event, as `resumeVariant` and `coverLetter`.
 
+**Build once.** The first pair produced is the pair that goes out, as long as the gates pass. Rebuild only on an objective gate failure (format verify, unsourced terms, a frozen field, the wrong regional base, a corrupted render), and name the gate when you do. Iterating inside a single build until the gates pass is part of building, not a rebuild.
+
 If tailoring or verification cannot be satisfied, upload the base resume, skip the cover letter, and say so plainly. A truthful generic resume beats a tailored one you cannot vouch for.
 
 **Free-text answers are a different craft from fields.** Screening questions, cover letters and referral messages follow `references/tailoring.md`: drafted in the user's voice from their writing samples, every claim traceable to the resume, the answer store, or the conversation, and built from the story bank rather than invented.
 
-**Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status, conflicts of interest, and truth attestations all belong to the user. Never tick a truth attestation, especially when any field holds inferred data — that is certifying your guess as their fact.
+**Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status and conflicts of interest belong to the user.
+
+**Accuracy attestations** ("I certify the information provided is true and accurate to the best of my knowledge") are standing-authorised by the user and may be ticked, but only when every answer on the form came from the profile, the answer store or the story bank. If any field holds something you inferred, guessed or composed beyond those sources, do not tick it: that is certifying your guess as their fact. Park it instead.
+
+**Arbitration agreements** are standing-authorised by the user and may be ticked. That covers any wording of an arbitration acknowledgement, including the ones bolted onto the submit step. The user knows it waives court and class-action rights over employment disputes and has decided that is acceptable, so do not park an application for this reason.
+
+**Every other binding legal agreement still goes to the user.** Background-check and consumer-report authorisations, non-competes, IP assignment, and anything else granting rights over the user go to **Needs you** with the clause quoted. The authorisation above is for arbitration specifically and does not widen to those, however routine the ATS makes them look.
 
 ## Hard stops
 
@@ -212,10 +222,10 @@ python3 "<skill-dir>/scripts/dashboard.py" --out <path>.html
 
 It reads the store and produces four sections:
 
-1. **Needs you** — every blocked application, what specifically is missing, and a link that opens the exact page. This is the section that matters; put it first and make each item one click plus one action.
-2. **Referral opportunities** — roles where the user has a connection, with the drafted message ready to copy.
+1. **In flight** — applications currently being worked on, each showing the stage it has reached. Set status `inflight` and report progress with `scripts/phase.py` as each stage completes, or the board shows nothing between the click and the result, which reads as broken.
+2. **Needs you** — every blocked application, what specifically is missing, and a link that opens the exact page. This is the section that matters; put it first and make each item one click plus one action.
 3. **Submitted** — what went out, so nothing gets applied to twice.
-4. **Watch list** — roles found but not yet started.
+4. **Watching** — roles found but not yet started.
 
 Then publish it with the Artifact tool and give the user the link.
 
@@ -233,10 +243,10 @@ One cycle is:
 
 1. **Sweep** using the stored sweep plan (`meta-get --key sweepPlan`), each channel-query cell filtered to postings newer than its last-swept stamp; build the plan from `references/sourcing.md` if this is the first run.
 2. **Dedupe** against history — `store.py history-status` gives the latest event per application, which is the guard against reapplying, and `store.py stats` lists `needsVerification`: applications where a previous session died mid-submit. Verify those on the platform before touching them, and log `completed` or `abandoned` accordingly. Filter out excluded companies here too.
-3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age.
-4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Fable 5 and verified against the base before upload.
-5. **Park** anything blocked as a session with its pending fields and reasons.
-6. **Regenerate the dashboard** and republish to the same artifact URL.
+3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age. Reject anything whose stated minimum experience is above five years, before scoring; the screen filters on it before a human reads the resume.
+4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Opus 5 and verified against the base before upload. **Work strictly one application at a time**, carrying each through to submitted and logged before opening the next. Concurrent fills cost more than they save: a stray keystroke in one tab has already submitted an application early, and when several are in flight there is no moment where the state is small enough to check.
+5. **Park** anything blocked as a session with its pending fields and reasons. Anything blocked on an act only the user can perform (account creation, a password, an OTP or emailed verification link, a CAPTCHA, a binding legal agreement, or an accuracy attestation on a form where some answer had to be inferred) is saved with status `review`, not `watch`, so it lands in **Needs you** rather than sitting in Watching where it reads as not-yet-started. Name the specific blocker in `pendingFields` so the card says what to do.
+6. **Regenerate the dashboard** and republish to the same artifact URL. Run `scripts/sync_board.py` after every application rather than once per cycle: it deletes the watch-list session for anything confirmed submitted and republishes, so a role never shows in Watching and Submitted at the same time.
 7. **Report**: what is new, what went out, what needs them, in a few lines.
 
 Steps 1 through 5 need no user input, which is the entire point of the intake phase. A cycle that interrupts three times has usually skipped something that intake should have captured.
@@ -301,6 +311,6 @@ Do **not** mirror the whole application store into memory. Per-application state
 
 When something in memory turns out to be wrong or superseded, update or delete it rather than layering a correction beside it.
 
-Full command surface for the application store in `references/storage.md`. The documents sent to employers live in that store too, under `resumes/` and `cover-letters/`, one pair per application.
+Full command surface for the application store in `references/storage.md`. The documents sent to employers live beside the skill in `applications/<Company>/`, one folder per company, not in the store.
 
 The key idea: **every stored value carries a confidence state.** Anything you inferred rather than were told is marked `inferred` and gets re-confirmed rather than reused silently. A guess that hardens into a fact is how these systems produce quiet inaccuracies at scale.

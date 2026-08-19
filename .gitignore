@@ -10,5 +10,20 @@ __pycache__/
 # Vercel hosting: the generated module carries real application data,
 # and .vercel holds the project link
 deploy/api/_dashboard.js
+deploy/api/_documents.js
+# Delivered resumes and cover letters: real name, phone and street address
+applications/
 deploy/.vercel/
+# Vercel writes the blob read/write token here
+.env.local
+deploy/.env*.local
 node_modules/
+deploy/node_modules/
+
+# Playwright drops traces and page snapshots here. A snapshot of a filled
+# application form holds name, phone and home address, so this must never be
+# committed even though browser.py now writes them outside the repo.
+.playwright-mcp/
+
+# Local board render used for browser-testing the dashboard JS.
+.board-preview.html

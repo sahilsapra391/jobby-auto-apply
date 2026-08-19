@@ -56,9 +56,85 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("PM — Agents", html)
         self.assertEqual(html, html.encode("utf-8").decode("utf-8"))
 
+    def test_submitted_rows_link_to_the_posting_via_the_role_index(self):
+        # Sessions are deleted once an application completes, so the URL has to
+        # come from the durable role index or the Submitted tab loses its link.
+        html = dashboard.build({
+            "profile": {}, "sessions": [], "history": [
+                {"event": "completed", "company": "A", "role": "PM",
+                 "applicationId": "a-pm", "at": "2026-08-19"}],
+            "roles": {"a-pm": {"company": "A", "role": "PM",
+                               "url": "https://example.com/a-pm"}},
+        }, "test")
+        self.assertIn("https://example.com/a-pm", html)
+
+    def test_role_index_url_survives_a_missing_session_url(self):
+        html = dashboard.build({
+            "profile": {}, "sessions": [
+                {"company": "B", "role": "PM", "status": "active",
+                 "applicationId": "b-pm", "pendingFields": []}],
+            "history": [],
+            "roles": {"b-pm": {"url": "https://example.com/b-pm"}},
+        }, "test")
+        self.assertIn("https://example.com/b-pm", html)
+
     def test_completed_not_flagged_as_unconfirmed(self):
         html = build(history=[{"event": "completed", "company": "C", "role": "PM", "at": "2026-08-15"}])
         self.assertNotIn("Not confirmed submitted", html)
+
+
+class BrandTest(unittest.TestCase):
+    def test_mark_outline_is_emitted_once_and_referenced(self):
+        # The traced outline is ~7KB. It appears in the app bar and again in
+        # the hero, so inlining it twice would cost a pointless second copy.
+        html = build()
+        self.assertEqual(html.count('id="jb-mark"'), 1)
+        self.assertEqual(html.count('href="#jb-mark"'), 2)
+
+    def test_logo_is_the_same_mark_in_every_theme(self):
+        # One logo everywhere: white mark on an ink circle, on the board, in
+        # the tab strip and on a home screen. Defined once, never overridden.
+        html = build()
+        self.assertEqual(html.count("--brand-bg:#2B2D2C; --brand-fg:#FFFFFF;"), 1)
+        self.assertNotIn("--brand-bg:#F8F8F8", html)
+        self.assertNotIn("--brand-fg:#2B2D2C", html)
+
+    def test_favicon_does_not_flip_in_dark_chrome(self):
+        # The pack ships the icon with a prefers-color-scheme swap built in.
+        # Shipping that unchanged would give a paper circle in a dark tab bar.
+        import base64
+        html = build()
+        blob = html.split('data:image/svg+xml;base64,')[1].split('"')[0]
+        self.assertNotIn("prefers-color-scheme", base64.b64decode(blob).decode())
+
+    def test_marks_are_not_clipped_by_their_own_viewbox(self):
+        # The circle is tangent to the viewBox on all four sides, so the
+        # default SVG overflow:hidden shaves the antialiased edge flat.
+        html = build()
+        self.assertIn("overflow:visible", html)
+
+    def test_marks_are_painted_from_theme_tokens(self):
+        html = build()
+        self.assertIn('fill="var(--brand-bg)"', html)
+        self.assertIn('fill="var(--brand-fg)"', html)
+
+    def test_theme_control_offers_all_three_states(self):
+        html = build()
+        for mode in ("auto", "light", "dark"):
+            self.assertIn(f'data-theme-set="{mode}"', html)
+
+    def test_theme_is_applied_before_the_stylesheet(self):
+        # Restoring the saved theme after paint shows one frame of the OS
+        # theme first, which reads as a flash on every load.
+        html = build()
+        self.assertLess(html.index("jobby.theme"), html.index("<style>"))
+
+    def test_favicon_is_inlined(self):
+        # publish.py inlines the page into a serverless function, so a favicon
+        # that pointed at a sibling file would 404 behind the password gate.
+        html = build()
+        self.assertIn("data:image/svg+xml;base64,", html)
+        self.assertNotIn('href="/favicon', html)
 
 
 if __name__ == "__main__":

@@ -63,6 +63,179 @@ python3 scripts/publish.py --local     # serve on localhost:3000, deploy nothing
 python3 scripts/publish.py --preview   # throwaway URL, leaves production alone
 ```
 
+## What a button actually does
+
+A page hosted on Vercel cannot start a process on the machine running the agent. Nothing about a published page grants it that. So no button runs anything directly. Each one **queues a request**, and the local watcher claims it and spawns the agent that does the work.
+
+The path, end to end, is the same for all three:
+
+1. The button POSTs to `/api/scan`, `/api/apply` or `/api/submitted`, behind the same password as the board.
+2. The function writes one blob per request under the matching prefix in a private Blob store. The payload lives in the blob **pathname** (`apply/<timestamp>__<applicationId>.json`), not the body, because the store is private and its URLs cannot be fetched without a token. Listing the queue therefore never fetches content.
+3. `scripts/watch.py`, running as a launchd agent, reads all three queues in one call every two seconds.
+4. Marks are applied inline. A Scan or an Apply spawns a detached runner (`run_scan.py`, `run_apply.py`) which starts a headless Claude session to do the actual work.
+
+Two seconds is the whole lag. A click reaches a running agent almost immediately.
+
+### Retry, Drop and the Dropped lane
+
+**Retry**, on a Needs you card, is the apply queue again. When the user has done the thing that was blocking an application (created the account, cleared the CAPTCHA, accepted a legal agreement), Retry re-runs the agent, which reuses the documents already built and picks up from the form rather than starting over. There is no separate retry queue because retrying and applying are the same operation.
+
+**Drop** says the user has decided against a role. It is available in three places: an `x` on each Watching row, a Drop button on a Needs you card, and Stop on an In flight card. Dropping something in flight also kills the runner: the runner is spawned in its own session, so the whole process group is signalled, or the `claude` session under it keeps driving the browser. `drop.py` checks the note on the lock before signalling anything, since by the time a drop is claimed the lock may be held by a different application and killing the wrong run is worse than not killing at all.
+
+Dropped is deliberately not the same as `abandoned`. Abandoned records that a submission attempt failed or was logged in error; dropped records a decision. So the session is kept rather than deleted, which also stops the next sweep re-finding the role and offering it again.
+
+Each dropped row keeps where the application had got to, because "dropped while it sat in Watching" and "dropped halfway through filling a form" are different facts:
+
+| Dropped from | Where it had got to |
+| --- | --- |
+| Watching | not started |
+| Needs you | waiting on you: *the first blocker*, and a count of the rest |
+| In flight | the phase it reached, e.g. *Filling the form (14 of 18 fields)* |
+
+**Restore** puts a row back in Watching, for the misclick that an `x` in a dense table invites.
+
+The lane sits apart from the other four in the tab bar. Nothing in it is waiting on anyone, so it should not read as a queue.
+
+### One at a time, and never blocking
+
+An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.
+
+The lock is also what enforces the standing rule that only one application runs at a time. It holds a pid rather than living in memory, so it survives a watcher restart, and a dead pid releases it automatically: a runner killed mid-flight cannot wedge the pipeline forever.
+
+### Setting up the queue
+
+The queue lives in Cloudflare Workers KV. It started on Vercel Blob, and Blob suspended the store once the watcher began polling it. The interesting part is not the vendor but the shape of the limit: free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows 100,000 key reads a day and only 1,000 list requests, so a queue you have to list in order to read is unusable at any poll rate worth having.
+
+So the whole queue is one key. A poll is a single read, 28,800 a day at a three second interval against a ceiling of 100,000. Writes happen only when somebody clicks or a runner claims, a few dozen a day against 1,000. R2 has the same trap in different units: list is a Class A operation with a 1,000,000/month allowance, which a three second poll very nearly exhausts on its own.
+
+The cost of coalescing is that a write becomes read-modify-write with no compare-and-swap, so a click landing in the same instant as a claim can be lost. That is already covered: the board re-sends clicks it remembers, and enqueue dedupes by application id.
+
+One-time setup:
+
+1. Create a namespace, or reuse the `jobby-queue` one:
+
+```bash
+npx wrangler kv namespace create jobby-queue
+```
+
+2. Create an API token at **dash.cloudflare.com → My Profile → API Tokens → Create Token**, using the *Custom token* template with a single permission: **Account → Workers KV Storage → Edit**. Scope it to the one account. Nothing else.
+
+3. Put three values in `deploy/.env.local`, which is gitignored:
+
+```
+CF_ACCOUNT_ID=<the id in your dashboard URL>
+CF_KV_NAMESPACE_ID=<from step 1>
+CF_API_TOKEN=<from step 2>
+```
+
+4. Give the same three to the Vercel project, so the board's buttons can write:
+
+```bash
+cd deploy
+vercel env add CF_ACCOUNT_ID production
+vercel env add CF_KV_NAMESPACE_ID production
+vercel env add CF_API_TOKEN production
+```
+
+5. Prove it works, including that the token can actually write, which a read-only token hides until the first click:
+
+```bash
+python3 scripts/queue_check.py --write
+```
+
+### Poll interval, and why it is not two seconds
+
+The watcher polls every few seconds so a click reaches an agent almost immediately. It is tempting to make that number very small. Do not: at two seconds the old Blob-backed queue ran roughly 1.3 million operations a month and the store was suspended.
+
+Three to five seconds keeps a click feeling instant while using well under a fifth of the daily KV read allowance. `scripts/watch.py --install --interval 3` sets it.
+
+### Installing the watcher
+
+```bash
+python3 scripts/watch.py --install
+python3 scripts/watch.py --status
+```
+
+`--status` prints the queue depths, which runner holds a lock, and whether anything is blocking the pipeline. It has no side effects, so it is the right first thing to run when a button seems not to work.
+
+## Four ways this pipeline has failed
+
+Each of these produced a board that looked fine while doing nothing, which is why the current design is shaped the way it is.
+
+**launchd does not give you your PATH.** It provides `/usr/bin:/bin:/usr/sbin:/sbin` and nothing more. `node`, `vercel` and `claude` all live in `/opt/homebrew/bin`, so every queue read died with `FileNotFoundError` and every publish failed. This ran for hours. `scripts/toolpath.py` now resolves every binary to an absolute path, and the plist sets `EnvironmentVariables.PATH` as a second line of defence. Verify with:
+
+```bash
+env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin python3 scripts/toolpath.py
+```
+
+**A crashed check looks exactly like an empty queue.** Both exit non-zero. The old watcher treated the crash as "nothing to do" and logged a healthy cycle every thirty seconds throughout the outage. `poll_queues()` now raises `TickError` rather than returning empty, and the tick reports health from whether the work actually happened.
+
+**Claiming a whole queue to process one item.** `queue.mjs claim` deletes every pending request. `run_apply` read the queue, ran the first item, then called it, destroying fourteen Apply clicks that had never been touched. Use `claim-one`. A worker that processes one item deletes one item.
+
+**A runner that cannot authenticate still eats the request.** An expired or revoked `claude` OAuth token makes every spawn exit instantly with a 401, and because the request was claimed first, one user click vanished per cycle. Runners now preflight with `scripts/agent.py` before claiming, the watcher will not spawn while auth is broken, and the reason appears as a banner on the board rather than in a log nobody opens.
+
+```bash
+python3 scripts/agent.py --check
+```
+
+If that fails, run `claude login` in a terminal. The watcher re-checks on its own and clears the banner.
+
+## The browser a spawned agent gets
+
+A `claude -p` session started by the watcher has no MCP servers at all, so by default it has no browser. The Claude for Chrome extension attaches to one session at a time, and that one belongs to whoever is at the keyboard. Left alone, the daemon could tailor an application's documents and then had nowhere to put them.
+
+So spawned agents get their own: `@playwright/mcp`, pinned, driving Chrome against a persistent profile at `~/.job-application/browser-profile`.
+
+```bash
+python3 scripts/browser.py --check
+```
+
+**The browser outlives the run.** It is started once by `serve()` and agents attach to it over CDP (`--cdp-endpoint`), rather than each run starting and stopping its own. That is not a detail: form values live in the page, not in the profile, so a browser that dies with its run takes twenty filled fields with it. That was why a parked application used to send the user to a blank form with all the work gone. Now the tab is still sitting there.
+
+```bash
+python3 scripts/browser.py --serve    # start it (the watcher does this on its own)
+python3 scripts/browser.py --tabs     # what it currently holds
+python3 scripts/browser.py --focus <url>
+```
+
+**Sign in once.** The profile persists, so a session is inherited by every later run. LinkedIn matters most here: Easy Apply needs a signed-in session, and without one those postings can only ever park.
+
+```bash
+python3 scripts/browser.py --login https://www.linkedin.com
+```
+
+That brings the running browser to the front on that page. It used to launch a second Chrome on the same profile, which stopped being safe the moment the browser became long-lived: two Chromes cannot share one `user-data-dir`.
+
+It is deliberately not the everyday Chrome. Playwright cannot attach to a browser that is already running, and driving a signed-in personal profile unattended is not something to do quietly.
+
+The practical consequence is that most Greenhouse, Lever and Ashby forms go end to end unattended, because they need no account. Anything behind a sign-in parks in **Needs you** with the tailored documents already built and filed, which is a decent outcome rather than a failure: the expensive part is done and what is left is a click.
+
+## Knowing when it breaks again
+
+The watcher pings [healthchecks.io](https://healthchecks.io) on every meaningful tick, and `/fail` with the error when a tick cannot do its job. The point is the silence: if the process dies or every tick starts failing, healthchecks notices the pings stopped and alerts. That is precisely the failure that went unnoticed for hours, and no amount of logging catches it, because the logs looked healthy.
+
+Add the ping URL to `~/.job-application/config.env`, **not** to `deploy/.env.local`:
+
+```
+HEALTHCHECKS_URL=https://hc-ping.com/<your-uuid>
+```
+
+The distinction matters. `vercel env pull` regenerates `deploy/.env.local` from the Vercel project and silently discards anything added by hand, which is exactly how the first ping URL disappeared. That file belongs to Vercel. Settings that belong to this machine go in `~/.job-application/config.env`, which nothing overwrites, and which wins when both define the same key.
+
+Set **period 5 minutes, grace 10 minutes**.
+
+The watcher pings every 30 seconds when idle and immediately on any real event, so a 5 minute period means ten consecutive pings would have to vanish before the grace clock even starts: a network blip never raises a false alarm, and a genuinely dead watcher is caught inside 15 minutes. A 1 hour grace is worth avoiding, since an hour of silence is roughly the length of the outage this was added to catch. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
+
+### Recovering lost requests
+
+The board remembers Apply clicks in `localStorage` and re-sends any the server has not acted on when the page loads. `/api/apply` dedupes by application id, so that retry is safe and a lost request heals itself on the next visit.
+
+To queue one by hand:
+
+```bash
+python3 scripts/enqueue.py apply <applicationId>
+```
+
 ## Rotating the password
 
 ```bash

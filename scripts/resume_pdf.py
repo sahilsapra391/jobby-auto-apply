@@ -18,6 +18,7 @@ install.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,19 @@ FONT_DIRS = [
     Path.home() / "Library/Fonts",
 ]
 
+# Office ships the real Microsoft fonts inside its app bundles, where the system
+# font machinery cannot see them. Copying them out beats substituting, and it
+# is the only way to get weights the substitutes do not carry (Calibri Light).
+OFFICE_FONT_DIRS = [
+    Path("/Applications/Microsoft Word.app/Contents/Resources/DFonts"),
+    Path("/Applications/Microsoft Excel.app/Contents/Resources/DFonts"),
+    Path("/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts"),
+]
+
 # Microsoft fonts are not on macOS by default. These substitutes have identical
-# metrics, so a resume built with them keeps the source's line breaks.
+# metrics, so a resume built with them keeps the source's line breaks. Note that
+# Carlito has no Light weight, so a Calibri Light resume renders too heavy with
+# it; prefer the real font from an Office bundle when one is present.
 METRIC_SUBSTITUTES = {
     "calibri": ("Carlito", "font-carlito"),
     "cambria": ("Caladea", "font-caladea"),
@@ -44,6 +56,12 @@ METRIC_SUBSTITUTES = {
     "times new roman": ("Liberation Serif", "font-liberation"),
     "courier new": ("Liberation Mono", "font-liberation"),
 }
+
+
+# Email, phone, or a profile link: the things a resume contact line is made of.
+# Deliberately not a bare ".com": body text mentions domains, and matching
+# those turned ordinary prose into phantom contact lines.
+CONTACT_MARKER = re.compile(r"@|linkedin|github|\+\d{2}\s?\d|\(\d{3}\)\s?\d{3}", re.I)
 
 
 class ToolError(Exception):
@@ -86,6 +104,18 @@ def installed_font_families():
 def font_available(family):
     key = family.lower().replace(" ", "").replace("-", "")
     return any(key in n or n in key for n in installed_font_families())
+
+
+def office_source_for(family):
+    """An installed Office bundle carrying this font, if there is one."""
+    key = family.lower().replace(" ", "").replace("-", "")[:7]
+    for d in OFFICE_FONT_DIRS:
+        if not d.exists():
+            continue
+        for f in d.glob("*"):
+            if f.suffix.lower() in (".ttf", ".otf", ".ttc") and key in f.stem.lower():
+                return d
+    return None
 
 
 def require_pymupdf():
@@ -137,19 +167,24 @@ def cmd_check(args):
                 have = font_available(base)
                 report["fonts"][family] = "installed" if have else "MISSING"
                 if not have:
+                    report["ok"] = False
+                    office = office_source_for(base)
                     sub = METRIC_SUBSTITUTES.get(base.lower())
-                    if sub:
-                        report["ok"] = False
-                        report["fixes"].append(
-                            f"{base} is not installed. Its metric-compatible "
-                            f"substitute is {sub[0]}: brew install --cask {sub[1]}"
-                        )
+                    if office:
+                        fix = (f"{base} is not installed system-wide, but the real "
+                               f"font ships inside an Office bundle. Copy it out:\n"
+                               f"    cp '{office}'/{base.lower()}*.ttf ~/Library/Fonts/\n"
+                               f"    (preferred over a substitute, which may lack "
+                               f"weights such as Light)")
+                    elif sub:
+                        fix = (f"{base} is not installed. Its metric-compatible "
+                               f"substitute is {sub[0]}: brew install --cask {sub[1]}")
                     else:
-                        report["fixes"].append(
-                            f"{base} is not installed and has no known metric "
-                            f"substitute. Chrome will fall back and line breaks "
-                            f"may shift; check the rendered result closely."
-                        )
+                        fix = (f"{base} is not installed and has no known metric "
+                               f"substitute. Chrome will fall back and line breaks "
+                               f"may shift; check the rendered result closely.")
+                    if fix not in report["fixes"]:
+                        report["fixes"].append(fix)
     return report
 
 
@@ -208,6 +243,20 @@ def geometry(pdf_path):
             "top": round(min(s["bbox"][1] for s in spans), 1),
             "bottom": round(page.rect.height - max(s["bbox"][3] for s in spans), 1),
         })
+        # How many lines the contact block occupies. A contact line that wraps
+        # reflows everything below it while leaving page count, margins,
+        # colours and font sizes untouched, so no other check notices. Counted
+        # by contact markers rather than a y-band, because a y-band also picks
+        # up body text and gives false positives.
+        if len(pages) == 1:
+            band = page.rect.height * 0.13   # name, contact line, profile title
+            rows = {}
+            for sp in spans:
+                if sp["bbox"][1] < band:
+                    rows.setdefault(round(sp["bbox"][1]), []).append(sp["text"])
+            contact = [y for y, texts in rows.items()
+                       if CONTACT_MARKER.search(" ".join(texts))]
+            pages[0]["contactLines"] = len(contact)
         for s in spans:
             sizes.add(round(s["size"], 1))
             fonts.add(s["font"].split("+")[-1])
@@ -231,6 +280,12 @@ def cmd_verify(args):
     for i, (a, b) in enumerate(zip(src["pages"], built["pages"])):
         if not a or not b:
             continue
+        if i == 0 and a.get("contactLines") and b.get("contactLines") and \
+                a["contactLines"] != b["contactLines"]:
+            diffs.append(
+                f"contact block: source occupies {a['contactLines']} line(s), built "
+                f"occupies {b['contactLines']} (a wrapped contact line reflows "
+                f"everything below it)")
         for edge in ("width", "height", "left", "right", "top", "bottom"):
             # 2pt is under a third of a millimetre, below what a reader sees.
             if abs(a[edge] - b[edge]) > 2:

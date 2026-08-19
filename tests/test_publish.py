@@ -75,7 +75,8 @@ class InliningTest(unittest.TestCase):
 
     def test_html_round_trips_exactly(self):
         html = self.html()
-        self.assertIn("<title>Application Board</title>", html)
+        self.assertIn("<title>Jobby is a free agent!</title>", html)
+        self.assertIn('<link rel="icon" href="data:image/svg+xml;base64,', html)
         self.assertTrue(html.lstrip().startswith('<meta charset="utf-8">'))
 
     def test_non_ascii_survives_inlining(self):
@@ -162,22 +163,27 @@ class NodeParsesGeneratedModuleTest(unittest.TestCase):
 
 class CliTest(unittest.TestCase):
     def test_missing_vercel_and_npx_is_a_clear_error(self):
-        original_which = publish.shutil.which
-        publish.shutil.which = lambda name: None
+        original = publish.toolpath.find
+        publish.toolpath.find = lambda name, required=True: None
         try:
             with self.assertRaises(publish.PublishError) as ctx:
                 publish.vercel_cmd()
             self.assertIn("npm install -g vercel", str(ctx.exception))
         finally:
-            publish.shutil.which = original_which
+            publish.toolpath.find = original
 
-    def test_falls_back_to_npx_when_vercel_is_not_on_path(self):
-        original_which = publish.shutil.which
-        publish.shutil.which = lambda name: None if name == "vercel" else "/usr/bin/npx"
+    def test_falls_back_to_npx_when_vercel_is_not_installed(self):
+        # The seam is toolpath, not shutil: every binary is resolved to an
+        # absolute path because launchd does not put /opt/homebrew/bin on PATH.
+        original = publish.toolpath.find
+        publish.toolpath.find = lambda name, required=True: (
+            None if name == "vercel" else "/opt/homebrew/bin/npx")
         try:
-            self.assertEqual(publish.vercel_cmd()[:2], ["npx", "--yes"])
+            cmd = publish.vercel_cmd()
+            self.assertEqual(cmd[0], "/opt/homebrew/bin/npx")
+            self.assertEqual(cmd[1], "--yes")
         finally:
-            publish.shutil.which = original_which
+            publish.toolpath.find = original
 
 
 if __name__ == "__main__":
