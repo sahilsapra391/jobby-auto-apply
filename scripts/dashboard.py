@@ -591,11 +591,14 @@ def build(state, generated):
     cursor:pointer; -webkit-tap-highlight-color:transparent; outline:none; }}
   .jb-morph .heromark {{ position:absolute; inset:0; width:100%; height:100%;
     margin:0; transition:transform .45s cubic-bezier(.34,1.4,.5,1), opacity .25s ease; }}
-  /* 128px, not the 176 the pack suggests: at 176 the mascot hangs over the
-     headline underneath it. */
-  .jb-mascot2 {{ position:absolute; left:50%; top:50%; height:128px; width:auto;
+  /* Anchored to the bottom of the badge and grown upward, not centred on it.
+     Centred, half its height hung below the badge and straight into the
+     headline, and shrinking it only made the overlap smaller rather than
+     removing it. Growing upward there is only whitespace to take. */
+  .jb-mascot2 {{ position:absolute; left:50%; bottom:0; height:104px; width:auto;
     color:var(--ink); pointer-events:none;
-    transform:translate(-50%,-54%) scale(.6); opacity:0;
+    transform:translateX(-50%) scale(.6); transform-origin:bottom center;
+    opacity:0;
     transition:transform .5s cubic-bezier(.34,1.4,.5,1), opacity .3s ease; }}
   .jb-mascot2 .jm2-contour {{ stroke-dasharray:1; stroke-dashoffset:1;
     transition:stroke-dashoffset .1s linear; }}
@@ -604,7 +607,7 @@ def build(state, generated):
   .jb-morph:hover .heromark, .jb-morph:focus-visible .heromark {{
     transform:scale(1.5); opacity:0; }}
   .jb-morph:hover .jb-mascot2, .jb-morph:focus-visible .jb-mascot2 {{
-    transform:translate(-50%,-54%) scale(1); opacity:1; }}
+    transform:translateX(-50%) scale(1); opacity:1; }}
   .jb-morph:hover .jm2-contour, .jb-morph:focus-visible .jm2-contour {{
     stroke-dashoffset:0; transition:stroke-dashoffset .55s ease .05s; }}
   .jb-morph:hover .jm2-ink, .jb-morph:focus-visible .jm2-ink {{
@@ -626,7 +629,7 @@ def build(state, generated):
   .themebtn:focus-visible {{ outline:3px solid var(--blue); outline-offset:2px; }}
   @media (max-width:600px) {{ .lockup {{ height:1.4rem; }}
     .jb-morph, .jb-morph .heromark {{ width:60px; height:60px; }}
-    .jb-mascot2 {{ height:108px; }} }}
+    .jb-mascot2 {{ height:88px; }} }}
 
   .top {{ text-align:center; margin-bottom:2rem; }}
   h1 {{ font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
