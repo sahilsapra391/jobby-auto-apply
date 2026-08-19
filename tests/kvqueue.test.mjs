@@ -44,12 +44,12 @@ test('a failed read raises instead of looking empty', async () => {
   // The whole outage came from a broken read being indistinguishable from a
   // quiet system. It must never resolve to an empty queue.
   fakeKV({ status: 500 });
-  await assert.rejects(() => readQueue(ENV), /KV read failed: 500/);
+  await assert.rejects(() => readQueue(ENV), /KV read failed for jobby:queue: 500/);
 });
 
 test('a failed write raises rather than silently dropping the click', async () => {
   fakeKV({ body: { apply: [], scan: [], marked: [], drop: [], restore: [], focus: [] }, failWrite: true });
-  await assert.rejects(() => writeQueue(ENV, { apply: [] }), /KV write failed: 403/);
+  await assert.rejects(() => writeQueue(ENV, { apply: [] }), /KV write failed for jobby:queue: 403/);
 });
 
 test('one poll costs exactly one read', async () => {

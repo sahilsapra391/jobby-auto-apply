@@ -15,56 +15,26 @@
 // lost. That is survivable here and already covered: the board re-sends clicks
 // it remembers, and enqueue dedupes by application id.
 
+import { kvGet, kvPut, configured } from './kv.mjs';
+
 const KEY = 'jobby:queue';
 export const QUEUES = ['apply', 'scan', 'marked', 'drop', 'restore', 'focus'];
+export { configured };
 
 const empty = () => ({ apply: [], scan: [], marked: [], drop: [], restore: [], focus: [] });
 
-function conf(env) {
-  const account = env.CF_ACCOUNT_ID;
-  const namespace = env.CF_KV_NAMESPACE_ID;
-  const token = env.CF_API_TOKEN;
-  if (!account || !namespace || !token) return null;
-  return {
-    url: `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(KEY)}`,
-    token,
-  };
-}
-
-export function configured(env) {
-  return conf(env) !== null;
-}
-
 export async function readQueue(env) {
-  const c = conf(env);
-  if (!c) throw new Error('queue not configured: need CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, CF_API_TOKEN');
-  const r = await fetch(c.url, { headers: { authorization: `Bearer ${c.token}` } });
-  // A key that has never been written is a 404, which is an empty queue, not a
-  // fault. Every other non-OK status is a real failure and must not be
-  // mistaken for "nothing waiting".
-  if (r.status === 404) return empty();
-  if (!r.ok) throw new Error(`KV read failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const raw = await kvGet(env, KEY);
+  if (raw === null) return empty();
   try {
-    const parsed = JSON.parse(await r.text());
-    return { ...empty(), ...parsed };
+    return { ...empty(), ...JSON.parse(raw) };
   } catch {
     return empty();
   }
 }
 
 export async function writeQueue(env, data) {
-  const c = conf(env);
-  if (!c) throw new Error('queue not configured');
-  const body = new FormData();
-  body.set('value', JSON.stringify(data));
-  body.set('metadata', '{}');
-  const r = await fetch(c.url, {
-    method: 'PUT',
-    headers: { authorization: `Bearer ${c.token}` },
-    body,
-  });
-  if (!r.ok) throw new Error(`KV write failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
-  return true;
+  return kvPut(env, KEY, JSON.stringify(data));
 }
 
 export async function enqueue(env, queue, applicationId) {

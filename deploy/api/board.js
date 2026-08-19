@@ -8,7 +8,7 @@
 // Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
 // board.
 
-import { HTML, GENERATED_AT } from './_dashboard.js';
+import { getBoard, getDoc } from '../kvcontent.mjs';
 
 const REALM = 'Application board';
 
@@ -69,7 +69,6 @@ const text = (body, status, extra = {}) =>
   });
 
 import { readQueue, enqueue as kvEnqueue, claimOne, configured } from '../kvqueue.mjs';
-import { DOCUMENTS } from './_documents.js';
 
 // Vercel Blob suspended this store once the watcher started polling it. The
 // queue now lives in Cloudflare Workers KV under a single key, because KV
@@ -127,7 +126,12 @@ export default {
     // Unauthenticated, and says nothing about the search: enough to confirm a
     // deploy landed without typing the password.
     if (pathname === '/healthz') {
-      return new Response(JSON.stringify({ ok: true, generatedAt: GENERATED_AT }), {
+      const health = await getBoard(process.env).catch(() => null);
+      return new Response(JSON.stringify({
+        ok: true,
+        generatedAt: health ? health.generatedAt : null,
+        boardPublished: health !== null,
+      }), {
         status: 200,
         headers: { 'content-type': 'application/json', ...BASE_HEADERS },
       });
@@ -160,8 +164,10 @@ export default {
     // received. Same password gate as the board, never cached, never indexed.
     if (pathname.startsWith('/doc/')) {
       const name = decodeURIComponent(pathname.slice('/doc/'.length));
-      const b64 = Object.prototype.hasOwnProperty.call(DOCUMENTS, name)
-        ? DOCUMENTS[name] : null;
+      // The name comes off the board but arrives as a URL path, so treat it as
+      // untrusted: only a plain filename may become a KV key.
+      if (!/^[A-Za-z0-9._-]+$/.test(name)) return text('No such document.\n', 404);
+      const b64 = await getDoc(process.env, name).catch(() => null);
       if (!b64) return text('No such document.\n', 404);
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       return new Response(request.method === 'HEAD' ? null : bytes, {
@@ -182,7 +188,19 @@ export default {
       return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
     }
 
-    return new Response(request.method === 'HEAD' ? null : HTML, {
+    // The page itself comes from KV, so publishing it is a write rather than a
+    // deployment. Deployments carry only code now.
+    let board;
+    try {
+      board = await getBoard(process.env);
+    } catch (err) {
+      return text(`The board could not be read: ${String(err.message || err)}\n`, 502);
+    }
+    if (!board) {
+      return text('No board has been published yet.\n' +
+                  'Run: python3 scripts/publish.py\n', 503);
+    }
+    return new Response(request.method === 'HEAD' ? null : board.html, {
       status: 200,
       headers: {
         'content-type': 'text/html; charset=utf-8',

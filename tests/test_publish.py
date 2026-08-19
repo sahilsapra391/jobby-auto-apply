@@ -53,25 +53,23 @@ class InliningTest(unittest.TestCase):
         payload.write_text(json.dumps(session), encoding="utf-8")
         store(cls.store_root, "session-save", "--id", "hostile", "--input", str(payload))
 
-        # Redirect the generated module into the temp dir so a test run never
-        # overwrites a real publish.
-        cls.generated = pathlib.Path(cls.tmp) / "_dashboard.js"
-        cls.original = publish.GENERATED
-        publish.GENERATED = cls.generated
         cls.summary = publish.build_dashboard(str(cls.store_root))
-        cls.text = cls.generated.read_text(encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
-        publish.GENERATED = cls.original
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def html(self):
-        literal = self.text.split("export const HTML = ", 1)[1].rsplit(";\n", 2)[0]
-        return json.loads(literal)
+        return self.summary["html"]
 
-    def test_generated_module_is_owner_readable_only(self):
-        self.assertEqual(os.stat(self.generated).st_mode & 0o777, 0o600)
+    def test_the_board_is_returned_rather_than_written_into_the_deployment(self):
+        # It used to be generated into deploy/api/_dashboard.js and shipped with
+        # the code. That meant a full redeploy for every board change against a
+        # hundred-a-day limit, and a build from GitHub had no board at all
+        # because the file was untracked. It goes to KV now.
+        self.assertIn("html", self.summary)
+        self.assertFalse((publish.DEPLOY / "api" / "_dashboard.js").exists(),
+                         "publishing must not leave a generated module behind")
 
     def test_html_round_trips_exactly(self):
         html = self.html()
@@ -79,34 +77,25 @@ class InliningTest(unittest.TestCase):
         self.assertIn('<link rel="icon" href="data:image/svg+xml;base64,', html)
         self.assertTrue(html.lstrip().startswith('<meta charset="utf-8">'))
 
-    def test_non_ascii_survives_inlining(self):
+    def test_non_ascii_survives(self):
         html = self.html()
-        for ch in ("—", "é", "中文", "\U0001f600"):
+        for ch in ("\u2014", "\u00e9", "\u4e2d\u6587", "\U0001f600"):
             self.assertIn(ch, html)
 
-    def test_literal_is_pure_ascii_so_encoding_cannot_corrupt_it(self):
-        # json.dumps escapes everything above ASCII, which means the module
-        # reads the same whatever encoding the deploy toolchain assumes.
-        self.text.encode("ascii")
-
-    def test_literal_is_double_quoted_not_a_template(self):
-        # A backtick-delimited literal would interpolate ${...} out of scraped
-        # page text and would end early on a backtick. A JSON double-quoted
-        # string does neither. This is the assertion that stops someone
-        # "simplifying" the generator into a template literal.
-        self.assertIn('export const HTML = "', self.text)
-        self.assertNotIn("export const HTML = `", self.text)
-
-    def test_hostile_page_content_stays_inert_inside_the_literal(self):
+    def test_the_page_survives_the_json_round_trip_it_takes_to_reach_kv(self):
+        # The board reaches KV as a JSON value and comes back parsed. Hostile
+        # page content has to survive that byte for byte, including the
+        # separators that are legal in JSON but not in JavaScript source.
         html = self.html()
-        # All present in the recovered HTML, none of them able to act: the
-        # module is JS, so </script> is just text, and ${...} and the backtick
-        # are inert in a double-quoted string.
+        self.assertEqual(json.loads(json.dumps({"html": html}))["html"], html)
+
+    def test_hostile_page_content_is_carried_as_data(self):
+        html = self.html()
         self.assertIn("Backtick", html)
         self.assertIn("${expr}", html)
         self.assertIn("\u2028", html)
-        # U+2028 and the backslash are escaped in the literal, not raw.
-        self.assertIn("\\u2028", self.text)
+        # Escaped when serialised, so it cannot terminate anything it lands in.
+        self.assertIn("\\u2028", json.dumps(html))
 
     def test_scraped_javascript_url_did_not_survive_into_the_page(self):
         self.assertNotIn("javascript:", self.html())
@@ -116,50 +105,46 @@ class InliningTest(unittest.TestCase):
         self.assertIn("generatedAt", self.summary)
 
 
-class NodeParsesGeneratedModuleTest(unittest.TestCase):
-    """Node is what actually imports this file on Vercel, so let Node judge."""
+class NodeReadsTheBoardTest(unittest.TestCase):
+    """Node is what serves this on Vercel, so let Node judge that it survives.
+
+    The board reaches the function as a JSON value out of KV. Page text is
+    scraped from postings, so it can contain anything: closing script tags,
+    backticks, ${...}, and the line separators that are legal in JSON but not in
+    JavaScript source.
+    """
 
     def setUp(self):
         if not shutil.which("node"):
             self.skipTest("node is not installed")
 
-    def test_node_imports_the_module_and_recovers_the_html(self):
+    def test_node_recovers_the_page_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
             store_root = tmp / "store"
             store(store_root, "init")
-
-            session = {"company": "Renée </script> & Cie", "role": "PM — AI",
+            session = {"company": "Ren\u00e9e </script> & Cie",
+                       "role": "PM \u2014 AI \u2028\u2029 ${x} `tick`",
                        "status": "active", "pendingFields": []}
             payload = tmp / "s.json"
             payload.write_text(json.dumps(session), encoding="utf-8")
-            store(store_root, "session-save", "--id", "x", "--input", str(payload))
+            store(store_root, "session-save", "--id", "hostile", "--input", str(payload))
 
-            original = publish.GENERATED
-            publish.GENERATED = tmp / "mod.mjs"
-            try:
-                publish.build_dashboard(str(store_root))
-            finally:
-                publish.GENERATED = original
-
-            probe = tmp / "probe.mjs"
-            probe.write_text(
-                "import { HTML, GENERATED_AT } from './mod.mjs';\n"
-                "process.stdout.write(JSON.stringify({"
-                "  len: HTML.length,"
-                "  hasName: HTML.includes('Ren\\u00e9e'),"
-                "  hasDash: HTML.includes('\\u2014'),"
-                "  stamped: /^\\d{4}-/.test(GENERATED_AT) }));\n",
-                encoding="utf-8",
-            )
-            out = subprocess.run(["node", str(probe)], capture_output=True,
-                                 text=True, cwd=tmp, check=True)
-            result = json.loads(out.stdout)
-            self.assertGreater(result["len"], 1000)
-            self.assertTrue(result["hasName"])
-            self.assertTrue(result["hasDash"])
-            self.assertTrue(result["stamped"])
-
+            html = publish.build_dashboard(str(store_root))["html"]
+            blob = tmp / "board.json"
+            blob.write_text(json.dumps({"html": html, "generatedAt": "now"}),
+                            encoding="utf-8")
+            script = tmp / "read.mjs"
+            script.write_text(
+                "import { readFileSync } from 'node:fs';\n"
+                f"const board = JSON.parse(readFileSync({json.dumps(str(blob))}, 'utf8'));\n"
+                "process.stdout.write(board.html);\n",
+                encoding="utf-8")
+            proc = subprocess.run(["node", str(script)], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout, html, "the page must survive Node exactly")
+            self.assertIn("</script>", proc.stdout)
+            self.assertIn("\u2028", proc.stdout)
 
 class CliTest(unittest.TestCase):
     def test_missing_vercel_and_npx_is_a_clear_error(self):
