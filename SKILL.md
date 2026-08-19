@@ -14,7 +14,7 @@ That framing changes the default behaviour in specific ways:
 - **Act without being told.** Inside a cycle, sweep, triage, fill and park without checking in. The intake exists precisely so you can.
 - **Judge, do not just execute.** If the user asks for more roles when what they actually need is to send three referral messages, say so. An agent that optimises the requested action over the underlying goal is doing the wrong job politely.
 - **Report like a colleague.** Short, factual, what changed. Quiet cycles get one line.
-- **Know your limits and name them.** Credentials, CAPTCHAs, legal attestations, and anything you would have to invent. Stopping and saying why is part of the job, not a failure of it.
+- **Know your limits and name them.** Credentials, CAPTCHAs, binding legal agreements, and anything you would have to invent. Stopping and saying why is part of the job, not a failure of it.
 
 Applications go out under someone's real name and cannot be recalled. A wrong salary figure, an overstated year count, or a legal declaration answered carelessly follows them into interviews and offer negotiations.
 
@@ -176,7 +176,11 @@ If tailoring or verification cannot be satisfied, upload the base resume, skip t
 
 **Free-text answers are a different craft from fields.** Screening questions, cover letters and referral messages follow `references/tailoring.md`: drafted in the user's voice from their writing samples, every claim traceable to the resume, the answer store, or the conversation, and built from the story bank rather than invented.
 
-**Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status, conflicts of interest, and truth attestations all belong to the user. Never tick a truth attestation, especially when any field holds inferred data — that is certifying your guess as their fact.
+**Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status and conflicts of interest belong to the user.
+
+**Accuracy attestations** ("I certify the information provided is true and accurate to the best of my knowledge") are standing-authorised by the user and may be ticked, but only when every answer on the form came from the profile, the answer store or the story bank. If any field holds something you inferred, guessed or composed beyond those sources, do not tick it: that is certifying your guess as their fact. Park it instead.
+
+**Binding legal agreements are a different thing and are never ticked.** Arbitration agreements, class-action waivers, background-check authorisations, non-competes and anything granting rights over the user go to **Needs you** with the clause quoted, no matter how routine the ATS makes them look.
 
 ## Hard stops
 
@@ -239,7 +243,7 @@ One cycle is:
 2. **Dedupe** against history — `store.py history-status` gives the latest event per application, which is the guard against reapplying, and `store.py stats` lists `needsVerification`: applications where a previous session died mid-submit. Verify those on the platform before touching them, and log `completed` or `abandoned` accordingly. Filter out excluded companies here too.
 3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age. Reject anything whose stated minimum experience is above five years, before scoring; the screen filters on it before a human reads the resume.
 4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Opus 5 and verified against the base before upload. **Work strictly one application at a time**, carrying each through to submitted and logged before opening the next. Concurrent fills cost more than they save: a stray keystroke in one tab has already submitted an application early, and when several are in flight there is no moment where the state is small enough to check.
-5. **Park** anything blocked as a session with its pending fields and reasons. Anything blocked on an act only the user can perform (account creation, a password, an OTP or emailed verification link, a CAPTCHA, a truth attestation, a legal agreement) is saved with status `review`, not `watch`, so it lands in **Needs you** rather than sitting in Watching where it reads as not-yet-started. Name the specific blocker in `pendingFields` so the card says what to do.
+5. **Park** anything blocked as a session with its pending fields and reasons. Anything blocked on an act only the user can perform (account creation, a password, an OTP or emailed verification link, a CAPTCHA, a binding legal agreement, or an accuracy attestation on a form where some answer had to be inferred) is saved with status `review`, not `watch`, so it lands in **Needs you** rather than sitting in Watching where it reads as not-yet-started. Name the specific blocker in `pendingFields` so the card says what to do.
 6. **Regenerate the dashboard** and republish to the same artifact URL. Run `scripts/sync_board.py` after every application rather than once per cycle: it deletes the watch-list session for anything confirmed submitted and republishes, so a role never shows in Watching and Submitted at the same time.
 7. **Report**: what is new, what went out, what needs them, in a few lines.
 

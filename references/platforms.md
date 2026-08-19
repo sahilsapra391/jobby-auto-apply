@@ -170,7 +170,7 @@ This is the concrete form of the rule in SKILL.md that any interaction with a co
 
 **iCIMS**: account creation plus hCaptcha before the form opens. Effectively a full stop.
 
-**Google Careers**: **quota of three applications per 30 days** — raise it before spending a slot. The stored profile goes stale like Amazon's. Uploading a new resume triggers a re-parse that repopulates work history and **wipes city and country on every job**. Upload offers a native OS picker or Drive. The final gate is a truth attestation; do not tick it.
+**Google Careers**: **quota of three applications per 30 days** — raise it before spending a slot. The stored profile goes stale like Amazon's. Uploading a new resume triggers a re-parse that repopulates work history and **wipes city and country on every job**. Upload offers a native OS picker or Drive. The final gate is an accuracy attestation; tick it when every answer came from the stored profile and answer store, and park it otherwise.
 
 **SmartRecruiters**: usually reached through LinkedIn Easy Apply rather than directly, so follow the Easy Apply recipe.
 

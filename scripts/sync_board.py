@@ -32,7 +32,14 @@ def main():
 
     sessions = json.loads(run(["session-list"]).stdout or "[]")
     history = json.loads(run(["history-list"]).stdout or "[]")
-    submitted = {e.get("applicationId") for e in history if e.get("event") == "completed"}
+    # Latest event wins. A `completed` retracted by a later `abandoned` is not a
+    # submission, and retiring it here would drop the role off the board
+    # entirely: gone from Watching, and correctly absent from Submitted.
+    latest = {}
+    for e in sorted(history, key=lambda e: e.get("at") or ""):
+        if e.get("applicationId"):
+            latest[e["applicationId"]] = e
+    submitted = {a for a, e in latest.items() if e.get("event") == "completed"}
 
     retired = []
     for s in sessions:
