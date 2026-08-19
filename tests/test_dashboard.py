@@ -5,6 +5,13 @@ Run from the repo root: python3 -m unittest discover -s tests
 
 import importlib.util
 import pathlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -139,3 +146,71 @@ class BrandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostedDateTests(unittest.TestCase):
+    """The Posted column has to lead with a real date, because it is the sort key.
+
+    A role found "2 hours ago" recorded only that string, so it had nothing
+    sortable and sank to the bottom of a list ordered newest first, which is the
+    exact opposite of where it belonged.
+    """
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp())
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "store.py"),
+                        "--root", str(self.root), "init"], capture_output=True)
+
+    def add(self, name, **fields):
+        session = {"applicationId": name, "company": name.title(), "role": "PM",
+                   "status": "watch", **fields}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(session, f)
+            path = f.name
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "store.py"),
+                        "--root", str(self.root), "session-save", "--id", name,
+                        "--input", path], capture_output=True)
+        os.unlink(path)
+
+    def render(self):
+        out = pathlib.Path(tempfile.mkdtemp()) / "b.html"
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "dashboard.py"),
+                        "--root", str(self.root), "--out", str(out)], capture_output=True)
+        html = out.read_text(encoding="utf-8")
+        body = html[html.index('id="p-watch"'):]
+        return body[body.index("<tbody>"):body.index("</tbody>")]
+
+    def order(self):
+        return re.findall(r"<strong>([^<]+)</strong>", self.render())
+
+    def test_a_relative_only_posting_still_gets_a_date(self):
+        self.add("zeta", postedAgo="2 hours ago")
+        today = datetime.now(timezone.utc).date().isoformat()
+        self.assertIn(today, self.render())
+
+    def test_hours_ago_sorts_above_an_older_dated_posting(self):
+        self.add("older", postedDate="2020-01-01")
+        self.add("fresh", postedAgo="2 hours ago")
+        self.assertEqual(self.order()[0], "Fresh")
+
+    def test_the_relative_string_is_kept_underneath_the_date(self):
+        self.add("zeta", postedAgo="2 hours ago")
+        cell = self.render()
+        self.assertIn("2 hours ago", cell)
+        self.assertIn('class="ago', cell)
+
+    def test_weeks_and_months_resolve_to_real_dates(self):
+        self.add("weeks", postedAgo="3 weeks ago")
+        self.add("days", postedAgo="2 days ago")
+        self.assertEqual(self.order(), ["Days", "Weeks"])
+
+    def test_a_posting_with_no_date_at_all_sorts_last(self):
+        self.add("nodate")
+        self.add("dated", postedDate="2020-01-01")
+        self.assertEqual(self.order()[-1], "Nodate")
+        self.assertIn("unknown", self.render())
+
+    def test_postedDays_still_works(self):
+        self.add("byday", postedDays=1)
+        expected = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        self.assertIn(expected, self.render())

@@ -15,9 +15,10 @@ Standard library only. No network calls; the page is fully offline.
 import argparse
 import html
 import json
+import re
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Importable whether this is run as a script from the repo root or loaded by
@@ -299,23 +300,59 @@ def build(state, generated):
         cls = "yrs over" if over else "yrs"
         return f'<span class="{cls}">{esc(text)}</span>'
 
-    def posted_cell(entry):
-        raw = entry.get("postedAgo")
+    RELATIVE = re.compile(
+        r"(\d+)\s*\+?\s*(minute|min|hour|hr|day|week|month|year)s?\s*ago", re.I)
+    PER_DAY = {"minute": 1 / 1440, "min": 1 / 1440, "hour": 1 / 24, "hr": 1 / 24,
+               "day": 1, "week": 7, "month": 30, "year": 365}
+
+    def posted_on(entry):
+        """(date, detail, age_in_days) for a posting, from whatever it recorded.
+
+        A date every time, because the date is what the column sorts on. A role
+        found "2 hours ago" carried only that string, so it had no sortable value
+        and sank to the bottom of a list ordered newest first, which is the exact
+        opposite of where it belonged.
+        """
+        raw = (entry.get("postedAgo") or "").strip()
         days = entry.get("postedDays")
-        if raw is None and days is None:
+        date = entry.get("postedDate")
+
+        if not isinstance(days, (int, float)):
+            days = None
+        if days is None and raw:
+            m = RELATIVE.search(raw)
+            if m:
+                days = int(m.group(1)) * PER_DAY[m.group(2).lower()]
+        if date is None and days is not None:
+            date = (datetime.now(timezone.utc).date()
+                    - timedelta(days=round(days))).isoformat()
+        if days is None and date:
+            try:
+                days = (datetime.now(timezone.utc).date()
+                        - datetime.strptime(date[:10], "%Y-%m-%d").date()).days
+            except ValueError:
+                days = None
+        return date, raw, days
+
+    def posted_cell(entry):
+        date, raw, days = posted_on(entry)
+        if date is None and not raw:
             return '<span class="muted">unknown</span>'
-        cls = "posted fresh" if isinstance(days, int) and days <= 3 else "posted"
-        # Show the absolute date when one could be derived. The relative string
-        # ("7 minutes ago") was true at sweep time and goes stale immediately,
-        # so it is only shown when there is no date to show instead.
-        if entry.get("postedDate"):
-            return f'<span class="{cls}">{esc(entry["postedDate"])}</span>'
-        return f'<span class="posted muted">{esc(raw)}</span>'
+        cls = "posted fresh" if isinstance(days, (int, float)) and days <= 3 else "posted"
+        # The date leads, because it is the fact and it is what the column is
+        # sorted by. The relative string was true when the sweep ran and goes
+        # stale immediately, so it sits underneath as detail.
+        head = esc(date) if date else esc(raw)
+        detail = f'<br><span class="ago muted">{esc(raw)}</span>' if raw and date else ""
+        return f'<span class="{cls}">{head}</span>{detail}'
 
     # Newest first. Unknown dates sort last rather than pretending to be fresh,
     # and fit breaks ties within the same day.
+    # Newest first, on the derived date rather than on whichever field the sweep
+    # happened to record. Anything with no date at all sorts last rather than
+    # pretending to be fresh, and fit breaks ties within the same day.
     watch.sort(key=lambda s: (
-        s.get("postedDays") if isinstance(s.get("postedDays"), int) else 10**6,
+        posted_on(s)[2] if posted_on(s)[2] is not None else 10**6,
         -(s.get("fitScore") or 0)))
     def dropped_row(entry):
         when = (entry.get("droppedAt") or "")[:10]
