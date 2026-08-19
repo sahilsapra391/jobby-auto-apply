@@ -355,7 +355,7 @@ def publish():
 
 # --- watchdog ---------------------------------------------------------------
 
-def sweep_stuck():
+def sweep_stuck(queued=()):
     """Rescue applications abandoned by a runner that died.
 
     Without this a card sits at 'Queued' forever, which is exactly what the user
@@ -371,6 +371,12 @@ def sweep_stuck():
             continue
         # A run that is still going is not stuck, whichever slot holds it.
         if x["applicationId"] in owned:
+            continue
+        # Nor is one still waiting for a free slot. Everything in the queue is
+        # marked inflight so the board reads correctly, but its phase does not
+        # move until a runner picks it up, and with a backlog deeper than three
+        # that wait can easily outlast the stuck timeout.
+        if x["applicationId"] in queued:
             continue
         at = x.get("phaseAt") or x.get("updatedAt") or ""
         try:
@@ -504,7 +510,7 @@ def tick(force_publish=False):
 
     # One scan at a time, and never while an application is mid-flight: a sweep
     # rewriting the watch list under a running apply is asking for trouble.
-    if agent_ok and q.get("scan") and not lock_holder("scan") and not running_applications():
+    if agent_ok and q.get("scan") and not lock_holder("scan"):
         pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "run_scan.py")],
                     "scan-runs.log", note="scan")
         changed["scanStarted"] = pid
@@ -532,6 +538,17 @@ def tick(force_publish=False):
             if not aid:
                 lock_path(slot).unlink(missing_ok=True)
                 continue
+            # Already being worked on. The board re-sends Apply clicks it
+            # remembers every time the page loads, and enqueue only dedupes
+            # against what is still IN the queue, so a reload after this one was
+            # claimed puts it straight back. Without this check a second agent
+            # takes the same application and it gets submitted twice.
+            busy = running_applications()
+            if aid in busy:
+                lock_path(slot).unlink(missing_ok=True)
+                changed.setdefault("alreadyRunning", []).append(
+                    {"applicationId": aid, "slot": busy[aid]})
+                continue
             q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
             browser.serve(slot)
             pid = spawn(slot, [sys.executable, str(REPO / "scripts" / "run_apply.py"),
@@ -540,7 +557,7 @@ def tick(force_publish=False):
             changed.setdefault("applyStarted", []).append(
                 {"slot": slot, "pid": pid, "applicationId": aid})
 
-    rescued = sweep_stuck()
+    rescued = sweep_stuck({x.get("applicationId") for x in (q.get("apply") or [])})
     if rescued:
         changed["rescued"] = rescued
 

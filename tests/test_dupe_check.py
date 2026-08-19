@@ -94,3 +94,68 @@ class GuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InFlightGuardTests(unittest.TestCase):
+    """Submitted history is not enough when three runs overlap.
+
+    Three runs for one posting under different ids all passed the guard at the
+    same moment and all submitted twenty minutes later, because at the time none
+    of them had logged anything yet.
+    """
+
+    def setUp(self):
+        self.history = [
+            {"at": "2026-01-01T00:00:00Z", "event": "completed", "applicationId": "old-one",
+             "company": "Initech", "role": "PM"},
+        ]
+        self.roles = {
+            "acme-pm-a": {"url": "https://boards.example.com/acme/pm",
+                          "company": "Acme", "role": "Product Manager"},
+            "acme-pm-b": {"url": "https://boards.example.com/acme/pm?src=li",
+                          "company": "Acme", "role": "Product Manager"},
+            "acme-eng": {"url": "https://boards.example.com/acme/eng",
+                         "company": "Acme", "role": "Engineering Manager"},
+        }
+        self.sessions = []
+
+        def fake(args):
+            if args[0] == "history-list":
+                return self.history
+            if args[0] == "roles-list":
+                return self.roles
+            if args[0] == "session-list":
+                return self.sessions
+            if args[0] == "session-load":
+                return self.roles.get(args[2])
+            return None
+
+        dupe_check.store = fake
+
+    def test_a_posting_already_in_flight_elsewhere_is_a_duplicate(self):
+        self.sessions = [{"applicationId": "acme-pm-a", "status": "inflight",
+                          "company": "Acme", "role": "Product Manager",
+                          "url": "https://boards.example.com/acme/pm"}]
+        result = dupe_check.guard("acme-pm-b")
+        self.assertTrue(result["duplicate"])
+        self.assertIn("right now", result["reason"])
+
+    def test_a_different_role_in_flight_is_not_a_duplicate(self):
+        self.sessions = [{"applicationId": "acme-eng", "status": "inflight",
+                          "company": "Acme", "role": "Engineering Manager",
+                          "url": "https://boards.example.com/acme/eng"}]
+        self.assertFalse(dupe_check.guard("acme-pm-a")["duplicate"])
+
+    def test_a_run_does_not_block_itself(self):
+        self.sessions = [{"applicationId": "acme-pm-a", "status": "inflight",
+                          "company": "Acme", "role": "Product Manager",
+                          "url": "https://boards.example.com/acme/pm"}]
+        self.assertFalse(dupe_check.guard("acme-pm-a")["duplicate"])
+
+    def test_a_watching_role_does_not_block_anything(self):
+        # Only work actually in flight counts; the watch list is full of roles
+        # at the same company.
+        self.sessions = [{"applicationId": "acme-pm-a", "status": "watch",
+                          "company": "Acme", "role": "Product Manager",
+                          "url": "https://boards.example.com/acme/pm"}]
+        self.assertFalse(dupe_check.guard("acme-pm-b")["duplicate"])

@@ -139,7 +139,7 @@ python3 scripts/watch.py --status      # which slots are busy and with what
 
 An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.
 
-The lock is also what enforces the standing rule that only one application runs at a time. It holds a pid rather than living in memory, so it survives a watcher restart, and a dead pid releases it automatically: a runner killed mid-flight cannot wedge the pipeline forever.
+The locks are also what cap concurrency at three and keep one agent to one application. They hold a pid rather than living in memory, so they survive a watcher restart, and a dead pid releases its own slot automatically: a runner killed mid-flight cannot wedge the pipeline.
 
 ### Setting up the queue
 

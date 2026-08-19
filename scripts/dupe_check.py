@@ -58,6 +58,22 @@ def submitted_index():
     return done, ids, pairs, urls, roles
 
 
+def in_flight(exclude):
+    """Applications being worked on right now, other than this one.
+
+    Submitted history is not enough. Three runs for one posting under different
+    ids all passed the guard at the same moment and all submitted twenty minutes
+    later, because at the time none of them had logged anything yet.
+    """
+    out = []
+    for x in (store(["session-list"]) or []):
+        if x.get("applicationId") == exclude:
+            continue
+        if x.get("status") == "inflight":
+            out.append(x)
+    return out
+
+
 def guard(aid):
     done, ids, pairs, urls, roles = submitted_index()
     entry = store(["session-load", "--id", aid]) or roles.get(aid) or {}
@@ -66,6 +82,18 @@ def guard(aid):
 
     if aid in ids:
         return {"duplicate": True, "reason": "this application id is already submitted"}
+
+    # Something else is applying to this same posting right now.
+    for other in in_flight(aid):
+        other_url = other.get("url") or (roles.get(other.get("applicationId")) or {}).get("url")
+        same_role = (company and role
+                     and norm(other.get("company")) == norm(company)
+                     and norm(other.get("role")) == norm(role))
+        same_url = url and other_url and norm_url(other_url) == norm_url(url)
+        if same_role or same_url:
+            return {"duplicate": True,
+                    "reason": f"another run is applying to this same posting right now "
+                              f"({other.get('applicationId')})"}
     if company and role and (norm(company), norm(role)) in pairs:
         return {"duplicate": True,
                 "reason": f"already applied to {company} — {role} under a different id"}
