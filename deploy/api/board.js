@@ -80,7 +80,7 @@ import { DOCUMENTS } from './_documents.js';
 // runner already reuses documents rather than rebuilding them.
 const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/retry': 'apply',
                  '/api/submitted': 'marked', '/api/drop': 'drop',
-                 '/api/restore': 'restore' };
+                 '/api/restore': 'restore', '/api/focus': 'focus' };
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },

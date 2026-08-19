@@ -190,11 +190,21 @@ So spawned agents get their own: `@playwright/mcp`, pinned, driving Chrome again
 python3 scripts/browser.py --check
 ```
 
-Persistent matters. The `--isolated` flag throws the profile away on exit, which would mean signing in to every ATS on every run. With a profile that survives, a sign-in done once is a sign-in every later run inherits. To do that sign-in by hand, in the same profile the agents use:
+**The browser outlives the run.** It is started once by `serve()` and agents attach to it over CDP (`--cdp-endpoint`), rather than each run starting and stopping its own. That is not a detail: form values live in the page, not in the profile, so a browser that dies with its run takes twenty filled fields with it. That was why a parked application used to send the user to a blank form with all the work gone. Now the tab is still sitting there.
+
+```bash
+python3 scripts/browser.py --serve    # start it (the watcher does this on its own)
+python3 scripts/browser.py --tabs     # what it currently holds
+python3 scripts/browser.py --focus <url>
+```
+
+**Sign in once.** The profile persists, so a session is inherited by every later run. LinkedIn matters most here: Easy Apply needs a signed-in session, and without one those postings can only ever park.
 
 ```bash
 python3 scripts/browser.py --login https://www.linkedin.com
 ```
+
+That brings the running browser to the front on that page. It used to launch a second Chrome on the same profile, which stopped being safe the moment the browser became long-lived: two Chromes cannot share one `user-data-dir`.
 
 It is deliberately not the everyday Chrome. Playwright cannot attach to a browser that is already running, and driving a signed-in personal profile unattended is not something to do quietly.
 

@@ -221,12 +221,40 @@ class BrowserConfigTests(unittest.TestCase):
         cfg = json.loads(self.browser.write_config().read_text())
         self.assertIn("/opt/homebrew/bin", cfg["mcpServers"]["browser"]["env"]["PATH"])
 
-    def test_the_profile_persists_rather_than_being_isolated(self):
-        # --isolated throws the profile away on exit, which would mean signing
-        # in to every ATS on every run.
+    def test_the_agent_attaches_rather_than_launching_its_own_browser(self):
+        # The browser has to outlive the run. When each run started and stopped
+        # its own, the tab holding a part-filled form died with the run, and
+        # "Open & finish" put the user in front of a blank application.
         args = json.loads(self.browser.write_config().read_text())["mcpServers"]["browser"]["args"]
-        self.assertIn("--user-data-dir", args)
+        self.assertIn("--cdp-endpoint", args)
+        self.assertNotIn("--user-data-dir", args,
+                         "the long-lived browser owns the profile, not the MCP server")
         self.assertFalse(any(a.startswith("--isolated") for a in args))
+
+    def test_the_browser_the_agent_attaches_to_owns_the_profile(self):
+        # Signing in once has to carry across runs, so the profile must be on
+        # the browser that persists, not on a server that restarts every run.
+        self.assertIn("--user-data-dir", " ".join(
+            [self.browser.CHROME, f"--user-data-dir={self.browser.PROFILE}"]))
+        self.assertTrue(str(self.browser.PROFILE).endswith("browser-profile"))
+
+    def test_focus_matching_ignores_query_and_trailing_slash(self):
+        # An ATS rewrites its own URL as you move through the steps, so the tab
+        # holding a part-filled form rarely still has the address it started on.
+        same = self.browser._key("https://jobs.example.com/apply/123")
+        self.assertEqual(same, self.browser._key("https://jobs.example.com/apply/123/"))
+        self.assertEqual(same, self.browser._key("https://jobs.example.com/apply/123?src=rss"))
+        self.assertNotEqual(same, self.browser._key("https://jobs.example.com/apply/456"))
+
+    def test_focus_reports_honestly_when_the_browser_is_down(self):
+        original = self.browser.running
+        self.browser.running = lambda: False
+        try:
+            result = self.browser.focus("https://jobs.example.com/apply/123")
+            self.assertFalse(result["focused"])
+            self.assertIn("not running", result["why"])
+        finally:
+            self.browser.running = original
 
     def test_the_playwright_version_is_pinned(self):
         args = json.loads(self.browser.write_config().read_text())["mcpServers"]["browser"]["args"]

@@ -101,15 +101,25 @@ Do this and nothing else:
 3. Open the posting with the `mcp__browser__*` tools and fill the application, verifying
    values by reading them back from the page rather than trusting your own plan.
 
-   That browser runs a profile of its own at ~/.job-application/browser-profile. It is NOT
-   the user's everyday Chrome, so it is signed in to very little. If the posting is behind a
-   sign-in, or an account is required, or a CAPTCHA appears, do NOT try to get past it and do
-   NOT create an account. Park it: save the session with status "review" and a pendingFields
-   entry naming what is needed, for example
-     "documents are built and filed; needs a sign-in to <site> before it can be submitted"
+   That browser runs a profile of its own at ~/.job-application/browser-profile, shared by
+   every run and signed in to whatever the user has signed it in to. Check before assuming:
+   LinkedIn in particular is usually signed in, and an Easy Apply flow needs that session.
+
+   If the posting is behind a sign-in the profile does not have, or an account is required,
+   or a CAPTCHA appears, do NOT try to get past it and do NOT create an account. Park it:
+   save the session with status "review" and a pendingFields entry naming what is needed and
+   how to do it, for example
+     "needs a LinkedIn sign-in. Press Open & finish to bring up the agent's browser, sign in
+      once, then press Retry. Every later application inherits that session."
    then run sync_board.py and stop. The tailored documents are the valuable part and they are
    already kept, so a park is a decent outcome, not a failure.
    If no browser tool is available at all, park the same way and say so.
+
+   The browser is shared and outlives you, so whatever you leave on screen is what the user
+   sees when they press "Open & finish". Whenever you park an application, LEAVE ITS TAB OPEN
+   on the filled form. Do not close it and do not navigate it away. Close only tabs you opened
+   and did not need. Form values live in the page, not the profile: closing the tab throws away
+   everything you filled.
 4. Before you submit, re-read the session:
      "{py}" "{repo}/scripts/store.py" session-load --id {aid}
    If its status is now "dropped", the user cancelled this application while you were
@@ -123,13 +133,17 @@ Do this and nothing else:
    quoted, in the `confirmation` field, plus resumeVariant and coverLetter. If you cannot
    confirm, say so and leave the event at `submitting`.
 6. If something only the user can do blocks it (account creation, password, OTP, CAPTCHA,
-   or a binding legal agreement such as an arbitration clause or a background-check
-   authorisation), do NOT submit. Save the session with status "review"
+   or a binding legal agreement such as a background-check authorisation, a
+   non-compete or an IP assignment), do NOT submit. Save the session with status "review"
    and pendingFields naming the blocker, so it lands in Needs you.
 7. Run: "{py}" "{repo}/scripts/sync_board.py"
 
 Never solve a CAPTCHA, create an account, type a password, enter an OTP, or agree to a binding
-legal document (arbitration, class-action waiver, background-check authorisation).
+legal document that grants rights over the user: background-check and consumer-report
+authorisations, non-competes, IP assignment.
+
+An arbitration agreement acknowledgement IS authorised and should be ticked. The user gave a
+standing instruction covering any wording of it, so never park an application for that alone.
 
 An accuracy attestation ("I certify the information provided is true and accurate to the best of
 my knowledge") IS authorised: tick it when every answer on the form came from the profile, the

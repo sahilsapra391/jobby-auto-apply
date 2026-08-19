@@ -180,7 +180,9 @@ If tailoring or verification cannot be satisfied, upload the base resume, skip t
 
 **Accuracy attestations** ("I certify the information provided is true and accurate to the best of my knowledge") are standing-authorised by the user and may be ticked, but only when every answer on the form came from the profile, the answer store or the story bank. If any field holds something you inferred, guessed or composed beyond those sources, do not tick it: that is certifying your guess as their fact. Park it instead.
 
-**Binding legal agreements are a different thing and are never ticked.** Arbitration agreements, class-action waivers, background-check authorisations, non-competes and anything granting rights over the user go to **Needs you** with the clause quoted, no matter how routine the ATS makes them look.
+**Arbitration agreements** are standing-authorised by the user and may be ticked. That covers any wording of an arbitration acknowledgement, including the ones bolted onto the submit step. The user knows it waives court and class-action rights over employment disputes and has decided that is acceptable, so do not park an application for this reason.
+
+**Every other binding legal agreement still goes to the user.** Background-check and consumer-report authorisations, non-competes, IP assignment, and anything else granting rights over the user go to **Needs you** with the clause quoted. The authorisation above is for arbitration specifically and does not widen to those, however routine the ATS makes them look.
 
 ## Hard stops
 

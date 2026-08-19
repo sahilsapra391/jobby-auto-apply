@@ -180,7 +180,9 @@ def build(state, generated):
                     data-company="{esc(s.get('company',''))}"
                     data-role="{esc(s.get('role',''))}"
                     title="I have done the blocked step; let the agent finish">Retry</button>
-            <a class="btn ghost" href="{esc(safe_url(posting_url(s)))}" target="_blank" rel="noopener">Open &amp; finish</a>
+            <button class="btn ghost finish" data-id="{esc(aid)}"
+                    data-url="{esc(safe_url(posting_url(s)))}"
+                    title="Bring up the tab the agent left, with the form still filled">Open &amp; finish</button>
             <button class="btn ghost mark" data-id="{esc(aid)}">Mark submitted</button>
             <button class="btn drop" data-id="{esc(aid)}" title="Do not pursue this one">Drop</button>
             <span class="ats">{esc(s.get('ats', ''))}</span>
@@ -1133,6 +1135,28 @@ def build(state, generated):
       tabCount('dropped', 1);
       placeholderDropped(facts, link ? link.href : '');
       post('/api/drop', id).catch(function () {{}});
+    }});
+  }});
+
+  // Open & finish asks the watcher to raise the tab the agent left behind, on
+  // the machine doing the work. Opening the posting from here instead would put
+  // the user in a different browser, in front of a blank application, with none
+  // of the filling the agent had already done.
+  document.querySelectorAll('.btn.finish').forEach(function (b) {{
+    b.addEventListener('click', function () {{
+      var id = b.dataset.id;
+      if (!id) return;
+      var was = b.textContent;
+      b.disabled = true;
+      b.textContent = 'Bringing it up...';
+      post('/api/focus', id)
+        .then(function (res) {{
+          b.textContent = (res && res.ok) ? 'Check your browser' : 'Could not reach it';
+          setTimeout(function () {{ b.disabled = false; b.textContent = was; }}, 4000);
+        }})
+        .catch(function () {{
+          b.disabled = false; b.textContent = was;
+        }});
     }});
   }});
 

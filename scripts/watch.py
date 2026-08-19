@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent  # noqa: E402
+import browser  # noqa: E402
 import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
@@ -286,6 +287,31 @@ def tick(force_publish=False):
         if dropped:
             changed["dropped"] = dropped
 
+    # "Open & finish" on a parked card. The point is to land the user on the tab
+    # the run left behind, with the form still filled, rather than a fresh copy
+    # of the application in a browser that has none of the work in it.
+    if q.get("focus"):
+        claimed = json.loads(subprocess.run(
+            [toolpath.node(), "queue.mjs", "claim", "focus/"], cwd=DEPLOY,
+            capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
+        ).stdout or "[]")
+        for item in claimed[-1:]:      # only the most recent click is meaningful
+            aid = item.get("applicationId")
+            if not aid:
+                continue
+            loaded = store(["session-load", "--id", aid])
+            url = ""
+            if loaded.returncode == 0:
+                url = (json.loads(loaded.stdout or "{}") or {}).get("url", "")
+            if not url:
+                roles = json.loads(store(["roles-list"]).stdout or "{}")
+                url = (roles.get(aid) or {}).get("url", "")
+            if not url:
+                changed["focus"] = {"applicationId": aid, "error": "no posting url on record"}
+                continue
+            browser.serve()
+            changed["focus"] = {"applicationId": aid, **browser.focus(url)}
+
     if q.get("restore"):
         claimed = json.loads(subprocess.run(
             [toolpath.node(), "queue.mjs", "claim", "restore/"], cwd=DEPLOY,
@@ -317,6 +343,9 @@ def tick(force_publish=False):
     # seconds. The check is cached, so this costs nothing per tick.
     agent_ok = True
     if q.get("scan") or q.get("apply"):
+        # The runner attaches to a browser it does not own, so make sure one is
+        # there before spawning. Cheap: a CDP ping when it is already up.
+        browser.serve()
         agent_ok, why = agent.authenticated()
         if not agent_ok:
             store(["meta-set", "--key", "blocked", "--value", agent.blocked_reason(why)])
