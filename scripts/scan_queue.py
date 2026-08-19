@@ -20,6 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import toolpath  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 
@@ -37,7 +40,7 @@ def blob_env():
 
 
 def queue(cmd):
-    r = subprocess.run(["node", "queue.mjs", cmd, "scan/"], cwd=DEPLOY,
+    r = subprocess.run([toolpath.node(), "queue.mjs", cmd, "scan/"], cwd=DEPLOY,
                        capture_output=True, text=True, env=blob_env())
     if r.returncode != 0:
         raise SystemExit(f"scan_queue: queue read failed: {(r.stderr or '').strip()[:200]}")

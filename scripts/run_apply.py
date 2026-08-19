@@ -20,6 +20,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agent  # noqa: E402
+import toolpath  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 STORE = REPO / "scripts" / "store.py"
@@ -41,7 +45,10 @@ def blob_env():
 
 
 def queue(cmd):
-    r = subprocess.run(["node", "queue.mjs", cmd, "apply/"], cwd=DEPLOY,
+    """cmd is `list` or `claim-one`. Never `claim`: this worker handles a single
+    request per invocation, and `claim` deletes the entire queue, which once
+    destroyed fourteen Apply clicks the user had made and never got back."""
+    r = subprocess.run([toolpath.node(), "queue.mjs", cmd, "apply/"], cwd=DEPLOY,
                        capture_output=True, text=True, env=blob_env())
     if r.returncode != 0:
         raise SystemExit(f"run_apply: queue read failed: {(r.stderr or '').strip()[:200]}")
@@ -123,7 +130,7 @@ def main():
     detail = store(["session-load", "--id", aid])
     if detail.returncode != 0:
         # Nothing to apply to. Drain it so it does not block the queue forever.
-        queue("claim")
+        queue("claim-one")
         print(json.dumps({"skipped": aid, "why": "no watch entry"}, indent=2))
         return 1
 
@@ -136,7 +143,7 @@ def main():
                            "--guard", aid], capture_output=True, text=True)
     if dupe.returncode != 0:
         why = json.loads(dupe.stdout or "{}").get("reason", "already applied to this job")
-        queue("claim")
+        queue("claim-one")
         store(["session-delete", "--id", aid])
         subprocess.run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
                        capture_output=True, text=True)
@@ -148,11 +155,21 @@ def main():
         print(prompt)
         return 0
 
+    # Preflight before claiming. A spawned agent with a revoked token exits
+    # instantly with a 401, and claiming first would eat one queued application
+    # per cycle while the board showed nothing wrong.
+    ok, reason = agent.authenticated()
+    if not ok:
+        store(["meta-set", "--key", "blocked", "--value", agent.blocked_reason(reason)])
+        print(json.dumps({"blocked": agent.blocked_reason(reason),
+                          "stillQueued": len(pending)}, indent=2))
+        return 2
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
     # Claim before running: a crash mid-apply must not cause a second attempt,
     # for the same reason the write-ahead `submitting` event exists.
-    queue("claim")
+    queue("claim-one")
 
     subprocess.run([sys.executable, str(REPO / "scripts" / "phase.py"),
                     "--id", aid, "--phase", "Queued",
@@ -162,8 +179,24 @@ def main():
     with open(log, "a") as fh:
         fh.write(f"\n=== {aid} ===\n")
         proc = subprocess.run(
-            ["claude", "-p", prompt, "--permission-mode", "acceptEdits"],
-            cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS)
+            [toolpath.claude(), "-p", prompt, "--permission-mode", "acceptEdits"],
+            cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
+            env=toolpath.enriched_env())
+
+    # A run that dies on auth must not leave the card sitting at "Queued" forever
+    # with the reason buried in a log file.
+    if proc.returncode != 0:
+        tail = log.read_text()[-4000:]
+        if agent.looks_like_auth_failure(tail):
+            agent.invalidate()
+            store(["meta-set", "--key", "blocked",
+                   "--value", agent.blocked_reason("the spawned agent could not authenticate")])
+        subprocess.run([sys.executable, str(REPO / "scripts" / "phase.py"),
+                        "--id", aid, "--phase", "Failed",
+                        "--detail", f"the apply run exited {proc.returncode}; see apply-runs.log"],
+                       capture_output=True, text=True)
+    else:
+        store(["meta-set", "--key", "blocked", "--value", ""])
     print(json.dumps({"ran": aid, "exit": proc.returncode, "log": str(log)}, indent=2))
     return proc.returncode
 

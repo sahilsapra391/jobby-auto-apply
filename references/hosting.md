@@ -63,36 +63,24 @@ python3 scripts/publish.py --local     # serve on localhost:3000, deploy nothing
 python3 scripts/publish.py --preview   # throwaway URL, leaves production alone
 ```
 
-## The Scan button
+## What a button actually does
 
-The board carries a **Scan for new jobs** button. It is worth being exact about what that does, because the obvious reading is wrong.
+A page hosted on Vercel cannot start a process on the machine running the agent. Nothing about a published page grants it that. So no button runs anything directly. Each one **queues a request**, and the local watcher claims it and spawns the agent that does the work.
 
-A page hosted on Vercel cannot start a process on the machine running the agent. Nothing about a published page grants it that. So the button does not run a scan. It **queues a request**, and something local has to claim it.
+The path, end to end, is the same for all three:
 
-The path, end to end:
+1. The button POSTs to `/api/scan`, `/api/apply` or `/api/submitted`, behind the same password as the board.
+2. The function writes one blob per request under the matching prefix in a private Blob store. The payload lives in the blob **pathname** (`apply/<timestamp>__<applicationId>.json`), not the body, because the store is private and its URLs cannot be fetched without a token. Listing the queue therefore never fetches content.
+3. `scripts/watch.py`, running as a launchd agent, reads all three queues in one call every two seconds.
+4. Marks are applied inline. A Scan or an Apply spawns a detached runner (`run_scan.py`, `run_apply.py`) which starts a headless Claude session to do the actual work.
 
-1. The button POSTs to `/api/scan`, behind the same password as the board.
-2. The function writes one blob per request under the `scan/` prefix in a private Blob store. The timestamp is in the pathname, so listing the queue never fetches content. The token lives in `BLOB_READ_WRITE_TOKEN` and never reaches the browser.
-3. On this machine, `scripts/scan_queue.py --check` polls the queue and exits 0 when something is pending.
-4. A Claude Code session running `/loop` notices and runs a scan cycle, then `--claim` removes the request.
+Two seconds is the whole lag. A click reaches a running agent almost immediately.
 
-The button says "Queued. The agent picks this up on its next check" rather than "Scanning...", because claiming otherwise would be a lie about what happened.
+### One at a time, and never blocking
 
-### The "Mark submitted" button
+An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.
 
-Same shape as Scan, same reason. When an application in **Needs you** was submitted by hand (a CAPTCHA you cleared, an account you created, a legal attestation only you can tick), pressing **Mark submitted** on its card:
-
-1. POSTs the application id to `/api/submitted`, which queues it as a blob under `marked/`.
-2. Moves the card out of Needs you and into Submitted immediately in the browser, so the tabs reflect what you just did rather than waiting on a round trip.
-3. `scripts/apply_marks.py` claims the queue on this machine, logs a `completed` event, retires the watch-list session and republishes, making the change durable.
-
-```bash
-DASHBOARD_PASSWORD='<board password>' python3 scripts/apply_marks.py
-```
-
-The optimistic move is deliberate: the click is a statement of fact about something that already happened, not a request for the agent to do something, so showing it as done immediately is honest. Until `apply_marks.py` runs, the next republish would put the card back, which is why the poller matters.
-
-The queue payload lives in the blob *pathname* (`marked/<timestamp>__<applicationId>.json`), not the blob body. The store is private, so its URLs cannot be fetched without a token, and reading the body from inside the function would have returned nothing.
+The lock is also what enforces the standing rule that only one application runs at a time. It holds a pid rather than living in memory, so it survives a watcher restart, and a dead pid releases it automatically: a runner killed mid-flight cannot wedge the pipeline forever.
 
 ### Setting up the queue
 
@@ -107,15 +95,58 @@ That sets `BLOB_READ_WRITE_TOKEN` on the project automatically and writes it int
 
 Note that `vercel storage add` does not exist: Vercel KV was discontinued and moved to the Marketplace in December 2024. Blob is the first-party option that needs no second account.
 
-### Making it actually fire
-
-The queue is only half of it. Something has to poll:
+### Installing the watcher
 
 ```bash
-DASHBOARD_PASSWORD='<your board password>' python3 scripts/scan_queue.py --check
+python3 scripts/watch.py --install
+python3 scripts/watch.py --status
 ```
 
-Wire that into a `/loop` in a Claude Code session and the button becomes a real trigger with a lag of one poll interval. Without a poller running, requests simply pile up until the next time someone looks, which is a perfectly reasonable way to use it, just not an instant one.
+`--status` prints the queue depths, which runner holds a lock, and whether anything is blocking the pipeline. It has no side effects, so it is the right first thing to run when a button seems not to work.
+
+## Four ways this pipeline has failed
+
+Each of these produced a board that looked fine while doing nothing, which is why the current design is shaped the way it is.
+
+**launchd does not give you your PATH.** It provides `/usr/bin:/bin:/usr/sbin:/sbin` and nothing more. `node`, `vercel` and `claude` all live in `/opt/homebrew/bin`, so every queue read died with `FileNotFoundError` and every publish failed. This ran for hours. `scripts/toolpath.py` now resolves every binary to an absolute path, and the plist sets `EnvironmentVariables.PATH` as a second line of defence. Verify with:
+
+```bash
+env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin python3 scripts/toolpath.py
+```
+
+**A crashed check looks exactly like an empty queue.** Both exit non-zero. The old watcher treated the crash as "nothing to do" and logged a healthy cycle every thirty seconds throughout the outage. `poll_queues()` now raises `TickError` rather than returning empty, and the tick reports health from whether the work actually happened.
+
+**Claiming a whole queue to process one item.** `queue.mjs claim` deletes every pending request. `run_apply` read the queue, ran the first item, then called it, destroying fourteen Apply clicks that had never been touched. Use `claim-one`. A worker that processes one item deletes one item.
+
+**A runner that cannot authenticate still eats the request.** An expired or revoked `claude` OAuth token makes every spawn exit instantly with a 401, and because the request was claimed first, one user click vanished per cycle. Runners now preflight with `scripts/agent.py` before claiming, the watcher will not spawn while auth is broken, and the reason appears as a banner on the board rather than in a log nobody opens.
+
+```bash
+python3 scripts/agent.py --check
+```
+
+If that fails, run `claude login` in a terminal. The watcher re-checks on its own and clears the banner.
+
+## Knowing when it breaks again
+
+The watcher pings [healthchecks.io](https://healthchecks.io) on every meaningful tick, and `/fail` with the error when a tick cannot do its job. The point is the silence: if the process dies or every tick starts failing, healthchecks notices the pings stopped and alerts. That is precisely the failure that went unnoticed for hours, and no amount of logging catches it, because the logs looked healthy.
+
+Add the ping URL to `deploy/.env.local`:
+
+```
+HEALTHCHECKS_URL=https://hc-ping.com/<your-uuid>
+```
+
+Set the period to a few minutes and the grace to about ten. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
+
+### Recovering lost requests
+
+The board remembers Apply clicks in `localStorage` and re-sends any the server has not acted on when the page loads. `/api/apply` dedupes by application id, so that retry is safe and a lost request heals itself on the next visit.
+
+To queue one by hand:
+
+```bash
+python3 scripts/enqueue.py apply <applicationId>
+```
 
 ## Rotating the password
 

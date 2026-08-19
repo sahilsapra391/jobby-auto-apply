@@ -72,6 +72,7 @@ def load_state(root):
         "sessions": sessions,
         "history": list(latest.values()),
         "roles": read_json(root / "roles.json", {}),
+        "meta": read_json(root / "meta.json", {}),
     }
 
 
@@ -348,6 +349,12 @@ def build(state, generated):
         ("flight", "In flight", len(inflight)),
     ]
 
+    stopped = str((state.get("meta") or {}).get("blocked") or "").strip()
+    blocked_banner = (
+        f'<div class="sysbanner" role="alert"><strong>Automation is stopped.</strong> '
+        f'{esc(stopped)}</div>'
+    ) if stopped else ""
+
     tabnav = "".join(
         f'<button class="tab{" on" if i == 0 else ""}" data-tab="{k}" role="tab" '
         f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="p-{k}">'
@@ -603,9 +610,14 @@ def build(state, generated):
     .watch th:nth-child(4), .watch td:nth-child(4),
     .watch th:nth-child(5), .watch td:nth-child(5) {{ display:none; }}
     .watch th, .watch td {{ padding:.65rem .5rem; font-size:.86rem; }} }}
+  .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
+    line-height:1.45; text-align:center; }}
+  .sysbanner strong {{ font-weight:650; }}
 </style>
 
 {brand.defs()}
+
+{blocked_banner}
 
 <header class="appbar">
   <div class="brand">{brand.lockup()}</div>
@@ -864,8 +876,13 @@ def build(state, generated):
     tabCount('flight', 1);
     placeholderCard(company, role);
   }}
-  // On load, re-apply clicks the store has not caught up with, and forget the
+  // On load, restore clicks the store has not caught up with, and forget the
   // ones it has (the row is gone from Watching, so the server agrees).
+  //
+  // It also re-sends the request. Restoring only the appearance was not enough:
+  // a queue wipe once destroyed fourteen queued Apply requests, and because the
+  // board still drew them as in flight, nothing looked wrong and they were
+  // never run. Re-sending is safe because /api/apply dedupes by application id.
   (function replayApplying() {{
     var ids = readApplying();
     if (!ids.length) return;
@@ -877,6 +894,11 @@ def build(state, generated):
       if (!row) return;
       still.push(id);
       leaveWatching(row, btn.dataset.company || '', (row.querySelector('.muted') || {{}}).textContent || '');
+      fetch('/api/apply', {{
+        method: 'POST',
+        headers: {{ 'content-type': 'application/json' }},
+        body: JSON.stringify({{ applicationId: id }}),
+      }}).catch(function () {{}});
     }});
     writeApplying(still);
   }})();

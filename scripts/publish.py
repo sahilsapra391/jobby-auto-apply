@@ -29,6 +29,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import toolpath  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 GENERATED = DEPLOY / "api" / "_dashboard.js"
@@ -41,11 +44,12 @@ class PublishError(Exception):
 
 
 def vercel_cmd():
-    exe = shutil.which("vercel")
+    exe = toolpath.vercel(required=False)
     if exe:
         return [exe]
-    if shutil.which("npx"):
-        return ["npx", "--yes", "vercel@latest"]
+    npx = toolpath.find("npx", required=False)
+    if npx:
+        return [npx, "--yes", "vercel@latest"]
     raise PublishError(
         "the Vercel CLI is not installed. Install it with: npm install -g vercel"
     )
@@ -179,7 +183,7 @@ def cmd_local(args, _base):
     password = os.environ.get(PASSWORD_ENV) or "local"
     print(f"Serving on http://localhost:{args.port} (password: {password})")
     env = {**os.environ, PASSWORD_ENV: password}
-    return run(["node", "dev-server.mjs", str(args.port)], env=env).returncode
+    return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
 
 
 def cmd_publish(args, base):

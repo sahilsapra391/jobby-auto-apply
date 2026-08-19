@@ -205,6 +205,20 @@ export default {
             return new Response(JSON.stringify({ ok: false, error: 'bad applicationId' }), {
               status: 400, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
           }
+          // Idempotent per application. The board re-requests on load for any
+          // click it remembers that the server has not acted on yet, which is
+          // how a lost request heals itself; without this that retry would
+          // queue the same role twice and it would be applied to twice.
+          const already = await pendingUnder(APPLY_PREFIX);
+          const dup = already.some((b) => {
+            const base = b.pathname.slice(APPLY_PREFIX.length).replace(/\.json$/, '');
+            const sep = base.indexOf('__');
+            return (sep === -1 ? base : base.slice(sep + 2)) === id;
+          });
+          if (dup) {
+            return new Response(JSON.stringify({ ok: true, queued: id, deduped: true }), {
+              status: 202, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
+          }
           const at = new Date().toISOString();
           await put(`${APPLY_PREFIX}${at.replace(/[:.]/g, '-')}__${id}.json`,
             JSON.stringify({ applicationId: id, requestedAt: at }),

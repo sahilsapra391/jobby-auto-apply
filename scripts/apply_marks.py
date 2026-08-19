@@ -22,6 +22,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import toolpath  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 DEPLOY = REPO / "deploy"
@@ -41,7 +44,7 @@ def blob_env():
 
 
 def queue(cmd, prefix="marked/"):
-    r = subprocess.run(["node", "queue.mjs", cmd, prefix], cwd=DEPLOY,
+    r = subprocess.run([toolpath.node(), "queue.mjs", cmd, prefix], cwd=DEPLOY,
                        capture_output=True, text=True, env=blob_env())
     if r.returncode != 0:
         raise SystemExit(f"apply_marks: queue read failed: {(r.stderr or '').strip()[:200]}")
