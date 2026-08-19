@@ -350,12 +350,13 @@ def build(state, generated):
         f"<td class='loc'>{esc(s.get('location') or s.get('realLocation') or '')}</td>"
         f"<td class='skills'>{skills_cell(s)}</td>"
         f"<td class='note-cell'>{esc(s.get('alignment') or s.get('step',''))}</td>"
-        f"<td><div class='rowacts'>{link(posting_url(s), 'View')}"
+        f"<td><div class='rowacts'>{link(posting_url(s), 'View posting')}"
+        f"<div class='rowacts-btns'>"
         f"<button class='btn apply' data-id=\"{esc(s.get('applicationId',''))}\" "
         f"data-company=\"{esc(s.get('company',''))}\">Apply</button>"
         f"<button class='xbtn drop' data-id=\"{esc(s.get('applicationId',''))}\" "
         f"title='Drop this role' aria-label='Drop {esc(s.get('company',''))}'>&#215;</button>"
-        f"</div></td></tr>" for s in watch
+        f"</div></div></td></tr>" for s in watch
     )
 
 
@@ -586,6 +587,7 @@ def build(state, generated):
 
   .sheet {{ background:var(--card); border-radius:20px; box-shadow:var(--sh); overflow:hidden; }}
   .tablewrap {{ overflow-x:auto; }}
+  .tablewrap table {{ min-width:900px; }}
   table {{ width:100%; border-collapse:collapse; font-size:.93rem; letter-spacing:-.015em;
     table-layout:fixed; }}
   table td {{ overflow-wrap:anywhere; word-break:normal; }}
@@ -673,7 +675,15 @@ def build(state, generated):
   .xbtn:focus-visible, .btn.drop:focus-visible {{ outline:3px solid var(--red); outline-offset:3px; }}
   /* The three row controls need room between them; the cell stays a table-cell
      so the colgroup widths still apply. */
-  .rowacts {{ display:flex; align-items:center; gap:.5rem; white-space:nowrap; }}
+  /* The posting link on its own line, then Apply and the drop control pushed to
+     opposite ends of exactly that width, so the block reads as one unit.
+     inline-flex matters: a stretch column made the link's box span the whole
+     table cell while its text ended well short of it, which left the drop
+     control floating past the arrow instead of sitting under it. Shrink-wrapped
+     to the link, the row is exactly as wide as "View posting" and its arrow. */
+  .rowacts {{ display:inline-flex; flex-direction:column; align-items:stretch;
+    gap:.45rem; white-space:nowrap; }}
+  .rowacts-btns {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; }}
   .chip.lane {{ background:var(--sunk); color:var(--ink-2); font-weight:520; }}
   tr.dropping {{ opacity:.4; }}
   .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
