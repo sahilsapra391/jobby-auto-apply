@@ -103,8 +103,11 @@ def cmd_setup(args, base):
     require_login(base)
 
     if not (DEPLOY / ".vercel" / "project.json").exists():
-        print("Linking the Vercel project...")
-        if run(base + ["link", "--yes"]).returncode != 0:
+        # Name the project explicitly. Without --project the CLI names it after
+        # the directory it links, which here is "deploy", and that becomes the
+        # production hostname.
+        print(f"Linking the Vercel project as {args.project}...")
+        if run(base + ["link", "--yes", "--project", args.project]).returncode != 0:
             raise PublishError("vercel link failed")
 
     password = args.password or secrets.token_urlsafe(18)
@@ -173,6 +176,10 @@ def main():
     ap.add_argument("--local", action="store_true", help="serve locally instead of deploying")
     ap.add_argument("--preview", action="store_true", help="deploy to a preview URL, not production")
     ap.add_argument("--password", help="use this password instead of generating one")
+    # Deliberately bland: this becomes the public hostname, and the board is
+    # readable over someone's shoulder before the password prompt is answered.
+    ap.add_argument("--project", default="jobby-board",
+                    help="Vercel project name, which becomes the hostname (default jobby-board)")
     ap.add_argument("--port", type=int, default=3000, help="port for --local (default 3000)")
     ap.add_argument("--root", help="store directory (default ~/.job-application)")
     args = ap.parse_args()

@@ -40,7 +40,9 @@ Then link the project and generate a password. It prints the password once and d
 python3 scripts/publish.py --setup
 ```
 
-Pass `--password` if you would rather choose your own.
+Run it from anywhere by absolute path; the script resolves its own location.
+
+Pass `--password` to choose your own, and `--project` to change the Vercel project name, which becomes the hostname. It defaults to `jobby-board` rather than anything naming the search, because the hostname is visible in a browser bar before the password prompt is even answered.
 
 ## Publishing
 
