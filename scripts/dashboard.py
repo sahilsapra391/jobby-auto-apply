@@ -979,12 +979,29 @@ def build(state, generated):
     if (!ids.length) return;
     var still = [];
     ids.forEach(function (id) {{
-      var btn = document.querySelector('.btn.apply[data-id="' + id.replace(/"/g, '') + '"]');
+      var safe = id.replace(/"/g, '');
+      // Apply comes from a Watching row, Retry from a Needs you card. Matching
+      // only the Apply button meant a retried card was never restored, so it
+      // reappeared under Needs you on every reload while the agent was queued.
+      var btn = document.querySelector('.btn.apply[data-id="' + safe + '"], '
+                                     + '.btn.retry[data-id="' + safe + '"]');
       if (!btn) return;                      // server already moved it
-      var row = btn.closest('tr');
-      if (!row) return;
+      var node = btn.closest('tr') || btn.closest('.card');
+      if (!node) return;
       still.push(id);
-      leaveWatching(row, btn.dataset.company || '', (row.querySelector('.muted') || {{}}).textContent || '');
+      var company = btn.dataset.company || '';
+      var role = btn.dataset.role || '';
+      if (!company) {{
+        var h3 = node.querySelector('h3');
+        var muted = node.querySelector('.muted') || node.querySelector('.role');
+        company = h3 ? h3.textContent : '';
+        role = muted ? muted.textContent : '';
+      }}
+      var from = tabOf(btn);
+      node.remove();
+      if (from) tabCount(from, -1);
+      tabCount('flight', 1);
+      placeholderCard(company, role);
       fetch('/api/apply', {{
         method: 'POST',
         headers: {{ 'content-type': 'application/json' }},

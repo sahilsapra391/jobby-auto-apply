@@ -388,6 +388,26 @@ def tick(force_publish=False):
         if applied:
             changed["marks"] = [a.get("company") for a in applied]
 
+    # Anything sitting in the apply queue is in flight as far as the board is
+    # concerned, whether or not a runner has reached it yet. Applications run
+    # strictly one at a time, so a queued retry can wait behind a forty-five
+    # minute run; leaving the store saying "review" for that whole time meant a
+    # reload put the card back under Needs you and it read as the click having
+    # failed. The lane is decided here, in the store, so it survives a reload
+    # and looks the same on another device.
+    for item in q.get("apply", []):
+        aid = item.get("applicationId")
+        if not aid:
+            continue
+        loaded = store(["session-load", "--id", aid])
+        if loaded.returncode != 0:
+            continue
+        if (json.loads(loaded.stdout or "{}") or {}).get("status") == "inflight":
+            continue
+        run([sys.executable, str(REPO / "scripts" / "phase.py"), "--id", aid,
+             "--phase", "Queued", "--detail", "waiting for a runner"])
+        changed.setdefault("queued", []).append(aid)
+
     # Nothing that needs a spawned agent is worth starting while the CLI cannot
     # authenticate. The runners preflight too, so the queue is safe either way,
     # but without this the watcher spawns a doomed process every couple of

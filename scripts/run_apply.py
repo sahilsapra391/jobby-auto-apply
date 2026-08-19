@@ -249,8 +249,12 @@ def main():
             agent.invalidate()
             store(["meta-set", "--key", "blocked",
                    "--value", agent.blocked_reason("the spawned agent could not authenticate")])
+        # Hand it back to the lane it came from rather than stranding it in
+        # flight. A failed retry belongs under Needs you again; a failed apply
+        # belongs in Watching. Sitting in flight forever claims work is
+        # happening when nothing is.
         subprocess.run([sys.executable, str(REPO / "scripts" / "phase.py"),
-                        "--id", aid, "--phase", "Failed",
+                        "--id", aid, "--restore", "--phase", "Failed",
                         "--detail", f"the apply run exited {proc.returncode}; see apply-runs.log"],
                        capture_output=True, text=True)
     else:

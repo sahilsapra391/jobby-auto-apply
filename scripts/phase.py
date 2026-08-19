@@ -29,9 +29,13 @@ def main():
     ap.add_argument("--phase")
     ap.add_argument("--detail", default="")
     ap.add_argument("--done", action="store_true", help="return it to the watch list")
+    ap.add_argument("--restore", action="store_true",
+                    help="hand it back to the lane it came from, for a run that failed")
+    ap.add_argument("--root", help="store directory (default ~/.job-application)")
     args = ap.parse_args()
 
-    loaded = subprocess.run([sys.executable, str(STORE), "session-load", "--id", args.id],
+    store = [sys.executable, str(STORE)] + (["--root", args.root] if args.root else [])
+    loaded = subprocess.run(store + ["session-load", "--id", args.id],
                             capture_output=True, text=True)
     if loaded.returncode != 0:
         print(json.dumps({"error": "no such application", "id": args.id}))
@@ -40,13 +44,25 @@ def main():
 
     if args.done:
         d["status"] = "watch"
-        d.pop("phase", None)
-        d.pop("phaseDetail", None)
-        d.pop("phaseAt", None)
+        for key in ("phase", "phaseDetail", "phaseAt", "previousStatus"):
+            d.pop(key, None)
+    elif args.restore:
+        # A run that failed should hand the role back to the lane it came from,
+        # not strand it in flight. A retry that fails belongs in Needs you again;
+        # an apply that fails belongs in Watching.
+        d["status"] = d.pop("previousStatus", None) or "watch"
+        d["phase"] = args.phase or "Stopped"
+        d["phaseDetail"] = args.detail
+        d["phaseAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
         if not args.phase:
             print(json.dumps({"error": "--phase required unless --done"}))
             return 2
+        # Remember the lane once, on the way in. Recording it on every phase
+        # update would overwrite it with "inflight" after the first one and the
+        # role could never be handed back.
+        if d.get("status") != "inflight" and not d.get("previousStatus"):
+            d["previousStatus"] = d.get("status") or "watch"
         d["status"] = "inflight"
         d["phase"] = args.phase
         d["phaseDetail"] = args.detail
@@ -55,17 +71,19 @@ def main():
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(d, f)
         path = f.name
-    r = subprocess.run([sys.executable, str(STORE), "session-save", "--id", args.id,
-                        "--input", path], capture_output=True, text=True)
+    r = subprocess.run(store + ["session-save", "--id", args.id, "--input", path],
+                       capture_output=True, text=True)
     os.unlink(path)
     if r.returncode != 0:
         print(json.dumps({"error": (r.stderr or "").strip()[:150]}))
         return 2
 
     # Refresh the board so the phase is visible while the work is still running.
-    subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
-                   capture_output=True, text=True)
-    print(json.dumps({"id": args.id, "status": d["status"], "phase": d.get("phase")}))
+    if not args.root:
+        subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
+                       capture_output=True, text=True)
+    print(json.dumps({"id": args.id, "status": d["status"],
+                      "previousStatus": d.get("previousStatus"), "phase": d.get("phase")}))
     return 0
 
 
