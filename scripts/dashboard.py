@@ -350,12 +350,12 @@ def build(state, generated):
         f"<td class='loc'>{esc(s.get('location') or s.get('realLocation') or '')}</td>"
         f"<td class='skills'>{skills_cell(s)}</td>"
         f"<td class='note-cell'>{esc(s.get('alignment') or s.get('step',''))}</td>"
-        f"<td>{link(posting_url(s), 'View')}"
+        f"<td><div class='rowacts'>{link(posting_url(s), 'View')}"
         f"<button class='btn apply' data-id=\"{esc(s.get('applicationId',''))}\" "
         f"data-company=\"{esc(s.get('company',''))}\">Apply</button>"
         f"<button class='xbtn drop' data-id=\"{esc(s.get('applicationId',''))}\" "
         f"title='Drop this role' aria-label='Drop {esc(s.get('company',''))}'>&#215;</button>"
-        f"</td></tr>" for s in watch
+        f"</div></td></tr>" for s in watch
     )
 
 
@@ -428,11 +428,12 @@ def build(state, generated):
     --bg:#f5f5f7; --card:#fff; --sunk:#f0f0f2; --seg:#e8e8ed;
     --ink:#1d1d1f; --ink-2:#6e6e73; --ink-3:#8e8e93;
     --hair:rgba(0,0,0,.07);
-    --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9; --red:#b3261e;
+    --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9; --red:#b3261e; --btn-g:#047857; --btn-g-ink:#fff;
     --t-o:rgba(234,88,12,.08); --t-g:rgba(5,150,105,.08); --t-p:rgba(109,40,217,.07);
     --sh:0 1px 3px rgba(0,0,0,.05), 0 6px 20px rgba(0,0,0,.05);
-    /* Logo inverts with the theme. An ink circle on a near-black page has
-       almost no edge, so dark mode gets the paper circle instead. */
+    /* One logo in every theme: the pack's primary, white mark knocked out of
+       an ink circle. Deliberately not themed, so the mark reads the same on
+       the board as it does in the tab strip and on a home screen. */
     --brand-bg:#2B2D2C; --brand-fg:#FFFFFF;
   }}
   @media (prefers-color-scheme:dark) {{
@@ -440,20 +441,18 @@ def build(state, generated):
       --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
       --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
       --hair:rgba(255,255,255,.1);
-      --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#ff6961;
+      --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
       --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
       --sh:0 1px 3px rgba(0,0,0,.5);
-    --brand-bg:#F8F8F8; --brand-fg:#2B2D2C;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
     --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
     --hair:rgba(255,255,255,.1);
-    --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#ff6961;
+    --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
     --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
     --sh:0 1px 3px rgba(0,0,0,.5);
-    --brand-bg:#F8F8F8; --brand-fg:#2B2D2C;
   }}
   *,*::before,*::after {{ box-sizing:border-box; }}
   body {{ margin:0; background:var(--bg); color:var(--ink);
@@ -477,8 +476,14 @@ def build(state, generated):
   .brand {{ display:inline-flex; align-items:center; color:var(--ink);
     text-decoration:none; border-radius:8px; }}
   .brand:focus-visible {{ outline:3px solid var(--blue); outline-offset:4px; }}
-  .lockup {{ height:1.6rem; width:auto; display:block; }}
-  .heromark {{ width:72px; height:72px; display:block; margin:0 auto 1.15rem; }}
+  /* The circle is tangent to its viewBox on all four sides, so the default
+     SVG overflow:hidden shaves the antialiased edge and the curve reads flat
+     top and bottom. The nudge is optical: the wordmark has no descender past
+     the circle, which makes the pair look low against the theme control. */
+  .lockup {{ height:1.6rem; width:auto; display:block; overflow:visible;
+    position:relative; top:-1px; }}
+  .heromark {{ width:72px; height:72px; display:block; margin:0 auto 1.15rem;
+    overflow:visible; }}
 
   .themeseg {{ display:inline-flex; background:var(--seg); border-radius:100px;
     padding:3px; gap:2px; flex:none; }}
@@ -558,7 +563,7 @@ def build(state, generated):
   .btn:hover {{ opacity:.86; }}
   .btn:active {{ transform:scale(.97); }}
   .btn.ghost {{ background:var(--sunk); color:var(--ink); }}
-  .btn[data-done] {{ background:var(--green); }}
+  .btn[data-done] {{ background:var(--btn-g); color:var(--btn-g-ink); }}
   .btn:focus-visible {{ outline:3px solid var(--blue); outline-offset:3px; }}
   .ats {{ color:var(--ink-3); font-size:.78rem; margin-left:auto; }}
   .card.marked {{ opacity:.55; }}
@@ -613,7 +618,8 @@ def build(state, generated):
   .step {{ width:100%; height:4px; border-radius:100px; background:var(--sunk); }}
   .step.on {{ background:var(--purple); }}
   .phase {{ margin:0; font-size:.92rem; font-weight:550; letter-spacing:-.014em; }}
-  .btn.apply {{ background:var(--green); font-size:.8rem; padding:.35rem .8rem;
+  .btn.apply {{ background:var(--btn-g); color:var(--btn-g-ink);
+    font-size:.8rem; padding:.35rem .8rem;
     margin-top:.4rem; display:block; }}
   .btn.apply[disabled] {{ opacity:.5; cursor:default; }}
   .applymsg {{ display:block; font-size:.74rem; color:var(--ink-3); margin-top:.3rem;
@@ -656,12 +662,18 @@ def build(state, generated):
      on anyone, so it should not read as a queue. */
   .tab.aside {{ margin-left:auto; opacity:.72; }}
   .tab.aside.on {{ opacity:1; }}
-  .xbtn {{ appearance:none; border:1px solid var(--hair); background:transparent;
-    color:var(--ink-2); border-radius:6px; cursor:pointer; line-height:1;
-    font-size:1rem; padding:.15rem .4rem; margin-left:.35rem; }}
-  .xbtn:hover {{ color:var(--red); border-color:var(--red); }}
-  .btn.drop {{ color:var(--red); }}
-  .btn.drop:hover {{ background:var(--red); color:#fff; border-color:var(--red); }}
+  /* Destructive controls are filled, not outlined. .btn already sets a blue
+     background, so colouring only the text left red-on-blue. */
+  .btn.drop {{ background:var(--red); color:#fff; border-color:var(--red); }}
+  .xbtn {{ appearance:none; border:1px solid var(--red); background:var(--red);
+    color:#fff; border-radius:6px; cursor:pointer; line-height:1; font-weight:600;
+    font-size:.95rem; padding:.3rem .55rem; }}
+  .xbtn:hover, .btn.drop:hover {{ filter:brightness(1.1); }}
+  .xbtn:active {{ transform:scale(.97); }}
+  .xbtn:focus-visible, .btn.drop:focus-visible {{ outline:3px solid var(--red); outline-offset:3px; }}
+  /* The three row controls need room between them; the cell stays a table-cell
+     so the colgroup widths still apply. */
+  .rowacts {{ display:flex; align-items:center; gap:.5rem; white-space:nowrap; }}
   .chip.lane {{ background:var(--sunk); color:var(--ink-2); font-weight:520; }}
   tr.dropping {{ opacity:.4; }}
   .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
@@ -723,8 +735,8 @@ def build(state, generated):
     <div class="sheet"><div class="tablewrap"><table>
       <colgroup>
         <col style="width:17%"><col style="width:7%"><col style="width:8%">
-        <col style="width:12%"><col style="width:19%"><col style="width:31%">
-        <col style="width:6%">
+        <col style="width:12%"><col style="width:18%"><col style="width:26%">
+        <col style="width:12%">
       </colgroup>
       <thead><tr><th>Role</th><th>Posted</th><th>Experience</th><th>Location</th><th>Core skills</th><th>How you line up</th><th></th></tr></thead>
       <tbody>{watch_rows}</tbody></table></div></div>

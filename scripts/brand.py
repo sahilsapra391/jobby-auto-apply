@@ -9,13 +9,11 @@ assets/brand/ is the single source of truth. The outlines are read from those
 SVGs rather than pasted into this module, so regenerating the pack updates the
 board without anyone editing Python.
 
-Two things make the marks follow the theme:
-
-  - The circle and the knockout mark are painted with var(--brand-bg) and
-    var(--brand-fg). dashboard.py flips that pair per theme, which inverts the
-    logo rather than dimming it.
-  - The wordmark is painted with currentColor, so it tracks the surrounding
-    text on its own.
+The mark is the same in every theme: white sock on an ink circle, the pack's
+primary. The circle and the knockout are painted with var(--brand-bg) and
+var(--brand-fg) so the pair lives in one place, but dashboard.py holds them
+fixed rather than flipping them. Only the wordmark moves, on currentColor, so
+it stays readable against whichever background it sits on.
 
 The mark outline is ~7KB and appears twice (app bar lockup and hero icon), so
 it is emitted once into <defs> and referenced with <use>.
@@ -96,7 +94,7 @@ def defs():
 
 
 def lockup(cls="lockup"):
-    """Mark and wordmark, horizontal. Circle and mark invert with the theme."""
+    """Mark and wordmark, horizontal. Only the wordmark tracks the theme."""
     transform, glyphs = wordmark_glyphs()
     return (
         f'<svg class="{cls}" viewBox="{LOCKUP_VIEWBOX}" role="img" aria-label="Jobby">'
@@ -118,14 +116,32 @@ def icon(cls="icon", label="Jobby"):
     )
 
 
+# The pack ships favicon.svg with a dark-chrome flip built in. Jobby shows one
+# mark everywhere, so the flip is stripped and the ink circle stays put.
+_DARK_FLIP = re.compile(
+    r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}"
+)
+
+
+def _pinned_favicon_svg():
+    svg = _read("01-favicon/favicon.svg")
+    pinned, n = _DARK_FLIP.subn("", svg)
+    if n != 1:
+        raise BrandError(
+            f"expected one prefers-color-scheme block in favicon.svg, found {n}; "
+            "the pack format changed, so the icon would flip in dark chrome"
+        )
+    return pinned
+
+
 def favicon_links():
     """Favicon markup, inlined so a saved copy of the board keeps its icon.
 
-    The pack's SVG carries its own prefers-color-scheme flip, which is what
-    keeps an ink circle from disappearing into a dark tab strip. The ICO stays
-    as the fallback for browsers that ignore SVG icons.
+    The ICO and the touch icon are already the primary mark, white on ink, so
+    only the SVG needs its flip removed. The ICO stays as the fallback for
+    browsers that ignore SVG icons.
     """
-    svg = base64.b64encode(_read("01-favicon/favicon.svg").encode("utf-8")).decode()
+    svg = base64.b64encode(_pinned_favicon_svg().encode("utf-8")).decode()
     ico = base64.b64encode((BRAND / "01-favicon/favicon.ico").read_bytes()).decode()
     touch = base64.b64encode((BRAND / "01-favicon/apple-touch-icon.png").read_bytes()).decode()
     return (

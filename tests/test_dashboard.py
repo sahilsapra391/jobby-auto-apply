@@ -91,13 +91,27 @@ class BrandTest(unittest.TestCase):
         self.assertEqual(html.count('id="jb-mark"'), 1)
         self.assertEqual(html.count('href="#jb-mark"'), 2)
 
-    def test_logo_inverts_rather_than_dims_in_dark(self):
-        # An ink circle on a near-black page has almost no edge, so dark mode
-        # swaps to the paper circle instead of just fading the light one.
+    def test_logo_is_the_same_mark_in_every_theme(self):
+        # One logo everywhere: white mark on an ink circle, on the board, in
+        # the tab strip and on a home screen. Defined once, never overridden.
         html = build()
-        self.assertIn("--brand-bg:#2B2D2C; --brand-fg:#FFFFFF;", html)
-        # Once for the prefers-color-scheme block, once for the forced one.
-        self.assertEqual(html.count("--brand-bg:#F8F8F8; --brand-fg:#2B2D2C;"), 2)
+        self.assertEqual(html.count("--brand-bg:#2B2D2C; --brand-fg:#FFFFFF;"), 1)
+        self.assertNotIn("--brand-bg:#F8F8F8", html)
+        self.assertNotIn("--brand-fg:#2B2D2C", html)
+
+    def test_favicon_does_not_flip_in_dark_chrome(self):
+        # The pack ships the icon with a prefers-color-scheme swap built in.
+        # Shipping that unchanged would give a paper circle in a dark tab bar.
+        import base64
+        html = build()
+        blob = html.split('data:image/svg+xml;base64,')[1].split('"')[0]
+        self.assertNotIn("prefers-color-scheme", base64.b64decode(blob).decode())
+
+    def test_marks_are_not_clipped_by_their_own_viewbox(self):
+        # The circle is tangent to the viewBox on all four sides, so the
+        # default SVG overflow:hidden shaves the antialiased edge flat.
+        html = build()
+        self.assertIn("overflow:visible", html)
 
     def test_marks_are_painted_from_theme_tokens(self):
         html = build()
