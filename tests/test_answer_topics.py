@@ -99,3 +99,74 @@ class OverMatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsentTopicTests(unittest.TestCase):
+    """Interview recording, and the line under background checks.
+
+    Being willing to undergo a background check is a statement of intent and the
+    user's to give. Authorising one, signing the consent that lets a third party
+    pull his records, is a different act and still goes to him. The marker keys
+    on the willingness, never on the words "background check", or it would tick
+    an FCRA consent form.
+    """
+
+    ANSWERS = {
+        "willing": {"question": "willing to submit a background check?", "value": "Yes",
+                    "tags": ["legal-declaration", "background-check-willingness"]},
+        "recording": {"question": "consent to interview recording?", "value": "Yes",
+                      "tags": ["consent", "interview-recording"]},
+    }
+
+    def find(self, question):
+        return store.find_answer(self.ANSWERS, question)
+
+    def test_a_named_vendor_resolves(self):
+        q = ("At Remote we use brighthire.ai to record and auto-transcript our interviews. "
+             "Do you consent to us using this tool during the interviewing process?")
+        self.assertEqual(self.find(q)["value"], "Yes")
+
+    def test_an_unnamed_notetaker_resolves(self):
+        self.assertEqual(
+            self.find("We use an AI notetaker in interviews. Do you consent?")["value"], "Yes")
+
+    def test_willingness_to_be_checked_resolves(self):
+        self.assertEqual(
+            self.find("Would you be willing to undergo a background check?")["value"], "Yes")
+
+    def test_authorising_a_consumer_report_does_NOT_resolve(self):
+        # The one that must keep going to the user. Signing this is what lets a
+        # third party pull his records; agreeing to be checked later is not.
+        out = self.find("I authorize the Company to obtain a consumer report about me "
+                        "for employment purposes.")
+        self.assertNotEqual(out.get("value"), "Yes")
+
+    def test_an_fcra_disclosure_does_NOT_resolve(self):
+        out = self.find("Please acknowledge the FCRA disclosure and sign to permit a "
+                        "background check to be conducted.")
+        self.assertNotEqual(out.get("value"), "Yes")
+
+
+class SourceQuestionTests(unittest.TestCase):
+    """"How did you hear about us" carries the company name, so no two forms
+    word it the same and overlap scoring never matches it."""
+
+    ANSWERS = {
+        "source": {"question": "how did you hear about us?", "value": "Company website",
+                   "tags": ["sourcing", "source-how-heard"]},
+        "referral": {"question": "who referred you?", "value": "",
+                     "tags": ["sourcing"]},
+    }
+
+    def find(self, q):
+        return store.find_answer(self.ANSWERS, q)
+
+    def test_the_company_name_in_the_question_does_not_break_it(self):
+        for q in ("How did you hear about Bevi? (required)",
+                  "How did you find out about this opportunity at Datadog?",
+                  "Where did you hear about this role?"):
+            self.assertEqual(self.find(q)["value"], "Company website", q)
+
+    def test_an_unrelated_question_is_not_swept_in(self):
+        self.assertNotEqual(self.find("How many years of experience do you have?")
+                            .get("value"), "Company website")

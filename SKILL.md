@@ -182,7 +182,13 @@ If tailoring or verification cannot be satisfied, upload the base resume, skip t
 - **Political contributions.** Any lookback window, to officials, candidates, parties, PACs or political organisations. Finance and investment-advisory firms ask this to satisfy pay-to-play rules, so it is on most of their forms.
 - **Relationships and conflicts of interest.** Related to or closely associated with a client's director, officer or senior employee, a government official, a regulator, an employee of the hiring company, or a competitor.
 
-Everything else still belongs to the user: auditor independence, criminal history, anything not squarely in those three. Check the answer store first, since it holds the exact wording and the boundary of each.
+Three more carry a standing answer:
+
+- **Background check, willingness.** "Are you willing to submit to / undergo a background check" is **Yes**. Signing the authorisation is not: an FCRA disclosure, "I authorise the company to obtain a consumer report", or any consent granting a third party the right to pull records still goes to the user. Agreeing to be checked and signing the thing that permits it are different acts.
+- **Interview recording.** Consent to recording, transcription or an AI notetaker is **Yes**, whatever the vendor.
+- **How did you hear about us.** "Company website", or the closest option the form offers. Never *Referral* or a named employee: that claims somebody vouched for him, and it is checkable.
+
+Everything else still belongs to the user: auditor independence, criminal history, anything not squarely in these. Check the answer store first, since it holds the exact wording and the boundary of each.
 
 **Accuracy attestations** ("I certify the information provided is true and accurate to the best of my knowledge") are standing-authorised by the user and may be ticked, but only when every answer on the form came from the profile, the answer store or the story bank. If any field holds something you inferred, guessed or composed beyond those sources, do not tick it: that is certifying your guess as their fact. Park it instead.
 

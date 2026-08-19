@@ -228,6 +228,29 @@ TOPIC_MARKERS = [
         "political contribution", "political contributions",
         "political action committee", "contribution to any political",
     )),
+    # Willingness only, never authorisation. "background check" on its own is
+    # deliberately absent: it appears just as often in "I authorise the company
+    # to obtain a consumer report", and signing that is the user's act, not a
+    # statement of intent. The marker has to carry the willingness with it.
+    ("background-check-willingness", (
+        "willing to submit a background", "willing to submit to a background",
+        "willing to undergo a background", "willing to complete a background",
+        "willing to consent to a background", "willing to take a background",
+        "willing to undergo a drug", "willing to submit to a drug",
+    )),
+    ("interview-recording", (
+        "record and auto-transcript", "record and auto-transcribe",
+        "record and transcribe", "auto-transcribe your interview",
+        "recording of your interview", "record your interview",
+        "interview recording", "ai notetaker", "brighthire", "metaview",
+    )),
+    ("source-how-heard", (
+        "how did you hear about", "how did you find out about",
+        "how did you learn about", "where did you hear about",
+        "how did you find this", "how did you come across",
+        "where did you find this role", "referral source",
+        "how were you referred", "source of application",
+    )),
     ("relationships-conflicts", (
         "close associate", "conflict of interest", "conflicts of interest",
         "related to, by birth", "related by birth", "birth, adoption or marriage",
