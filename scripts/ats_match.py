@@ -184,6 +184,7 @@ NOISE = set("""
 four five six seven eight nine ten first second third next last full part high low big small
 fit gap gaps ask asks down drag entirely expect fatal background thing things area areas
 lot lots way ways day days week weeks month months time times point points level levels
+need needs needed want wants right good better best able
 """.split())
 
 
@@ -198,6 +199,34 @@ def useful(term):
     return True
 
 
+def surface_forms(text):
+    """Stem -> how the posting actually spells it.
+
+    Matching is done on stems, so "management" and "manages" collapse together.
+    But the suggested terms get woven into a resume verbatim, and writing
+    "manag" or "kubernet" into Areas of Expertise is worse than writing nothing.
+    Keep the posting's own spelling to put back.
+    """
+    forms = {}
+    for raw in TOKEN.findall(text or ""):
+        stem = normalise(raw)
+        if not stem:
+            continue
+        # Same punctuation normalise strips, or "platform." ends up in Areas of
+        # Expertise with the full stop attached.
+        clean = raw.strip(".,;:()[]{}\"'")
+        if not clean:
+            continue
+        # Prefer the longest spelling seen: "management" over "manage".
+        if stem not in forms or len(clean) > len(forms[stem]):
+            forms[stem] = clean
+    return forms
+
+
+def spell(term, forms):
+    return " ".join(forms.get(part, part) for part in term.split())
+
+
 def suggest(jd_text, resume_text, base_text, facts_text, limit):
     """What the resume could honestly say in the posting's words, and cannot.
 
@@ -208,16 +237,20 @@ def suggest(jd_text, resume_text, base_text, facts_text, limit):
     jd_terms = [t for t in keywords(jd_text, limit * 2) if useful(t)][:limit]
     resume_tokens = tokens(resume_text)
     source_tokens = tokens(base_text) + tokens(facts_text or "")
+    # The posting's spelling for the terms, and the candidate's for the evidence.
+    jd_forms = surface_forms(jd_text)
+    mine_forms = surface_forms((base_text or "") + " " + (facts_text or ""))
     rewritable, not_claimable, already = [], [], []
     for term in jd_terms:
         if contains(resume_tokens, term):
-            already.append(term)
+            already.append(spell(term, jd_forms))
             continue
         found = evidence_for(term, source_tokens)
         if found:
-            rewritable.append({"term": term, "evidence": found})
+            rewritable.append({"term": spell(term, jd_forms),
+                               "evidence": spell(found, mine_forms)})
         else:
-            not_claimable.append(term)
+            not_claimable.append(spell(term, jd_forms))
     reachable = len(already) + len(rewritable)
     return {
         "postingTerms": len(jd_terms),

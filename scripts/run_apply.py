@@ -97,7 +97,24 @@ Do this and nothing else:
    following references/tailoring.md:
    the region-matched base resume from profile.resumes, the identity block for that region,
    six sentences maximum on any free-text answer, every claim traceable to the base resume,
-   the answer store or the story bank. Verify with scripts/resume_pdf.py verify before using them.
+   the answer store or the story bank.
+
+   BEFORE you write either document, work out which of the posting's words you are entitled
+   to use. Write the posting's text (the `extraction`) to a file and run:
+     "{py}" "{repo}/scripts/ats_match.py" --suggest --jd <that file> --base <base resume>.pdf
+   `rewritable` is the posting's word for something he has genuinely done, each with the
+   evidence behind it. Weave every one of those in, hard: re-pick and re-order Areas of
+   Expertise for this posting, regroup Technical Proficiencies under the posting's names,
+   and rewrite the Professional Experience bullets so the posting's phrasing leads while the
+   numbers, employers, dates and titles stay exactly as they are. The cover letter takes the
+   same vocabulary. Never use anything from `notClaimable`.
+
+   Then verify both, and do not upload until both pass:
+     "{py}" "{repo}/scripts/resume_pdf.py" verify ...          (layout matches the base)
+     "{py}" "{repo}/scripts/ats_match.py" --jd <that file> --resume <tailored>.pdf --base <base>.pdf
+   `unsourcedTerms` MUST be empty. A term in there is one lifted off the posting with nothing
+   behind it: cut it and rebuild. High coverage with a non-empty unsourced list is not a good
+   resume, it is one that started inventing.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
 3. Open the posting with the `mcp__browser__*` tools and fill the application, verifying

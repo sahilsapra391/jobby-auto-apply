@@ -19,7 +19,7 @@ import re
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Importable whether this is run as a script from the repo root or loaded by
 # path (which the tests do), where scripts/ would not be on sys.path.
@@ -241,12 +241,20 @@ def build(state, generated):
         return f'<span class="chip ready" title="{esc(conf)}">confirmed</span>'
 
     def doc_cell(value):
-        """A link when a real file went out, an honest note when none did."""
+        """A link when a real file went out, an honest note when none did.
+
+        Link by basename. Runs record this either way, some as
+        "Sahil_Sapra_Cohere_Resume.pdf" and some as
+        "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf". Documents are
+        published under the basename and the route rejects a name containing
+        slashes, so a path-recorded document produced a link that resolved to
+        "No such document" while the file itself was published and fine.
+        """
         v = (value or "").strip()
         if v.endswith(".pdf"):
             from urllib.parse import quote
-            return (f'<a class="go" href="/doc/{quote(v)}" target="_blank" '
-                    f'rel="noopener">PDF &nearr;</a>')
+            return (f'<a class="go" href="/doc/{quote(PurePosixPath(v).name)}" '
+                    f'target="_blank" rel="noopener">PDF &nearr;</a>')
         if not v or v == "-":
             return '<span class="muted">&mdash;</span>'
         # e.g. "not accepted by this form", "pasted as text into Additional Information"

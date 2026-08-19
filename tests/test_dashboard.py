@@ -246,3 +246,57 @@ class PostedDateTests(unittest.TestCase):
     def test_unparseable_text_is_shown_rather_than_invented(self):
         self.add("vague", postedAgo="not shown")
         self.assertIn("not shown", self.render())
+
+
+class DocumentLinkTests(unittest.TestCase):
+    """Links to the resume and cover letter an employer received.
+
+    Runs record the document either way: some as a bare filename, some as
+    "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf". Documents are published
+    under the basename and the route rejects a name containing slashes, so the
+    path-recorded ones produced links that resolved to "No such document" while
+    the files themselves were published and fine.
+    """
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp())
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "store.py"),
+                        "--root", str(self.root), "init"], capture_output=True)
+
+    def completed(self, aid, resume, cover):
+        event = {"event": "completed", "applicationId": aid, "company": aid.title(),
+                 "role": "PM", "confirmation": "submitted",
+                 "resumeVariant": resume, "coverLetter": cover}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(event, f)
+            path = f.name
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "store.py"),
+                        "--root", str(self.root), "history-append", "--input", path],
+                       capture_output=True)
+        os.unlink(path)
+
+    def links(self):
+        out = pathlib.Path(tempfile.mkdtemp()) / "b.html"
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "dashboard.py"),
+                        "--root", str(self.root), "--out", str(out)], capture_output=True)
+        return re.findall(r'href="/doc/([^"]+)"', out.read_text(encoding="utf-8"))
+
+    def test_a_path_recorded_document_links_by_basename(self):
+        self.completed("cohere", "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf",
+                       "applications/Cohere/Sahil_Sapra_Cohere_CoverLetter.pdf")
+        self.assertEqual(sorted(self.links()),
+                         ["Sahil_Sapra_Cohere_CoverLetter.pdf",
+                          "Sahil_Sapra_Cohere_Resume.pdf"])
+
+    def test_a_filename_recorded_document_is_unchanged(self):
+        self.completed("criteo", "Sahil_Sapra_Criteo_Resume.pdf",
+                       "Sahil_Sapra_Criteo_CoverLetter.pdf")
+        self.assertIn("Sahil_Sapra_Criteo_Resume.pdf", self.links())
+
+    def test_no_link_ever_contains_a_path_separator(self):
+        # The route only accepts [A-Za-z0-9._-], so a slash is a guaranteed 404.
+        self.completed("a", "applications/A/x.pdf", "applications/A/y.pdf")
+        self.completed("b", "z.pdf", "w.pdf")
+        for link in self.links():
+            self.assertNotIn("/", link)
+            self.assertNotIn("%2F", link)
