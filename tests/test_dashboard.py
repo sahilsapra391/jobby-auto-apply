@@ -214,3 +214,35 @@ class PostedDateTests(unittest.TestCase):
         self.add("byday", postedDays=1)
         expected = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
         self.assertIn(expected, self.render())
+
+    def test_the_shapes_sweeps_actually_write(self):
+        # Every one of these came off a real watch entry. Requiring the word
+        # "ago" matched almost none of them.
+        for name, note in [("a", "~23 hours"), ("b", "~20-21 hours"),
+                           ("c", "LinkedIn feed said 3 hours"), ("d", "~3 weeks"),
+                           ("e", "22 days (released)")]:
+            self.add(name, postedAgo=note)
+        rendered = self.render()
+        self.assertNotIn("unknown", rendered,
+                         "every one of these carries enough to date it")
+
+    def test_a_date_written_into_the_note_beats_a_misleading_relative(self):
+        # A LinkedIn feed says "3 hours" for a posting Greenhouse dates months
+        # back. The real date is the one in the note.
+        self.add("klaviyo", postedAgo="LinkedIn feed said 3 hours, but Greenhouse says 2026-07-28")
+        self.assertIn("2026-07-28", self.render())
+
+    def test_a_relative_note_is_measured_from_when_the_sweep_ran(self):
+        # "2 hours" recorded three days ago means three days ago, not today.
+        # Measuring from now would make stale finds look brand new.
+        old_scan = (datetime.now(timezone.utc) - timedelta(days=3))
+        self.add("stale", postedAgo="2 hours")
+        path = self.root / "sessions" / "stale.json"
+        session = json.loads(path.read_text())
+        session["updatedAt"] = old_scan.strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.write_text(json.dumps(session))
+        self.assertIn(old_scan.date().isoformat(), self.render())
+
+    def test_unparseable_text_is_shown_rather_than_invented(self):
+        self.add("vague", postedAgo="not shown")
+        self.assertIn("not shown", self.render())

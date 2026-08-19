@@ -300,32 +300,51 @@ def build(state, generated):
         cls = "yrs over" if over else "yrs"
         return f'<span class="{cls}">{esc(text)}</span>'
 
+    # Sweeps record this as free text, and every sweep words it differently:
+    # "~23 hours", "~20-21 hours", "LinkedIn feed said 3 hours", "22 days
+    # (released)", "~2-3 hours (2026-08-19)", "not shown". Requiring the word
+    # "ago" matched almost none of it, so the freshest roles had no sortable
+    # value and sank to the bottom of a list ordered newest first.
+    ISO_DATE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
     RELATIVE = re.compile(
-        r"(\d+)\s*\+?\s*(minute|min|hour|hr|day|week|month|year)s?\s*ago", re.I)
+        r"(\d+)\s*(?:[-\u2013]\s*\d+\s*)?\+?\s*"
+        r"(minute|min|hour|hr|day|week|month|year)s?", re.I)
     PER_DAY = {"minute": 1 / 1440, "min": 1 / 1440, "hour": 1 / 24, "hr": 1 / 24,
-               "day": 1, "week": 7, "month": 30, "year": 365}
+               "day": 1.0, "week": 7.0, "month": 30.0, "year": 365.0}
+
+    def _scan_time(entry):
+        """When the sweep saw this. A relative note is relative to THAT moment,
+        not to now: "2 hours" recorded yesterday means yesterday, and measuring
+        it from now would make a day-old posting look brand new."""
+        stamp = entry.get("foundAt") or entry.get("updatedAt") or ""
+        try:
+            return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.now(timezone.utc)
 
     def posted_on(entry):
-        """(date, detail, age_in_days) for a posting, from whatever it recorded.
-
-        A date every time, because the date is what the column sorts on. A role
-        found "2 hours ago" carried only that string, so it had no sortable value
-        and sank to the bottom of a list ordered newest first, which is the exact
-        opposite of where it belonged.
-        """
-        raw = (entry.get("postedAgo") or "").strip()
+        """(date, detail, age_in_days) for a posting, from whatever it recorded."""
+        raw = str(entry.get("postedAgo") or "").strip()
         days = entry.get("postedDays")
         date = entry.get("postedDate")
-
         if not isinstance(days, (int, float)):
             days = None
-        if days is None and raw:
-            m = RELATIVE.search(raw)
-            if m:
-                days = int(m.group(1)) * PER_DAY[m.group(2).lower()]
-        if date is None and days is not None:
-            date = (datetime.now(timezone.utc).date()
-                    - timedelta(days=round(days))).isoformat()
+
+        # An explicit date beats everything, including one written into the note.
+        if not date:
+            found = ISO_DATE.search(raw)
+            if found:
+                date = found.group(0)
+
+        anchor = _scan_time(entry)
+        if date is None:
+            if days is None:
+                m = RELATIVE.search(raw)
+                if m:
+                    days = int(m.group(1)) * PER_DAY[m.group(2).lower()]
+            if days is not None:
+                date = (anchor - timedelta(days=days)).date().isoformat()
+
         if days is None and date:
             try:
                 days = (datetime.now(timezone.utc).date()
