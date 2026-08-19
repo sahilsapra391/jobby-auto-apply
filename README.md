@@ -1,20 +1,20 @@
 <div align="center">
 
-# apply-for-me
+# jobby-auto-apply
 
 ### I stopped applying to jobs myself. My Claude agent does it now.
 
-A [Claude Skill](https://docs.claude.com/en/docs/claude-code/skills) that reads your resume once, interviews you once, then finds roles, fills the applications, surfaces referrals, and hands you a dashboard of what still needs a human. Never invents a fact. Never touches your passwords. Never leaves your machine.
+A [Claude Skill](https://docs.claude.com/en/docs/claude-code/skills) that reads your resume once, interviews you once, then finds roles, fills the applications, surfaces referrals, and hands you a dashboard of what still needs a human. Never invents a fact. Never touches your passwords. Never leaves your machine, unless you choose to publish the board.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](SKILL.md)
 [![Built on](https://img.shields.io/badge/built%20on-Claude%20Skills-D97757.svg)](https://docs.claude.com/en/docs/claude-code/skills)
 
 ```bash
-git clone https://github.com/YoursSarcastically/apply-for-me.git ~/.claude/skills/job-application
+git clone https://github.com/sahilsapra391/jobby-auto-apply.git ~/.claude/skills/job-application
 ```
 
-Needs Python 3.9+ and the [Claude for Chrome](https://claude.com/chrome) extension. Then just say: *"find me senior AI PM roles and apply."*
+The target directory is the skill's name, not the repo's. Needs Python 3.9+ and the [Claude for Chrome](https://claude.com/chrome) extension. Then just say: *"find me senior AI PM roles and apply."*
 
 </div>
 
@@ -22,13 +22,14 @@ Needs Python 3.9+ and the [Claude for Chrome](https://claude.com/chrome) extensi
 
 ## The pitch, in one table
 
-| | Typical auto-apply tools | apply-for-me |
+| | Typical auto-apply tools | jobby-auto-apply |
 |---|---|---|
 | Unknown required field | Guesses something plausible | Leaves it blank, parks it, asks you once |
 | Your data | Their servers | `~/.job-application/`, your machine, owner-readable only |
 | Submission | Fire and forget | Verified, crash-safe, defaults to stopping for your review |
 | Strategy | Volume | Referrals first, quality-capped volume, full-posting reads |
 | Free-text answers | Generic template | Your writing samples, your stories, every claim traceable |
+| Your resume | One file, sent everywhere | A new resume *and* cover letter per posting, in your own layout, checked against the original |
 | After you apply | Nothing | Tracks outcomes, shifts search toward what converts |
 
 ---
@@ -90,6 +91,11 @@ It reduces the risk deliberately: it works inside your own logged-in Chrome sess
 **Where does my data live? Is anything sent anywhere?**
 Everything lives in `~/.job-application/` on your machine, owner-readable only. Sensitive values (compensation, visa status, demographics) need separate permission to *use* and to *store*, and are never fuzzy-matched into look-alike fields. Nothing is uploaded except the applications you approve.
 
+**Does it change my resume?**
+Every single application gets its own resume *and* its own cover letter, built from that posting's description. Never a reused file. It uses the `resume-tailor` skill to clone your existing layout exactly and reword only the content, with the drafting done by Claude Fable 5. Your original file is never edited.
+
+Because rewording next to a job description is exactly where invention creeps in, every pair is checked twice before upload. On content: skills, numbers, dates, employers and employment titles all have to trace back to your real resume, and anything that arrived from the posting and nowhere else gets cut. Your job titles are frozen; only the profile title at the top is allowed to adapt toward the role. On format: `scripts/resume_pdf.py verify` diffs the rebuilt PDF against your original and exits non-zero on a changed margin, a missing accent colour, or a font size with no counterpart. If either check fails, it sends your base resume and tells you.
+
 **Will it lie on my behalf?**
 No. That's the skill's core design constraint. Every stored value carries a confidence state (`confirmed` / `inferred` / `missing` / `sensitive`), so a guess is never silently reused as a fact. It never ticks accuracy attestations, never answers legal declarations by default, and free-text answers must trace every claim to your resume, your answers, or your own words.
 
@@ -98,6 +104,9 @@ Yes, that's the default. During intake you choose: always stop before Submit, or
 
 **Can it run on a schedule?**
 Yes. It's designed as a recurring cycle: sweep new postings, apply where nothing is blocking, park what needs you, update the dashboard. Run it on demand ("check for new jobs") or schedule it with Claude Code's `/loop` or scheduled tasks.
+
+**Can I read the dashboard from my phone?**
+Yes. By default it publishes as a private Claude artifact, which needs no account. If you'd rather have your own URL, `python3 scripts/publish.py --setup` deploys it to Vercel behind a password and every later `publish.py` overwrites that same link. The board names companies, contacts and drafted messages, so the password is not optional: Vercel's own protection leaves production domains public on the free plan, so the gate is built into the deployment and refuses to serve anything if no password is set. `references/hosting.md` has the details.
 
 **How do I know it works before it touches a real application?**
 It ships with a practice form (`tests/fixtures/practice-form.html`) that reproduces the real hazards: a modal X that submits, autocompletes that reject free text, silently-validating fields, a planted prompt-injection trap. The first run rehearses there first. The storage and dashboard code has a unit-test suite: `python3 -m unittest discover -s tests`.
@@ -110,8 +119,12 @@ scripts/store.py             profile, answers, history, sessions, funnel stats
 scripts/dashboard.py         builds the board
 references/platforms.md      per-ATS quirks and blockers
 references/sourcing.md       channel map, sweep planning, outcome-driven search
-references/tailoring.md      voice, story bank, truth ledger, resume variants
+references/tailoring.md      voice, story bank, truth ledger, per-posting resumes
 references/storage.md        the data contract
+references/hosting.md        local, artifact, or your own password-gated URL
+scripts/publish.py           renders the board and deploys it to Vercel
+scripts/resume_pdf.py        macOS PDF toolchain: font check, render, format verify
+deploy/                      the password gate and its Vercel config
 tests/                       unit tests + the practice application form
 ```
 
@@ -119,4 +132,4 @@ State lives in `~/.job-application/`, owner-readable only. Every stored value ca
 
 Contributions welcome. Run the tests, and add a row to the failure table if a real application taught you a new rule.
 
-MIT.
+Forked from [YoursSarcastically/apply-for-me](https://github.com/YoursSarcastically/apply-for-me), with per-posting resume tailoring and self-hosted dashboard hosting added. MIT.

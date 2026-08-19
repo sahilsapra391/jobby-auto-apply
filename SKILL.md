@@ -1,7 +1,7 @@
 ---
 name: job-application
-description: Apply to jobs end to end - read the user's resume, run a one-time intake so later applications need almost no input, find matching roles, fill applications on LinkedIn Easy Apply, Greenhouse, Lever, Ashby, Workday, iCIMS, Google Careers and company forms, surface referral contacts, and produce a dashboard artifact showing what still needs the user. Use this whenever the user wants to apply to a job, shares a job or careers URL, asks for a shortlist of roles, says "apply for me", "find me jobs", "fill this application", or asks about tailoring answers, cover letters or referral messages to a posting. Prefer this over ad-hoc browser driving, because applications carry the user's name and mistakes are expensive to undo.
-allowed-tools: Read, Write, Bash, Artifact, mcp__claude-in-chrome__*, mcp__Claude_Browser__*
+description: Apply to jobs end to end - read the user's resume, run a one-time intake so later applications need almost no input, find matching roles, fill applications on LinkedIn Easy Apply, Greenhouse, Lever, Ashby, Workday, iCIMS, Google Careers and company forms, surface referral contacts, build a resume and cover letter tailored to each posting, and produce a dashboard artifact showing what still needs the user. Use this whenever the user wants to apply to a job, shares a job or careers URL, asks for a shortlist of roles, says "apply for me", "find me jobs", "fill this application", or asks about tailoring answers, cover letters or referral messages to a posting. Prefer this over ad-hoc browser driving, because applications carry the user's name and mistakes are expensive to undo.
+allowed-tools: Read, Write, Bash, Skill, Agent, Artifact, mcp__claude-in-chrome__*, mcp__Claude_Browser__*
 ---
 
 # Job Application
@@ -44,6 +44,14 @@ Once connected, confirm the user is signed in to LinkedIn in that profile before
 
 **Preflight on the practice form.** Before the first real application ever, open `tests/fixtures/practice-form.html` (from the skill directory, via `file://`) and complete it end to end. It reproduces the classic hazards — the modal X that submits, the autocomplete that rejects free text, the silently-validating salary field, the overlay-blocked radios, the hidden file input, an attestation box, and a planted instruction addressed to AI assistants. Passing it proves the browser toolchain and these rules work here, without spending a real application to find out. Rerun it after any change to this skill.
 
+**Preflight the PDF toolchain too**, once, before the first tailored resume:
+
+```bash
+python3 "<skill-dir>/scripts/resume_pdf.py" check --resume <base-resume>.pdf
+```
+
+It reports whether Chrome and pymupdf are present and whether the fonts the user's resume actually uses are installed, with the exact `brew install --cask` for a metric-compatible substitute where one is missing. A substituted font with different metrics reflows the page, so a resume that looked identical in review arrives at the employer with different line breaks.
+
 ## Phase 1: Intake (once)
 
 Run this before the first application. It is what makes everything afterwards low-touch.
@@ -51,6 +59,8 @@ Run this before the first application. It is what makes everything afterwards lo
 ### Resume
 
 Ask for the resume path. Read it, extract the fields listed in `references/storage.md`, and **show the user what you extracted before saving.** PDF extraction is lossy and an error here propagates into every future application.
+
+Save that path in the profile as `resumePath`. It is the base document every tailored resume is cloned from, and it is never edited in place.
 
 ### The intake interview
 
@@ -144,7 +154,23 @@ Recurring mechanics:
 
 When the options don't include an accurate answer, pick the closest truthful one and say what you picked and why. If the honest option is weaker than an available exaggeration, still pick the honest one and let the user override.
 
-**Free-text answers are a different craft from fields.** Screening questions, cover letters and referral messages follow `references/tailoring.md`: drafted in the user's voice from their writing samples, every claim traceable to the resume, the answer store, or the conversation, and built from the story bank rather than invented. When a resume variant is used, record which one on the `completed` event (`resumeVariant`) — the interviewer is reading the resume they received, and the user must know which that was.
+**Every application gets a fresh resume and a fresh cover letter.** Not one per role family, not a reused file: one pair per posting, built from that posting's own description. Build them **before filling, not after**, because most forms take the resume early and some parse it to prefill later fields, so a swap afterwards is either impossible or leaves the form disagreeing with the document.
+
+Delegate the pair to a **subagent running Claude Fable 5** (`claude-fable-5`), one per application, invoking the **`resume-tailor` skill** with the profile's `resumePath` and the posting extraction already stored in the watch entry. Do not re-open the posting: a body is read exactly once per role, ever. The subagent carries the PDF work and returns two file paths plus what it changed, never page dumps.
+
+Write the resume to `~/.job-application/resumes/` and the cover letter to `~/.job-application/cover-letters/`, keeping the skill's naming (`<First>_<Last>_<Company-or-Role>_Resume.pdf`). Ignore the `/mnt/user-data/` paths in that skill's own docs; they are a Linux sandbox convention and do not exist here.
+
+Then verify both, because rewording next to a job description is exactly the operation that invents things. Every skill, number, employment title, employer and date must trace to the base resume, the answer store, or something the user said, and a term that arrived only from the posting gets cut. One deliberate exception: the **profile title** at the top is meant to adapt toward the role, while **employment titles inside the experience section are frozen**. Check them separately. Then verify the format holds:
+
+```bash
+python3 "<skill-dir>/scripts/resume_pdf.py" verify --pdf <tailored>.pdf --against <base>.pdf
+```
+
+It exits non-zero and names what drifted. `references/tailoring.md` has the full checklist. Record both filenames on the `completed` event, as `resumeVariant` and `coverLetter`.
+
+If tailoring or verification cannot be satisfied, upload the base resume, skip the cover letter, and say so plainly. A truthful generic resume beats a tailored one you cannot vouch for.
+
+**Free-text answers are a different craft from fields.** Screening questions, cover letters and referral messages follow `references/tailoring.md`: drafted in the user's voice from their writing samples, every claim traceable to the resume, the answer store, or the conversation, and built from the story bank rather than invented.
 
 **Legal declarations** get cross-checked against work history rather than answered by default. Auditor-independence questions, government-official status, conflicts of interest, and truth attestations all belong to the user. Never tick a truth attestation, especially when any field holds inferred data — that is certifying your guess as their fact.
 
@@ -193,6 +219,8 @@ It reads the store and produces four sections:
 
 Then publish it with the Artifact tool and give the user the link.
 
+**If the user wants the board on their own URL**, `references/hosting.md` covers it. `python3 "<skill-dir>/scripts/publish.py"` renders the board and deploys it to Vercel behind a password, overwriting the same production URL every time. When `store.py meta-get --key dashboardUrl` returns a URL, that is the board the user is reading, so publish there rather than creating a fresh artifact beside it.
+
 Regenerate it whenever the state meaningfully changes. Store its URL after the first publish — `store.py meta-set --key artifactUrl --value <url>` — and pass that stored URL to the Artifact tool on every republish, so the user keeps one link rather than accumulating them.
 
 ## Running as a standing agent
@@ -206,7 +234,7 @@ One cycle is:
 1. **Sweep** using the stored sweep plan (`meta-get --key sweepPlan`), each channel-query cell filtered to postings newer than its last-swept stamp; build the plan from `references/sourcing.md` if this is the first run.
 2. **Dedupe** against history — `store.py history-status` gives the latest event per application, which is the guard against reapplying, and `store.py stats` lists `needsVerification`: applications where a previous session died mid-submit. Verify those on the platform before touching them, and log `completed` or `abandoned` accordingly. Filter out excluded companies here too.
 3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age.
-4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap.
+4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Fable 5 and verified against the base before upload.
 5. **Park** anything blocked as a session with its pending fields and reasons.
 6. **Regenerate the dashboard** and republish to the same artifact URL.
 7. **Report**: what is new, what went out, what needs them, in a few lines.
@@ -238,6 +266,8 @@ Between cycles, hold the state in the store rather than in conversation. A cycle
 ### Keeping the dashboard current
 
 Republish to the **same artifact URL** every cycle: read it with `store.py meta-get --key artifactUrl` and pass it to the Artifact tool. The user keeps one bookmark that is always current, rather than accumulating links.
+
+If `dashboardUrl` is set, the same rule applies to the hosted board: run `scripts/publish.py` at the end of the cycle and it overwrites that URL in place. Either way the user keeps one link.
 
 Be accurate about what this is: the page is regenerated when a cycle runs, not continuously live. If asked for genuinely live updating, say plainly that a published page can only refresh itself where the runtime grants it a data capability, and check `artifact-capabilities` for what is actually available rather than promising it.
 
@@ -271,6 +301,6 @@ Do **not** mirror the whole application store into memory. Per-application state
 
 When something in memory turns out to be wrong or superseded, update or delete it rather than layering a correction beside it.
 
-Full command surface for the application store in `references/storage.md`.
+Full command surface for the application store in `references/storage.md`. The documents sent to employers live in that store too, under `resumes/` and `cover-letters/`, one pair per application.
 
 The key idea: **every stored value carries a confidence state.** Anything you inferred rather than were told is marked `inferred` and gets re-confirmed rather than reused silently. A guess that hardens into a fact is how these systems produce quiet inaccuracies at scale.

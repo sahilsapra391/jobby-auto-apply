@@ -1,0 +1,6 @@
+{
+  "name": "job-application-board",
+  "private": true,
+  "type": "module",
+  "description": "Password-gated hosting for the job-application dashboard."
+}

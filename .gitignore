@@ -6,3 +6,9 @@ dashboard.html
 __pycache__/
 *.pyc
 .DS_Store
+
+# Vercel hosting: the generated module carries real application data,
+# and .vercel holds the project link
+deploy/api/_dashboard.js
+deploy/.vercel/
+node_modules/

@@ -8,8 +8,12 @@ All persistent state lives under `~/.job-application/` and is reached only throu
   answers.json         reusable answers, each with a confidence state
   applications.jsonl   append-only event log
   sessions/            resumable in-progress applications
+  resumes/             one tailored resume per application
+  cover-letters/       one cover letter per application
   meta.json            small operational values: dashboard artifact URL, last sweep time
 ```
+
+`resumes/` and `cover-letters/` hold the documents actually sent to employers, built by the `resume-tailor` skill from the base resume at `profile.resumePath`. The base resume is never edited. **Every application gets its own pair**, named as that skill names them (`<First>_<Last>_<Company-or-Role>_Resume.pdf`) so the filename still means something in an inbox. Both filenames go on the `completed` event, as `resumeVariant` and `coverLetter`, so the user can pull up exactly what an interviewer is reading. See `references/tailoring.md` for the checks a pair has to pass before upload.
 
 ## Commands
 
@@ -71,7 +75,7 @@ Only pass `--remember-sensitive` after a clear yes to the second. Permission to 
 {"event": "reviewed", "company": "...", "role": "...", "ats": "greenhouse", "applicationId": "..."}
 ```
 
-Useful optional fields: `source` (the channel the role came from — `linkedin`, `greenhouse`, `wellfound` — put it on every `completed` event; it is what powers the per-channel conversion in `stats`) and `resumeVariant` (which resume the employer received, per `tailoring.md`).
+Useful optional fields: `source` (the channel the role came from — `linkedin`, `greenhouse`, `wellfound` — put it on every `completed` event; it is what powers the per-channel conversion in `stats`) and `resumeVariant` plus `coverLetter` (the two documents the employer received, per `tailoring.md`).
 
 `reviewed` means the form reached final review. `submitting` is written immediately **before** any potentially-final interaction — Submit, closing a completed modal, navigating away. `completed` means the user confirmed submission, or you directly observed a confirmation state.
 

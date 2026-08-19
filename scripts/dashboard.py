@@ -32,7 +32,7 @@ def read_json(path, default):
     if not p.exists():
         return default
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return default
 
@@ -49,7 +49,7 @@ def load_state(root):
     history = []
     hpath = root / "applications.jsonl"
     if hpath.exists():
-        for line in hpath.read_text().splitlines():
+        for line in hpath.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line:
                 try:
@@ -222,7 +222,8 @@ def build(state, generated):
         for i, (k, label, n) in enumerate(tabs)
     )
 
-    return f"""<title>Application Board</title>
+    return f"""<meta charset="utf-8">
+<title>Application Board</title>
 <style>
   :root {{
     color-scheme:light dark;
@@ -474,7 +475,7 @@ def main():
     generated = datetime.now(timezone.utc).astimezone().strftime("%d %b %Y, %H:%M")
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build(state, generated))
+    out.write_text(build(state, generated), encoding="utf-8")
 
     print(json.dumps({
         "written": str(out),
