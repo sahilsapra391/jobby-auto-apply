@@ -76,6 +76,13 @@ def main():
         pub = subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
                              capture_output=True, text=True)
         result["published"] = pub.returncode == 0
+        if not result["published"]:
+            # Carry the reason up. Reporting published:false and dropping the
+            # message meant a spent deployment quota looked identical to a
+            # broken build, and the watcher could not tell it should stop
+            # trying rather than retry every tick.
+            blob = ((pub.stderr or "") + (pub.stdout or "")).strip()
+            result["error"] = blob[-500:] or f"publish.py exited {pub.returncode}"
         for line in (pub.stdout or "").splitlines():
             if line.startswith("Board published:"):
                 result["url"] = line.split(": ", 1)[1].strip()
