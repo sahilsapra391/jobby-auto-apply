@@ -595,7 +595,7 @@ def build(state, generated):
      Centred, half its height hung below the badge and straight into the
      headline, and shrinking it only made the overlap smaller rather than
      removing it. Growing upward there is only whitespace to take. */
-  .jb-mascot2 {{ position:absolute; left:50%; bottom:0; height:104px; width:auto;
+  .jb-mascot2 {{ position:absolute; left:50%; bottom:0; height:112px; width:auto;
     color:var(--ink); pointer-events:none;
     transform:translateX(-50%) scale(.6); transform-origin:bottom center;
     opacity:0;
@@ -629,7 +629,7 @@ def build(state, generated):
   .themebtn:focus-visible {{ outline:3px solid var(--blue); outline-offset:2px; }}
   @media (max-width:600px) {{ .lockup {{ height:1.4rem; }}
     .jb-morph, .jb-morph .heromark {{ width:60px; height:60px; }}
-    .jb-mascot2 {{ height:88px; }} }}
+    .jb-mascot2 {{ height:95px; }} }}
 
   .top {{ text-align:center; margin-bottom:2rem; }}
   h1 {{ font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
