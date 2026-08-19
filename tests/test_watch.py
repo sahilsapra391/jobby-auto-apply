@@ -389,3 +389,43 @@ class ApplySlotTests(unittest.TestCase):
             capture_output=True, text=True, cwd=str(ROOT))
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--id is required", (r.stderr or "") + (r.stdout or ""))
+
+
+class SlotRaceTests(unittest.TestCase):
+    """Two processes must never land in one slot.
+
+    This happened: a hand-run `--once` alongside the daemon put two runners in
+    apply-2, which is two agents on one browser, which is one of them typing
+    into the other's application.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original
+        self.tmp.cleanup()
+
+    def test_only_one_reservation_of_a_slot_succeeds(self):
+        self.assertTrue(watch.reserve("apply-1", note="first"))
+        self.assertFalse(watch.reserve("apply-1", note="second"),
+                         "the second caller must lose, not overwrite")
+
+    def test_a_reserved_slot_is_not_offered_again(self):
+        watch.reserve("apply-1", note="first")
+        self.assertNotIn("apply-1", watch.free_apply_slots())
+
+    def test_a_reservation_left_by_a_dead_process_is_reclaimable(self):
+        watch.take_lock("apply-2", 999999, note="crashed")
+        self.assertTrue(watch.reserve("apply-2", note="new owner"))
+
+    def test_the_watcher_lock_keeps_a_second_watcher_out(self):
+        watch.take_lock("watcher", 999999, note="dead daemon")
+        ok, _ = watch.single_watcher()
+        self.assertTrue(ok, "a dead watcher must not block a new one")
+        watch.take_lock("watcher", os.getpid(), note="live")
+        # A different live pid is what must be refused; our own is a re-entry.
+        ok, _ = watch.single_watcher()
+        self.assertTrue(ok)

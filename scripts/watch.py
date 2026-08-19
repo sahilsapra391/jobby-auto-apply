@@ -71,6 +71,20 @@ HEARTBEAT_SECONDS = 30
 STUCK_AFTER_SECONDS = 75 * 60
 
 
+def single_watcher():
+    """Refuse to tick while another watcher is ticking.
+
+    Running `--once` by hand next to the daemon is the obvious thing to do while
+    debugging, and it is how two runners once landed in one slot: both processes
+    read the queue and picked slots before either had written a lock.
+    """
+    holder = lock_holder("watcher")
+    if holder and holder.get("pid") != os.getpid():
+        return False, holder
+    take_lock("watcher", os.getpid(), note="ticking")
+    return True, None
+
+
 class TickError(Exception):
     """The tick could not do its job. Never confused with 'nothing to do'."""
 
@@ -174,8 +188,31 @@ def take_lock(name, pid, note=""):
         {"pid": pid, "at": now_stamp(), "note": note}))
 
 
+def reserve(name, note=""):
+    """Claim a slot atomically. False if somebody already holds it.
+
+    O_EXCL rather than exists-then-write. Checking and then writing is two
+    steps, and two watchers running at once, a daemon plus a hand-run --once,
+    both saw the same slot free and both spawned into it. Two agents in one
+    slot means two agents on one browser, which is one of them typing into the
+    other's form.
+    """
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(LOCK_DIR, 0o700)
+    lock_holder(name)  # clears it first if the previous holder is dead
+    try:
+        fd = os.open(lock_path(name), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w") as fh:
+        # Our own pid for now: it is alive, so the slot cannot be mistaken for
+        # stale in the moment between reserving it and the runner starting.
+        json.dump({"pid": os.getpid(), "at": now_stamp(), "note": note}, fh)
+    return True
+
+
 def spawn(name, argv, logname, note=""):
-    """Start a runner detached and record the lock. Never waits on it."""
+    """Start a runner detached in a reserved slot. Never waits on it."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
     fh = open(LOG_DIR / logname, "a")
@@ -483,11 +520,17 @@ def tick(force_publish=False):
         for slot in free_apply_slots():
             if not queue_depth(q, "apply"):
                 break
+            # Reserve BEFORE claiming. Claiming first and then losing the slot
+            # would take a request off the queue with nothing to run it.
+            if not reserve(slot, note="starting"):
+                continue
             claimed = claim_one("apply/")
             if not claimed:
+                lock_path(slot).unlink(missing_ok=True)
                 break
             aid = claimed[0].get("applicationId")
             if not aid:
+                lock_path(slot).unlink(missing_ok=True)
                 continue
             q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
             browser.serve(slot)
@@ -614,6 +657,16 @@ def main():
         return 0
 
     if args.once or not args.interval:
+        ok, holder = single_watcher()
+        if not ok:
+            print(json.dumps({
+                "refused": "another watcher is running",
+                "holder": holder,
+                "why": "two watchers pick slots from the same free list and both "
+                       "spawn into it, which puts two agents on one browser",
+                "how": "launchctl unload ~/Library/LaunchAgents/ai.jobby.watch.plist",
+            }, indent=2))
+            return 1
         try:
             changed = tick(force_publish=True)
         except (TickError, subprocess.TimeoutExpired) as exc:
@@ -624,12 +677,18 @@ def main():
         print(json.dumps(changed or {"quiet": True}, indent=2, sort_keys=True))
         return 0
 
+    ok, holder = single_watcher()
+    if not ok:
+        print(json.dumps({"refused": "another watcher is already running",
+                          "holder": holder}, indent=2))
+        return 1
     ping_health("start", f"watcher up, interval {args.interval}s")
     consecutive_failures = 0
     last_line = ""
     last_ping = 0.0
     while True:
         try:
+            take_lock("watcher", os.getpid(), note="ticking")
             changed = tick()
             if consecutive_failures:
                 print(f"{now_stamp()} recovered after {consecutive_failures} failed ticks",
