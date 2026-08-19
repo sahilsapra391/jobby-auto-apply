@@ -40,6 +40,20 @@ Where AI-native and early-stage roles actually live, and where the LinkedIn swee
 | Europe | Otta, Welcome to the Jungle, Honeypot |
 | Remote-first | RemoteOK, WeWorkRemotely, Remotive |
 
+### Indian ATS platforms
+
+Indian employers mostly do not use Greenhouse, Lever or Ashby. They use a different ATS set, and a sweep that only probes the US platforms will conclude a role type "barely exists" in India while the openings sit on boards it never queried. Sweep these directly, and search across all their customers at once with `site:` queries.
+
+| Platform | Confirmed URL shape | How to sweep it |
+|---|---|---|
+| Zoho Recruit | `<company>.zohorecruit.in` (India data centre) and `.zohorecruit.com`; paths `/jobs/Careers` (modern) or `/careers` (legacy) | `site:zohorecruit.in "product manager"` and the `.com` equivalent. Note that many customers map a custom subdomain such as `jobs.<company>.com`, which hides them from a `site:` sweep |
+| Darwinbox | `<tenant>.darwinbox.in/ms/candidatev2/<id>/careers/home`, also `/ms/candidatev2/main/careers/allJobs` and older `/ms/candidate/careers` | `site:darwinbox.in careers "product manager"`. Tenant subdomains are company-specific and not guessable, so discovery is search-first |
+| Keka | Keka Hire integrates into the employer's own career portal, so listings often surface on the company domain rather than a Keka one | `site:keka.com careers` finds some; expect most to be reachable only through the employer's own careers page |
+| RippleHire | Not a confirmed public pattern | Enterprise-heavy in India (Mphasis, LTIMindtree, HDFC Life, Axis, Aditya Birla, Tata Steel, Tata Technologies, UST, Tredence). Reach these through the employer's careers page. Worth prioritising: RippleHire is built around employee referrals, so roles on it frequently have a referral path |
+| Naukri RMS (Info Edge) | Powers corporate career sites; pattern not confirmed | Reach through the employer's careers page, and through Naukri itself once signed in |
+
+Two of these have no verified public URL pattern, which is a finding rather than a gap to paper over: for RippleHire and Naukri RMS, go through the employer's own careers page instead of trying to sweep the platform. Record any real pattern in `platforms.md` the first time one is applied to.
+
 ### Company boards directly
 
 The highest-signal channel and the most often skipped. When a company is a genuine target, go straight to its careers page — roles appear there first, and aggregator listings are frequently stale or truncated.
@@ -72,7 +86,9 @@ Revise the plan when the search revises: a new target geography, a title variant
 
 **5. Rank on fit, not recency — with an explicit rubric.** Two stages, and the order matters:
 
-*Hard filters first*, from intake, and failing any one is a rejection however good the rest looks: location or setup the user won't accept, seniority band clearly off, compensation stated below their floor, sponsorship excluded where they need it, excluded company.
+*Hard filters first*, from intake, and failing any one is a rejection however good the rest looks: **a stated minimum above five years of experience**, location or setup the user won't accept, seniority band clearly off, compensation stated below their floor, sponsorship excluded where they need it, excluded company.
+
+The years cap is the one that rejects most volume. The user has four years, so three to five is the target band and five is the ceiling. A posting asking for 7+ or 10+ is out regardless of how well the body matches, because the screen filters on it before anyone reads the resume. Titles are not a reliable proxy either way: plenty of roles called Senior ask for four years, and plenty called Product Manager ask for eight. Read the stated requirement, not the title.
 
 *Then score what survives.* Roughly: how squarely the body matches the user's actual work (weight this most), whether a referral path exists, applicant-count-versus-age, seniority match, compensation signal. Record the score **and the reasons** in the watch entry — "kept: body is agent-platform PM work, 2nd-degree referral via [name], 40 applicants at 3 days" — so ranking is consistent across cycles and the user can see why something is on their board. A score with no reasons is not auditable and will drift between sessions.
 

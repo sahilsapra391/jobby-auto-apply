@@ -10,5 +10,12 @@ __pycache__/
 # Vercel hosting: the generated module carries real application data,
 # and .vercel holds the project link
 deploy/api/_dashboard.js
+deploy/api/_documents.js
+# Delivered resumes and cover letters: real name, phone and street address
+applications/
 deploy/.vercel/
+# Vercel writes the blob read/write token here
+.env.local
+deploy/.env*.local
 node_modules/
+deploy/node_modules/

@@ -154,6 +154,16 @@ But the résumé upload widget is a **cross-origin iframe**, so the file input i
 
 `career*.sapsf.com`. The Apply button leads straight to a sign-in wall with "Create an account". The form is not visible until then. Hard stop; ask the user to sign in, then fill in one pass.
 
+### Greenhouse, the newer React build
+
+Some Greenhouse boards now render with no `<select>` elements at all: every dropdown is a `react-select` combobox. Two things follow, and the first one has already cost a real application.
+
+- **Never press Enter to confirm a react-select option.** Enter is the only reliable keyboard confirm, and it works right up until it doesn't: on the DataGrail form it confirmed six dropdowns and then, on the seventh, propagated to the form and submitted the application outright. Click the focused `[role="option"]` node directly instead, then read the control wrapper's text back to confirm the selection registered.
+- **`form_input` does not work on a react-select.** It writes the visible text while the control's underlying value stays empty, so the field looks filled and submits blank. Every combobox needs the click-the-option treatment plus a read-back.
+- File inputs disappear from the DOM after a successful upload; the filename appears in the form's `innerText`, which is the reliable way to confirm an attachment landed.
+
+This is the concrete form of the rule in SKILL.md that any interaction with a complete form may be final. It was not a Submit click that sent that application, it was a keystroke inside a dropdown.
+
 ## Lever, iCIMS, Google Careers, SmartRecruiters
 
 **Lever**: form sits below a long job description. Radio buttons frequently have overlays intercepting clicks; a click that does not register is usually this.
@@ -167,3 +177,16 @@ But the résumé upload widget is a **cross-origin iframe**, so the file input i
 ## Email applications
 
 Some postings use a `mailto:` link. Draft the body, attach the resume through the file input, and **stop**. Sending needs explicit permission. Say clearly that it is a draft and confirm the attachment landed.
+
+
+## Indian ATS platforms (added 19 Aug 2026, quirks not yet observed)
+
+Everything else in this file came from a real application going wrong. These five have not been applied to yet, so this section records only what is structurally known. **Add the real blockers here the first time each one is used**, and delete this caveat once a platform has been exercised.
+
+- **Zoho Recruit** — runs on regional data centres (`.in` for India, `.com` elsewhere); the same employer can exist on either. Expect a candidate-account or social-login step on some tenants.
+- **Darwinbox** — a single-page candidate portal (`/ms/candidatev2/...`). Multi-step SPA flows tend to re-render between steps, so verify by read-back after every step rather than at the end.
+- **Keka** — usually embedded into the employer's own careers page rather than presented as a Keka-branded form.
+- **RippleHire** — referral-centric by design. Before filling, check whether a referral route exists, since that is the platform's primary path and the reason employers buy it.
+- **Naukri RMS** — tied to the Naukri ecosystem; expect a signed-in Naukri profile to matter, and expect the profile's stored resume to be what an employer actually reads.
+
+Anything here that turns out to need an account, an OTP, or a CAPTCHA is a park-and-report, per the credentials hard stop.

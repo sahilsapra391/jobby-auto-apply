@@ -24,7 +24,9 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 ANSWER_STATES = {"confirmed", "inferred", "missing", "sensitive"}
-SESSION_STATUSES = {"watch", "active", "review", "completed", "abandoned"}
+# "inflight" means an Apply run is under way: the role has left the watch
+# list but nothing has been submitted yet.
+SESSION_STATUSES = {"watch", "inflight", "active", "review", "completed", "abandoned"}
 # Pre-submission lifecycle, then post-submission outcomes reported by the user.
 HISTORY_EVENTS = {"started", "reviewed", "submitting", "completed", "abandoned",
                   "response", "interview", "offer", "rejected"}
@@ -51,8 +53,13 @@ def paths(root):
         "answers": str(root / "answers.json"),
         "history": str(root / "applications.jsonl"),
         "sessions": str(root / "sessions"),
-        "resumes": str(root / "resumes"),
-        "coverLetters": str(root / "cover-letters"),
+        # Delivered documents live beside the skill, one folder per company, so
+        # they are browsable in Finder. Gitignored: they carry a real address.
+        "applications": str(Path(__file__).resolve().parents[1] / "applications"),
+        # Durable index of every role ever seen. Sessions are deleted once an
+        # application completes, which would otherwise lose the posting URL and
+        # leave the board unable to link to what was applied to.
+        "roles": str(root / "roles.json"),
         "meta": str(root / "meta.json"),
     }
 
@@ -112,11 +119,12 @@ def cmd_init(args):
     root = root_dir(args.root)
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
-    # 0700 throughout: sessions name the companies applied to, and the document
-    # directories hold the files sent out under the user's name.
-    for sub in ("sessions", "resumes", "cover-letters"):
-        (root / sub).mkdir(exist_ok=True)
-        os.chmod(root / sub, 0o700)
+    # 0700: sessions name the companies applied to.
+    (root / "sessions").mkdir(exist_ok=True)
+    os.chmod(root / "sessions", 0o700)
+    apps = Path(paths(root)["applications"])
+    apps.mkdir(parents=True, exist_ok=True)
+    os.chmod(apps, 0o700)
     p = paths(root)
     if not Path(p["profile"]).exists():
         write_private(p["profile"], {})
@@ -138,9 +146,20 @@ def cmd_profile_replace(args):
     profile = load_input(args.input)
     if not isinstance(profile, dict):
         raise StoreError("profile must be a JSON object")
-    for list_field in ("workHistory", "education", "skills"):
+    for list_field in ("workHistory", "education", "skills", "resumes"):
         if list_field in profile and not isinstance(profile[list_field], list):
             raise StoreError(f"{list_field} must be a list")
+    # Each base resume carries the identity block that must go on that region's
+    # forms and cover letter. A base without one would silently fall back to
+    # another region's phone number.
+    for entry in profile.get("resumes", []):
+        if not isinstance(entry, dict) or "key" not in entry or "path" not in entry:
+            raise StoreError("each resume needs a key and a path")
+        identity = entry.get("identity")
+        if not isinstance(identity, dict) or not identity.get("phone") or not identity.get("location"):
+            raise StoreError(f"resume '{entry.get('key')}' needs identity.phone and identity.location")
+    if profile.get("resumes") and sum(1 for e in profile["resumes"] if e.get("default")) != 1:
+        raise StoreError("exactly one resume must be marked default")
     profile["updatedAt"] = now()
     profile["schemaVersion"] = SCHEMA_VERSION
     write_private(paths(root_dir(args.root))["profile"], profile)
@@ -233,6 +252,7 @@ def cmd_history_append(args):
             raise StoreError(f"history must not contain {banned}")
     event["at"] = now()
     event["eventId"] = str(uuid.uuid4())
+    remember_role(root_dir(args.root), event)
     path = paths(root_dir(args.root))["history"]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as fh:
@@ -266,6 +286,32 @@ def cmd_history_status(args):
     return list(latest.values())
 
 
+def remember_role(root, data):
+    """Upsert the durable role index. Never deletes; sessions come and go."""
+    aid = data.get("applicationId")
+    if not aid:
+        return
+    path = paths(root)["roles"]
+    roles = read_json(path, {})
+    entry = roles.get(aid, {})
+    for field in ("company", "role", "url", "ats", "region", "source"):
+        if data.get(field):
+            entry[field] = data[field]
+    entry["applicationId"] = aid
+    roles[aid] = entry
+    write_private(path, roles)
+
+
+def cmd_roles_list(args):
+    return read_json(paths(root_dir(args.root))["roles"], {})
+
+
+def cmd_role_put(args):
+    root = root_dir(args.root)
+    remember_role(root, load_input(args.input))
+    return {"remembered": True}
+
+
 def cmd_session_save(args):
     session = load_input(args.input)
     app_id = safe_id(args.id)
@@ -283,6 +329,7 @@ def cmd_session_save(args):
     sessions = Path(paths(root_dir(args.root))["sessions"])
     sessions.mkdir(parents=True, exist_ok=True)
     write_private(sessions / f"{app_id}.json", session)
+    remember_role(root_dir(args.root), session)
     return session
 
 
@@ -403,6 +450,8 @@ COMMANDS = {
     "session-load": cmd_session_load,
     "session-list": cmd_session_list,
     "session-delete": cmd_session_delete,
+    "roles-list": cmd_roles_list,
+    "role-put": cmd_role_put,
     "meta-set": cmd_meta_set,
     "meta-get": cmd_meta_get,
 }
@@ -413,7 +462,7 @@ def build_parser():
     p.add_argument("--root", help="store directory (default ~/.job-application)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    for name in ("init", "paths", "profile-get", "answer-list", "history-status", "stats"):
+    for name in ("init", "paths", "profile-get", "answer-list", "history-status", "stats", "roles-list"):
         sub.add_parser(name)
 
     sp = sub.add_parser("profile-replace"); sp.add_argument("--input", required=True)
@@ -421,6 +470,7 @@ def build_parser():
     sp = sub.add_parser("answer-find"); sp.add_argument("--question", required=True)
     sp = sub.add_parser("answers-resolve"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("history-append"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("role-put"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("history-list"); sp.add_argument("--company")
     sp = sub.add_parser("session-save"); sp.add_argument("--id", required=True); sp.add_argument("--input", required=True)
     for name in ("session-load", "session-delete"):

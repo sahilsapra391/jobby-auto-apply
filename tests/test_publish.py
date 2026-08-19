@@ -75,7 +75,8 @@ class InliningTest(unittest.TestCase):
 
     def test_html_round_trips_exactly(self):
         html = self.html()
-        self.assertIn("<title>Application Board</title>", html)
+        self.assertIn("<title>Jobby is a free agent!</title>", html)
+        self.assertIn('<link rel="icon" href="data:image/svg+xml;base64,', html)
         self.assertTrue(html.lstrip().startswith('<meta charset="utf-8">'))
 
     def test_non_ascii_survives_inlining(self):

@@ -2,5 +2,8 @@
   "name": "job-application-board",
   "private": true,
   "type": "module",
-  "description": "Password-gated hosting for the job-application dashboard."
+  "description": "Password-gated hosting for the job-application dashboard.",
+  "dependencies": {
+    "@vercel/blob": "^2.0.0"
+  }
 }

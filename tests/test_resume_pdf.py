@@ -22,7 +22,16 @@ HTML = """<!doctype html><meta charset="utf-8"><style>
 @page {{ size: 8.5in 11in; margin: {margin}; }}
 body {{ font-family: Helvetica, sans-serif; font-size: 10.5pt; margin: 0; }}
 h1 {{ font-size: 20pt; color: {accent}; margin: 0; }}
-</style><h1>Test Person</h1><p>A line of body text with a 42% metric in it.</p>"""
+.contact {{ font-size: 9.5pt; margin: 2pt 0 0; }}
+</style><h1>Test Person</h1>
+<p class="contact">{contact}</p>
+<p>A line of body text with a 42% metric in it.</p>"""
+
+SHORT_CONTACT = "Springfield, IL 62704 | (216) 848-7236 | someone@example.com | LinkedIn"
+# Long enough to wrap at this width: the exact failure a street address caused.
+LONG_CONTACT = ("9308 Somewhere Extremely Long Street Name, Springfield, IL 62704 | "
+                "(216) 848-7236 | someone@example.com | example.com | LinkedIn | "
+                "GitHub | Portfolio | Personal Blog | Twitter")
 
 
 def chrome_available():
@@ -73,9 +82,11 @@ class RenderAndVerifyTest(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @classmethod
-    def render(cls, name, margin, accent):
+    def render(cls, name, margin, accent, **kwargs):
         html = cls.tmp / f"{name}.html"
-        html.write_text(HTML.format(margin=margin, accent=accent), encoding="utf-8")
+        html.write_text(HTML.format(margin=margin, accent=accent,
+                                    contact=kwargs.get("contact", SHORT_CONTACT)),
+                        encoding="utf-8")
         out = cls.tmp / f"{name}.pdf"
         resume_pdf.cmd_render(type("A", (), {"html": str(html), "out": str(out)}))
         return out
@@ -108,6 +119,17 @@ class RenderAndVerifyTest(unittest.TestCase):
         result = self.verify(drifted)
         self.assertFalse(result["match"])
         self.assertTrue(any("#1f4e79" in d for d in result["differences"]))
+
+    def test_wrapped_contact_line_is_caught(self):
+        # The failure this exists for: a contact line long enough to wrap
+        # leaves page count, margins, colours and font sizes untouched, so
+        # every other check passes while the document visibly differs.
+        wrapped = self.render("wrapped", margin="0.5in 0.6in", accent="#1F4E79",
+                              contact=LONG_CONTACT)
+        result = self.verify(wrapped)
+        self.assertFalse(result["match"])
+        self.assertTrue(any("contact block" in d for d in result["differences"]),
+                        result["differences"])
 
     def test_rendered_pdf_is_owner_readable_only(self):
         import os

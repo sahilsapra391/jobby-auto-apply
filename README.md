@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/04-lockup/jobby-lockup-horizontal-white-1600.png">
+  <img src="assets/brand/04-lockup/jobby-lockup-horizontal-ink-1600.png" alt="Jobby" width="260">
+</picture>
+
 # jobby-auto-apply
 
 ### I stopped applying to jobs myself. My Claude agent does it now.
