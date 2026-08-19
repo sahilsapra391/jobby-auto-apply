@@ -88,6 +88,38 @@ def enriched_env(env=None):
     return out
 
 
+REPO = Path(__file__).resolve().parents[1]
+QUEUE_VARS = ("CF_ACCOUNT_ID", "CF_KV_NAMESPACE_ID", "CF_API_TOKEN")
+
+
+def queue_env(env=None):
+    """Environment for talking to the board queue, from deploy/.env.local.
+
+    The queue moved from Vercel Blob to Cloudflare Workers KV after the Blob
+    store was suspended for exceeding its free operation limit. Everything that
+    reads or writes the queue needs these three, and having each caller load
+    them itself is how half of them ended up out of step.
+    """
+    out = enriched_env(env)
+    envfile = REPO / "deploy" / ".env.local"
+    if envfile.exists():
+        for line in envfile.read_text().splitlines():
+            if "=" not in line or line.lstrip().startswith("#"):
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            if k in QUEUE_VARS or k == "HEALTHCHECKS_URL":
+                out[k] = v.strip().strip('"').strip("'")
+    missing = [k for k in QUEUE_VARS if not out.get(k)]
+    if missing:
+        raise SystemExit(
+            "job-application: the board queue is not configured. Missing "
+            + ", ".join(missing)
+            + " in deploy/.env.local. See references/hosting.md."
+        )
+    return out
+
+
 def report():
     out = {"searchPath": search_path().split(os.pathsep), "tools": {}}
     for name in ("node", "vercel", "claude"):

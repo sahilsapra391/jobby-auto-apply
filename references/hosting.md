@@ -84,16 +84,50 @@ The lock is also what enforces the standing rule that only one application runs 
 
 ### Setting up the queue
 
-Until a queue exists the endpoint returns 503 and the button says so honestly instead of failing silently:
+The queue lives in Cloudflare Workers KV. It started on Vercel Blob, and Blob suspended the store once the watcher began polling it. The interesting part is not the vendor but the shape of the limit: free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows 100,000 key reads a day and only 1,000 list requests, so a queue you have to list in order to read is unusable at any poll rate worth having.
+
+So the whole queue is one key. A poll is a single read, 28,800 a day at a three second interval against a ceiling of 100,000. Writes happen only when somebody clicks or a runner claims, a few dozen a day against 1,000. R2 has the same trap in different units: list is a Class A operation with a 1,000,000/month allowance, which a three second poll very nearly exhausts on its own.
+
+The cost of coalescing is that a write becomes read-modify-write with no compare-and-swap, so a click landing in the same instant as a claim can be lost. That is already covered: the board re-sends clicks it remembers, and enqueue dedupes by application id.
+
+One-time setup:
+
+1. Create a namespace, or reuse the `jobby-queue` one:
 
 ```bash
-cd deploy && vercel blob create-store jobby-scan-queue --access private --yes
-cd .. && python3 scripts/publish.py
+npx wrangler kv namespace create jobby-queue
 ```
 
-That sets `BLOB_READ_WRITE_TOKEN` on the project automatically and writes it into `deploy/.env.local`, which is gitignored.
+2. Create an API token at **dash.cloudflare.com → My Profile → API Tokens → Create Token**, using the *Custom token* template with a single permission: **Account → Workers KV Storage → Edit**. Scope it to the one account. Nothing else.
 
-Note that `vercel storage add` does not exist: Vercel KV was discontinued and moved to the Marketplace in December 2024. Blob is the first-party option that needs no second account.
+3. Put three values in `deploy/.env.local`, which is gitignored:
+
+```
+CF_ACCOUNT_ID=<the id in your dashboard URL>
+CF_KV_NAMESPACE_ID=<from step 1>
+CF_API_TOKEN=<from step 2>
+```
+
+4. Give the same three to the Vercel project, so the board's buttons can write:
+
+```bash
+cd deploy
+vercel env add CF_ACCOUNT_ID production
+vercel env add CF_KV_NAMESPACE_ID production
+vercel env add CF_API_TOKEN production
+```
+
+5. Prove it works, including that the token can actually write, which a read-only token hides until the first click:
+
+```bash
+python3 scripts/queue_check.py --write
+```
+
+### Poll interval, and why it is not two seconds
+
+The watcher polls every few seconds so a click reaches an agent almost immediately. It is tempting to make that number very small. Do not: at two seconds the old Blob-backed queue ran roughly 1.3 million operations a month and the store was suspended.
+
+Three to five seconds keeps a click feeling instant while using well under a fifth of the daily KV read allowance. `scripts/watch.py --install --interval 3` sets it.
 
 ### Installing the watcher
 

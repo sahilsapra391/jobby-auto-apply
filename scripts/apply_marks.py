@@ -31,16 +31,7 @@ DEPLOY = REPO / "deploy"
 
 
 def blob_env():
-    """The blob token Vercel wrote when the store was created."""
-    env = dict(os.environ)
-    envfile = DEPLOY / ".env.local"
-    if envfile.exists():
-        for line in envfile.read_text().splitlines():
-            if line.startswith("BLOB_READ_WRITE_TOKEN="):
-                env["BLOB_READ_WRITE_TOKEN"] = line.split("=", 1)[1].strip().strip('"')
-    if not env.get("BLOB_READ_WRITE_TOKEN"):
-        raise SystemExit("apply_marks: no BLOB_READ_WRITE_TOKEN. Run: cd deploy && vercel env pull")
-    return env
+    return toolpath.queue_env()
 
 
 def queue(cmd, prefix="marked/"):

@@ -186,10 +186,10 @@ def spawn(name, argv, logname, note=""):
 
 def poll_queues():
     """Every queue in one call. Raises TickError rather than looking empty."""
-    env = toolpath.enriched_env()
-    env.update({k: v for k, v in config().items() if k == "BLOB_READ_WRITE_TOKEN"})
-    if not env.get("BLOB_READ_WRITE_TOKEN"):
-        raise TickError("no BLOB_READ_WRITE_TOKEN in deploy/.env.local")
+    try:
+        env = toolpath.queue_env()
+    except SystemExit as exc:
+        raise TickError(str(exc))
     r = subprocess.run([toolpath.node(), "queue.mjs", "poll"], cwd=DEPLOY,
                        capture_output=True, text=True, env=env, timeout=60)
     if r.returncode != 0:

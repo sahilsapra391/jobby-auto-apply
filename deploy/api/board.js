@@ -68,39 +68,51 @@ const text = (body, status, extra = {}) =>
     headers: { 'content-type': 'text/plain; charset=utf-8', ...BASE_HEADERS, ...extra },
   });
 
-import { put, list, del } from '@vercel/blob';
+import { readQueue, enqueue as kvEnqueue, claimOne, configured } from '../kvqueue.mjs';
 import { DOCUMENTS } from './_documents.js';
 
-const QUEUE_PREFIX = 'scan/';
-const MARK_PREFIX = 'marked/';
-const APPLY_PREFIX = 'apply/';
+// Vercel Blob suspended this store once the watcher started polling it. The
+// queue now lives in Cloudflare Workers KV under a single key, because KV
+// allows 100,000 key reads a day but only 1,000 list requests: a queue you have
+// to list to read is unusable at any poll rate worth having. See kvqueue.mjs.
+const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/submitted': 'marked' };
 
-function queueConfigured() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
-}
+const json = (body, status) => new Response(JSON.stringify(body), {
+  status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },
+});
 
-// One blob per request. The timestamp lives in the pathname, so listing the
-// queue never needs to fetch any content.
-async function enqueue() {
-  const at = new Date().toISOString();
-  await put(`${QUEUE_PREFIX}${at.replace(/[:.]/g, '-')}.json`,
-    JSON.stringify({ requestedAt: at }),
-    { access: 'private', contentType: 'application/json' });
-  return at;
-}
-
-async function pendingUnder(prefix) {
-  const { blobs } = await list({ prefix });
-  return (blobs || [])
-    .map((b) => ({ pathname: b.pathname, url: b.url, uploadedAt: b.uploadedAt }))
-    .sort((a, b) => String(a.pathname).localeCompare(String(b.pathname)));
-}
-
-async function pending() {
-  const { blobs } = await list({ prefix: QUEUE_PREFIX });
-  return (blobs || [])
-    .map((b) => ({ pathname: b.pathname, url: b.url, uploadedAt: b.uploadedAt }))
-    .sort((a, b) => String(a.pathname).localeCompare(String(b.pathname)));
+// All three buttons are the same shape: POST to ask for something, GET to see
+// what is waiting, DELETE for a local runner to claim the oldest.
+async function handleQueue(request, queue) {
+  if (!configured(process.env)) {
+    return json({
+      ok: false, error: 'queue not configured',
+      hint: 'Set CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID and CF_API_TOKEN on this project, then redeploy.',
+    }, 503);
+  }
+  try {
+    if (request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      let id = String(body.applicationId || '').trim();
+      if (queue === 'scan' && !id) {
+        id = new Date().toISOString().replace(/[:.]/g, '-');
+      }
+      if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) return json({ ok: false, error: 'bad applicationId' }, 400);
+      // Idempotent per application id, so the board can re-send a click it
+      // remembers without the role being applied to twice.
+      return json({ ok: true, ...(await kvEnqueue(process.env, queue, id)) }, 202);
+    }
+    if (request.method === 'GET') {
+      return json({ ok: true, pending: (await readQueue(process.env))[queue] || [] }, 200);
+    }
+    if (request.method === 'DELETE') {
+      const claimed = await claimOne(process.env, queue);
+      return json({ ok: true, claimed: claimed[0] || null }, 200);
+    }
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+  return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
 }
 
 export default {
@@ -132,42 +144,11 @@ export default {
       });
     }
 
-    // Scan queue. The board cannot start anything on the user's machine, so a
-    // request is parked here and a local poller claims it.
-    if (pathname === '/api/scan') {
-      if (!queueConfigured()) {
-        return new Response(JSON.stringify({
-          ok: false, error: 'queue not configured',
-          hint: 'vercel blob create-store <name> --access private --yes, then redeploy.',
-        }), { status: 503, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      try {
-        if (request.method === 'POST') {
-          const at = await enqueue();
-          return new Response(JSON.stringify({ ok: true, queued: true, requestedAt: at }), {
-            status: 202, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-        if (request.method === 'GET') {
-          const q = await pending();
-          return new Response(JSON.stringify({ ok: true, pending: q }), {
-            status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-        if (request.method === 'DELETE') {
-          // The local poller claims the oldest request when it starts work.
-          const q = await pending();
-          if (!q.length) {
-            return new Response(JSON.stringify({ ok: true, claimed: null }), {
-              status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-          }
-          await del(q[0].url);
-          return new Response(JSON.stringify({ ok: true, claimed: q[0].pathname }), {
-            status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-      } catch (err) {
-        return new Response(JSON.stringify({ ok: false, error: String(err.message || err) }), {
-          status: 502, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
+    // The three board buttons. A page on Vercel cannot start a process on the
+    // user's machine, so each click is parked in the queue and the local
+    // watcher claims it and spawns the agent that does the work.
+    if (QUEUES[pathname]) {
+      return handleQueue(request, QUEUES[pathname]);
     }
 
     // Application documents: the exact resume and cover letter an employer
@@ -192,102 +173,6 @@ export default {
     // Apply request from the Watching tab: build the documents and drive the
     // application. Queued like the others, because the board cannot start work
     // on the agent's machine.
-    if (pathname === '/api/apply') {
-      if (!queueConfigured()) {
-        return new Response(JSON.stringify({ ok: false, error: 'queue not configured' }), {
-          status: 503, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      try {
-        if (request.method === 'POST') {
-          const body = await request.json().catch(() => ({}));
-          const id = String(body.applicationId || '').trim();
-          if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) {
-            return new Response(JSON.stringify({ ok: false, error: 'bad applicationId' }), {
-              status: 400, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-          }
-          // Idempotent per application. The board re-requests on load for any
-          // click it remembers that the server has not acted on yet, which is
-          // how a lost request heals itself; without this that retry would
-          // queue the same role twice and it would be applied to twice.
-          const already = await pendingUnder(APPLY_PREFIX);
-          const dup = already.some((b) => {
-            const base = b.pathname.slice(APPLY_PREFIX.length).replace(/\.json$/, '');
-            const sep = base.indexOf('__');
-            return (sep === -1 ? base : base.slice(sep + 2)) === id;
-          });
-          if (dup) {
-            return new Response(JSON.stringify({ ok: true, queued: id, deduped: true }), {
-              status: 202, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-          }
-          const at = new Date().toISOString();
-          await put(`${APPLY_PREFIX}${at.replace(/[:.]/g, '-')}__${id}.json`,
-            JSON.stringify({ applicationId: id, requestedAt: at }),
-            { access: 'private', contentType: 'application/json' });
-          return new Response(JSON.stringify({ ok: true, queued: id }), {
-            status: 202, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-        if (request.method === 'GET') {
-          return new Response(JSON.stringify({ ok: true, pending: await pendingUnder(APPLY_PREFIX) }), {
-            status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-      } catch (err) {
-        return new Response(JSON.stringify({ ok: false, error: String(err.message || err) }), {
-          status: 502, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      return text('Method not allowed.\n', 405, { allow: 'GET, POST' });
-    }
-
-    // "Mark submitted" from the Needs you tab. Queued the same way as scans:
-    // the board cannot write to the store on the agent's machine.
-    if (pathname === '/api/submitted') {
-      if (!queueConfigured()) {
-        return new Response(JSON.stringify({ ok: false, error: 'queue not configured' }), {
-          status: 503, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      try {
-        if (request.method === 'POST') {
-          const body = await request.json().catch(() => ({}));
-          const id = String(body.applicationId || '').trim();
-          if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) {
-            return new Response(JSON.stringify({ ok: false, error: 'bad applicationId' }), {
-              status: 400, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-          }
-          const at = new Date().toISOString();
-          await put(`${MARK_PREFIX}${at.replace(/[:.]/g, '-')}__${id}.json`,
-            JSON.stringify({ applicationId: id, company: body.company || '', role: body.role || '', markedAt: at }),
-            { access: 'private', contentType: 'application/json' });
-          return new Response(JSON.stringify({ ok: true, marked: id }), {
-            status: 202, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-        if (request.method === 'GET') {
-          return new Response(JSON.stringify({ ok: true, pending: await pendingUnder(MARK_PREFIX) }), {
-            status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-        if (request.method === 'DELETE') {
-          const q = await pendingUnder(MARK_PREFIX);
-          if (!q.length) {
-            return new Response(JSON.stringify({ ok: true, claimed: null }), {
-              status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-          }
-          // The store is private, so the blob URL is not fetchable without a
-          // token. Everything the poller needs is in the pathname:
-          // marked/<timestamp>__<applicationId>.json
-          const base = q[0].pathname.slice(MARK_PREFIX.length).replace(/\.json$/, '');
-          const sep = base.indexOf('__');
-          const claimed = sep === -1
-            ? { applicationId: base }
-            : { markedAt: base.slice(0, sep), applicationId: base.slice(sep + 2) };
-          await del(q[0].url);
-          return new Response(JSON.stringify({ ok: true, claimed }), {
-            status: 200, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-        }
-      } catch (err) {
-        return new Response(JSON.stringify({ ok: false, error: String(err.message || err) }), {
-          status: 502, headers: { 'content-type': 'application/json', ...BASE_HEADERS } });
-      }
-      return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
-    }
-
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
     }
