@@ -2,15 +2,17 @@
 """Run one queued Apply request end to end by spawning a Claude Code session.
 
 The watcher is a background daemon and cannot build a tailored resume or drive
-a browser. This bridges that gap: it claims one apply request and launches a
-headless Claude session scoped to exactly one application, which builds the
-documents, fills the form, submits, logs the evidence and syncs the board.
+a browser. This bridges that gap: given one application, it launches a headless
+Claude session scoped to exactly that one, which builds the documents, fills the
+form, submits, logs the evidence and syncs the board.
 
-  python3 scripts/run_apply.py --check   # exit 0 if a request is waiting
-  python3 scripts/run_apply.py           # run the oldest request
+  python3 scripts/run_apply.py --check       # exit 0 if a request is waiting
+  python3 scripts/run_apply.py --id <app-id> # run this one
 
-Deliberately serial: one application per invocation, matching the standing
-policy that nothing runs two applications at once.
+One application per invocation, always. Several of these run at once, but no
+single agent ever handles two: the application is passed in, and this never
+reaches into the queue for another. The watcher does the claiming, because the
+queue cannot be claimed safely from more than one process at a time.
 """
 
 import argparse
@@ -167,9 +169,14 @@ Report in three lines: what you built, what happened, and what is left for the u
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Run one queued Apply request.")
+    ap = argparse.ArgumentParser(description="Run one Apply request, start to finish.")
+    ap.add_argument("--id", help="the application to run. The watcher claims it and "
+                                 "passes it here; this never claims for itself.")
+    ap.add_argument("--slot", default="apply-1",
+                    help="which browser this run drives. Each slot has its own Chrome: "
+                         "two agents on one browser end up driving the same tab.")
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--dry-run", action="store_true", help="claim and print the prompt, run nothing")
+    ap.add_argument("--dry-run", action="store_true", help="print the prompt, run nothing")
     args = ap.parse_args()
 
     if args.check:
@@ -177,16 +184,21 @@ def main():
         print(json.dumps({"pending": len(pending)}, indent=2))
         return 0 if pending else 1
 
-    pending = queue("list")
-    if not pending:
-        print(json.dumps({"pending": 0}, indent=2))
-        return 1
+    # The runner is given its application; it does not go and take one. Up to
+    # three of these run at once, and the queue is a single KV key updated by
+    # read-modify-write with no compare-and-swap, so two runners claiming at the
+    # same instant both take the head and the same job is applied to twice.
+    # Measured, not theorised. Claiming happens only in the watcher's tick,
+    # which is single-threaded.
+    aid = args.id
+    if not aid:
+        raise SystemExit(
+            "run_apply: --id is required. The watcher claims a request and passes it in; "
+            "claiming here would race the other runners. To start one by hand:\n"
+            "  python3 scripts/enqueue.py apply <applicationId>")
 
-    aid = pending[0].get("applicationId")
     detail = store(["session-load", "--id", aid])
     if detail.returncode != 0:
-        # Nothing to apply to. Drain it so it does not block the queue forever.
-        queue("claim-one")
         print(json.dumps({"skipped": aid, "why": "no watch entry"}, indent=2))
         return 1
 
@@ -199,7 +211,6 @@ def main():
                            "--guard", aid], capture_output=True, text=True)
     if dupe.returncode != 0:
         why = json.loads(dupe.stdout or "{}").get("reason", "already applied to this job")
-        queue("claim-one")
         store(["session-delete", "--id", aid])
         subprocess.run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
                        capture_output=True, text=True)
@@ -218,14 +229,19 @@ def main():
     if not ok:
         store(["meta-set", "--key", "blocked", "--value", agent.blocked_reason(reason)])
         print(json.dumps({"blocked": agent.blocked_reason(reason),
-                          "stillQueued": len(pending)}, indent=2))
+                          "applicationId": aid}, indent=2))
         return 2
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
-    # Claim before running: a crash mid-apply must not cause a second attempt,
-    # for the same reason the write-ahead `submitting` event exists.
-    queue("claim-one")
+    # This run attaches to its slot's browser rather than starting one, so the
+    # browser has to exist first and has to be that slot's.
+    up = browser.serve(args.slot)
+    if up.get("error"):
+        store(["meta-set", "--key", "blocked",
+               "--value", f"browser for {args.slot} would not start: {up['error']}"])
+        print(json.dumps({"blocked": up["error"], "slot": args.slot}, indent=2))
+        return 2
 
     subprocess.run([sys.executable, str(REPO / "scripts" / "phase.py"),
                     "--id", aid, "--phase", "Queued",
@@ -237,7 +253,7 @@ def main():
         proc = subprocess.run(
             [toolpath.claude(), "-p", prompt, "--permission-mode", "acceptEdits",
              "--allowedTools", APPLY_TOOLS,
-             "--mcp-config", str(browser.config_path())],
+             "--mcp-config", str(browser.config_path(args.slot))],
             cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
             env=toolpath.enriched_env())
 

@@ -96,7 +96,46 @@ Each dropped row keeps where the application had got to, because "dropped while 
 
 The lane sits apart from the other four in the tab bar. Nothing in it is waiting on anyone, so it should not read as a queue.
 
-### One at a time, and never blocking
+### Three at a time, one agent each
+
+Up to three applications run concurrently. Each is owned by one agent from start
+to finish; no agent ever handles two. Slots are lock files holding a pid, so a
+runner that dies frees its own slot and a watcher restart does not lose track.
+
+Two details here are load-bearing, and both were measured rather than assumed.
+
+**The watcher claims, never the runner.** The queue is a single KV key updated by
+read-modify-write with no compare-and-swap. Two runners calling `claim-one` at
+the same instant both take the head of the queue, so the same job is applied to
+twice. The tick is single-threaded, so claiming there is sequential however many
+runners are in flight; the application id is then passed to the runner, which
+refuses to start without one.
+
+**One browser per slot, not one shared.** Two `@playwright/mcp` servers attached
+to the same Chrome over CDP share a browser context and drift onto the same tab:
+navigate one to example.com and the other to example.org, and afterwards both
+report being on example.org. With three concurrent applications that is one agent
+typing into another's form, or pressing Submit on it.
+
+Chrome will not let two instances share a `user-data-dir` (`SingletonLock`), so
+each slot has its own profile on its own debugging port. To avoid signing in
+three times, sign in once and copy the profile across:
+
+```bash
+python3 scripts/browser.py --login https://www.linkedin.com
+python3 scripts/browser.py --stop
+python3 scripts/browser.py --clone-logins
+```
+
+Cloning refuses while any browser is running, because copying a profile Chrome
+has open produces a corrupt one.
+
+```bash
+python3 scripts/browser.py --check     # every slot, its port, profile and tabs
+python3 scripts/watch.py --status      # which slots are busy and with what
+```
+
+### Never blocking
 
 An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.
 

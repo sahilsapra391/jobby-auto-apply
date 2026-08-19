@@ -20,6 +20,7 @@ live profile unattended is not something to do quietly.
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -46,14 +47,52 @@ SERVER = "browser"
 # parked application sent the user to a blank form: the tab holding twenty
 # filled fields died with the run that filled it. Form state lives in the page,
 # not in the profile, so the only way to keep it is to keep the page open.
-CDP_PORT = 9222
-CDP = f"http://127.0.0.1:{CDP_PORT}"
+#
+# One browser PER SLOT, not one shared between them. Two MCP servers attached to
+# the same Chrome over CDP share a browser context and both drift onto the same
+# tab: navigate A to example.com and B to example.org, and afterwards both
+# report being on example.org. With three concurrent applications that is one
+# agent typing into another's form, or pressing Submit on it. Measured, not
+# assumed. And Chrome's SingletonLock means separate browsers cannot share a
+# profile, so each slot gets its own; clone_logins() carries a sign-in across
+# them so the user still only signs in once.
+SLOTS = ["apply-1", "apply-2", "apply-3"]
+BASE_PORT = 9222
 READY_TIMEOUT = 25
 
 
-def write_config():
-    """MCP config with absolute paths, because launchd gives children no PATH."""
-    for d in (PROFILE, ARTIFACTS):
+def port_for(slot):
+    return BASE_PORT + (SLOTS.index(slot) if slot in SLOTS else 0)
+
+
+def cdp_for(slot):
+    return f"http://127.0.0.1:{port_for(slot)}"
+
+
+def profile_for(slot):
+    return STATE / f"browser-profile-{slot}" if slot in SLOTS else PROFILE
+
+
+# The first slot keeps the original profile directory, so the sign-ins already
+# in it carry over rather than needing to be done again.
+def _profile_dir(slot):
+    return PROFILE if slot == SLOTS[0] else profile_for(slot)
+
+
+CDP_PORT = BASE_PORT
+CDP = f"http://127.0.0.1:{CDP_PORT}"
+
+
+def config_file(slot):
+    return STATE / f"browser-mcp-{slot}.json"
+
+
+def write_config(slot=None):
+    """MCP config for one slot, with absolute paths because launchd gives
+    children no PATH. Each slot points at its OWN browser: two agents sharing a
+    CDP endpoint end up driving the same tab."""
+    slot = slot or SLOTS[0]
+    for d in (_profile_dir(slot), ARTIFACTS):
         d.mkdir(parents=True, exist_ok=True)
         d.chmod(0o700)
     npx = toolpath.find("npx")
@@ -70,22 +109,25 @@ def write_config():
                 # the working directory, and a snapshot of a filled application
                 # form holds the user's name, phone and home address.
                 "args": ["-y", PACKAGE,
-                         "--cdp-endpoint", CDP,
-                         "--output-dir", str(ARTIFACTS)],
+                         "--cdp-endpoint", cdp_for(slot),
+                         "--output-dir", str(ARTIFACTS / slot)],
                 "env": {"PATH": toolpath.search_path()},
             }
         }
     }
     STATE.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps(cfg, indent=2))
-    CONFIG.chmod(0o600)
-    return CONFIG
+    path = config_file(slot)
+    path.write_text(json.dumps(cfg, indent=2))
+    path.chmod(0o600)
+    return path
 
 
-def config_path():
-    if not CONFIG.exists():
-        return write_config()
-    return CONFIG
+def config_path(slot=None):
+    slot = slot or SLOTS[0]
+    path = config_file(slot)
+    if not path.exists():
+        return write_config(slot)
+    return path
 
 
 def available():
@@ -97,58 +139,117 @@ def available():
     return True, ""
 
 
-def _cdp(path, timeout=4):
+def _cdp(path, slot=None, timeout=4):
     """Chrome's DevTools HTTP endpoint. Returns parsed JSON, or None if down."""
+    base = cdp_for(slot) if slot else CDP
     try:
-        with urllib.request.urlopen(f"{CDP}{path}", timeout=timeout) as r:
+        with urllib.request.urlopen(f"{base}{path}", timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
         return json.loads(body) if body.strip().startswith(("{", "[")) else body
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return None
 
 
-def running():
-    return _cdp("/json/version") is not None
+def running(slot=None):
+    return _cdp("/json/version", slot) is not None
 
 
-def serve():
-    """Start the long-lived browser if it is not already up.
+def serve(slot=None):
+    """Start a slot's browser if it is not already up.
 
     Detached and in its own session, so it survives the run that started it and
     is not killed along with a runner's process group when an application is
-    dropped mid-flight.
+    dropped mid-flight. With no slot, starts the first one, which is what the
+    interactive commands use.
     """
-    if running():
-        return {"started": False, "alreadyRunning": True, "cdp": CDP}
+    slot = slot or SLOTS[0]
+    if running(slot):
+        return {"started": False, "alreadyRunning": True, "slot": slot, "cdp": cdp_for(slot)}
     ok, why = available()
     if not ok:
         return {"started": False, "error": why}
-    for d in (PROFILE, ARTIFACTS):
+    profile = _profile_dir(slot)
+    for d in (profile, ARTIFACTS):
         d.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(
         [CHROME,
-         f"--remote-debugging-port={CDP_PORT}",
-         f"--user-data-dir={PROFILE}",
+         f"--remote-debugging-port={port_for(slot)}",
+         f"--user-data-dir={profile}",
          "--no-first-run", "--no-default-browser-check",
          # Keep it alive with a window even when the agent closes its last tab.
          "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True, env=toolpath.enriched_env())
     for _ in range(READY_TIMEOUT * 4):
-        if running():
-            return {"started": True, "cdp": CDP}
+        if running(slot):
+            return {"started": True, "slot": slot, "cdp": cdp_for(slot)}
         time.sleep(0.25)
-    return {"started": False, "error": f"Chrome did not open a CDP port within {READY_TIMEOUT}s"}
+    return {"started": False, "slot": slot,
+            "error": f"Chrome did not open a CDP port within {READY_TIMEOUT}s"}
 
 
-def tabs():
-    return [t for t in (_cdp("/json/list") or []) if t.get("type") == "page"]
+def clone_logins():
+    """Copy the signed-in profile from the first slot to the others.
+
+    Chrome will not let two instances share a user-data-dir, so each slot needs
+    its own. Without this the user would have to sign in to LinkedIn once per
+    slot. Every browser has to be stopped first: copying a profile Chrome is
+    using produces a corrupt one.
+    """
+    live = [s for s in SLOTS if running(s)]
+    if live:
+        return {"cloned": False,
+                "why": f"stop these first, a profile in use copies badly: {', '.join(live)}",
+                "how": "python3 scripts/browser.py --stop"}
+    src = _profile_dir(SLOTS[0])
+    if not src.exists():
+        return {"cloned": False, "why": f"nothing to clone from; {src} does not exist"}
+    done = []
+    for slot in SLOTS[1:]:
+        dst = _profile_dir(slot)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, symlinks=False, ignore_dangling_symlinks=True,
+                        ignore=shutil.ignore_patterns("Singleton*", "*.lock"))
+        dst.chmod(0o700)
+        done.append(slot)
+    return {"cloned": True, "slots": done, "from": str(src)}
 
 
-def _open_tab(url):
-    """Open a new tab in the long-lived browser. Chrome wants PUT for /json/new."""
+def stop_all():
+    """Shut every slot's browser down, for cloning or a clean restart."""
+    stopped = []
+    for slot in SLOTS:
+        if not running(slot):
+            continue
+        # Chrome exposes no clean shutdown over the HTTP endpoint, so close the
+        # tabs and let it exit, then fall back to a signal.
+        for t in tabs(slot):
+            _cdp(f"/json/close/{t['id']}", slot)
+        time.sleep(1)
+        if running(slot):
+            subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
+                           capture_output=True)
+        stopped.append(slot)
+    time.sleep(1)
+    return {"stopped": stopped, "stillRunning": [s for s in SLOTS if running(s)]}
+
+
+def tabs(slot=None):
+    if slot is None:
+        out = []
+        for name in SLOTS:
+            for t in tabs(name):
+                out.append({**t, "slot": name})
+        return out
+    return [t for t in (_cdp("/json/list", slot) or []) if t.get("type") == "page"]
+
+
+def _open_tab(url, slot=None):
+    """Open a new tab in a slot's browser. Chrome wants PUT for /json/new."""
+    base = cdp_for(slot) if slot else CDP
     req = urllib.request.Request(
-        f"{CDP}/json/new?{urllib.parse.urlencode({'': url})[1:]}", method="PUT")
+        f"{base}/json/new?{urllib.parse.urlencode({'': url})[1:]}", method="PUT")
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode("utf-8", "replace"))
@@ -167,31 +268,35 @@ def focus(url, open_if_missing=True):
     a miss. The point of the button is to land the user in the browser that holds
     the profile and the logins, whether or not a run left something behind.
     """
-    if not running():
-        return {"focused": False, "why": "the browser is not running"}
+    live = [s for s in SLOTS if running(s)]
+    if not live:
+        return {"focused": False, "why": "no browser is running"}
+    # The tab could be in any slot's browser, so look across all of them.
+    everything = tabs()
     want = _key(url)
-    hit = next((t for t in tabs() if _key(t.get("url", "")) == want), None)
+    hit = next((t for t in everything if _key(t.get("url", "")) == want), None)
     if hit is None:
         host = urllib.parse.urlparse(url).netloc
-        hit = next((t for t in tabs()
+        hit = next((t for t in everything
                     if urllib.parse.urlparse(t.get("url", "")).netloc == host), None)
     opened = False
+    slot = hit.get("slot") if hit else live[0]
     if hit is None:
         if not open_if_missing:
             return {"focused": False, "why": "no open tab for this posting"}
-        hit = _open_tab(url)
+        hit = _open_tab(url, slot)
         opened = True
         if hit is None:
             return {"focused": False, "why": "could not open a tab for this posting"}
-    _cdp(f"/json/activate/{hit['id']}")
+    _cdp(f"/json/activate/{hit['id']}", slot)
     # Raising the tab inside its window is the part that always works. Fronting
     # the window needs the window server, which a launchd agent may not reach;
     # if it fails the tab is still the active one when the user switches to it.
     subprocess.run(["osascript", "-e",
                     'tell application "Google Chrome" to activate'],
                    capture_output=True, text=True, timeout=10)
-    return {"focused": True, "opened": opened, "url": hit.get("url", ""),
-            "title": (hit.get("title") or "")[:120]}
+    return {"focused": True, "opened": opened, "slot": slot,
+            "url": hit.get("url", ""), "title": (hit.get("title") or "")[:120]}
 
 
 def _key(url):
@@ -216,28 +321,46 @@ def check():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Browser for spawned agents.")
+    ap = argparse.ArgumentParser(description="Browsers for spawned agents, one per slot.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--config", action="store_true")
     g.add_argument("--check", action="store_true")
     g.add_argument("--serve", action="store_true",
-                   help="start the long-lived browser if it is not already up")
-    g.add_argument("--tabs", action="store_true", help="what the browser has open")
+                   help="start a slot's browser if it is not already up")
+    g.add_argument("--serve-all", action="store_true", help="start every slot's browser")
+    g.add_argument("--stop", action="store_true", help="shut every slot's browser down")
+    g.add_argument("--clone-logins", action="store_true",
+                   help="copy the signed-in profile from the first slot to the others, "
+                        "so a sign-in is done once rather than once per slot")
+    g.add_argument("--tabs", action="store_true", help="what the browsers currently hold")
     g.add_argument("--focus", metavar="URL",
                    help="bring the tab already showing this posting to the front")
     g.add_argument("--login", metavar="URL",
                    help="open this profile in a visible window so you can sign in")
+    ap.add_argument("--slot", choices=SLOTS, help="which slot to act on (default the first)")
     args = ap.parse_args()
 
     if args.config:
-        print(str(write_config()))
+        print(str(write_config(args.slot)))
         return 0
     if args.serve:
-        out = serve()
+        out = serve(args.slot)
         print(json.dumps(out, indent=2))
         return 0 if not out.get("error") else 1
+    if args.serve_all:
+        out = {slot: serve(slot) for slot in SLOTS}
+        print(json.dumps(out, indent=2))
+        return 0 if all(not v.get("error") for v in out.values()) else 1
+    if args.stop:
+        print(json.dumps(stop_all(), indent=2))
+        return 0
+    if args.clone_logins:
+        out = clone_logins()
+        print(json.dumps(out, indent=2))
+        return 0 if out["cloned"] else 1
     if args.tabs:
-        print(json.dumps([{"url": t.get("url", ""), "title": t.get("title", "")[:100]}
+        print(json.dumps([{"slot": t.get("slot"), "url": t.get("url", ""),
+                           "title": (t.get("title") or "")[:90]}
                           for t in tabs()], indent=2))
         return 0
     if args.focus:
@@ -245,26 +368,28 @@ def main():
         print(json.dumps(out, indent=2))
         return 0 if out["focused"] else 1
     if args.check:
-        out = check()
-        out["browserRunning"] = running()
-        out["openTabs"] = len(tabs())
+        ok, why = available()
+        out = {"ok": ok, "reason": why,
+               "slots": {slot: {"running": running(slot), "port": port_for(slot),
+                                "profile": str(_profile_dir(slot)),
+                                "tabs": len(tabs(slot)) if running(slot) else 0}
+                         for slot in SLOTS}}
         print(json.dumps(out, indent=2))
-        return 0 if out["ok"] else 1
+        return 0 if ok else 1
 
     # Sign in inside the browser the agents actually use, so the session is
-    # theirs from then on. It is a normal visible Chrome, just on a profile of
-    # its own, so signing in here is an ordinary sign-in that sticks.
-    #
-    # This used to launch a second Chrome on the same profile. Two Chromes
-    # cannot share one user-data-dir, so once the browser became long-lived that
-    # would either fail or corrupt the profile. Reuse the running one instead.
-    started = serve()
+    # theirs from then on. A sign-in done in the first slot is carried to the
+    # others by --clone-logins, so it is done once rather than once per slot.
+    slot = args.slot or SLOTS[0]
+    started = serve(slot)
     if started.get("error"):
         print(json.dumps(started, indent=2))
         return 1
     out = focus(args.login)
-    out["signInHere"] = ("Sign in in the window that just came up. Every later run uses "
-                         "this same profile, so LinkedIn and anything else stays signed in.")
+    out["signInHere"] = (
+        f"Sign in in the window that came up ({slot}). Then run "
+        "`python3 scripts/browser.py --stop && python3 scripts/browser.py --clone-logins` "
+        "to carry it to the other slots.")
     print(json.dumps(out, indent=2))
     return 0 if out["focused"] else 1
 

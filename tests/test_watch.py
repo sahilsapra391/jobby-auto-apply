@@ -14,6 +14,8 @@ Run from the repo root: python3 -m unittest discover -s tests
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import pathlib
 import tempfile
 import unittest
@@ -203,6 +205,7 @@ class BrowserConfigTests(unittest.TestCase):
         self.browser.STATE = root
         self.browser.PROFILE = root / "browser-profile"
         self.browser.CONFIG = root / "browser-mcp.json"
+        self.browser.ARTIFACTS = root / "artifacts"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -246,13 +249,40 @@ class BrowserConfigTests(unittest.TestCase):
         self.assertEqual(same, self.browser._key("https://jobs.example.com/apply/123?src=rss"))
         self.assertNotEqual(same, self.browser._key("https://jobs.example.com/apply/456"))
 
-    def test_focus_reports_honestly_when_the_browser_is_down(self):
+    def test_focus_reports_honestly_when_no_browser_is_up(self):
         original = self.browser.running
-        self.browser.running = lambda: False
+        self.browser.running = lambda slot=None: False
         try:
             result = self.browser.focus("https://jobs.example.com/apply/123")
             self.assertFalse(result["focused"])
-            self.assertIn("not running", result["why"])
+            self.assertIn("no browser", result["why"])
+        finally:
+            self.browser.running = original
+
+    def test_each_slot_gets_its_own_browser_and_profile(self):
+        # Two MCP servers on one Chrome share a context and drift onto the same
+        # tab, which with three concurrent applications means one agent typing
+        # into another's form. Ports and profiles must not overlap.
+        ports = [self.browser.port_for(s) for s in self.browser.SLOTS]
+        self.assertEqual(len(set(ports)), len(ports), "each slot needs its own port")
+        profiles = [str(self.browser._profile_dir(s)) for s in self.browser.SLOTS]
+        self.assertEqual(len(set(profiles)), len(profiles), "each slot needs its own profile")
+
+    def test_a_slot_config_points_at_that_slot_only(self):
+        for slot in self.browser.SLOTS:
+            cfg = json.loads(self.browser.write_config(slot).read_text())
+            args = cfg["mcpServers"]["browser"]["args"]
+            endpoint = args[args.index("--cdp-endpoint") + 1]
+            self.assertIn(str(self.browser.port_for(slot)), endpoint)
+
+    def test_cloning_refuses_while_a_browser_is_running(self):
+        # Copying a profile Chrome has open produces a corrupt one.
+        original = self.browser.running
+        self.browser.running = lambda slot=None: True
+        try:
+            out = self.browser.clone_logins()
+            self.assertFalse(out["cloned"])
+            self.assertIn("stop these first", out["why"])
         finally:
             self.browser.running = original
 
@@ -300,3 +330,62 @@ class HeartbeatTests(unittest.TestCase):
         # comfortably shorter than the configured period, or a single dropped
         # ping reads as death.
         self.assertLessEqual(watch.HEARTBEAT_SECONDS, 30)
+
+
+class ApplySlotTests(unittest.TestCase):
+    """Three applications at once, one agent each, and never the same job twice.
+
+    The queue is a single KV key updated by read-modify-write with no
+    compare-and-swap. Two runners claiming at the same instant both take the head
+    and the same job is applied to twice, which was measured rather than feared.
+    So claiming happens only in the watcher's tick, which is single-threaded, and
+    the runner is handed its application.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original
+        self.tmp.cleanup()
+
+    def test_there_are_three_slots(self):
+        self.assertEqual(watch.APPLY_SLOTS, 3)
+        self.assertEqual(len(watch.APPLY_LOCKS), 3)
+        self.assertEqual(len(set(watch.APPLY_LOCKS)), 3)
+
+    def test_slots_are_handed_out_until_they_run_out(self):
+        self.assertEqual(len(watch.free_apply_slots()), 3)
+        watch.take_lock("apply-1", os.getpid(), note="acme-pm")
+        watch.take_lock("apply-2", os.getpid(), note="beta-pm")
+        self.assertEqual(watch.free_apply_slots(), ["apply-3"])
+        watch.take_lock("apply-3", os.getpid(), note="gamma-pm")
+        self.assertEqual(watch.free_apply_slots(), [], "never a fourth at once")
+
+    def test_a_dead_runner_frees_its_own_slot(self):
+        watch.take_lock("apply-2", 999999, note="crashed-run")
+        self.assertIn("apply-2", watch.free_apply_slots())
+        self.assertNotIn("crashed-run", watch.running_applications())
+
+    def test_running_applications_maps_each_job_to_its_slot(self):
+        watch.take_lock("apply-1", os.getpid(), note="acme-pm")
+        watch.take_lock("apply-3", os.getpid(), note="gamma-pm")
+        self.assertEqual(watch.running_applications(),
+                         {"acme-pm": "apply-1", "gamma-pm": "apply-3"})
+
+    def test_a_running_application_is_never_swept_as_stuck(self):
+        # The sweep used to skip entirely while any apply held the lock. With
+        # three slots it has to skip only the ones still owned by a live runner.
+        watch.take_lock("apply-1", os.getpid(), note="acme-pm")
+        self.assertIn("acme-pm", watch.running_applications())
+
+    def test_the_runner_refuses_to_claim_for_itself(self):
+        # This is the race guard. If run_apply could reach into the queue, three
+        # of them would take the same head and apply to one job three times.
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "run_apply.py")],
+            capture_output=True, text=True, cwd=str(ROOT))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--id is required", (r.stderr or "") + (r.stdout or ""))

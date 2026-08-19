@@ -11,9 +11,12 @@ Nothing blocks. An application can take forty five minutes. The old design ran
 it inline, so the whole board froze for the duration and no other click was
 even noticed. Agents are spawned detached and tracked by a lock file.
 
-One application at a time, still. The lock is what enforces the user's standing
-rule, and it survives a watcher restart because it holds a pid rather than
-living in memory.
+Up to three applications at once, one agent per application from start to
+finish. Slots are lock files holding a pid, so they survive a watcher restart
+and a dead runner frees its own slot. The claim happens in this tick and never
+in a runner: the queue is one KV key updated by read-modify-write with no
+compare-and-swap, so two runners claiming together both take the head and the
+same job is applied to twice.
 
 A tick that could not do its job says so. The old watcher logged a healthy
 looking cycle every thirty seconds for hours while every queue read was dying
@@ -186,6 +189,40 @@ def spawn(name, argv, logname, note=""):
 
 # --- queues -----------------------------------------------------------------
 
+# Three applications at once, each owned start to finish by one agent. More than
+# this and they contend for the single browser; fewer wastes the wait on forms.
+APPLY_SLOTS = 3
+APPLY_LOCKS = [f"apply-{i}" for i in range(1, APPLY_SLOTS + 1)]
+
+
+def free_apply_slots():
+    """Slot names with no live runner, in order."""
+    return [name for name in APPLY_LOCKS if lock_holder(name) is None]
+
+
+def running_applications():
+    """applicationId -> slot, for every apply currently in flight."""
+    out = {}
+    for name in APPLY_LOCKS:
+        held = lock_holder(name)
+        if held and held.get("note"):
+            out[held["note"]] = name
+    return out
+
+
+def queue_depth(q, name):
+    return len(q.get(name) or [])
+
+
+def claim_one(prefix):
+    """Take exactly one request off a queue. Only ever called from the tick."""
+    r = subprocess.run([toolpath.node(), "queue.mjs", "claim-one", prefix], cwd=DEPLOY,
+                       capture_output=True, text=True, env=toolpath.queue_env(), timeout=60)
+    if r.returncode != 0:
+        raise TickError(f"claim failed for {prefix}: {(r.stderr or '').strip()[:200]}")
+    return json.loads(r.stdout or "[]")
+
+
 def poll_queues():
     """Every queue in one call. Raises TickError rather than looking empty."""
     try:
@@ -287,14 +324,16 @@ def sweep_stuck():
     Without this a card sits at 'Queued' forever, which is exactly what the user
     saw: the runner was never able to start, and nothing ever said so.
     """
-    if lock_holder("apply"):
-        return []
+    owned = running_applications()
     s = store(["session-list"])
     if s.returncode != 0:
         raise TickError("store is unreadable")
     rescued = []
     for x in json.loads(s.stdout or "[]"):
         if x.get("status") != "inflight":
+            continue
+        # A run that is still going is not stuck, whichever slot holds it.
+        if x["applicationId"] in owned:
             continue
         at = x.get("phaseAt") or x.get("updatedAt") or ""
         try:
@@ -414,9 +453,6 @@ def tick(force_publish=False):
     # seconds. The check is cached, so this costs nothing per tick.
     agent_ok = True
     if q.get("scan") or q.get("apply"):
-        # The runner attaches to a browser it does not own, so make sure one is
-        # there before spawning. Cheap: a CDP ping when it is already up.
-        browser.serve()
         agent_ok, why = agent.authenticated()
         if not agent_ok:
             store(["meta-set", "--key", "blocked", "--value", agent.blocked_reason(why)])
@@ -431,26 +467,45 @@ def tick(force_publish=False):
 
     # One scan at a time, and never while an application is mid-flight: a sweep
     # rewriting the watch list under a running apply is asking for trouble.
-    if agent_ok and q.get("scan") and not lock_holder("scan") and not lock_holder("apply"):
+    if agent_ok and q.get("scan") and not lock_holder("scan") and not running_applications():
         pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "run_scan.py")],
                     "scan-runs.log", note="scan")
         changed["scanStarted"] = pid
 
-    # Strictly one application at a time. This is the user's standing rule and
-    # the lock is the only thing enforcing it.
-    if agent_ok and q.get("apply") and not lock_holder("apply") and not lock_holder("scan"):
-        aid = q["apply"][0].get("applicationId")
-        pid = spawn("apply", [sys.executable, str(REPO / "scripts" / "run_apply.py")],
-                    "apply-runs.log", note=aid or "")
-        changed["applyStarted"] = {"pid": pid, "applicationId": aid}
+    # Up to APPLY_SLOTS applications at once, one agent per application, start to
+    # finish. The claim happens HERE rather than inside the runner, and that is
+    # the whole point: the queue is a single KV key updated by read-modify-write
+    # with no compare-and-swap, so two runners claiming at the same instant both
+    # take the same head of the queue and the same job gets applied to twice.
+    # Verified, not assumed. This tick is single-threaded, so claiming in it is
+    # sequential however many runners are already in flight.
+    if agent_ok and not lock_holder("scan"):
+        for slot in free_apply_slots():
+            if not queue_depth(q, "apply"):
+                break
+            claimed = claim_one("apply/")
+            if not claimed:
+                break
+            aid = claimed[0].get("applicationId")
+            if not aid:
+                continue
+            q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
+            browser.serve(slot)
+            pid = spawn(slot, [sys.executable, str(REPO / "scripts" / "run_apply.py"),
+                               "--id", aid, "--slot", slot],
+                        f"{slot}.log", note=aid)
+            changed.setdefault("applyStarted", []).append(
+                {"slot": slot, "pid": pid, "applicationId": aid})
 
     rescued = sweep_stuck()
     if rescued:
         changed["rescued"] = rescued
 
-    holder = lock_holder("apply") or lock_holder("scan")
-    if holder:
-        changed.setdefault("running", holder.get("note") or "agent")
+    busy = sorted(running_applications())
+    if lock_holder("scan"):
+        busy.append("scan")
+    if busy:
+        changed.setdefault("running", busy)
 
     fp = fingerprint()
     statefile = STATE_DIR / "board-fingerprint"
@@ -486,8 +541,10 @@ def status():
         out["queues"] = poll_queues()
     except (TickError, subprocess.TimeoutExpired) as exc:
         out["queues"] = {"error": str(exc)}
-    for name in ("apply", "scan"):
+    for name in APPLY_LOCKS + ["scan"]:
         out["locks"][name] = lock_holder(name)
+    out["slots"] = {"total": APPLY_SLOTS, "free": len(free_apply_slots()),
+                    "running": running_applications()}
     out["blocked"] = blocked_message() or None
     return out
 

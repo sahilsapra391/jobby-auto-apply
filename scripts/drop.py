@@ -91,7 +91,10 @@ def stop_agent(aid):
     held by a different application by the time this runs, and killing the wrong
     run would be worse than not killing at all.
     """
-    for name in ("apply", "scan"):
+    # Every apply slot, not just one. With three running concurrently the lock
+    # holding this application could be any of them, and the note is what says
+    # which; signalling by slot position would kill somebody else's run.
+    for name in watch.APPLY_LOCKS + ["scan"]:
         holder = watch.lock_holder(name)
         if not holder or holder.get("note") != aid:
             continue
