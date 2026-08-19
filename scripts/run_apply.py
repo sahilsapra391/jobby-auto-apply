@@ -89,7 +89,13 @@ Do this and nothing else:
 1. Read the watch entry: "{py}" "{repo}/scripts/store.py" session-load --id {aid}
    It carries the company, role, url, region, ats and an `extraction` summarising the posting.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
-2. Build the tailored resume and cover letter for this role, following references/tailoring.md:
+2. FIRST check whether the documents already exist: ls "{repo}/applications/<Company>/".
+   If a resume and cover letter for THIS role are already there, use them as they are. Do not
+   rebuild them, do not "improve" them. A run can be retried for reasons that have nothing to
+   do with the documents (no browser, a crashed runner, a lost queue entry), and the standing
+   rule from the user is that the first version built is the one that gets sent.
+   Only if they are missing, build the tailored resume and cover letter for this role,
+   following references/tailoring.md:
    the region-matched base resume from profile.resumes, the identity block for that region,
    six sentences maximum on any free-text answer, every claim traceable to the base resume,
    the answer store or the story bank. Verify with scripts/resume_pdf.py verify before using them.
