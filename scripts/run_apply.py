@@ -152,6 +152,14 @@ Do this and nothing else:
    on the filled form. Do not close it and do not navigate it away. Close only tabs you opened
    and did not need. Form values live in the page, not the profile: closing the tab throws away
    everything you filled.
+3b. If the posting states a salary band and the form asks what he expects, the answer is
+   the MIDDLE of that band, not his stored figure:
+     "{py}" "{repo}/scripts/salary.py" --band "<the range exactly as the posting writes it>"
+   Do not work it out by eye. It handles K suffixes, en dashes, lakh grouping, LPA and
+   one-sided bands, and returns it formatted the way the band was written. With no band
+   stated, use the stored expectation. The separate "do you agree this range works" checkbox
+   is always Yes and is not this field.
+
 4. Before you submit, re-read the session:
      "{py}" "{repo}/scripts/store.py" session-load --id {aid}
    If its status is now "dropped", the user cancelled this application while you were
