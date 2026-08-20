@@ -1,0 +1,100 @@
+{
+  "banner": "PRODUCT MANAGER | AI PRODUCT STRATEGY &amp; AGENTIC SYSTEMS",
+  "summary": "Product manager who builds data-driven product strategy from user, usage, and market insights, then validates the end-to-end use cases and workflows behind it until the gaps are visible. Conducted comparative analysis of legacy and next-generation systems and delivered structured gap assessments that exposed functional and performance inefficiencies, and turned those workflow gaps into a prioritized roadmap that moved 75 enterprise customers with zero operational downtime. Hands-on with agentic systems as a builder rather than a reviewer: founded SpecHawk, an AI-powered deploy-aware no-code agentic QA platform, and grounded an AI test case generator in retrieval-augmented generation over roughly 2,000 of the team&rsquo;s own ticket-to-test conversions so generated output followed house conventions. Runs direct customer discovery, four design partners recruited and looped weekly on real usage, and partners across engineering, QA, marketing, and executive leadership to execute and monitor product performance. Works in TypeScript, Node.js, Python and Java across product strategy, platform integration, and software delivery.",
+  "areasOfExpertise": [
+    "AI Product Strategy &amp; Vision",
+    "Agentic Systems &amp; AI Workflows",
+    "Data-Driven Roadmap Strategy",
+    "Product Analytics &amp; Data Analysis",
+    "Gap Assessment &amp; Feature Parity",
+    "Customer Discovery &amp; Validation",
+    "Cross-Functional Product Delivery",
+    "Technical Solution Design",
+    "Process Automation &amp; Operational Excellence",
+    "AWS Certified Cloud Practitioner",
+    "Weaviate Vector Databases Professional",
+    "ICAgile Certified Professional",
+    "Atlassian Agile PM Professional",
+    "Aha! Product Management Professional",
+    "Anaconda Machine Learning Professional"
+  ],
+  "technical": [
+    {
+      "label": "AI &amp; Agentic Systems",
+      "items": "Large Language Models, Agentic Workflows, Retrieval-Augmented Generation (RAG), Dense Embeddings, Weaviate, Cursor, Claude Code, Codex, GitHub Copilot, Amazon Q Developer, Replit, Lovable, Google Stitch"
+    },
+    {
+      "label": "Product Strategy &amp; Roadmap",
+      "items": "Jira, Confluence, Aha!, Agile/Scrum, Roadmap Prioritization, Gap Assessments, Acceptance Criteria, Prioritized Requirements, Specifications, Technical Writing"
+    },
+    {
+      "label": "Data, Insights &amp; Performance Monitoring",
+      "items": "Snowflake SQL, Snowflake, Tableau, PowerBI, Product Analytics, Data Modeling, Big Data, New Relic, Observability, ETL Data Injection"
+    },
+    {
+      "label": "SaaS Product Development Lifecycle",
+      "items": "Agile/Scrum, Jira, Confluence, Requirements &amp; Acceptance Criteria, Bitbucket, Git, AWS CodePipeline"
+    },
+    {
+      "label": "Languages &amp; Frameworks",
+      "items": "TypeScript, Python, Java, Spring Boot, Angular, React, Next.js, NestJS, Node.js"
+    },
+    {
+      "label": "Cloud &amp; Infrastructure",
+      "items": "AWS (ECS, Lambda, IAM, KMS, S3, VPC, API Gateway, CloudWatch, Systems Manager, Secrets Manager), Azure, Google Cloud Platform (GCP), CloudFormation, Docker, Terraform, Railway, Vercel"
+    },
+    {
+      "label": "Languages &amp; Frameworks",
+      "items": "TypeScript, Python, Java, Spring Boot, Angular, React, Next.js, NestJS, Node.js"
+    }
+  ],
+  "roles": [
+    {
+      "lede": "Defined product strategy and roadmap for a next-generation aviation platform, validated end-to-end use cases and workflows against the legacy system to surface gaps, and partnered across engineering, QA, and go-to-market stakeholders to execute and monitor delivery.",
+      "bullets": [
+        "Owned the enterprise migration roadmap end to end, onboarded 75 customers from competing FBO platforms to TFBO Next-Gen, and sustained 104% YoY ARR growth over two consecutive years.",
+        "Directed QA resource planning and the automated testing strategy that raised test coverage from 62% to 81%, trading breadth of coverage against confidence in each individual result while holding enterprise-grade release stability and regression quality assurance.",
+        "Owned the product side of an infrastructure migration from a legacy monolithic aviation platform to a domain-driven microservices architecture using Java, Spring Boot, TypeScript, and Angular, implementing reusable RESTful APIs, caching, and lazy loading to reduce data retrieval latency by 68% and eliminate enterprise system timeouts.",
+        "Directed a feature parity program for TFBO Next-Gen through influence without authority over engineering, translating workflow gaps into prioritized requirements, acceptance criteria and migration sequencing so 75 enterprise customers moved with zero operational downtime.",
+        "Executed enterprise customer migration strategy, onboarded 75 customers from competing FBO platforms to TFBO Next-Gen, and sustained 104% YoY ARR growth over two consecutive years.",
+        "Removed a two-week onboarding bottleneck by automating the data injection ETL rather than asking for headcount, taking capacity from over two weeks per customer to three customers per day and making the 75-customer program feasible.",
+        "Optimized engineering delivery velocity through AI-driven workflow integration to accelerate the redesign and release of the Invoicing module by five months and reduce customer churn significantly."
+      ]
+    },
+    {
+      "lede": "Supported post-merger integration of multiple FBO operations products into CAMP System&rsquo;s aircraft maintenance solutions suite following a $200M acquisition.",
+      "bullets": [
+        "Led enterprise-wide adoption of LaunchDarkly, a release control platform, modernized CI/CD pipelines, decoupled deployment from release cycles, and increased feature release frequency by 400%.",
+        "Developed and deployed a LaunchDarkly API&ndash;based JavaScript web application in Cursor, enabled centralized feature flag monitoring and release control, reduced subscription costs, and achieved a 7% reduction in team OPEX."
+      ]
+    },
+    {
+      "lede": "Enabled data-driven product improvements through continuous enhancement cycles to optimize ERP workflows and align with aviation industry operational requirements.",
+      "bullets": [
+        "Replaced 25 separate weekly revenue emails to the CEO of a top-two enterprise account with a single dynamic PowerBI digest covering cumulative revenue and per-location drill-down, verifying every figure against raw Snowflake data before it reached an executive inbox.",
+        "Spearheaded platform integration initiatives connecting four major accounting platforms and two loyalty/rewards programs into FBO360 to expand product ecosystem capabilities and enable new customer acquisition and market penetration.",
+        "Supported enterprise aviation ERP product operations by collaborating with cross-functional engineers, QA, and stakeholders to enhance system reliability, scalability, and user experience across FBO360 deployments."
+      ]
+    },
+    {
+      "lede": "Assisted in business intelligence and analytics initiatives by developing interactive dashboards, performing data modeling, and generating actionable insights to inform product and business decisions.",
+      "bullets": [
+        "Engineered seven Tableau dashboards leveraging Snowflake SQL data across four customer-facing applications to enable advanced product analytics, uncover usage patterns, and reduce customer attrition by 28%."
+      ]
+    },
+    {
+      "lede": "Directed development of an AI-powered, deploy-aware no-code agentic QA platform for SaaS applications, where the agent discovers and maps staging environments, generates test cases, orchestrates execution, validates Jira tickets, and returns screenshot evidence. Engineered end-to-end QA workflow automation and improved deployment confidence by integrating environment discovery, test orchestration, and defect validation within a unified product system.",
+      "bullets": [
+        "Executed a six-month product roadmap, delivered MVP (V1), and advanced V2/V3 builds featuring Security Hub for dependency risk analysis, GitHub integration, a developer CLI, and a credit-based pricing architecture to enable scalable SaaS monetization.",
+        "Executed a six-month product roadmap, delivered MVP (V1), and advanced V2/V3 builds featuring Security Hub for dependency risk analysis, GitHub integration, developer CLI, and a credit-based pricing architecture to enable scalable SaaS monetization.",
+        "Raised early pre-seed capital to support MVP development, customer discovery, and product validation."
+      ]
+    },
+    {
+      "lede": "",
+      "bullets": [
+        "Built Python-based classification models to evaluate ~250 early-stage startups, automating due diligence and surfacing 8 high-potential seed investment targets for the in-house venture fund."
+      ]
+    }
+  ]
+}

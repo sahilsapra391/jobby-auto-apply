@@ -144,6 +144,26 @@ Do this and nothing else:
    numbers, employers, dates and titles stay exactly as they are. The cover letter takes the
    same vocabulary. Never use anything from `notClaimable`.
 
+   DO NOT WRITE THE RESUME HTML BY HAND. There is a template, and you supply only what
+   this posting changes:
+     {py} "{repo}/scripts/resume_build.py" render \
+       --template "{repo}/templates/resume.html" \
+       --base-content "{repo}/templates/resume-content.json" \
+       --content <your overrides>.json --out "<Company>/.resume.html"
+   The overrides are JSON, and anything you leave out is inherited:
+     {{"banner": "...", "summary": "...",
+      "areasOfExpertise": [15 items], "technical": [7 rows],
+      "roles": [{{"lede": "...", "bullets": {{"2": "reworded third bullet"}}}}, ...]}}
+   `bullets` takes a full list, or a map of index to replacement when you are changing one
+   line and keeping the rest. Two thirds of the bullets across the resumes already written
+   are word for word the same, because they describe the same real work, so restating all of
+   them to change a third is most of what writing the document used to cost.
+
+   The employers, dates, job titles, contact block and stylesheet live in the template. You
+   cannot set them, which is the point: they are frozen, and now they cannot drift.
+   Run `resume_build.py slots --template ...` if you need the exact counts. The lists must
+   be exactly that long, because the layout is measured against the base resume.
+
    Then the two gates, and do not upload until both pass. CONTENT FIRST, LAYOUT SECOND.
    Wording edits change how many lines the page holds, so clearing layout before content
    means the content fix invalidates the layout you just cleared, and you render again.
