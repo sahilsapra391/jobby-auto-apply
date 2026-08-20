@@ -6,16 +6,26 @@ worrying about. This is what makes hourly scanning affordable — the cost is a
 function of how many companies are known, and every company that enters the
 registry is covered for free from then on.
 
-Bodies are fetched separately and only for postings that survive the metadata
-gate. Measured on a real board (Vercel, 83 jobs): the list is 59 KB, the same
-list with `content=true` is 845 KB. Fourteen times the traffic, every hour, for
-descriptions of roles that are about to be filtered out on title and country
-anyway. Title, location and posted date are all in the cheap response, which is
-enough to reject most of a sweep.
+Bodies come with the list, and that decision was reversed once on evidence.
+
+The first version fetched them per job, because the list is 59 KB for 83 jobs
+and the same list with `content=true` is 845 KB — fourteen times the traffic for
+descriptions of roles about to be rejected on title and country anyway.
+
+Then a full sweep ran: 88 boards, 8,422 postings, 799 kept. Per-job fetching
+needs one request each, at a second apiece, so the run took 6.5 minutes and hit
+its own body cap at 300 — leaving seven of every ten kept jobs with no
+description, no fingerprint, and no extracted experience. The cheaper request
+was buying a worse board.
+
+`content=true` costs one request per board instead of one per job: 88 requests
+rather than 887, every kept job with a real body, and the sweep drops to about
+a quarter of the time. The bandwidth is the price and it is worth paying.
 
 Verified 2026-08-19: list at /v1/boards/{token}/jobs, one body at
 /v1/boards/{token}/jobs/{id} (the `id` field, not `internal_job_id`, which
-404s). A wrong token is a 404 with {"error":"Job not found"}.
+404s). A wrong token is a 404 with {"error":"Job not found"}. The per-job route
+is kept because a caller may still want exactly one body.
 """
 
 import sys
@@ -27,7 +37,7 @@ import base  # noqa: E402
 SOURCE = "greenhouse"
 SOURCE_CLASS = "ats"
 TIER = "1a"
-LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
+LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
 JOB_URL = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{job}"
 
 

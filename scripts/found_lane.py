@@ -77,6 +77,10 @@ def compact(job):
     extracted = job.get("extracted") or {}
     return {
         "place": place(job),
+        # 0 = the company's own ATS, 1 = its careers page, 2+ = somebody
+        # else's copy. Applying through the employer's own system beats
+        # applying through a redirect, so the lane leads with these.
+        "rank": direct_rank(job),
         "id": job.get("id"),
         "co": job.get("company") or "",
         "ti": job.get("title") or "",
@@ -175,6 +179,18 @@ def place(job):
     if city and city.lower() in NOT_A_CITY:
         return REGION_LABELS.get(city.lower(), city.title())
     return city or raw or ""
+
+
+DIRECT_RANKS = {"ats": 0, "careers": 1}
+
+
+def direct_rank(job):
+    """How close this record is to the employer's own application form."""
+    import jobs_store
+    classes = [s.get("sourceClass") for s in (job.get("sources") or [])
+               if isinstance(s, dict)]
+    best = min(classes, key=jobs_store.canonical_rank, default="other")
+    return jobs_store.canonical_rank(best)
 
 
 def sort_key(job):
@@ -308,7 +324,10 @@ def filter_bar(jobs, config):
         <input type="search" id="jb-kw" placeholder="Add a keyword and press Enter&hellip;"
                aria-label="Add a keyword">
         <div class="jb-radios">{dates}</div>
+        <label class="jb-check"><input type="checkbox" id="jb-direct">
+          <span>direct listings only</span></label>
         <select id="jb-sort" aria-label="Sort">
+          <option value="direct">Direct first</option>
           <option value="score">Match %</option>
           <option value="new">Newest</option>
         </select>
@@ -510,6 +529,7 @@ CSS = """
   .jb-chip.gate { background:var(--t-red); color:var(--red-ink); }
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
   .jb-chip.years { background:var(--t-o); color:var(--orange); }
+  .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
   .jb-acts { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-top:auto;
     padding-top:.65rem; border-top:1px solid var(--hair); }
   .jb-acts .jb-det { margin-left:auto; }
@@ -698,6 +718,8 @@ SCRIPT = r"""
     if (when) chips.appendChild(chip(when));
     else chips.appendChild(chip('no date', 'unknown'));
     if (job.bd > 1) chips.appendChild(chip('on ' + job.bd + ' boards', 'boards'));
+    chips.appendChild(chip(job.src || 'unknown source',
+                           job.rank === 0 ? 'direct' : (job.rank === 1 ? 'direct' : '')));
     (job.ga || []).forEach(function (label) { chips.appendChild(chip(label, 'gate')); });
     (job.tg || []).slice(0, 3).forEach(function (tag) { chips.appendChild(chip(tag)); });
     article.appendChild(chips);
@@ -878,6 +900,7 @@ SCRIPT = r"""
     if (value('jb-deg') && job.dg !== value('jb-deg')) {
       if (job.dg || !unknownAllowed('degree')) return false;
     }
+    if (checked('jb-direct') && job.rank > 1) return false;
     if (value('jb-role') && job.rc !== value('jb-role')) { if (job.rc) return false; }
     if (value('jb-emp') && job.et !== value('jb-emp')) { if (job.et) return false; }
     return true;
@@ -885,9 +908,18 @@ SCRIPT = r"""
 
   function render() {
     var rows = JOBS.filter(matches);
-    if (value('jb-sort') === 'new') {
+    var how = value('jb-sort') || 'direct';
+    if (how === 'new') {
       rows = rows.slice().sort(function (a, b) {
         return String(b.pa || b.fs || '').localeCompare(String(a.pa || a.fs || ''));
+      });
+    } else if (how === 'direct') {
+      // Direct listings first, best match within each group. Applying through
+      // the employer's own ATS beats applying through somebody's redirect, so
+      // a 70% Greenhouse posting outranks a 70% aggregator copy of it.
+      rows = rows.slice().sort(function (a, b) {
+        var grouped = (a.rank > 1 ? 1 : 0) - (b.rank > 1 ? 1 : 0);
+        return grouped || (b.sc || 0) - (a.sc || 0);
       });
     }
     grid.textContent = '';
@@ -929,7 +961,7 @@ SCRIPT = r"""
     });
   }
   ['jb-ex','jb-scope','jb-sort','jb-loc','jb-remote','jb-cmode','jb-companies',
-   'jb-exp','jb-deg','jb-role','jb-emp','jb-jt'].forEach(function (id) {
+   'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-direct'].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) { node.addEventListener('input', render); node.addEventListener('change', render); }
   });
@@ -951,6 +983,8 @@ SCRIPT = r"""
       document.querySelectorAll('[data-wp],[data-unknown]').forEach(function (n) {
         n.checked = true;
       });
+      var direct = document.getElementById('jb-direct');
+      if (direct) direct.checked = false;
       var week = document.querySelector('input[name="jb-date"][value="7d"]');
       if (week) week.checked = true;
       drawPills(); render();

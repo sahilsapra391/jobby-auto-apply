@@ -329,6 +329,46 @@ class PruneTests(unittest.TestCase):
         jobs, _ = jobs_store.prune(jobs, cap=3, at=self.now)
         self.assertIn("kept", jobs)
 
+    def test_the_cap_keeps_direct_listings_over_aggregator_copies(self):
+        # Measured, not theorised. A full sweep brought in 1,482 postings from
+        # company ATS boards and 5,300 aggregator copies; sorting on score
+        # alone kept 3,000 of which only 214 were direct. Aggregator snippets
+        # are short and keyword-dense, so they out-score real job descriptions
+        # and evict the records that link to the employer's own form.
+        jobs = {}
+        for i in range(20):
+            jobs[f"agg{i}"] = job(f"agg{i}", score={"total": 95},
+                                  lastSeenAt=self.stamp(1),
+                                  sources=[{"source": "careerjet",
+                                            "sourceClass": "aggregator",
+                                            "url": f"https://c/{i}"}])
+        for i in range(5):
+            jobs[f"ats{i}"] = job(f"ats{i}", score={"total": 60},
+                                  lastSeenAt=self.stamp(1),
+                                  sources=[{"source": "greenhouse", "sourceClass": "ats",
+                                            "url": f"https://gh/{i}"}])
+        jobs, _ = jobs_store.prune(jobs, cap=5, at=self.now)
+        self.assertEqual(sorted(jobs), ["ats0", "ats1", "ats2", "ats3", "ats4"],
+                         "every direct listing survives before any aggregator copy")
+
+    def test_within_direct_listings_the_better_match_still_wins(self):
+        jobs = {f"j{i}": job(f"j{i}", score={"total": i * 10}, lastSeenAt=self.stamp(1),
+                             sources=[{"source": "greenhouse", "sourceClass": "ats",
+                                       "url": f"https://gh/{i}"}])
+                for i in range(6)}
+        jobs, _ = jobs_store.prune(jobs, cap=2, at=self.now)
+        self.assertEqual(sorted(jobs), ["j4", "j5"])
+
+    def test_a_careers_page_is_kept_like_an_ats_listing(self):
+        jobs = {"agg": job("agg", score={"total": 99}, lastSeenAt=self.stamp(1),
+                           sources=[{"source": "adzuna", "sourceClass": "aggregator",
+                                     "url": "https://a/1"}]),
+                "careers": job("careers", score={"total": 41}, lastSeenAt=self.stamp(1),
+                               sources=[{"source": "acme", "sourceClass": "careers",
+                                         "url": "https://acme.com/1"}])}
+        jobs, _ = jobs_store.prune(jobs, cap=1, at=self.now)
+        self.assertEqual(sorted(jobs), ["careers"])
+
     def test_an_unscored_job_loses_to_a_scored_one(self):
         jobs = {"scored": job("scored", score={"total": 10}, lastSeenAt=self.stamp(1)),
                 "unscored": job("unscored", lastSeenAt=self.stamp(1))}

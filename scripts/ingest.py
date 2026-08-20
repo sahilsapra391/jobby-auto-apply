@@ -48,8 +48,13 @@ REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
 # Channels whose postings arrive without a body, so a description has to be
-# asked for separately. Only these need the enrichment pass.
-NEEDS_BODY = {"greenhouse"}
+# asked for separately.
+#
+# Empty, and deliberately so. Greenhouse was the only member and it now returns
+# bodies with the list: per-job fetching capped a full sweep at 300 bodies and
+# left seven of every ten kept jobs with no description. The enrichment pass
+# stays because the next connector that needs it will need exactly this.
+NEEDS_BODY = set()
 # Bodies cost a request each. Even after the metadata gate this is capped, so a
 # badly-scoped saved search cannot turn one ingest into four thousand requests.
 MAX_BODIES_PER_RUN = 300

@@ -141,7 +141,8 @@ nodes['jb-grid'] = grid;
 // Every control the script reads has to exist before it reads it, or an
 // absent node reads as an empty value and the filter silently does nothing.
 ['jb-kw','jb-ex','jb-scope','jb-sort','jb-loc','jb-remote','jb-cmode','jb-companies',
- 'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-count','jb-none','jb-pills'
+ 'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-count','jb-none','jb-pills',
+ 'jb-direct'
 ].forEach(function (id) { node(id); });
 
 const wpNodes = ['remote', 'hybrid', 'onsite'].map(function (w) {
@@ -161,6 +162,9 @@ const dateNode = makeNode('input');
 dateNode.value = CONTROLS.date || 'all';
 dateNode.checked = true;
 
+// Checkboxes in this stub default to checked; the direct-only filter is an
+// opt-in, so it has to be turned off unless a test asks for it.
+node('jb-direct').checked = !!CONTROLS['jb-direct'];
 global.localStorage = {
   store: {},
   getItem(k) { return this.store[k] || null; },
@@ -227,7 +231,8 @@ setTimeout(function () {
                 "src": "greenhouse", "loc": "New York, NY", "cty": "US", "wp": "hybrid",
                 "pa": "2026-08-13", "fs": "2026-08-19", "sc": 80, "pt": {}, "wt": {},
                 "wy": {}, "un": [], "ga": [], "bd": 1, "sg": [], "tg": [], "ex": "",
-                "yr": None, "dg": None, "rc": None, "et": None, "sal": None}
+                "yr": None, "yrt": None, "place": "New York, United States", "rank": 0,
+                "dg": None, "rc": None, "et": None, "sal": None}
         base.update(fields)
         return base
 
@@ -322,7 +327,35 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class SaveReconciliationTests(ScriptHarness, unittest.TestCase):
+class DirectListingTests(ScriptHarness, unittest.TestCase):
+    """Applying through the employer's own ATS beats applying through a
+    redirect, so the lane leads with direct listings."""
+
+    def test_direct_listings_lead_even_when_an_aggregator_scores_higher(self):
+        out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
+                               self.job("ats", rank=0, src="greenhouse", sc=70)])
+        self.assertEqual(out["ids"], ["ats", "agg"])
+
+    def test_within_a_group_the_better_match_still_leads(self):
+        out = self.run_script([self.job("lo", rank=0, sc=60),
+                               self.job("hi", rank=0, sc=90)])
+        self.assertEqual(out["ids"], ["hi", "lo"])
+
+    def test_a_careers_page_counts_as_direct(self):
+        out = self.run_script([self.job("agg", rank=2, sc=99),
+                               self.job("careers", rank=1, sc=50)])
+        self.assertEqual(out["ids"], ["careers", "agg"])
+
+    def test_sorting_by_match_ignores_how_direct_it_is(self):
+        out = self.run_script([self.job("agg", rank=2, sc=95),
+                               self.job("ats", rank=0, sc=70)], {"jb-sort": "score"})
+        self.assertEqual(out["ids"], ["agg", "ats"])
+
+    def test_the_direct_only_filter_hides_aggregator_copies(self):
+        out = self.run_script([self.job("agg", rank=2), self.job("ats", rank=0)],
+                              {"jb-direct": True})
+        self.assertEqual(out["ids"], ["ats"])
+
     """Review finding 3: a lost saved search must not read as a saved one.
 
     The single-key design is read-modify-write with no compare-and-swap, so a

@@ -408,15 +408,32 @@ def mark_watched(root, job_id):
 
 
 def keep_priority(job):
-    """Sort key for what survives the cap: highest score, then freshest.
+    """Sort key for what survives the cap: direct listings, then score, then age.
 
     Reversed, this is the drop order the plan asks for — oldest and
-    lowest-scoring first.
+    lowest-scoring first — with one addition the plan does not state and a real
+    run made unarguable.
+
+    Retention used to sort on score alone. A full sweep brought in 1,482
+    postings from company ATS boards and 5,300 aggregator copies; the cap kept
+    3,000 and only 214 of the survivors were direct. Aggregator snippets are
+    short and keyword-dense, so they score at least as well as a real job
+    description, and they crowded out exactly the records worth keeping: the
+    ones that link to the employer's own application form.
+
+    The plan already ranks ATS above careers page above aggregator when
+    deciding which sighting is canonical. This is the same ordering applied to
+    the question of what to throw away, which is the same question wearing a
+    different hat.
     """
     score = (job.get("score") or {}).get("total")
     score = score if isinstance(score, (int, float)) else -1
+    classes = [s.get("sourceClass") for s in (job.get("sources") or [])
+               if isinstance(s, dict)]
+    best = min(classes, key=canonical_rank, default="other")
+    direct = 1 if canonical_rank(best) <= 1 else 0
     when = job.get("postedAt") or job.get("firstSeenAt") or ""
-    return (score, str(when))
+    return (direct, score, str(when))
 
 
 def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None):
