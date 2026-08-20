@@ -255,7 +255,7 @@ remembered clicks on load.
 
 ## 7. Concurrency
 
-Up to **three applications at once**, each owned by one agent start to finish. No
+Up to **five applications at once**, each owned by one agent start to finish. No
 agent ever handles two.
 
 Two mechanisms carry this, both established by measurement rather than reasoning:
@@ -270,9 +270,9 @@ cannot reach into the queue even when invoked by hand.
 **One browser per slot.** Two `@playwright/mcp` servers attached to the same
 Chrome over CDP share a browser context and drift onto the same tab: drive one to
 example.com and the other to example.org, and afterwards both report example.org.
-With three applications that is one agent typing into another's form, or pressing
-Submit on it. Each slot has its own Chrome on its own debugging port (9222/9223/
-9224). Chrome's `SingletonLock` forbids sharing a profile, so each has its own,
+With several applications that is one agent typing into another's form, or pressing
+Submit on it. Each slot has its own Chrome on its own debugging port (9222 upward), and the count is
+defined once in browser.py with watch.py deriving its locks from it. Chrome's `SingletonLock` forbids sharing a profile, so each has its own,
 and `--clone-logins` copies a signed-in profile across so the user signs in once.
 
 Supporting guarantees:

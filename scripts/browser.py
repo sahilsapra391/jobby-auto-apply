@@ -56,7 +56,12 @@ SERVER = "browser"
 # assumed. And Chrome's SingletonLock means separate browsers cannot share a
 # profile, so each slot gets its own; clone_logins() carries a sign-in across
 # them so the user still only signs in once.
-SLOTS = ["apply-1", "apply-2", "apply-3"]
+# How many applications run at once. This is the single definition: watch.py
+# derives its locks from it, because two hardcoded lists that must agree is a
+# drift waiting to happen, and disagreement here means a runner attaching to
+# a browser that was never started.
+SLOT_COUNT = 5
+SLOTS = [f"apply-{i}" for i in range(1, SLOT_COUNT + 1)]
 BASE_PORT = 9222
 READY_TIMEOUT = 25
 

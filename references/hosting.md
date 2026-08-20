@@ -96,9 +96,9 @@ Each dropped row keeps where the application had got to, because "dropped while 
 
 The lane sits apart from the other four in the tab bar. Nothing in it is waiting on anyone, so it should not read as a queue.
 
-### Three at a time, one agent each
+### Five at a time, one agent each
 
-Up to three applications run concurrently. Each is owned by one agent from start
+Up to five applications run concurrently. Each is owned by one agent from start
 to finish; no agent ever handles two. Slots are lock files holding a pid, so a
 runner that dies frees its own slot and a watcher restart does not lose track.
 
@@ -114,7 +114,7 @@ refuses to start without one.
 **One browser per slot, not one shared.** Two `@playwright/mcp` servers attached
 to the same Chrome over CDP share a browser context and drift onto the same tab:
 navigate one to example.com and the other to example.org, and afterwards both
-report being on example.org. With three concurrent applications that is one agent
+report being on example.org. With several concurrent applications that is one agent
 typing into another's form, or pressing Submit on it.
 
 Chrome will not let two instances share a `user-data-dir` (`SingletonLock`), so
