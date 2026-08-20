@@ -134,7 +134,25 @@ If a form asks "were you referred by an employee," and a referral is realistical
 
 Identify the ATS and read `references/platforms.md` for its known blockers, so you can tell the user upfront what will need them.
 
+**Fill in batches, not field by field.** One snapshot to read the form, then one
+`browser_fill_form` call carrying every field it supports (textbox, checkbox, radio,
+combobox, slider), then **one** snapshot to verify the lot. Values are still read back from
+the page rather than trusted; what changes is paying for that once instead of once per
+field. Every snapshot returns the page's whole accessibility tree, and on a Workday form
+that is thousands of tokens charged twenty times over. Use `browser_find` to re-check a
+single disagreeing field rather than another full snapshot. File uploads, react-select
+comboboxes, native selects and multi-step wizards are handled separately, as
+`references/platforms.md` describes; batching does not change those rules.
+
 **Resolve the whole form before touching it.** Read the form once, list its questions, and resolve them in a single call — `store.py answers-resolve --input questions.json` — rather than one lookup per field. That produces the fill plan upfront: which fields have confirmed answers, which are inferred and need confirming, which are missing and block the application. Ask the user for everything missing in one message, not field by field. Treat a `fuzzy` match as a candidate you must confirm means the same thing, never as an authority — the score measures wording overlap, not meaning.
+
+**Work history boxes get filled from that posting's own resume.** Employment history entries usually carry a free-text box under each one: Description, Responsibilities, Summary. If it exists it gets filled, because a blank job sitting next to a full attached resume reads worse than no history at all. The text is not written from memory and not loosely summarised; it comes from the resume built for this posting, for that specific role:
+
+```bash
+python3 scripts/experience.py --app "<Company>" --role "<the job title>"
+```
+
+It reads `.resume.html`, the source the PDF renders from, so role boundaries are looked up in markup rather than guessed at from reflowed PDF text, and typeset entities never reach a form. Pass `--max-chars N` when the box caps length and it drops whole bullets instead of halving a sentence; `--list` shows the exact titles. Pass the title you just typed in, since an ambiguous fragment is refused rather than guessed at, and guessing between two roles at one company files the wrong years under the wrong job. If it reports no description for a role, write one factual line from the title, company and dates and invent nothing. If a form has no such box, add nothing.
 
 Work in order, and **verify every few fields rather than at the end.** Long forms re-render as you fill: dropdowns shift, clicks land on neighbouring options, scroll position moves a target between reading its coordinate and clicking. Silent mis-fills are the normal failure mode.
 
@@ -187,6 +205,10 @@ Three more carry a standing answer:
 - **Background check, willingness.** "Are you willing to submit to / undergo a background check" is **Yes**. Signing the authorisation is not: an FCRA disclosure, "I authorise the company to obtain a consumer report", or any consent granting a third party the right to pull records still goes to the user. Agreeing to be checked and signing the thing that permits it are different acts.
 - **Interview recording.** Consent to recording, transcription or an AI notetaker is **Yes**, whatever the vendor.
 - **How did you hear about us.** "Company website", or the closest option the form offers. Never *Referral* or a named employee: that claims somebody vouched for him, and it is checkable.
+- **Salary range acknowledgement.** "Do you agree this range aligns with your expectations" is **Yes**, whatever the range. Never put Yes in a field that wants a number.
+- **The compensation figure.** When the posting states a band, answer the **middle of that band** — `$70,000-$90,000` gives `$80,000`. Run `scripts/salary.py --band '<range>'` (single quotes: a `$70,000` band inside double quotes gets eaten by shell expansion) rather than working it out by eye; it handles K suffixes, en dashes, lakh grouping, LPA and one-sided bands. With no band stated, use the stored expectation ($120,000 US, ₹30,00,000 India). A figure above a published band invites a filter; one below it leaves money on the table.
+- **Exclusion and debarment.** Excluded from federal healthcare programs, OIG list, debarred from federal contracting, SAM.gov: **No**.
+- **Typing a name as a signature.** "Sahil Sapra", plus today's date if asked. But typing the name **is** signing, so read what the block above it covers: an accuracy certification is fine on the usual condition, while a background-check authorisation, non-compete, IP assignment or at-will agreement in the same block still parks.
 
 Everything else still belongs to the user: auditor independence, criminal history, anything not squarely in these. Check the answer store first, since it holds the exact wording and the boundary of each.
 
@@ -256,7 +278,7 @@ One cycle is:
 1. **Sweep** using the stored sweep plan (`meta-get --key sweepPlan`), each channel-query cell filtered to postings newer than its last-swept stamp; build the plan from `references/sourcing.md` if this is the first run.
 2. **Dedupe** against history — `store.py history-status` gives the latest event per application, which is the guard against reapplying, and `store.py stats` lists `needsVerification`: applications where a previous session died mid-submit. Verify those on the platform before touching them, and log `completed` or `abandoned` accordingly. Filter out excluded companies here too.
 3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age. Reject anything whose stated minimum experience is above five years, before scoring; the screen filters on it before a human reads the resume.
-4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Opus 5 and verified against the base before upload. **One agent owns one application from start to finish.** Up to three run at once, each in its own browser, and no agent ever holds two. The isolation is the whole safety story: two agents sharing a browser drift onto the same tab, and a stray keystroke in one tab has already submitted an application early. If you are filling by hand rather than through the watcher, work one at a time.
+4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Opus 5 and verified against the base before upload. **One agent owns one application from start to finish.** Up to five run at once, each in its own browser, and no agent ever holds two. The isolation is the whole safety story: two agents sharing a browser drift onto the same tab, and a stray keystroke in one tab has already submitted an application early. If you are filling by hand rather than through the watcher, work one at a time.
 5. **Park** anything blocked as a session with its pending fields and reasons. Anything blocked on an act only the user can perform (account creation, a password, an OTP or emailed verification link, a CAPTCHA, a binding legal agreement, or an accuracy attestation on a form where some answer had to be inferred) is saved with status `review`, not `watch`, so it lands in **Needs you** rather than sitting in Watching where it reads as not-yet-started. Name the specific blocker in `pendingFields` so the card says what to do.
 6. **Regenerate the dashboard** and republish to the same artifact URL. Run `scripts/sync_board.py` after every application rather than once per cycle: it deletes the watch-list session for anything confirmed submitted and republishes, so a role never shows in Watching and Submitted at the same time.
 7. **Report**: what is new, what went out, what needs them, in a few lines.

@@ -352,18 +352,33 @@ class ApplySlotTests(unittest.TestCase):
         watch.LOCK_DIR = self.original
         self.tmp.cleanup()
 
-    def test_there_are_three_slots(self):
-        self.assertEqual(watch.APPLY_SLOTS, 3)
-        self.assertEqual(len(watch.APPLY_LOCKS), 3)
-        self.assertEqual(len(set(watch.APPLY_LOCKS)), 3)
+    def test_the_slot_count_is_defined_once_and_agreed_on(self):
+        # A lock with no browser behind it spawns a runner that cannot attach to
+        # anything, so watch must derive its locks from browser rather than
+        # declaring its own list.
+        import importlib.util, pathlib as _p
+        spec = importlib.util.spec_from_file_location(
+            "browser", _p.Path(watch.REPO) / "scripts" / "browser.py")
+        b = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(b)
+        self.assertEqual(watch.APPLY_LOCKS, b.SLOTS)
+        self.assertEqual(watch.APPLY_SLOTS, len(watch.APPLY_LOCKS))
+        self.assertEqual(len(set(watch.APPLY_LOCKS)), watch.APPLY_SLOTS,
+                         "slot names must be unique")
+        self.assertEqual(len({b.port_for(s) for s in b.SLOTS}), len(b.SLOTS),
+                         "each slot needs its own port")
+        self.assertEqual(len({str(b._profile_dir(s)) for s in b.SLOTS}), len(b.SLOTS),
+                         "each slot needs its own profile")
 
     def test_slots_are_handed_out_until_they_run_out(self):
-        self.assertEqual(len(watch.free_apply_slots()), 3)
-        watch.take_lock("apply-1", os.getpid(), note="acme-pm")
-        watch.take_lock("apply-2", os.getpid(), note="beta-pm")
-        self.assertEqual(watch.free_apply_slots(), ["apply-3"])
-        watch.take_lock("apply-3", os.getpid(), note="gamma-pm")
-        self.assertEqual(watch.free_apply_slots(), [], "never a fourth at once")
+        total = watch.APPLY_SLOTS
+        self.assertEqual(len(watch.free_apply_slots()), total)
+        for i, name in enumerate(watch.APPLY_LOCKS[:-1], start=1):
+            watch.take_lock(name, os.getpid(), note=f"job-{i}")
+            self.assertEqual(len(watch.free_apply_slots()), total - i)
+        watch.take_lock(watch.APPLY_LOCKS[-1], os.getpid(), note="last")
+        self.assertEqual(watch.free_apply_slots(), [],
+                         "never more concurrent than there are slots")
 
     def test_a_dead_runner_frees_its_own_slot(self):
         watch.take_lock("apply-2", 999999, note="crashed-run")

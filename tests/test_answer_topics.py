@@ -170,3 +170,64 @@ class SourceQuestionTests(unittest.TestCase):
     def test_an_unrelated_question_is_not_swept_in(self):
         self.assertNotEqual(self.find("How many years of experience do you have?")
                             .get("value"), "Company website")
+
+
+class SignatureAndCertificationTests(unittest.TestCase):
+    """Typing a name is signing, and a certification covers the whole page.
+
+    These resolve to an answer, but the value carries a condition rather than a
+    bare yes: the agent still has to check that nothing on the form was inferred,
+    and read what the block above it actually grants.
+    """
+
+    ANSWERS = {
+        "sig": {"question": "type your name", "value": "Sahil Sapra",
+                "tags": ["signature", "signature-name"]},
+        "cert": {"question": "certify true and correct", "value": "Agree, match the field",
+                 "tags": ["attestation", "accuracy-attestation"]},
+        "range": {"question": "agree this range aligns", "value": "Yes",
+                  "tags": ["compensation", "salary-range-acknowledgement"]},
+        "excl": {"question": "excluded or debarred", "value": "No",
+                 "tags": ["legal-declaration", "exclusion-debarment"]},
+        "comp": {"question": "expected salary for US roles", "value": "$120,000",
+                 "state": "sensitive", "tags": ["compensation"]},
+    }
+
+    def find(self, q):
+        return store.find_answer(self.ANSWERS, q)
+
+    def test_a_certification_signature_block_resolves_to_the_name(self):
+        q = ("I HAVE READ THE CERTIFICATION ABOVE AND UNDERSTAND AND AGREE TO ITS TERMS. "
+             "Please type your name and the date.")
+        self.assertEqual(self.find(q)["value"], "Sahil Sapra")
+
+    def test_an_accuracy_certification_resolves(self):
+        q = ("By submitting my application, I certify that the information provided "
+             "(including in my resume/CV) is true and correct.")
+        self.assertIn("Agree", self.find(q)["value"])
+
+    def test_acknowledging_a_posted_range_resolves_to_yes(self):
+        q = ("Our base salary range for this role is $70,000 - $90,000. Do you acknowledge "
+             "and agree that this range aligns with your compensation expectations?")
+        self.assertEqual(self.find(q)["value"], "Yes")
+
+    def test_asking_for_a_salary_FIGURE_never_returns_yes(self):
+        # One word apart from the acknowledgement, and "Yes" in a salary field is
+        # the worst mis-fill this store can produce.
+        for q in ("What are your compensation expectations?",
+                  "Desired salary", "What is your expected CTC?"):
+            self.assertNotEqual(self.find(q).get("value"), "Yes", q)
+
+    def test_a_sensitive_figure_is_never_reached_by_fuzzy_or_topic_match(self):
+        out = self.find("What compensation are you looking for?")
+        self.assertNotEqual(out.get("value"), "$120,000")
+
+    def test_exclusion_and_debarment_resolves_to_no(self):
+        q = ("Are you currently, or have you ever been, excluded from, debarred or otherwise "
+             "ineligible to participate in state or federally funded programs or federal "
+             "healthcare programs as defined in 42 USC 1320a-7b(f)?")
+        self.assertEqual(self.find(q)["value"], "No")
+
+    def test_criminal_history_is_not_swept_into_the_exclusion_answer(self):
+        out = self.find("Have you ever been convicted of a crime?")
+        self.assertNotEqual(out.get("value"), "No")

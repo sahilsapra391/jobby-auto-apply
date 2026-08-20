@@ -231,8 +231,10 @@ def spawn(name, argv, logname, note=""):
 
 # Three applications at once, each owned start to finish by one agent. More than
 # this and they contend for the single browser; fewer wastes the wait on forms.
-APPLY_SLOTS = 3
-APPLY_LOCKS = [f"apply-{i}" for i in range(1, APPLY_SLOTS + 1)]
+# Derived from browser.SLOTS rather than declared again: a lock with no browser
+# behind it spawns a runner that cannot attach to anything.
+APPLY_LOCKS = list(browser.SLOTS)
+APPLY_SLOTS = len(APPLY_LOCKS)
 
 
 def free_apply_slots():
@@ -562,7 +564,7 @@ def sweep_stuck(queued=()):
         if age > STUCK_AFTER_SECONDS:
             run([sys.executable, str(REPO / "scripts" / "phase.py"), "--id", x["applicationId"],
                  "--phase", "Stalled",
-                 "--detail", "no runner reported in over an hour; press Apply to retry"])
+                 "--detail", "no runner reported in over an hour; press Retry"])
             rescued.append(x["applicationId"])
     return rescued
 

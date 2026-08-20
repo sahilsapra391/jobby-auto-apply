@@ -23,6 +23,11 @@ Nothing here guesses. A description that does not state a requirement returns
 None, the rubric scores it neutral, and the card says `experience unknown` —
 which is true, and is the whole reason unknown is a first-class value.
 
+Not to be confused with `scripts/experience.py`, which is about the opposite
+side of the same word: that one lifts *the applicant's* own work history out of
+their tailored resume to fill a form's description boxes. This one reads *the
+posting's* stated requirement.
+
   python3 scripts/extract.py --text "We want 3-5 years of product experience."
 """
 

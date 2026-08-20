@@ -223,7 +223,12 @@ def build(state, generated):
           <div class="steps">{dots}</div>
           <p class="phase">{esc(phase)}{f' <span class="why">{esc(detail)}</span>' if detail else ''}</p>
           <div class="act">
-            <a class="btn ghost" href="{esc(safe_url(posting_url(entry)))}" target="_blank" rel="noopener">Posting</a>
+            <a class="btn ghost" href="{esc(safe_url(posting_url(entry)))}" target="_blank"
+               rel="noopener">Posting &nearr;</a>
+            <button class="btn retry" data-id="{esc(entry.get('applicationId',''))}"
+                    data-company="{esc(entry.get('company',''))}"
+                    data-role="{esc(entry.get('role',''))}"
+                    title="Start this one again">Retry</button>
             <button class="btn drop" data-id="{esc(entry.get('applicationId',''))}"
                     title="Stop the agent and drop this application">Stop</button>
             <span class="ats">{esc(at + ' UTC' if at else '')}</span>
@@ -406,9 +411,9 @@ def build(state, generated):
             f'<td class="note-cell">{esc(stage)}'
             f'{f"<br><span class=\'muted\'>{esc(reason)}</span>" if reason else ""}</td>'
             f'<td class="when">{esc(when)}</td>'
-            f'<td>{link(posting_url(entry), "View")}'
+            f'<td><div class="rowacts-inline">{link(posting_url(entry), "Posting")}'
             f'<button class="btn ghost undrop" data-id="{esc(aid)}" '
-            f'title="Put this back in Watching">Restore</button></td></tr>'
+            f'title="Put this back in Watching">Restore</button></div></td></tr>'
         )
 
     dropped_rows = "\n".join(dropped_row(d) for d in dropped)
@@ -838,6 +843,8 @@ def build(state, generated):
   .rowacts {{ display:inline-flex; flex-direction:column; align-items:stretch;
     gap:.45rem; white-space:nowrap; margin-left:1.4rem; }}
   .rowacts-btns {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; }}
+  /* Posting and Restore sat flush against each other. */
+  .rowacts-inline {{ display:flex; align-items:center; gap:.85rem; }}
   .chip.lane {{ background:var(--sunk); color:var(--ink-2); font-weight:520; }}
   tr.dropping {{ opacity:.4; }}
   .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;

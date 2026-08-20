@@ -244,6 +244,46 @@ TOPIC_MARKERS = [
         "recording of your interview", "record your interview",
         "interview recording", "ai notetaker", "brighthire", "metaview",
     )),
+    # Typing a name into a certification block is an electronic signature. The
+    # marker resolves the NAME to use; whether signing is appropriate at all is
+    # the policy entry's job, and it is conditional. Deliberately narrow: these
+    # phrases only appear where a signature is being collected.
+    # Acknowledging a posted range, NOT stating a number. The two live one word
+    # apart and the wrong one is a disaster: "what are your compensation
+    # expectations" must return the figure, never "Yes". Every phrase here
+    # carries the acknowledgement shape with it.
+    ("salary-range-acknowledgement", (
+        "agree that this range", "acknowledge and agree that this range",
+        "this range aligns with your compensation",
+        "range aligns with your expectations",
+        "are you comfortable with this range",
+        "does this range work for you",
+        "acknowledge this salary range", "agree to this salary range",
+    )),
+    # Healthcare and government contractors must ask. A factual declaration
+    # about his own standing, and he has stated it.
+    ("exclusion-debarment", (
+        "excluded from, debarred", "debarred or otherwise ineligible",
+        "ineligible to participate in state or federally funded",
+        "federal healthcare programs", "1320a-7b", "oig exclusion",
+        "excluded party", "system for award management", "sam.gov",
+        "suspended or debarred",
+    )),
+    # The accuracy attestation, in all its wordings. Conditional, not automatic:
+    # the policy entry carries the condition that nothing on the form was
+    # inferred, because ticking this certifies everything else on the page.
+    ("accuracy-attestation", (
+        "true and correct", "true and complete", "true and accurate",
+        "certify that the information provided", "certify that the information i have",
+        "information provided is accurate", "certify the above information",
+        "to the best of my knowledge and belief",
+    )),
+    ("signature-name", (
+        "type your name", "type your full name", "typing your name",
+        "type your legal name", "electronic signature", "e-signature",
+        "signature (type", "please sign by typing", "enter your name to sign",
+        "name and the date", "your name and today's date",
+    )),
     ("source-how-heard", (
         "how did you hear about", "how did you find out about",
         "how did you learn about", "where did you hear about",

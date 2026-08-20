@@ -38,7 +38,14 @@ TIMEOUT_SECONDS = 45 * 60
 # because the session is non-interactive that approval could never be granted:
 # the agent could not read the watch entry, report a phase, verify a PDF or log
 # an event. It reported the blockage and exited 0, so nothing looked wrong.
-APPLY_TOOLS = "Bash(python3:*),Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,mcp__browser"
+# ls/cat/find/head/which grant nothing Read, Glob and Grep do not already grant;
+# without them the agent burns calls being refused for looking around. mkdir is
+# needed to create applications/<Company>/ before writing documents into it.
+APPLY_TOOLS = (
+    "Bash(python3:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),"
+    "Bash(head:*),Bash(which:*),"
+    "Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,mcp__browser"
+)
 
 
 def blob_env():
@@ -69,7 +76,7 @@ PROMPT = """Use the job-application skill and apply to exactly ONE job, end to e
 APPLICATION ID: {aid}
 
 REPORT YOUR PHASE as you go, after finishing each stage, so the board shows live progress:
-   "{py}" "{repo}/scripts/phase.py" --id {aid} --phase "<stage>" --detail "<short detail>"
+   {py} "{repo}/scripts/phase.py" --id {aid} --phase "<stage>" --detail "<short detail>"
 Use exactly these stage names, in order:
    "Building documents"   after you start tailoring
    "Documents ready"      once both PDFs verify against the base
@@ -85,7 +92,7 @@ Do this and nothing else:
    legal agreement). Re-open the form, confirm what is already filled, and carry on from
    there rather than starting over.
 
-1. Read the watch entry: "{py}" "{repo}/scripts/store.py" session-load --id {aid}
+1. Read the watch entry: {py} "{repo}/scripts/store.py" session-load --id {aid}
    It carries the company, role, url, region, ats and an `extraction` summarising the posting.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
 2. FIRST check whether the documents already exist: ls "{repo}/applications/<Company>/".
@@ -101,7 +108,7 @@ Do this and nothing else:
 
    BEFORE you write either document, work out which of the posting's words you are entitled
    to use. Write the posting's text (the `extraction`) to a file and run:
-     "{py}" "{repo}/scripts/ats_match.py" --suggest --jd <that file> --base <base resume>.pdf
+     {py} "{repo}/scripts/ats_match.py" --suggest --jd <that file> --base <base resume>.pdf
    `rewritable` is the posting's word for something he has genuinely done, each with the
    evidence behind it. Weave every one of those in, hard: re-pick and re-order Areas of
    Expertise for this posting, regroup Technical Proficiencies under the posting's names,
@@ -110,15 +117,65 @@ Do this and nothing else:
    same vocabulary. Never use anything from `notClaimable`.
 
    Then verify both, and do not upload until both pass:
-     "{py}" "{repo}/scripts/resume_pdf.py" verify ...          (layout matches the base)
-     "{py}" "{repo}/scripts/ats_match.py" --jd <that file> --resume <tailored>.pdf --base <base>.pdf
+     {py} "{repo}/scripts/resume_pdf.py" verify ...          (layout matches the base)
+     {py} "{repo}/scripts/ats_match.py" --jd <that file> --resume <tailored>.pdf --base <base>.pdf
    `unsourcedTerms` MUST be empty. A term in there is one lifted off the posting with nothing
    behind it: cut it and rebuild. High coverage with a non-empty unsourced list is not a good
    resume, it is one that started inventing.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
-3. Open the posting with the `mcp__browser__*` tools and fill the application, verifying
-   values by reading them back from the page rather than trusting your own plan.
+3. Open the posting with the `mcp__browser__*` tools.
+
+   RESOLVE THE WHOLE FORM BEFORE YOU TOUCH IT. Read it once, write every question it asks
+   to a JSON list, and resolve them in ONE call:
+     {py} "{repo}/scripts/store.py" answers-resolve --input questions.json
+   That returns the fill plan: which fields have confirmed answers, which came back fuzzy
+   and need confirming, which are missing. One lookup per field instead is a round trip
+   per field and it is most of why filling a form takes ten minutes. Treat a `fuzzy` match
+   as a candidate to confirm, never as an authority: the score measures wording overlap,
+   not meaning.
+
+   FILL IN BATCHES, NOT FIELD BY FIELD. Take ONE snapshot to read the form, then fill
+   everything it supports in a SINGLE `browser_fill_form` call, passing an array of fields,
+   each with target, name, type and value. type is one of textbox, checkbox, radio,
+   combobox, slider. Filling one field at a time and re-snapshotting after each is the
+   single biggest reason a form takes ten minutes: every snapshot returns the whole
+   accessibility tree of the page, and on a Workday or Greenhouse form that is thousands
+   of tokens you pay for twenty times over.
+
+   Four things `browser_fill_form` does not do, and the existing rules for them still hold:
+     - FILE UPLOADS: `browser_file_upload` with the absolute path.
+     - REACT-SELECT and other custom comboboxes (Greenhouse, Ashby): click the field, then
+       click the [role="option"] node. NEVER press Enter to accept one. A stray Enter has
+       already submitted an application early, and `browser_fill_form` cannot drive them.
+     - NATIVE <select>: `browser_select_option`.
+     - MULTI-STEP FORMS: one batch per step, not one batch for the whole wizard.
+
+   WORK HISTORY DESCRIPTION BOXES. A form that asks for employment history usually puts a
+   free-text box under each entry: Description, Responsibilities, Summary, "what did you do
+   in this role". If that box exists, it gets filled. An empty one is the worst outcome
+   available, because the recruiter sees a blank job next to an attached resume that is full.
+   Do not write it from memory or summarise loosely. The text comes from the resume you built
+   for THIS posting, for THAT role:
+
+     {py} "{repo}/scripts/experience.py" --app "<Company>" --role "<the job title>"
+
+   It prints that role's summary line and its bullets, already carrying this posting's own
+   vocabulary and already free of the resume's typeset entities. Paste it as it comes. Add
+   --max-chars N when the box caps length: it drops whole bullets rather than cutting a
+   sentence in half. Add --list to see the exact titles. Pass the title you just typed into
+   the form; an ambiguous fragment is refused rather than guessed at, because guessing
+   between two roles at one company files the wrong years under the wrong job. If it reports
+   the resume has no description for that role, write one factual line from the title,
+   company and dates, and invent nothing.
+
+   If a form has no such box, add nothing. This is not a field to go looking for.
+
+   THEN VERIFY, ONCE. After the batch, take ONE snapshot and check every value you set is
+   actually on the page. Values are still read back from the page rather than trusted, that
+   rule has not changed; what changed is doing it once for the whole form instead of once
+   per field. Use `browser_find` to re-check a single field that disagrees, rather than
+   another full snapshot. Fix only what is wrong, and verify the fix.
 
    That browser runs a profile of its own at ~/.job-application/browser-profile, shared by
    every run and signed in to whatever the user has signed it in to. Check before assuming:
@@ -152,13 +209,24 @@ Do this and nothing else:
    on the filled form. Do not close it and do not navigate it away. Close only tabs you opened
    and did not need. Form values live in the page, not the profile: closing the tab throws away
    everything you filled.
+3b. If the posting states a salary band and the form asks what he expects, the answer is
+   the MIDDLE of that band, not his stored figure:
+     {py} "{repo}/scripts/salary.py" --band '<the range exactly as the posting writes it>'
+   SINGLE quotes around the band, not double. A US band starts with a dollar sign, and in
+   double quotes the shell expands $70 to nothing: the tool then sees ",000 - ,000" and
+   correctly reports that it found no figure, so you lose the answer to a quoting mistake.
+   Do not work it out by eye. It handles K suffixes, en dashes, lakh grouping, LPA and
+   one-sided bands, and returns it formatted the way the band was written. With no band
+   stated, use the stored expectation. The separate "do you agree this range works" checkbox
+   is always Yes and is not this field.
+
 4. Before you submit, re-read the session:
-     "{py}" "{repo}/scripts/store.py" session-load --id {aid}
+     {py} "{repo}/scripts/store.py" session-load --id {aid}
    If its status is now "dropped", the user cancelled this application while you were
    working. Stop immediately. Do not submit, do not change the status back.
 
    Then confirm this is not a second application to the same job:
-   "{py}" "{repo}/scripts/dupe_check.py" --guard {aid}
+   {py} "{repo}/scripts/dupe_check.py" --guard {aid}
    If it reports duplicate, stop without submitting and say so.
 5. If every required field is answerable truthfully, log a write-ahead `submitting` event,
    submit once, then verify. Log `completed` ONLY with the exact confirmation you observed,
@@ -168,7 +236,7 @@ Do this and nothing else:
    or a binding legal agreement such as a background-check authorisation, a
    non-compete or an IP assignment), do NOT submit. Save the session with status "review"
    and pendingFields naming the blocker, so it lands in Needs you.
-7. Run: "{py}" "{repo}/scripts/sync_board.py"
+7. Run: {py} "{repo}/scripts/sync_board.py"
 
 Never solve a CAPTCHA, create an account, type a password, enter an OTP, or agree to a binding
 legal document that grants rights over the user: background-check and consumer-report
@@ -234,7 +302,13 @@ def main():
         print(json.dumps({"skipped": aid, "duplicate": True, "why": why}, indent=2))
         return 1
 
-    prompt = PROMPT.format(aid=aid, repo=str(REPO), py=sys.executable)
+    # "python3", not sys.executable. The allowlist below grants Bash(python3:*),
+    # which is a prefix match on the literal command: an absolute
+    # /opt/anaconda3/bin/python3 does not match it and every such call was
+    # refused. The prompt was instructing agents to run the one form of the
+    # command their own permissions forbade, 351 blocked calls across 84 runs.
+    # PATH is enriched at spawn, so python3 resolves to this same interpreter.
+    prompt = PROMPT.format(aid=aid, repo=str(REPO), py="python3")
     if args.dry_run:
         print(prompt)
         return 0
