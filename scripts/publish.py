@@ -292,6 +292,20 @@ def cmd_publish(args, base):
 
     guard_render(summary, args.root)
 
+    if getattr(args, "dry_run", False):
+        # The hatch for tests. Everything up to here runs, so a render fault or
+        # a guard_render failure still surfaces; nothing reaches KV. This exists
+        # instead of a --root override because the board is served from one
+        # namespace fixed in deploy/.env.local, so any store that publishes
+        # overwrites the real board. There is no safe way to let a temp store
+        # through, only a safe way to stop short.
+        html = summary.pop("html")
+        print(json.dumps({"published": False, "dryRun": True,
+                          "wouldWriteBytes": len(html),
+                          "documents": docs["documents"],
+                          "submitted": summary.get("submitted")}, indent=2))
+        return 0
+
     result = push_content(summary.pop("html"), docs.pop("docs"))
     print(f"Board written to KV: {result['board']['bytes'] / 1024:.0f} KB, "
           f"{result['documents']['written']} documents written, "
@@ -344,6 +358,10 @@ def main():
                     help="Vercel project name, which becomes the hostname (default jobby-board)")
     ap.add_argument("--port", type=int, default=3000, help="port for --local (default 3000)")
     ap.add_argument("--root", help="store directory (default ~/.job-application)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="render and check, write nothing to KV. The way to exercise "
+                         "publishing from a test store, since publishing one for real "
+                         "would overwrite the live board.")
     args = ap.parse_args()
 
     # Refuse to publish a store that is not the one this board belongs to.
@@ -363,7 +381,7 @@ def main():
     default_store = Path("~/.job-application").expanduser().resolve()
     resolved = Path(args.root).expanduser().resolve() if args.root \
         else Path(os.environ.get("JOB_APPLICATION_DIR", default_store)).expanduser().resolve()
-    if resolved != default_store and not args.local:
+    if resolved != default_store and not args.local and not args.dry_run:
         print(json.dumps({
             "published": False,
             "error": f"refusing to publish from {resolved}. The board is served from one "

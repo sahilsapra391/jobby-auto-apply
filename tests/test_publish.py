@@ -268,3 +268,37 @@ class RedirectedStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DryRunTests(unittest.TestCase):
+    """The hatch that lets a test store exercise publishing without reaching KV.
+
+    There is deliberately no --root override: the board is served from one KV
+    namespace fixed in deploy/.env.local, so any store that publishes for real
+    overwrites the live board. The only safe hatch is one that stops short.
+    """
+
+    def run_publish(self, extra, env_root):
+        env = dict(os.environ, JOB_APPLICATION_DIR=str(env_root))
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "publish.py")] + extra,
+            capture_output=True, text=True, env=env)
+
+    def test_a_dry_run_from_a_temp_store_renders_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "sessions").mkdir()
+            r = self.run_publish(["--dry-run"], d)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            body = json.loads(r.stdout[r.stdout.index("{"):])
+            self.assertFalse(body["published"])
+            self.assertTrue(body["dryRun"])
+            self.assertGreater(body["wouldWriteBytes"], 0)
+            self.assertNotIn("written to KV", r.stdout)
+            self.assertNotIn("Board updated", r.stdout)
+
+    def test_without_the_flag_a_temp_store_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "sessions").mkdir()
+            body = json.loads(self.run_publish([], d).stdout)
+            self.assertFalse(body["published"])
+            self.assertIn("refusing to publish", body["error"])
