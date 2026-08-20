@@ -19,6 +19,7 @@ Standard library plus pymupdf.
 """
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -85,6 +86,30 @@ def keywords(text, limit=60):
         if len(out) >= limit:
             break
     return out
+
+
+def document_text(path):
+    """Text of a tailored resume, from the PDF or from the HTML it renders from.
+
+    The content gate used to read PDFs only, so every wording fix had to be
+    pushed through Chrome before it could be checked: 42 of 141 re-renders
+    across 84 runs existed for no other reason. Reading the render source turns
+    that loop into an edit-and-check with no render in it.
+
+    The HTML is a proxy, and the direction it can be wrong in matters. The page
+    box clips overflow, so HTML can hold a line the PDF does not show; it cannot
+    show a term the HTML lacks. So a term found here but clipped from the PDF
+    reads as present when it is absent, which is the safe direction for a gate
+    whose job is to catch terms that should NOT be there. The final check still
+    runs against the PDF that gets uploaded.
+    """
+    path = Path(path).expanduser()
+    if path.suffix.lower() in (".html", ".htm"):
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = re.sub(r"<(script|style)\b.*?</\1>", " ", raw, flags=re.S | re.I)
+        raw = re.sub(r"<[^>]+>", " ", raw)
+        return re.sub(r"\s+", " ", html.unescape(raw))
+    return pdf_text(path)
 
 
 def pdf_text(path):
@@ -266,7 +291,10 @@ def suggest(jd_text, resume_text, base_text, facts_text, limit):
 def main():
     ap = argparse.ArgumentParser(description="Keyword coverage, and what it cost in truth.")
     ap.add_argument("--jd", required=True, help="job description text file")
-    ap.add_argument("--resume", help="tailored resume PDF (not needed with --suggest)")
+    ap.add_argument("--resume", help="tailored resume, PDF or the .html it renders "
+                                     "from (not needed with --suggest). Use the HTML "
+                                     "while iterating on wording; check the PDF once at "
+                                     "the end.")
     ap.add_argument("--base", required=True, help="base resume PDF, the source of truth")
     ap.add_argument("--facts", help="optional text file of confirmed story facts")
     ap.add_argument("--limit", type=int, default=60, help="how many JD keywords to score")
@@ -280,7 +308,7 @@ def main():
 
     jd = Path(args.jd).expanduser().read_text(encoding="utf-8", errors="replace")
     # --suggest runs BEFORE the tailored resume exists; that is the point of it.
-    tailored_text = pdf_text(args.resume) if args.resume else ""
+    tailored_text = document_text(args.resume) if args.resume else ""
     base_text = pdf_text(args.base)
     facts_text = Path(args.facts).expanduser().read_text(encoding="utf-8", errors="replace") if args.facts else ""
 

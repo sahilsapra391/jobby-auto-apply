@@ -1,0 +1,2 @@
+/Users/sahilsapra/Documents/Development.nosync/jobby-auto-apply/scripts/ats_sweep.py:62: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+  posted = (dt.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")

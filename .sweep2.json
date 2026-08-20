@@ -1,0 +1,1057 @@
+{
+ "boardsQueried": 141,
+ "boardsFailed": [
+  "ashby/rippling: HTTP 404",
+  "ashby/moveworks: HTTP 404",
+  "ashby/glean: HTTP 404",
+  "ashby/perplexityai: HTTP 404",
+  "ashby/runwayml: HTTP 404",
+  "ashby/unit21: HTTP 404",
+  "ashby/alloy: HTTP 404",
+  "ashby/assembled: HTTP 404",
+  "ashby/amplemarket: HTTP 404",
+  "ashby/torq: HTTP 404",
+  "ashby/descope: HTTP 404",
+  "ashby/abnormalsecurity: HTTP 404",
+  "ashby/together: HTTP 404",
+  "ashby/doordash: HTTP 404",
+  "ashby/hashicorp: HTTP 404",
+  "ashby/dbt-labs: HTTP 404",
+  "ashby/dbtlabs: HTTP 404",
+  "ashby/planetscale: HTTP 404",
+  "greenhouse/nerdwallet: HTTP 404",
+  "greenhouse/wealthfront: HTTP 404",
+  "greenhouse/wayfair: HTTP 404",
+  "greenhouse/remitly: HTTP 404",
+  "greenhouse/airwallex: HTTP 404",
+  "greenhouse/whatnot: HTTP 404",
+  "greenhouse/navan: HTTP 404",
+  "greenhouse/ironclad: HTTP 404",
+  "greenhouse/oscarhealth: HTTP 404",
+  "greenhouse/includedhealth: HTTP 404",
+  "greenhouse/veeva: HTTP 404",
+  "greenhouse/atlan: HTTP 404",
+  "greenhouse/hevodata: HTTP 404",
+  "greenhouse/eightfold: HTTP 404",
+  "greenhouse/uniphore: HTTP 404",
+  "greenhouse/yellowai: HTTP 404",
+  "greenhouse/gupshup: HTTP 404",
+  "greenhouse/sirionlabs: HTTP 404",
+  "greenhouse/icertis: HTTP 404",
+  "greenhouse/leadsquared: HTTP 404",
+  "greenhouse/innovaccer: HTTP 404",
+  "greenhouse/freshworks: HTTP 404",
+  "greenhouse/zepto: HTTP 404",
+  "greenhouse/swiggy: HTTP 404",
+  "greenhouse/meesho: HTTP 404",
+  "greenhouse/cred: HTTP 404",
+  "greenhouse/dream11: HTTP 404",
+  "greenhouse/navi: HTTP 404",
+  "greenhouse/razorpay: HTTP 404",
+  "greenhouse/sprinklr: HTTP 404",
+  "greenhouse/notion1: HTTP 404",
+  "greenhouse/harvey: HTTP 404",
+  "greenhouse/sierra: HTTP 404",
+  "lever/sprinklr: HTTP 404",
+  "lever/netcore: HTTP 404",
+  "lever/capillarytech: HTTP 404",
+  "lever/acko: HTTP 404",
+  "lever/razorpay: HTTP 404",
+  "lever/exotel: HTTP 404",
+  "lever/innovaccer: HTTP 404",
+  "lever/hike: HTTP 404",
+  "lever/jupiter: HTTP 404",
+  "lever/khatabook: HTTP 404",
+  "lever/rebelfoods: HTTP 404",
+  "lever/udaan: HTTP 404",
+  "lever/vedantu: HTTP 404",
+  "lever/unacademy: HTTP 404",
+  "lever/scaler: HTTP 404",
+  "lever/newton-school: HTTP 404",
+  "lever/plum: HTTP 404",
+  "lever/onsurity: HTTP 404",
+  "lever/betterhalf: HTTP 404",
+  "lever/glance: HTTP 404",
+  "lever/zluri: HTTP 404",
+  "lever/atlan: HTTP 404",
+  "lever/mudrex: HTTP 404",
+  "lever/coinswitch: HTTP 404",
+  "lever/pixis: HTTP 404",
+  "lever/scienaptic: HTTP 404",
+  "lever/wingify: HTTP 404",
+  "lever/gomechanic: HTTP 404",
+  "lever/springworks: HTTP 404",
+  "lever/skit: HTTP 404",
+  "lever/observeai: HTTP 404",
+  "lever/uniphore: HTTP 404",
+  "lever/haptik: HTTP 404",
+  "lever/yellowai: HTTP 404"
+ ],
+ "totalPostings": 3151,
+ "titleMatches": 107,
+ "rows": [
+  {
+   "company": "notion",
+   "ats": "ashby",
+   "title": "Business Systems Analyst",
+   "location": "San Francisco, California",
+   "url": "https://jobs.ashbyhq.com/notion/7793e862-50fa-4357-a4bc-2328440f8d68",
+   "updated": "2026-07-17",
+   "id": "7793e862-50fa-4357-a4bc-2328440f8d68"
+  },
+  {
+   "company": "supabase",
+   "ats": "ashby",
+   "title": "Product Manager - Marketplace",
+   "location": "Remote",
+   "url": "https://jobs.ashbyhq.com/supabase/23c9ce7e-6b7b-4316-8f00-8f318e902441",
+   "updated": "2026-07-24",
+   "id": "23c9ce7e-6b7b-4316-8f00-8f318e902441"
+  },
+  {
+   "company": "supabase",
+   "ats": "ashby",
+   "title": "Product Manager - Security & Trust (EMEA/AMER)",
+   "location": "Remote",
+   "url": "https://jobs.ashbyhq.com/supabase/b8010a28-109c-46a9-b8b7-c7f9b24077fa",
+   "updated": "2026-04-29",
+   "id": "b8010a28-109c-46a9-b8b7-c7f9b24077fa"
+  },
+  {
+   "company": "supabase",
+   "ats": "ashby",
+   "title": "Product Manager - Infrastructure",
+   "location": "Remote",
+   "url": "https://jobs.ashbyhq.com/supabase/47bcfdb8-b954-423e-8a9e-85256434575c",
+   "updated": "2026-06-01",
+   "id": "47bcfdb8-b954-423e-8a9e-85256434575c"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/8d092528-2554-42e4-a68b-67307b48e6aa",
+   "updated": "2025-10-08",
+   "id": "8d092528-2554-42e4-a68b-67307b48e6aa"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager, New Verticals",
+   "location": "New York",
+   "url": "https://jobs.ashbyhq.com/harvey/2cbe13b9-a44b-47d3-abb8-45d9a98b05f6",
+   "updated": "2026-01-27",
+   "id": "2cbe13b9-a44b-47d3-abb8-45d9a98b05f6"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Innovation Product Manager",
+   "location": "New York",
+   "url": "https://jobs.ashbyhq.com/harvey/e5272fbe-4431-4841-bf00-b9f59812b82a",
+   "updated": "2025-12-11",
+   "id": "e5272fbe-4431-4841-bf00-b9f59812b82a"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager, New Products",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/e89103ca-765f-42f1-882a-80364f3c2321",
+   "updated": "2026-06-02",
+   "id": "e89103ca-765f-42f1-882a-80364f3c2321"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Senior/Staff Product Manager, Vault",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/85de4e2f-9ece-40a6-bea4-3ee94bba6c97",
+   "updated": "2026-07-07",
+   "id": "85de4e2f-9ece-40a6-bea4-3ee94bba6c97"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Senior/Staff Product Manager, Vault",
+   "location": "New York",
+   "url": "https://jobs.ashbyhq.com/harvey/d1669780-6956-4e5b-bc84-590267c565ea",
+   "updated": "2026-07-07",
+   "id": "d1669780-6956-4e5b-bc84-590267c565ea"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Infrastructure",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/d629fa64-599d-435c-b4ef-a925299ddac8",
+   "updated": "2026-07-14",
+   "id": "d629fa64-599d-435c-b4ef-a925299ddac8"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Command Center",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/7a3b9337-ac67-4255-8db5-08bb3d57541e",
+   "updated": "2026-08-03",
+   "id": "7a3b9337-ac67-4255-8db5-08bb3d57541e"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Command Center",
+   "location": "New York",
+   "url": "https://jobs.ashbyhq.com/harvey/04aa6087-3ca1-4b73-9320-3f1e95cf9e6e",
+   "updated": "2026-08-03",
+   "id": "04aa6087-3ca1-4b73-9320-3f1e95cf9e6e"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Contract Intelligence",
+   "location": "New York",
+   "url": "https://jobs.ashbyhq.com/harvey/c5e6405c-a48d-450a-8cd3-cdb4988c7f36",
+   "updated": "2026-08-18",
+   "id": "c5e6405c-a48d-450a-8cd3-cdb4988c7f36"
+  },
+  {
+   "company": "harvey",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Contract Intelligence",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/harvey/e1048593-df50-4681-8274-381deedac23c",
+   "updated": "2026-08-18",
+   "id": "e1048593-df50-4681-8274-381deedac23c"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Data Platform",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/422cb7bb-ab03-447b-808c-6d72f59bbd2f",
+   "updated": "2025-08-31",
+   "id": "422cb7bb-ab03-447b-808c-6d72f59bbd2f"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/effd7cd2-8a28-4bae-a3b8-40720ba09717",
+   "updated": "2026-03-12",
+   "id": "effd7cd2-8a28-4bae-a3b8-40720ba09717"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (German speaking)",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/fed8ca9a-0bb7-44ef-a541-0be6a8ae7bba",
+   "updated": "2025-08-21",
+   "id": "fed8ca9a-0bb7-44ef-a541-0be6a8ae7bba"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/b4b762e6-8ce7-4ea7-b9b3-40c04f62135a",
+   "updated": "2025-04-08",
+   "id": "b4b762e6-8ce7-4ea7-b9b3-40c04f62135a"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (French speaking)",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/38f06024-4ee9-47d6-a36f-f2791ac1e412",
+   "updated": "2025-08-21",
+   "id": "38f06024-4ee9-47d6-a36f-f2791ac1e412"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (Spanish speaking)",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/4892f01e-8871-4b32-8963-527f1cf8db5d",
+   "updated": "2025-08-21",
+   "id": "4892f01e-8871-4b32-8963-527f1cf8db5d"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development",
+   "location": "Singapore",
+   "url": "https://jobs.ashbyhq.com/sierra/dc443fd1-14bd-493c-9397-c3713c78321c",
+   "updated": "2026-07-27",
+   "id": "dc443fd1-14bd-493c-9397-c3713c78321c"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (Arabic speaking)",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/9dc1651d-43e9-4970-a757-a5223cef1c4d",
+   "updated": "2025-12-04",
+   "id": "9dc1651d-43e9-4970-a757-a5223cef1c4d"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (Italian speaking)",
+   "location": "London",
+   "url": "https://jobs.ashbyhq.com/sierra/2e07f536-bbaa-4cc0-957a-774ddf99de64",
+   "updated": "2025-12-04",
+   "id": "2e07f536-bbaa-4cc0-957a-774ddf99de64"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent SDK",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/10d2e2f1-6657-40c9-b6fb-6999c76df6cf",
+   "updated": "2026-02-07",
+   "id": "10d2e2f1-6657-40c9-b6fb-6999c76df6cf"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development - Healthcare",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/65eb2c63-c936-4e8e-87e7-ea080dcdca73",
+   "updated": "2026-02-28",
+   "id": "65eb2c63-c936-4e8e-87e7-ea080dcdca73"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Voice",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/0c66e8ed-1c18-4b64-ad27-a522a866b6e1",
+   "updated": "2026-04-15",
+   "id": "0c66e8ed-1c18-4b64-ad27-a522a866b6e1"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Studio",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/5aaa2eeb-92bc-4b0a-901e-8e091eff819e",
+   "updated": "2026-04-15",
+   "id": "5aaa2eeb-92bc-4b0a-901e-8e091eff819e"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Ghostwriter",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/22ba107d-de01-4aa3-98fc-838cccad760c",
+   "updated": "2026-04-11",
+   "id": "22ba107d-de01-4aa3-98fc-838cccad760c"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Infrastructure",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/1e052261-0c89-4ccb-abfa-3820a1596a6e",
+   "updated": "2026-05-01",
+   "id": "1e052261-0c89-4ccb-abfa-3820a1596a6e"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (Brazilian Portuguese speaking)",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/4f0e65ba-b262-4d79-b926-3988f8eb0c00",
+   "updated": "2026-06-18",
+   "id": "4f0e65ba-b262-4d79-b926-3988f8eb0c00"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development - Flagship Deployment",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/758beaca-db59-4e46-9867-7a93989735a7",
+   "updated": "2026-06-17",
+   "id": "758beaca-db59-4e46-9867-7a93989735a7"
+  },
+  {
+   "company": "sierra",
+   "ats": "ashby",
+   "title": "Product Manager, Agent Development (Spanish speaking)",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/sierra/9b94e279-5869-4a33-b50f-9aa01ff61a22",
+   "updated": "2026-07-23",
+   "id": "9b94e279-5869-4a33-b50f-9aa01ff61a22"
+  },
+  {
+   "company": "abridge",
+   "ats": "ashby",
+   "title": "Product Lead, Core Product Experiences",
+   "location": "SF Office",
+   "url": "https://jobs.ashbyhq.com/abridge/c45524b6-96b2-49f0-9cd5-176b998d6ba7",
+   "updated": "2026-03-10",
+   "id": "c45524b6-96b2-49f0-9cd5-176b998d6ba7"
+  },
+  {
+   "company": "abridge",
+   "ats": "ashby",
+   "title": "Forward Deployed Product Manager",
+   "location": "SF Office",
+   "url": "https://jobs.ashbyhq.com/abridge/aef83f6a-0bc8-4d6a-b310-24415918ee3c",
+   "updated": "2026-06-22",
+   "id": "aef83f6a-0bc8-4d6a-b310-24415918ee3c"
+  },
+  {
+   "company": "abridge",
+   "ats": "ashby",
+   "title": "Product Lead, Revenue Cycle Management (New Bets)",
+   "location": "SF Office",
+   "url": "https://jobs.ashbyhq.com/abridge/991c2527-c2f9-41bb-a68f-282581b78794",
+   "updated": "2026-03-03",
+   "id": "991c2527-c2f9-41bb-a68f-282581b78794"
+  },
+  {
+   "company": "abridge",
+   "ats": "ashby",
+   "title": "Product Lead, AI/ML (Evals) ",
+   "location": "SF Office",
+   "url": "https://jobs.ashbyhq.com/abridge/9c7ba6c3-7744-48b8-a5b3-dab55c22e4b3",
+   "updated": "2026-06-22",
+   "id": "9c7ba6c3-7744-48b8-a5b3-dab55c22e4b3"
+  },
+  {
+   "company": "abridge",
+   "ats": "ashby",
+   "title": "Product Lead, Clinical Decision Support",
+   "location": "SF Office",
+   "url": "https://jobs.ashbyhq.com/abridge/5acb269b-6ca0-4890-ae3f-ffb46e99d2ba",
+   "updated": "2026-07-22",
+   "id": "5acb269b-6ca0-4890-ae3f-ffb46e99d2ba"
+  },
+  {
+   "company": "perplexity",
+   "ats": "ashby",
+   "title": "Product Manager (Builder)",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/perplexity/f25e190e-0508-4707-b575-fcaed358dc13",
+   "updated": "2026-04-21",
+   "id": "f25e190e-0508-4707-b575-fcaed358dc13"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Staff Product Manager - AI Foundations",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/8b81429d-f0e8-4b84-9f71-d25405e63d71",
+   "updated": "2026-04-24",
+   "id": "8b81429d-f0e8-4b84-9f71-d25405e63d71"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Product Manager, Account Verification",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/0fa4649a-dae2-4c13-ae70-8e93ce221152",
+   "updated": "2026-07-20",
+   "id": "0fa4649a-dae2-4c13-ae70-8e93ce221152"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Credit",
+   "location": "New York City Office",
+   "url": "https://jobs.ashbyhq.com/plaid/72b12284-00b6-4557-a4fb-38eb0b771779",
+   "updated": "2026-07-29",
+   "id": "72b12284-00b6-4557-a4fb-38eb0b771779"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Product Manager - Europe",
+   "location": "London Office",
+   "url": "https://jobs.ashbyhq.com/plaid/29d1f5fc-d986-4a5d-9c42-0c05d9326f9d",
+   "updated": "2026-04-28",
+   "id": "29d1f5fc-d986-4a5d-9c42-0c05d9326f9d"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Product Manager ",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/aef4ef62-ea67-4c9c-98f4-6a81a4dc1f09",
+   "updated": "2026-07-20",
+   "id": "aef4ef62-ea67-4c9c-98f4-6a81a4dc1f09"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Product Manager",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/8d2c62be-4fce-4e69-8335-6f15a2553b62",
+   "updated": "2026-06-03",
+   "id": "8d2c62be-4fce-4e69-8335-6f15a2553b62"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Consumer",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/ecfa7ea5-8849-4666-9bed-8fe9f57f20cf",
+   "updated": "2026-07-29",
+   "id": "ecfa7ea5-8849-4666-9bed-8fe9f57f20cf"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Financial Management",
+   "location": "New York City Office",
+   "url": "https://jobs.ashbyhq.com/plaid/8b5aa324-bbb5-472b-8536-76b705c80829",
+   "updated": "2026-07-29",
+   "id": "8b5aa324-bbb5-472b-8536-76b705c80829"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Growth",
+   "location": "New York City Office",
+   "url": "https://jobs.ashbyhq.com/plaid/542d46b1-1032-49c8-b96f-806ace7b3a8b",
+   "updated": "2026-07-30",
+   "id": "542d46b1-1032-49c8-b96f-806ace7b3a8b"
+  },
+  {
+   "company": "plaid",
+   "ats": "ashby",
+   "title": "Staff Product Manager - Internal AI",
+   "location": "San Francisco HQ",
+   "url": "https://jobs.ashbyhq.com/plaid/1d5a1e7c-9dd9-45fb-a06c-274bc76f8561",
+   "updated": "2026-08-18",
+   "id": "1d5a1e7c-9dd9-45fb-a06c-274bc76f8561"
+  },
+  {
+   "company": "benchling",
+   "ats": "ashby",
+   "title": "Product Manager, Developer Platform",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/benchling/61b20c5a-5c3d-4388-a19d-13a89886e73f",
+   "updated": "2026-05-14",
+   "id": "61b20c5a-5c3d-4388-a19d-13a89886e73f"
+  },
+  {
+   "company": "benchling",
+   "ats": "ashby",
+   "title": "Product Manager, Schemas",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/benchling/0796012f-3e8c-40b7-a869-b98ab5290380",
+   "updated": "2026-06-22",
+   "id": "0796012f-3e8c-40b7-a869-b98ab5290380"
+  },
+  {
+   "company": "benchling",
+   "ats": "ashby",
+   "title": "Product Manager, Growth, Scientific AI Models",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/benchling/dc25d641-aff0-4804-8276-8c3406119c4b",
+   "updated": "2026-07-07",
+   "id": "dc25d641-aff0-4804-8276-8c3406119c4b"
+  },
+  {
+   "company": "benchling",
+   "ats": "ashby",
+   "title": "Product Manager, Scientific Development Solutions",
+   "location": "San Francisco, CA",
+   "url": "https://jobs.ashbyhq.com/benchling/3b50ebb7-4e9e-4ede-aaf7-d5ce91ca7eb3",
+   "updated": "2026-07-22",
+   "id": "3b50ebb7-4e9e-4ede-aaf7-d5ce91ca7eb3"
+  },
+  {
+   "company": "1password",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Developer Workflows",
+   "location": "Remote (United States | Canada)",
+   "url": "https://jobs.ashbyhq.com/1password/56ffab65-2953-42ee-ae84-04c3e9d9c38c",
+   "updated": "2026-06-29",
+   "id": "56ffab65-2953-42ee-ae84-04c3e9d9c38c"
+  },
+  {
+   "company": "1password",
+   "ats": "ashby",
+   "title": "Senior Product Manager, Machine Identity",
+   "location": "Remote (United States | Canada)",
+   "url": "https://jobs.ashbyhq.com/1password/c6fc16b0-bb5b-48f1-994d-d69e07846bc8",
+   "updated": "2026-06-29",
+   "id": "c6fc16b0-bb5b-48f1-994d-d69e07846bc8"
+  },
+  {
+   "company": "1password",
+   "ats": "ashby",
+   "title": "Senior Staff Product Manager, Device Security",
+   "location": "Remote (United States | Canada)",
+   "url": "https://jobs.ashbyhq.com/1password/99eb8a4c-81e1-413b-822f-dd27598207e0",
+   "updated": "2026-08-14",
+   "id": "99eb8a4c-81e1-413b-822f-dd27598207e0"
+  },
+  {
+   "company": "temporal",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Developer Lifecycle & Tooling",
+   "location": "United States",
+   "url": "https://jobs.ashbyhq.com/temporal/56056a3b-6a0d-4abe-9b42-8c3a5738617c",
+   "updated": "2026-04-29",
+   "id": "56056a3b-6a0d-4abe-9b42-8c3a5738617c"
+  },
+  {
+   "company": "temporal",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Agent Platform",
+   "location": "United States",
+   "url": "https://jobs.ashbyhq.com/temporal/b6f06de9-fc02-493c-8aef-abaf8495572f",
+   "updated": "2026-04-30",
+   "id": "b6f06de9-fc02-493c-8aef-abaf8495572f"
+  },
+  {
+   "company": "temporal",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Core Primitives",
+   "location": "United States",
+   "url": "https://jobs.ashbyhq.com/temporal/7592248c-719a-485c-a1a9-9285f99ed56b",
+   "updated": "2026-04-29",
+   "id": "7592248c-719a-485c-a1a9-9285f99ed56b"
+  },
+  {
+   "company": "temporal",
+   "ats": "ashby",
+   "title": "Staff Product Manager,  Cloud Namespace & Capacity ",
+   "location": "United States",
+   "url": "https://jobs.ashbyhq.com/temporal/5d4ee2f8-8ff0-4271-9292-c78df24735aa",
+   "updated": "2026-08-11",
+   "id": "5d4ee2f8-8ff0-4271-9292-c78df24735aa"
+  },
+  {
+   "company": "render",
+   "ats": "ashby",
+   "title": "Staff Product Manager, CI/CD & Developer Productivity",
+   "location": "Remote: United States",
+   "url": "https://jobs.ashbyhq.com/render/b7508c39-c91f-405a-bdef-9c6b6eca1fee",
+   "updated": "2026-08-03",
+   "id": "b7508c39-c91f-405a-bdef-9c6b6eca1fee"
+  },
+  {
+   "company": "render",
+   "ats": "ashby",
+   "title": "Staff Product Manager - Datastores (Postgres Specialist)",
+   "location": "Remote: United States",
+   "url": "https://jobs.ashbyhq.com/render/d0860ea9-fdbd-4a66-82bc-1d75228cf594",
+   "updated": "2026-07-21",
+   "id": "d0860ea9-fdbd-4a66-82bc-1d75228cf594"
+  },
+  {
+   "company": "render",
+   "ats": "ashby",
+   "title": "Staff Product Manager - Agent & Systems Observability ",
+   "location": "Remote: United States",
+   "url": "https://jobs.ashbyhq.com/render/3ec7433c-efbc-42f2-8f28-b8eca42f384c",
+   "updated": "2026-07-21",
+   "id": "3ec7433c-efbc-42f2-8f28-b8eca42f384c"
+  },
+  {
+   "company": "scribe",
+   "ats": "ashby",
+   "title": "Staff Product Manager, Pricing & Packaging",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/scribe/52d385d7-1ce4-453f-98d9-ec74b92abc56",
+   "updated": "2026-08-07",
+   "id": "52d385d7-1ce4-453f-98d9-ec74b92abc56"
+  },
+  {
+   "company": "gamma",
+   "ats": "ashby",
+   "title": "Sr. Product Manager, B2B",
+   "location": "San Francisco",
+   "url": "https://jobs.ashbyhq.com/gamma/623482be-52fd-464a-901f-8687f50a0f8b",
+   "updated": "2026-07-13",
+   "id": "623482be-52fd-464a-901f-8687f50a0f8b"
+  },
+  {
+   "company": "flexport",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager",
+   "location": "Bellevue, Washington, United States; San Francisco, California, United States",
+   "url": "https://job-boards.greenhouse.io/flexport/jobs/7740282",
+   "updated": "2026-07-20",
+   "id": 7740282
+  },
+  {
+   "company": "flexport",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager",
+   "location": "Hong Kong; Shanghai, China; Shenzhen, China",
+   "url": "https://job-boards.greenhouse.io/flexport/jobs/8022960",
+   "updated": "2026-07-09",
+   "id": 8022960
+  },
+  {
+   "company": "flexport",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager ",
+   "location": "Shenzhen, China",
+   "url": "https://job-boards.greenhouse.io/flexport/jobs/8011493",
+   "updated": "2026-07-09",
+   "id": 8011493
+  },
+  {
+   "company": "flexport",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, Trucking Tech",
+   "location": "Bellevue, Washington, United States",
+   "url": "https://job-boards.greenhouse.io/flexport/jobs/8110066",
+   "updated": "2026-08-18",
+   "id": 8110066
+  },
+  {
+   "company": "carta",
+   "ats": "greenhouse",
+   "title": "Lead Product Manager",
+   "location": "San Francisco, CA; Seattle, WA; New York, NY",
+   "url": "https://job-boards.greenhouse.io/carta/jobs/7544235003",
+   "updated": "2026-08-03",
+   "id": 7544235003
+  },
+  {
+   "company": "checkr",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager, Verifications",
+   "location": "Denver, Colorado, United States; San Francisco, California, United States",
+   "url": "https://job-boards.greenhouse.io/checkr/jobs/7697852",
+   "updated": "2026-08-13",
+   "id": 7697852
+  },
+  {
+   "company": "lattice",
+   "ats": "greenhouse",
+   "title": "Lead Product Manager",
+   "location": "Remote - Canada",
+   "url": "https://lattice.com/job?gh_jid=8570063002",
+   "updated": "2026-07-31",
+   "id": 8570063002
+  },
+  {
+   "company": "chime",
+   "ats": "greenhouse",
+   "title": "2026 - Product Manager, Transaction Risk Decisioning",
+   "location": "Chicago, IL, USA; San Francisco, CA, USA",
+   "url": "https://boards.greenhouse.io/chime/jobs/8694087002?gh_jid=8694087002",
+   "updated": "2026-08-10",
+   "id": 8694087002
+  },
+  {
+   "company": "chime",
+   "ats": "greenhouse",
+   "title": "Product Manager, Lending",
+   "location": "San Francisco, CA, USA",
+   "url": "https://boards.greenhouse.io/chime/jobs/8530438002?gh_jid=8530438002",
+   "updated": "2026-08-18",
+   "id": 8530438002
+  },
+  {
+   "company": "chime",
+   "ats": "greenhouse",
+   "title": "Product Manager, Trust & Safety",
+   "location": "Chicago, IL, USA; San Francisco, CA, USA",
+   "url": "https://boards.greenhouse.io/chime/jobs/8530184002?gh_jid=8530184002",
+   "updated": "2026-08-10",
+   "id": 8530184002
+  },
+  {
+   "company": "toast",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager, Toast Now",
+   "location": "Remote, US",
+   "url": "https://careers.toasttab.com/jobs?gh_jid=7979861",
+   "updated": "2026-07-22",
+   "id": 7979861
+  },
+  {
+   "company": "duolingo",
+   "ats": "greenhouse",
+   "title": "Consumer Product Lead",
+   "location": "Tokyo, Japan",
+   "url": "https://careers.duolingo.com/jobs/8625579002?gh_jid=8625579002",
+   "updated": "2026-07-29",
+   "id": 8625579002
+  },
+  {
+   "company": "duolingo",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager",
+   "location": "Beijing, China",
+   "url": "https://careers.duolingo.com/jobs/8675670002?gh_jid=8675670002",
+   "updated": "2026-08-04",
+   "id": 8675670002
+  },
+  {
+   "company": "duolingo",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager, DET",
+   "location": "Pittsburgh, PA",
+   "url": "https://careers.duolingo.com/jobs/8530395002?gh_jid=8530395002",
+   "updated": "2026-07-23",
+   "id": 8530395002
+  },
+  {
+   "company": "duolingo",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager, Monetization",
+   "location": "New York, NY",
+   "url": "https://careers.duolingo.com/jobs/8474673002?gh_jid=8474673002",
+   "updated": "2026-07-23",
+   "id": 8474673002
+  },
+  {
+   "company": "coursera",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager",
+   "location": "United States",
+   "url": "https://job-boards.greenhouse.io/coursera/jobs/6138720004",
+   "updated": "2026-08-12",
+   "id": 6138720004
+  },
+  {
+   "company": "faire",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager, Search Algorithms",
+   "location": "New York City, NY; San Francisco, CA",
+   "url": "https://boards.greenhouse.io/faire/jobs/8686167002?gh_jid=8686167002",
+   "updated": "2026-08-19",
+   "id": 8686167002
+  },
+  {
+   "company": "faire",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, AI, Data, ML & Platform",
+   "location": "New York City, NY; San Francisco, CA",
+   "url": "https://boards.greenhouse.io/faire/jobs/8656341002?gh_jid=8656341002",
+   "updated": "2026-08-19",
+   "id": 8656341002
+  },
+  {
+   "company": "faire",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, Inspire & App",
+   "location": "New York City, NY; San Francisco, CA",
+   "url": "https://boards.greenhouse.io/faire/jobs/8686191002?gh_jid=8686191002",
+   "updated": "2026-08-05",
+   "id": 8686191002
+  },
+  {
+   "company": "faire",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, Marketplace Quality",
+   "location": "New York City, NY; San Francisco, CA; Toronto, ON",
+   "url": "https://boards.greenhouse.io/faire/jobs/8462945002?gh_jid=8462945002",
+   "updated": "2026-08-19",
+   "id": 8462945002
+  },
+  {
+   "company": "everlaw",
+   "ats": "greenhouse",
+   "title": "Senior Manager, Product Lead",
+   "location": "Oakland, California, United States",
+   "url": "https://job-boards.greenhouse.io/everlaw/jobs/4574042006",
+   "updated": "2026-05-26",
+   "id": 4574042006
+  },
+  {
+   "company": "everlaw",
+   "ats": "greenhouse",
+   "title": "Senior Product Manager",
+   "location": "Oakland, California, United States",
+   "url": "https://job-boards.greenhouse.io/everlaw/jobs/4701031006",
+   "updated": "2026-07-30",
+   "id": 4701031006
+  },
+  {
+   "company": "zocdoc",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager",
+   "location": "New York, NY",
+   "url": "https://job-boards.greenhouse.io/zocdoc/jobs/7723219",
+   "updated": "2026-08-17",
+   "id": 7723219
+  },
+  {
+   "company": "zocdoc",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, Ads ",
+   "location": "New York, NY",
+   "url": "https://job-boards.greenhouse.io/zocdoc/jobs/7909556",
+   "updated": "2026-08-17",
+   "id": 7909556
+  },
+  {
+   "company": "zocdoc",
+   "ats": "greenhouse",
+   "title": "Staff Product Manager, Payments",
+   "location": "New York, NY",
+   "url": "https://job-boards.greenhouse.io/zocdoc/jobs/8082087",
+   "updated": "2026-08-17",
+   "id": 8082087
+  },
+  {
+   "company": "phonepe",
+   "ats": "greenhouse",
+   "title": "Business Analyst (2-4 years) - Lending",
+   "location": "Bengaluru",
+   "url": "https://job-boards.greenhouse.io/phonepe/jobs/7852638003",
+   "updated": "2026-08-13",
+   "id": 7852638003
+  },
+  {
+   "company": "phonepe",
+   "ats": "greenhouse",
+   "title": "Product Lead",
+   "location": "Bangalore",
+   "url": "https://job-boards.greenhouse.io/phonepe/jobs/7752800003",
+   "updated": "2026-06-29",
+   "id": 7752800003
+  },
+  {
+   "company": "phonepe",
+   "ats": "greenhouse",
+   "title": "Product Manager",
+   "location": "Bengaluru, Karnataka",
+   "url": "https://job-boards.greenhouse.io/phonepe/jobs/7799414003",
+   "updated": "2026-07-30",
+   "id": 7799414003
+  },
+  {
+   "company": "phonepe",
+   "ats": "greenhouse",
+   "title": "Product Manager : Data Platform",
+   "location": "Bangalore",
+   "url": "https://job-boards.greenhouse.io/phonepe/jobs/7813734003",
+   "updated": "2026-07-23",
+   "id": 7813734003
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Agent Security & Governance",
+   "location": "San Francisco, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4694761005",
+   "updated": "2026-05-14",
+   "id": 4694761005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Agent Security & Governance",
+   "location": "Mountain View, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4525297005",
+   "updated": "2026-05-14",
+   "id": 4525297005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, AI Quality",
+   "location": "Mountain View, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4694764005",
+   "updated": "2026-05-14",
+   "id": 4694764005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, AI Quality",
+   "location": "San Francisco, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4525518005",
+   "updated": "2026-05-14",
+   "id": 4525518005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Connectors",
+   "location": "Bangalore, India",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4629292005",
+   "updated": "2026-07-08",
+   "id": 4629292005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Enterprise Intelligence",
+   "location": "Mountain View, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4702369005",
+   "updated": "2026-06-03",
+   "id": 4702369005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Enterprise Intelligence",
+   "location": "San Francisco, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4701912005",
+   "updated": "2026-06-02",
+   "id": 4701912005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Glean Protect (Security & Governance)",
+   "location": "Bangalore, India",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4641940005",
+   "updated": "2026-05-14",
+   "id": 4641940005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Growth",
+   "location": "San Francisco, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4702151005",
+   "updated": "2026-06-03",
+   "id": 4702151005
+  },
+  {
+   "company": "gleanwork",
+   "ats": "greenhouse",
+   "title": "Product Manager, Growth",
+   "location": "Mountain View, CA",
+   "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4702367005",
+   "updated": "2026-06-03",
+   "id": 4702367005
+  },
+  {
+   "company": "meesho",
+   "ats": "lever",
+   "title": "Product Manager II",
+   "location": "Bangalore, Karnataka",
+   "url": "https://jobs.lever.co/meesho/e4aba1e5-ef86-4c50-8985-2e46ff688354",
+   "updated": "2026-02-27",
+   "id": "e4aba1e5-ef86-4c50-8985-2e46ff688354"
+  },
+  {
+   "company": "meesho",
+   "ats": "lever",
+   "title": "Senior Product Manager",
+   "location": "Bangalore, Karnataka",
+   "url": "https://jobs.lever.co/meesho/128cee5f-5e62-43f4-8339-6ead8b5498e7",
+   "updated": "2026-08-12",
+   "id": "128cee5f-5e62-43f4-8339-6ead8b5498e7"
+  },
+  {
+   "company": "fampay",
+   "ats": "lever",
+   "title": "Senior Product Manager",
+   "location": "Bengaluru",
+   "url": "https://jobs.lever.co/fampay/bc1060ed-d15a-4f62-a560-856cc344201e",
+   "updated": "2025-11-07",
+   "id": "bc1060ed-d15a-4f62-a560-856cc344201e"
+  }
+ ]
+}

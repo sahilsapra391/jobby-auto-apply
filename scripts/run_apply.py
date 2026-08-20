@@ -155,12 +155,27 @@ Do this and nothing else:
    numbers, employers, dates and titles stay exactly as they are. The cover letter takes the
    same vocabulary. Never use anything from `notClaimable`.
 
-   Then verify both, and do not upload until both pass:
-     {py} "{repo}/scripts/resume_pdf.py" verify ...          (layout matches the base)
-     {py} "{repo}/scripts/ats_match.py" --jd <that file> --resume <tailored>.pdf --base <base>.pdf
+   Then the two gates, and do not upload until both pass. CONTENT FIRST, LAYOUT SECOND.
+   Wording edits change how many lines the page holds, so clearing layout before content
+   means the content fix invalidates the layout you just cleared, and you render again.
+
+   Content gate, and it reads the HTML, so this loop has no render in it:
+     {py} "{repo}/scripts/ats_match.py" --jd <the jd file> \
+       --resume "<Company>/.resume.html" --base "<base resume>.pdf"
    `unsourcedTerms` MUST be empty. A term in there is one lifted off the posting with nothing
    behind it: cut it and rebuild. High coverage with a non-empty unsourced list is not a good
-   resume, it is one that started inventing.
+   resume, it is one that started inventing. Edit the HTML and re-run this directly. Only
+   render once it is clean.
+
+   Layout gate, on the RESUME ONLY, after it renders:
+     {py} "{repo}/scripts/resume_pdf.py" verify --pdf "<tailored resume>.pdf" \
+       --against "<base resume>.pdf"
+   Those are the real flags; do not run it with --help to find them out. Do NOT run this on
+   the cover letter: it has no base to match and comparing one letter against another just
+   reports that they are different lengths.
+
+   Then run the content gate once more against the rendered PDF, which is the file that
+   actually gets uploaded.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
 3. Open the posting with the `mcp__browser__*` tools.
