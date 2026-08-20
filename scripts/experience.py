@@ -199,6 +199,90 @@ def pick(roles, wanted):
     return hits
 
 
+def work_history(root=None):
+    """The profile's employment record, which is where real dates live.
+
+    The resume prints years, because that is what a resume does. A form wants a
+    month and a year per position, and it wants them to be true.
+    """
+    import subprocess
+    args = [sys.executable, str(ROOT / "scripts" / "store.py"), "profile-get"]
+    if root:
+        args = args[:2] + ["--root", str(root)] + args[2:]
+    out = subprocess.run(args, capture_output=True, text=True)
+    if out.returncode != 0:
+        return []
+    return (json.loads(out.stdout or "{}") or {}).get("workHistory") or []
+
+
+def month_year(value):
+    """A store date to the parts a form asks for, or None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    found = re.match(r"(\d{4})-(\d{2})", text)
+    if not found:
+        return None
+    year, month = int(found.group(1)), int(found.group(2))
+    return {"year": year, "month": month, "text": f"{year}-{month:02d}"}
+
+
+def plan(html, root=None, max_chars=0, style="text"):
+    """Every position, newest first, ready to fill a repeatable form section.
+
+    Forms that take employment history almost always let you add another entry,
+    and the whole history is supposed to go in. Runs were filling the first one
+    and moving on, which leaves a candidate looking like he has held one job.
+
+    Two sources, joined on the job title. The profile carries the dates and the
+    city and is the record of what is true. The resume carries the wording
+    tailored to this posting, so the description in the form says what the
+    attached document says.
+    """
+    roles = parse(html)
+    history = work_history(root)
+
+    def key(value):
+        return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+    remaining = list(history)
+    positions = []
+    for role in roles:
+        match = None
+        for entry in remaining:
+            if key(entry.get("title")) == key(role["title"]):
+                match = entry
+                break
+        if match is None:                      # fall back to the company
+            for entry in remaining:
+                if key(entry.get("company"))[:12] and \
+                        key(entry.get("company"))[:12] in key(role["company"]):
+                    match = entry
+                    break
+        if match is not None:
+            remaining.remove(match)
+
+        start = month_year((match or {}).get("start"))
+        end = month_year((match or {}).get("end"))
+        positions.append({
+            "title": role["title"],
+            "company": (match or {}).get("company") or role["company"].split(",")[0].strip(),
+            "location": (match or {}).get("city") or "",
+            "startDate": start,
+            "endDate": end,
+            "isCurrent": match is not None and not (match or {}).get("end"),
+            "description": render(role, style, max_chars),
+            "datesFromProfile": match is not None,
+        })
+
+    # Newest first, which is the order every form expects. Anything without a
+    # start date sorts last rather than being dropped.
+    positions.sort(key=lambda p: (p["startDate"] or {}).get("text") or "", reverse=True)
+    for i, position in enumerate(positions, 1):
+        position["order"] = i
+    return positions
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     src = ap.add_mutually_exclusive_group(required=True)
@@ -206,6 +290,11 @@ def main():
     src.add_argument("--resume", help="path to a .resume.html")
     ap.add_argument("--role", help="title or company fragment to look up")
     ap.add_argument("--list", action="store_true", help="show every role")
+    ap.add_argument("--plan", action="store_true",
+                    help="every position, newest first, with dates from the profile and "
+                         "the description from this posting's resume. What a repeatable "
+                         "employment section needs.")
+    ap.add_argument("--root", help="store directory (default ~/.job-application)")
     ap.add_argument("--format", choices=["text", "prose", "json"], default="text")
     ap.add_argument("--max-chars", type=int, default=0)
     args = ap.parse_args()
@@ -216,6 +305,15 @@ def main():
     roles = parse(path.read_text())
     if not roles:
         raise SystemExit(f"no experience entries found in {path}")
+
+    if args.plan:
+        positions = plan(path.read_text(), args.root, args.max_chars, args.format
+                         if args.format in ("text", "prose") else "text")
+        print(json.dumps({"positions": positions, "count": len(positions),
+                          "note": "Fill every one of these. If the form only shows one "
+                                  "block, look for Add another before moving on."},
+                         indent=2))
+        return
 
     if args.list or not args.role:
         if args.format == "json":
