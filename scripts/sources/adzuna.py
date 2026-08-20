@@ -69,7 +69,8 @@ def parse_job(entry, country):
         salary=salary)
 
 
-def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
+def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
+          cursor=0, **_):
     app_id = base.api_key(ID_VAR, settings)
     app_key = base.api_key(KEY_VAR, settings)
     if not app_id or not app_key:
@@ -85,9 +86,10 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
 
     terms = config.get("keywords") or [""]
     days = config.get("_postedWithinDays")
+    asked, start = base.query_slice(reachable, cursor)
     postings, errors = [], []
     before = fetcher.requests
-    for country in reachable:
+    for country in asked:
         for term in terms:
             url = _query({"app_id": app_id, "app_key": app_key}, country, term, days)
             data, response = fetcher.get_json(url)
@@ -105,7 +107,9 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
         if limit and len(postings) >= limit:
             break
 
-    note = f"{len(reachable)} countries x {len(terms)} terms"
+    note = f"{len(asked)} of {len(reachable)} countries x {len(terms)} terms"
+    if len(asked) < len(reachable):
+        note += f" (rotating window from {start})"
     if unreachable:
         note += f"; not covered here: {', '.join(unreachable)}"
     requests = fetcher.requests - before

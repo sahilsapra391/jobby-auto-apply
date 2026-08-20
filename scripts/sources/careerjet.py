@@ -16,7 +16,14 @@ SOURCE = "careerjet"
 SOURCE_CLASS = "aggregator"
 TIER = "1b"
 KEY_VAR = "JOBBY_CAREERJET_KEY"
-SEARCH_URL = "https://public.api.careerjet.net/search"
+# HTTP, not HTTPS. Verified 2026-08-20 during the supervised run: the public
+# endpoint refuses a TLS connection outright (connection refused on 443) and
+# answers on port 80. That means the affiliate key travels in plaintext, which
+# is recorded in references/sources-registry.md rather than papered over — it is
+# an affiliate identifier rather than an account credential, but it is still a
+# key on the wire.
+SEARCH_URL = "http://public.api.careerjet.net/search"
+REFERER = "https://github.com/sahilsapra391/jobby-auto-apply"
 PAGE_SIZE = 50
 
 # Careerjet is addressed by locale rather than by country code.
@@ -39,7 +46,8 @@ def parse_job(entry, country):
         salary=entry.get("salary") or None)
 
 
-def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
+def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
+          cursor=0, **_):
     key = base.api_key(KEY_VAR, settings)
     if not key:
         return base.skipped(SOURCE, f"no key ({KEY_VAR} is not set)")
@@ -52,16 +60,23 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
                                     f"({', '.join(unreachable) or 'none selected'})")
 
     terms = config.get("keywords") or [""]
+    asked, start = base.query_slice(reachable, cursor)
     postings, errors = [], []
     before = fetcher.requests
-    for country in reachable:
+    for country in asked:
         for term in terms:
             params = {"affid": key, "locale_code": LOCALES[country], "pagesize": PAGE_SIZE,
                       "user_ip": "127.0.0.1", "user_agent": base.USER_AGENT}
             if term:
                 params["keywords"] = term
+            # Careerjet refuses an undeclared caller: "Please add a Referer
+            # header so we know who is calling this API and from which page."
+            # Verified 2026-08-20 — the body says so in as many words. This is
+            # the same honest-identification rule as the User-Agent, so it
+            # names the project rather than pretending to be a browser.
             data, response = fetcher.get_json(
-                f"{SEARCH_URL}?{urllib.parse.urlencode(params)}")
+                f"{SEARCH_URL}?{urllib.parse.urlencode(params)}",
+                headers={"Referer": REFERER})
             if data is None:
                 errors.append(base.describe(response, f"{SOURCE} {country} {term!r}"))
                 continue
@@ -76,7 +91,9 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
                 break
         if limit and len(postings) >= limit:
             break
-    note = f"{len(reachable)} locales x {len(terms)} terms"
+    note = f"{len(asked)} of {len(reachable)} locales x {len(terms)} terms"
+    if len(asked) < len(reachable):
+        note += f" (rotating window from {start})"
     if unreachable:
         note += f"; no locale for: {', '.join(unreachable)}"
     requests = fetcher.requests - before

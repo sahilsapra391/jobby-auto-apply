@@ -265,7 +265,8 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     for name, connector in sorted(selected.items()):
         try:
             result = connector(fetcher, config=config, companies=companies,
-                               settings=settings, countries=countries, limit=limit)
+                               settings=settings, countries=countries, limit=limit,
+                               cursor=now.hour)
         except Exception as exc:                   # noqa: BLE001
             # A connector that raises must not take the other thirteen with it,
             # and must not vanish either.

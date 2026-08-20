@@ -61,6 +61,35 @@ MAX_RESPONSE_BYTES = 12_000_000
 # How much of a description is worth storing. The rest is benefits boilerplate.
 EXCERPT_CHARS = 1500
 
+# The most country-or-locale queries one keyed channel may make in one run.
+#
+# This exists because of a measured failure, not a hunch. The plan's nine
+# regions expand to about fifty countries, and a keyed connector querying every
+# country against every search term is fifty times four requests — per channel,
+# per hour. Adzuna, Jooble and Careerjet together came to roughly four hundred
+# requests and blew a ten-minute timeout on the first supervised dry run.
+#
+# That is not what "Tier 1 costs ~nothing" meant, and at twenty-four runs a day
+# it would exhaust the free quotas these channels are on within hours. So each
+# run asks a slice and the slice rotates, which covers everything across a day
+# rather than everything every hour. The slice actually used is reported, because
+# a channel that asked six of fifty countries this hour must say so.
+MAX_QUERIES_PER_RUN = 8
+
+
+def query_slice(items, cursor, cap=MAX_QUERIES_PER_RUN):
+    """A rotating window over `items`, so a day covers all of them.
+
+    Deterministic in `cursor` (the hour of the run), so two runs in the same
+    hour ask the same thing and a retry is not a fresh burst of traffic.
+    """
+    items = list(items)
+    if not items or cap is None or len(items) <= cap:
+        return items, 0
+    start = (int(cursor) * cap) % len(items)
+    doubled = items + items
+    return doubled[start:start + cap], start
+
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 

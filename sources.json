@@ -151,7 +151,7 @@
       "endpoint": "https://api.adzuna.com/v1/api/jobs/{country}/search/1",
       "id": "adzuna",
       "name": "Adzuna",
-      "notes": "Endpoint shape NOT verified live: no key installed. Written to the published contract; the first real run confirms it. Covers 19 countries.",
+      "notes": "Verified live 2026-08-20. Covers 19 countries; a selected country outside that set is reported rather than dropped silently. Country x term queries are capped per run and rotate, so a day covers what an hour cannot.",
       "phase": 1,
       "regions": [
         "US",
@@ -176,11 +176,11 @@
         "IN"
       ],
       "sourceClass": "aggregator",
-      "status": "needs-key",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
     },
     {
       "auth": "key",
@@ -188,35 +188,35 @@
       "endpoint": "https://jooble.org/api/{key}",
       "id": "jooble",
       "name": "Jooble",
-      "notes": "Endpoint shape NOT verified live: no key installed. POST with a JSON body; the key is in the URL path, so it must never reach an error line.",
+      "notes": "Verified live 2026-08-20. POST with a JSON body; the key is in the URL path and never reaches an error line. Location x term queries capped and rotating.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "aggregator",
-      "status": "needs-key",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "https://public.api.careerjet.net/search",
+      "endpoint": "http://public.api.careerjet.net/search",
       "id": "careerjet",
       "name": "Careerjet",
-      "notes": "Endpoint shape NOT verified live: no key installed. Addressed by locale rather than country code.",
+      "notes": "Verified live 2026-08-20, with TWO CORRECTIONS. The endpoint is plain HTTP: it refuses TLS outright (connection refused on 443) and answers on port 80, so the affiliate key travels in plaintext. And it rejects an undeclared caller with 403 and the body 'Undeclared referrer. Please add a Referer header so we know who is calling this API and from which page.' - so the connector declares itself with a Referer naming the project, which is the same honest-identification rule as the User-Agent. Locale x term queries capped and rotating.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "aggregator",
-      "status": "needs-key",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
     },
     {
       "auth": "key",
@@ -224,17 +224,17 @@
       "endpoint": "https://www.reed.co.uk/api/1.0/search",
       "id": "reed",
       "name": "Reed",
-      "notes": "Endpoint shape NOT verified live: no key installed. HTTP Basic with the key as username; dd/mm/yyyy dates. Only asked when the search selects the UK.",
+      "notes": "Verified live 2026-08-20. HTTP Basic with the key as username; dd/mm/yyyy dates. Only asked when the saved search includes the UK.",
       "phase": 1,
       "regions": [
         "GB"
       ],
       "sourceClass": "aggregator",
-      "status": "needs-key",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
     },
     {
       "auth": "key",
@@ -242,17 +242,17 @@
       "endpoint": "https://data.usajobs.gov/api/search",
       "id": "usajobs",
       "name": "USAJobs",
-      "notes": "Endpoint shape NOT verified live: no key installed. Needs the key AND the registered email, which goes in the User-Agent header.",
+      "notes": "Verified live 2026-08-20. Needs the key AND the registered email, which goes in the User-Agent header.",
       "phase": 1,
       "regions": [
         "US"
       ],
       "sourceClass": "aggregator",
-      "status": "needs-key",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
     },
     {
       "auth": "optional-key",

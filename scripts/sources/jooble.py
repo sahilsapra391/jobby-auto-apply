@@ -37,7 +37,8 @@ def parse_job(entry, country=None):
         salary=entry.get("salary") or None)
 
 
-def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
+def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
+          cursor=0, **_):
     key = base.api_key(KEY_VAR, settings)
     if not key:
         return base.skipped(SOURCE, f"no key ({KEY_VAR} is not set)")
@@ -45,9 +46,10 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
     config = config or {}
     terms = config.get("keywords") or [""]
     places = list(countries or []) or [""]
+    asked, start = base.query_slice(places, cursor)
     postings, errors = [], []
     before = fetcher.requests
-    for place in places:
+    for place in asked:
         for term in terms:
             body = json.dumps({"keywords": term, "location": place}).encode("utf-8")
             data, response = _post_json(fetcher, SEARCH_URL.format(key=key), body)
@@ -66,8 +68,10 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
     requests = fetcher.requests - before
     if errors and not postings:
         return base.failed(SOURCE, errors[0], requests, errors)
-    return base.ok(SOURCE, postings, requests, errors,
-                   f"{len(places)} locations x {len(terms)} terms")
+    note = f"{len(asked)} of {len(places)} locations x {len(terms)} terms"
+    if len(asked) < len(places):
+        note += f" (rotating window from {start})"
+    return base.ok(SOURCE, postings, requests, errors, note)
 
 
 def _post_json(fetcher, url, body):

@@ -575,6 +575,94 @@ class NormalisationTests(unittest.TestCase):
         self.assertLessEqual(len(record["descriptionExcerpt"]), base.EXCERPT_CHARS)
 
 
+class QueryBudgetTests(unittest.TestCase):
+    """A keyed channel may not ask fifty countries every hour.
+
+    Measured, not assumed: the plan's nine regions expand to about fifty
+    countries, and Adzuna, Jooble and Careerjet querying every country against
+    every search term came to roughly four hundred requests and blew a
+    ten-minute timeout on the first supervised dry run. At twenty-four runs a
+    day that exhausts the free quotas these channels are on.
+    """
+
+    def test_a_short_list_is_asked_in_full(self):
+        items, start = base.query_slice(["US", "GB", "IN"], cursor=0)
+        self.assertEqual(items, ["US", "GB", "IN"])
+        self.assertEqual(start, 0)
+
+    def test_a_long_list_is_capped(self):
+        items, _ = base.query_slice([f"C{i}" for i in range(50)], cursor=0)
+        self.assertEqual(len(items), base.MAX_QUERIES_PER_RUN)
+
+    def test_the_window_rotates_and_covers_everything_across_a_day(self):
+        # Coverage over a day rather than over an hour is the trade. If the
+        # rotation did not actually reach everything, the coverage claim would
+        # be false and nothing would say so.
+        countries = [f"C{i}" for i in range(50)]
+        seen = set()
+        for hour in range(24):
+            asked, _ = base.query_slice(countries, cursor=hour)
+            seen.update(asked)
+        self.assertEqual(seen, set(countries))
+
+    def test_the_same_hour_asks_the_same_thing(self):
+        # A retry inside one hour must not be a fresh burst of traffic.
+        countries = [f"C{i}" for i in range(50)]
+        self.assertEqual(base.query_slice(countries, cursor=7),
+                         base.query_slice(countries, cursor=7))
+
+    def test_the_window_wraps_rather_than_running_short(self):
+        countries = [f"C{i}" for i in range(10)]
+        asked, start = base.query_slice(countries, cursor=1, cap=8)
+        self.assertEqual(len(asked), 8)
+        self.assertEqual(start, 8)
+        self.assertEqual(asked[0], "C8")
+        self.assertEqual(asked[2], "C0", "it wraps back to the beginning")
+
+    def test_an_empty_list_is_not_a_crash(self):
+        self.assertEqual(base.query_slice([], cursor=3), ([], 0))
+
+    def test_a_capped_channel_says_how_much_it_asked(self):
+        # A channel that asked six of fifty countries must say so, or the
+        # coverage accounting is a lie.
+        f = fetcher({"api.adzuna.com": (200, fixture("adzuna_search.json"))})
+        result = adzuna.fetch(f, config={"keywords": ["pm"]},
+                              settings={"JOBBY_ADZUNA_ID": "i", "JOBBY_ADZUNA_KEY": "k"},
+                              countries=["US", "GB", "IN", "CA", "AU", "DE", "FR", "NL",
+                                         "PL", "ES", "IT", "SE"],
+                              cursor=0)
+        # Eleven of the twelve are countries Adzuna operates in; Sweden is not,
+        # and the same line says so rather than dropping it quietly.
+        self.assertIn(f"{base.MAX_QUERIES_PER_RUN} of 11 countries", result["reason"])
+        self.assertIn("rotating window", result["reason"])
+        self.assertIn("not covered here: se", result["reason"])
+
+
+class CareerjetTransportTests(unittest.TestCase):
+    """Two things the live run contradicted, both recorded in the registry."""
+
+    def test_the_endpoint_is_plain_http(self):
+        # Verified 2026-08-20: the public endpoint refuses a TLS connection
+        # outright (connection refused on 443) and answers on port 80.
+        self.assertTrue(careerjet.SEARCH_URL.startswith("http://"))
+        self.assertNotIn("https://", careerjet.SEARCH_URL)
+
+    def test_the_caller_declares_itself_with_a_referer(self):
+        # "Undeclared referrer. Please add a Referer header so we know who is
+        # calling this API and from which page." — the 403 body, verbatim.
+        f = fetcher({"careerjet.net": (200, fixture("careerjet_search.json"))})
+        careerjet.fetch(f, config={"keywords": ["pm"]},
+                        settings={"JOBBY_CAREERJET_KEY": "k"}, countries=["US"])
+        referer = f.fake_opener.calls[0].get_header("Referer")
+        self.assertTrue(referer)
+        self.assertIn("github.com", referer)
+
+    def test_the_referer_names_the_project_rather_than_a_browser(self):
+        # The honest-identification rule applies to the Referer for the same
+        # reason it applies to the User-Agent.
+        self.assertIn("jobby", careerjet.REFERER.lower())
+
+
 class FixtureProvenanceTests(unittest.TestCase):
     def test_the_unverified_fixtures_say_they_are_unverified(self):
         # Five channels have no key on this machine, so their fixtures come
