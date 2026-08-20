@@ -276,12 +276,22 @@ def strip_html(text):
     Not a sanitiser — the board escapes everything it renders — but a
     fingerprint taken over markup measures the ATS's template rather than the
     job, and every Greenhouse posting would look like every other one.
+
+    Unescaping happens BEFORE tags are stripped, and then again after, because
+    Greenhouse serves its `content` field HTML-escaped: the payload contains
+    `&lt;h2&gt;About the Role&lt;/h2&gt;`. Stripping first and unescaping
+    afterwards turned those entities into tags a moment too late to remove
+    them, so every Greenhouse description carried its own markup as visible
+    text — into the card, into the simhash, and into experience extraction.
+    Two passes, because one level of escaping is the common case and two is
+    Greenhouse.
     """
-    raw = str(text or "")
-    raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
-    raw = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6])[^>]*>", "\n", raw)
-    raw = TAG.sub(" ", raw)
-    raw = unescape(raw)
+    raw = unescape(str(text or ""))
+    for _ in range(2):
+        raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+        raw = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6])[^>]*>", "\n", raw)
+        raw = TAG.sub(" ", raw)
+        raw = unescape(raw)
     raw = WHITESPACE.sub(" ", raw)
     return BLANKS.sub("\n\n", raw).strip()
 

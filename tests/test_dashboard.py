@@ -389,6 +389,38 @@ class FoundLaneTests(unittest.TestCase):
         self.assertEqual(rows[0]["yrt"], "3–5 years")
         self.assertEqual(rows[0]["yr"], 3, "the filter compares against the floor")
 
+    def test_a_title_typed_in_block_capitals_is_calmed_down(self):
+        # "JUNIOR PRODUCT MANAGER- OBSZAR RX (K/M)" is a real posting title and
+        # it shouts across a card.
+        self.assertEqual(found_lane.tidy_title("PRODUCT MANAGER, GROWTH"),
+                         "Product Manager, Growth")
+        self.assertEqual(found_lane.tidy_title("SENIOR SOFTWARE ENGINEER (AI/ML)"),
+                         "Senior Software Engineer (AI/ML)")
+        self.assertEqual(found_lane.tidy_title("DEVOPS ENGINEER"), "DevOps Engineer")
+
+    def test_a_title_already_written_properly_is_left_alone(self):
+        for title in ("Senior PM, AI Platform", "Staff Product Manager",
+                      "Manager, Internal Product Analytics"):
+            self.assertEqual(found_lane.tidy_title(title), title)
+
+    def test_chips_read_as_labels_not_as_database_values(self):
+        self.assertEqual(found_lane.tidy_tag("product management"), "Product Management")
+        self.assertEqual(found_lane.tidy_tag("sql"), "SQL")
+        self.assertEqual(found_lane.tidy_tag("b2b saas"), "B2B SaaS")
+        self.assertEqual(found_lane.tidy_tag("Data & AI"), "Data & AI")
+
+    def test_a_board_is_named_the_way_the_world_names_it(self):
+        rows = json.loads(self.payload(self.render([self.job(
+            canonicalSource="smartrecruiters", workplace="onsite")])))
+        self.assertEqual(rows[0]["src"], "SmartRecruiters")
+        self.assertEqual(rows[0]["wp"], "On-site")
+
+    def test_the_card_carries_a_line_of_the_posting_itself(self):
+        rows = json.loads(self.payload(self.render([self.job(
+            descriptionExcerpt="Own the internal reporting platform. " * 20)])))
+        self.assertTrue(rows[0]["sum"])
+        self.assertLessEqual(len(rows[0]["sum"]), 150)
+
     def test_a_country_code_becomes_a_country_name(self):
         self.assertEqual(found_lane.place({"location": {"country": "GB", "city": "London"}}),
                          "London, United Kingdom")

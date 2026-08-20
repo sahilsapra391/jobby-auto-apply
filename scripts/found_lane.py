@@ -83,12 +83,13 @@ def compact(job):
         "rank": direct_rank(job),
         "id": job.get("id"),
         "co": job.get("company") or "",
-        "ti": job.get("title") or "",
+        "ti": tidy_title(job.get("title")),
         "url": safe_url(job.get("canonicalUrl")),
-        "src": job.get("canonicalSource") or "",
+        "src": SOURCE_LABELS.get(job.get("canonicalSource") or "",
+                                 (job.get("canonicalSource") or "").title()),
         "loc": location.get("raw") or "",
         "cty": location.get("country") or "",
-        "wp": job.get("workplace") or "",
+        "wp": WORKPLACE_LABELS.get(job.get("workplace") or "", ""),
         "pa": (job.get("postedAt") or "")[:10],
         "fs": (job.get("firstSeenAt") or "")[:10],
         "sc": score.get("total"),
@@ -102,8 +103,8 @@ def compact(job):
         # posting came out of the supervised run. "Seen on 2 boards" has to
         # mean two boards or it means nothing.
         "bd": len({s.get("source") for s in (job.get("sources") or []) if s.get("source")}),
-        "sg": sightings,
-        "tg": (job.get("tags") or [])[:MAX_TAGS],
+        "sg": [dict(s, s=SOURCE_LABELS.get(s["s"], s["s"].title())) for s in sightings],
+        "tg": [tidy_tag(t) for t in (job.get("tags") or [])[:MAX_TAGS] if tidy_tag(t)],
         "ex": (job.get("descriptionExcerpt") or "")[:EMBED_EXCERPT_CHARS],
         # The floor the posting demands: that is what a screen rejects on, and
         # what "up to N years" in the filter bar has to compare against.
@@ -114,6 +115,9 @@ def compact(job):
         "rc": extracted.get("roleCategory"),
         "et": extracted.get("employmentType"),
         "sal": job.get("salary"),
+        # One line of the posting itself, so a card says something about the
+        # job rather than only about its metadata.
+        "sum": " ".join((job.get("descriptionExcerpt") or "").split())[:150],
     }
 
 
@@ -191,6 +195,96 @@ def direct_rank(job):
                if isinstance(s, dict)]
     best = min(classes, key=jobs_store.canonical_rank, default="other")
     return jobs_store.canonical_rank(best)
+
+
+# What a board calls itself, versus what it is called. Chips read as names.
+SOURCE_LABELS = {
+    "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
+    "smartrecruiters": "SmartRecruiters", "workable": "Workable",
+    "recruitee": "Recruitee", "personio": "Personio", "breezy": "Breezy",
+    "rippling": "Rippling", "adzuna": "Adzuna", "jooble": "Jooble",
+    "careerjet": "Careerjet", "reed": "Reed", "usajobs": "USAJobs",
+    "themuse": "The Muse", "remoteok": "RemoteOK", "remotive": "Remotive",
+    "himalayas": "Himalayas", "workingnomads": "Working Nomads",
+    "weworkremotely": "We Work Remotely", "linkedin": "LinkedIn",
+}
+WORKPLACE_LABELS = {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site"}
+
+# Words a title-caser must not touch. Employers write these in caps on purpose.
+KEEP_UPPER = {
+    "AI", "ML", "API", "APIs", "SDK", "UX", "UI", "QA", "SRE", "IT", "HR",
+    "B2B", "B2C", "SaaS", "CRM", "ERP", "SQL", "AWS", "GCP", "iOS", "PM",
+    "GTM", "KYC", "AML", "LLM", "NLP", "CX", "VP", "CTO", "CEO", "COO", "CFO",
+    "US", "USA", "UK", "EU", "UAE", "APAC", "EMEA", "R&D", "3D", "AR", "VR",
+    "RX", "SEO", "SEM", "PPC", "P&L", "M&A", "IoT", "DevOps", "SaaS", "K", "M", "F",
+}
+SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on",
+               "or", "the", "to", "with", "vs"}
+# Looked up case-insensitively, but restored in the spelling the world uses:
+# "DEVOPS" comes back as "DevOps", "SAAS" as "SaaS".
+CANONICAL = {word.upper(): word for word in KEEP_UPPER}
+
+
+def _titlecase_part(part, first):
+    bare = part.strip("()[],.-")
+    if not bare:
+        return part
+    if bare.upper() in CANONICAL:
+        return part.replace(bare, CANONICAL[bare.upper()])
+    if not first and bare.lower() in SMALL_WORDS:
+        return part.lower()
+    if any(c.islower() for c in bare):
+        return part                      # already mixed case; leave it alone
+    return part[:1].upper() + part[1:].lower()
+
+
+def _titlecase_word(word, first):
+    # "AI/ML" and "M/F" are two acronyms wearing one word, so each side of a
+    # slash is decided on its own.
+    if "/" in word:
+        return "/".join(_titlecase_part(p, first and i == 0)
+                        for i, p in enumerate(word.split("/")))
+    return _titlecase_part(word, first)
+
+
+def tidy_title(title):
+    """Fix a title an employer typed in block capitals, and leave the rest.
+
+    "JUNIOR PRODUCT MANAGER- OBSZAR RX (K/M)" is a real posting title and it
+    shouts across a card. Only titles that are overwhelmingly uppercase are
+    touched, and known acronyms survive, so "Senior PM, AI Platform" is
+    returned exactly as written.
+    """
+    text = str(title or "").strip()
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 8:
+        return text
+    if sum(1 for c in letters if c.isupper()) / len(letters) < 0.7:
+        return text
+    words = text.split()
+    return " ".join(_titlecase_word(w, i == 0) for i, w in enumerate(words))
+
+
+def tidy_tag(tag):
+    """A chip reads as a label, not as a database value."""
+    text = str(tag or "").strip()
+    if not text:
+        return ""
+    if text.upper() in CANONICAL:
+        return CANONICAL[text.upper()]
+    if any(c.isupper() for c in text):
+        return text                      # the board already styled it
+    # Tags arrive lowercased by normalisation, so unlike a title they always
+    # want capitalising rather than leaving alone.
+    out = []
+    for i, word in enumerate(text.split()):
+        if word.upper() in CANONICAL:
+            out.append(CANONICAL[word.upper()])
+        elif i and word in SMALL_WORDS:
+            out.append(word)
+        else:
+            out.append(word[:1].upper() + word[1:])
+    return " ".join(out)
 
 
 def sort_key(job):
@@ -493,8 +587,8 @@ CSS = """
   .jb-pill button:hover { color:var(--red-ink); }
 
   /* One button shape everywhere on this lane. */
-  .jb-btn { font:inherit; font-size:.83rem; font-weight:520; line-height:1;
-    padding:.42rem .85rem; border-radius:100px; cursor:pointer;
+  .jb-btn { font:inherit; font-size:.845rem; font-weight:530; line-height:1;
+    padding:.5rem .9rem; border-radius:100px; cursor:pointer;
     border:1px solid var(--hair); background:var(--bg); color:var(--ink);
     display:inline-flex; align-items:center; gap:.32rem; text-decoration:none;
     transition:border-color .18s, color .18s, background .18s; }
@@ -508,30 +602,42 @@ CSS = """
   .jb-btn.danger:hover { border-color:var(--red-ink); color:var(--red-ink); }
   .jb-btn svg { width:.95rem; height:.95rem; display:block; }
 
-  .jb-grid { display:grid; gap:.75rem;
-    grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
-  .jb-card { background:var(--card); border-radius:16px; padding:1rem 1.1rem .85rem;
-    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.6rem; }
-  .jb-head { display:flex; gap:.8rem; align-items:flex-start; }
-  .jb-ring { width:44px; height:44px; border-radius:50%; flex:none; display:grid;
+  /* Four to a row on a wide screen, and only four. Five made the cards narrow
+     enough that every title wrapped to three lines. */
+  .jb-grid { display:grid; gap:1.15rem;
+    grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); }
+  @media (min-width:1180px) { .jb-grid { grid-template-columns:repeat(4, 1fr); } }
+  .jb-card { background:var(--card); border-radius:20px; padding:1.3rem 1.4rem 1.1rem;
+    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.8rem;
+    border:1px solid transparent; transition:border-color .18s, transform .18s; }
+  .jb-card:hover { border-color:var(--hair); transform:translateY(-1px); }
+  .jb-head { display:flex; gap:1rem; align-items:flex-start; }
+  .jb-ring { width:56px; height:56px; border-radius:50%; flex:none; display:grid;
     place-items:center; background:var(--sunk); }
-  .jb-ring i { width:35px; height:35px; border-radius:50%; background:var(--card);
-    display:grid; place-items:center; font-style:normal; font-size:.76rem; font-weight:640;
-    font-variant-numeric:tabular-nums; color:var(--ink); }
-  .jb-co { font-size:.78rem; color:var(--ink-2); margin:0; }
-  .jb-ti { font-size:.97rem; font-weight:610; letter-spacing:-.02em; margin:.1rem 0 0;
-    line-height:1.3; }
-  .jb-chips { display:flex; gap:.28rem; flex-wrap:wrap; }
-  .jb-chip { font-size:.71rem; font-weight:540; padding:.15rem .48rem; border-radius:100px;
-    background:var(--sunk); color:var(--ink-2); white-space:nowrap; }
+  .jb-ring i { width:44px; height:44px; border-radius:50%; background:var(--card);
+    display:grid; place-items:center; font-style:normal; font-size:.9rem; font-weight:660;
+    font-variant-numeric:tabular-nums; color:var(--ink); letter-spacing:-.03em; }
+  .jb-co { font-size:.82rem; color:var(--ink-2); margin:0; font-weight:540;
+    letter-spacing:-.01em; }
+  .jb-ti { font-size:1.06rem; font-weight:620; letter-spacing:-.025em; margin:.15rem 0 0;
+    line-height:1.28; }
+  .jb-sum { margin:0; font-size:.845rem; line-height:1.5; color:var(--ink-2);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; }
+  .jb-chips { display:flex; gap:.35rem; flex-wrap:wrap; }
+  .jb-chip { font-size:.735rem; font-weight:550; padding:.22rem .6rem; border-radius:100px;
+    background:var(--sunk); color:var(--ink-2); white-space:nowrap;
+    letter-spacing:-.005em; }
+  .jb-chip.place { background:var(--t-p); color:var(--purple); }
+  .jb-chip.pay { background:var(--t-g); color:var(--green); }
   .jb-chip.unknown { background:transparent; color:var(--ink-3);
     border:1px dashed var(--hair); }
   .jb-chip.gate { background:var(--t-red); color:var(--red-ink); }
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
   .jb-chip.years { background:var(--t-o); color:var(--orange); }
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
-  .jb-acts { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-top:auto;
-    padding-top:.65rem; border-top:1px solid var(--hair); }
+  .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
+    padding-top:.9rem; border-top:1px solid var(--hair); }
   .jb-acts .jb-det { margin-left:auto; }
   .jb-panel { border-top:1px solid var(--hair); padding-top:.6rem; font-size:.83rem;
     color:var(--ink-2); display:flex; flex-direction:column; gap:.45rem; }
@@ -666,24 +772,48 @@ SCRIPT = r"""
     return panel;
   }
 
-  // An inline SVG eye, not the emoji. The emoji renders as a photoreal
-  // eyeball on macOS and it is unsettling on a card about a job.
-  function eyeIcon() {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.8');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    var lid = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    lid.setAttribute('d', 'M1.8 12S5.4 5.2 12 5.2 22.2 12 22.2 12 18.6 18.8 12 18.8 1.8 12 1.8 12Z');
-    var iris = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    iris.setAttribute('cx', '12'); iris.setAttribute('cy', '12'); iris.setAttribute('r', '3.1');
-    svg.appendChild(lid); svg.appendChild(iris);
-    return svg;
+  // One drawn icon per action. Five identical pills reading Watch / Apply /
+  // Pass / Posting / Details were hard to tell apart at a glance, and Details
+  // in particular read as an afterthought.
+  function svg(paths, extra) {
+    var node = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    node.setAttribute('viewBox', '0 0 24 24');
+    node.setAttribute('fill', 'none');
+    node.setAttribute('stroke', 'currentColor');
+    node.setAttribute('stroke-width', '1.8');
+    node.setAttribute('stroke-linecap', 'round');
+    node.setAttribute('stroke-linejoin', 'round');
+    node.setAttribute('aria-hidden', 'true');
+    paths.forEach(function (d) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      node.appendChild(path);
+    });
+    (extra || []).forEach(function (c) {
+      var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', c[0]); circle.setAttribute('cy', c[1]);
+      circle.setAttribute('r', c[2]);
+      node.appendChild(circle);
+    });
+    return node;
   }
+  var ICONS = {
+    // An eye, drawn. The emoji renders as a photoreal eyeball on macOS.
+    watch: function () {
+      return svg(['M1.8 12S5.4 5.2 12 5.2 22.2 12 22.2 12 18.6 18.8 12 18.8 1.8 12 1.8 12Z'],
+                 [[12, 12, 3.1]]);
+    },
+    // A paper plane: this one sends something.
+    apply: function () { return svg(['M21.5 2.5 11 13', 'M21.5 2.5 15 21.5l-4-8.5-8.5-4Z']); },
+    // A struck-through circle: no, and not deleted.
+    pass: function () { return svg(['M5.6 5.6l12.8 12.8'], [[12, 12, 8.4]]); },
+    // Arrow out of a box: this leaves the board.
+    posting: function () {
+      return svg(['M14 4h6v6', 'M20 4 11 13', 'M18 14.5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H10']);
+    },
+    // A chevron that turns over, so Details reads as "there is more below".
+    details: function () { return svg(['M6 9.5 12 15.5 18 9.5']); },
+  };
   function button(cls, label, icon) {
     var b = el('button', 'jb-btn' + (cls ? ' ' + cls : ''));
     if (icon) b.appendChild(icon);
@@ -707,45 +837,53 @@ SCRIPT = r"""
     head.appendChild(titles);
     article.appendChild(head);
 
+    if (job.sum) article.appendChild(el('p', 'jb-sum', job.sum));
+
     // Chips carry what the posting actually said, and say plainly when it said
     // nothing. A row of "unknown" is honest; a row of invented detail is not.
     var chips = el('div', 'jb-chips');
-    if (job.place) chips.appendChild(chip(job.place));
+    if (job.place) chips.appendChild(chip(job.place, 'place'));
     if (job.wp) chips.appendChild(chip(job.wp));
     if (job.yrt) chips.appendChild(chip(job.yrt, 'years'));
-    else chips.appendChild(chip('experience not stated', 'unknown'));
+    else chips.appendChild(chip('Experience not stated', 'unknown'));
     var when = ago(job);
     if (when) chips.appendChild(chip(when));
-    else chips.appendChild(chip('no date', 'unknown'));
-    if (job.bd > 1) chips.appendChild(chip('on ' + job.bd + ' boards', 'boards'));
-    chips.appendChild(chip(job.src || 'unknown source',
-                           job.rank === 0 ? 'direct' : (job.rank === 1 ? 'direct' : '')));
+    else chips.appendChild(chip('No date', 'unknown'));
+    if (job.sal) chips.appendChild(chip(job.sal, 'pay'));
+    if (job.bd > 1) chips.appendChild(chip('On ' + job.bd + ' boards', 'boards'));
+    chips.appendChild(chip(job.src || 'Unknown source',
+                           job.rank <= 1 ? 'direct' : ''));
     (job.ga || []).forEach(function (label) { chips.appendChild(chip(label, 'gate')); });
     (job.tg || []).slice(0, 3).forEach(function (tag) { chips.appendChild(chip(tag)); });
     article.appendChild(chips);
 
     var acts = el('div', 'jb-acts');
-    var eye = button('', 'Watch', eyeIcon());
+    var eye = button('', 'Watch', ICONS.watch());
     eye.title = 'Move this to Watching';
     eye.addEventListener('click', function () { doWatch(job, article, eye); });
     acts.appendChild(eye);
 
-    var apply = button('primary', 'Apply');
+    var apply = button('primary', 'Apply', ICONS.apply());
+    apply.title = 'Queue the full application';
     apply.addEventListener('click', function () { doApply(job, article, apply); });
     acts.appendChild(apply);
 
-    var pass = button('danger', 'Pass');
+    var pass = button('danger', 'Pass', ICONS.pass());
+    pass.title = 'Never offer this one again';
     pass.addEventListener('click', function () { doPass(job, article); });
     acts.appendChild(pass);
 
     if (job.url) {
       var open = el('a', 'jb-btn');
       open.href = job.url; open.target = '_blank'; open.rel = 'noopener';
+      open.title = 'Open the posting on ' + (job.src || 'its board');
+      open.appendChild(ICONS.posting());
       open.appendChild(el('span', null, 'Posting'));
       acts.appendChild(open);
     }
 
-    var details = button('jb-det', 'Details');
+    var details = button('jb-det', 'Details', ICONS.details());
+    details.title = 'Why this percentage, and where else it was seen';
     var panel = null;
     details.addEventListener('click', function () {
       if (panel) {

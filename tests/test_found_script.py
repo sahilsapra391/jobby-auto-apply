@@ -70,6 +70,15 @@ class ScriptSyntaxTests(unittest.TestCase):
         self.assertNotIn("jb-apply", found_lane.SCRIPT)
         self.assertIn("'jb-btn'", found_lane.SCRIPT)
 
+    def test_every_action_has_its_own_icon(self):
+        # One shape, five characters. Five identical pills were hard to tell
+        # apart at a glance and Details read as an afterthought.
+        for name in ("watch", "apply", "pass", "posting", "details"):
+            self.assertIn(name + ": function", found_lane.SCRIPT, name)
+
+    def test_the_grid_is_four_wide_on_a_wide_screen(self):
+        self.assertIn("repeat(4, 1fr)", found_lane.CSS)
+
     def test_no_job_text_is_ever_concatenated_into_markup(self):
         # Titles and descriptions are written by strangers. innerHTML with any
         # of them is the whole attack, and textContent is the whole defence.
@@ -232,6 +241,7 @@ setTimeout(function () {
                 "pa": "2026-08-13", "fs": "2026-08-19", "sc": 80, "pt": {}, "wt": {},
                 "wy": {}, "un": [], "ga": [], "bd": 1, "sg": [], "tg": [], "ex": "",
                 "yr": None, "yrt": None, "place": "New York, United States", "rank": 0,
+                "sum": "Own the internal reporting platform.",
                 "dg": None, "rc": None, "et": None, "sal": None}
         base.update(fields)
         return base

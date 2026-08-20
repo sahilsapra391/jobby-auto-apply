@@ -519,6 +519,27 @@ class NormalisationTests(unittest.TestCase):
         self.assertNotIn("evil()", text)
         self.assertNotIn("<", text)
 
+    def test_a_double_escaped_description_still_comes_out_as_text(self):
+        # Greenhouse serves `content` HTML-escaped, so the payload holds
+        # "&lt;h2&gt;About the Role&lt;/h2&gt;". Unescaping after stripping
+        # turned those into tags a moment too late to remove them, and every
+        # Greenhouse description carried its own markup as visible text — onto
+        # the card, into the simhash, and into experience extraction.
+        raw = ("&lt;h2&gt;&lt;strong&gt;About the Role&lt;/strong&gt;&lt;/h2&gt; "
+               "&lt;p&gt;At Chime, we believe&lt;/p&gt;")
+        text = base.strip_html(raw)
+        self.assertIn("About the Role", text)
+        self.assertIn("At Chime", text)
+        self.assertNotIn("<", text)
+        self.assertNotIn("&lt;", text)
+
+    def test_an_escaped_script_is_removed_rather_than_shown(self):
+        self.assertNotIn("evil", base.strip_html("&lt;script&gt;evil()&lt;/script&gt;Real"))
+
+    def test_an_entity_that_is_not_a_tag_survives(self):
+        # Two unescaping passes must not eat legitimate text.
+        self.assertEqual(base.strip_html("R&amp;D and 5+ years"), "R&D and 5+ years")
+
     def test_entities_are_unescaped(self):
         self.assertEqual(base.strip_html("R&amp;D &mdash; product"), "R&D — product")
 
