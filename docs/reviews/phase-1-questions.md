@@ -169,3 +169,46 @@ scheduler arms itself.
 
 Nothing has touched `~/.job-application/` or the production queue. That is where
 I have stopped.
+
+
+## 11. Attribute extraction was pulled forward from Phase 2
+
+Sahil asked for required experience on the cards during the supervised run.
+`scripts/extract.py` now runs during normalisation, on the full body before the
+excerpt is truncated, and fills `extracted.yearsMin/yearsMax/yearsText`.
+
+**Why it is not in the excerpt:** only 6 of 199 stored 1500-character excerpts
+carry a year figure, against 46 of 197 read from the whole body. The
+requirements section is almost always below the cap.
+
+**Why most of its tests are refusals:** the difficulty is refusing the wrong
+number, and a wrong one mis-scores and mis-filters silently. "PayPal has been
+revolutionizing commerce globally for more than 25 years. Creating innovative
+experiences that…" nearly qualified itself on the word "experiences" in the
+next sentence.
+
+This is Phase 2 scope per plan §7 and the reviewer ring-fenced it. It is here
+because the sign-off asked for it, and it is recorded so the next review sees a
+declared change rather than a surprise. Degree, role category and employment
+type are **not** extracted and their filters still say so.
+
+## 12. Fifty more ATS platforms: triaged, not built
+
+Sahil asked to connect to all fifty ATS platforms on a published list.
+`docs/plans/ats-coverage-triage.md` is the answer in full. The short version:
+
+There is no way to crawl an ATS. Every platform is per-tenant —
+`boards-api.greenhouse.io/v1/boards/{token}/jobs` has no "all boards" sibling —
+so **the unit of coverage is the company, not the platform**. 140 company
+tokens returned 17,632 postings in one sweep; a connector for a platform Jobby
+knows ten tenants of adds ten companies.
+
+Of the fifty: 13 are public per-company JSON (Phase 2), 23 are per-tenant
+enterprise JSON (Phase 3, and gated on the ATS resolver), 11 have no public API
+at all and belong to Tier-2 sweeps or documented exclusion, and the rest are
+proprietary one-offs.
+
+**Recommendation:** land Phase 1, then grow the registry — that is the largest
+multiplier and needs no new connector — then Group A, then the resolver and
+Group B. Building twenty connectors into an unmerged, already-reviewed diff
+would mean the reviewed diff is not the merged diff.
