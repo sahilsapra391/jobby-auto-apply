@@ -69,8 +69,10 @@ COMPONENTS = ("title", "experience", "location", "keywords", "freshness")
 # because there will be far fewer weight sets than jobs.
 MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 
+# "Any time" would be a lie: nothing older than two months is ingested or kept,
+# so the widest the board goes is the ceiling, and the chip says so.
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
-                ("14d", "14 days"), ("30d", "30 days"), ("all", "Any time")]
+                ("14d", "14 days"), ("30d", "30 days"), ("all", "2 months")]
 WORKPLACES = [("remote", "Remote"), ("hybrid", "Hybrid"), ("onsite", "Onsite")]
 EXPERIENCE_OPTIONS = [("", "Open to all"), ("0", "No experience"), ("1", "Up to 1 year"),
                       ("2", "Up to 2 years"), ("3", "Up to 3 years"),
@@ -890,7 +892,10 @@ SCRIPT = r"""
     MIDDLE_EAST: ['AE','SA','QA','KW','BH','OM','JO','EG'],
     SEA: ['SG','MY','PH','ID','TH','VN']
   };
-  var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30, all: null };
+  // The widest chip is 60 days, not null. Null meant "skip the date check",
+  // which was only ever safe because the payload is already inside the
+  // ceiling, and a chip that says two months while applying no limit lies.
+  var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30, all: 60 };
   var WATCH_KEY = 'jobby.watching', PASS_KEY = 'jobby.passed';
   var keywords = [];
 

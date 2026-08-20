@@ -244,7 +244,10 @@ class ConfigGateTests(IngestCase):
     def test_a_posting_outside_the_date_window_is_dropped(self):
         self.assertTrue(self.gate({"postedWithin": "24h"}, posted_at=when(9)))
         self.assertFalse(self.gate({"postedWithin": "24h"}, posted_at=when(0)))
-        self.assertFalse(self.gate({"postedWithin": "all"}, posted_at=when(400)))
+        # `all` used to mean no limit. It now means the two-month ceiling, so a
+        # 400-day-old posting is dropped under every window on offer.
+        self.assertTrue(self.gate({"postedWithin": "all"}, posted_at=when(400)))
+        self.assertFalse(self.gate({"postedWithin": "all"}, posted_at=when(10)))
 
     def test_an_undated_posting_follows_the_include_unknowns_switch(self):
         self.assertFalse(self.gate({"postedWithin": "7d"}, posted_at=None))
@@ -542,6 +545,60 @@ class DefaultConfigTests(IngestCase):
         job = next(iter(jobs.values()))
         self.assertEqual(job["configVersion"], 1)
         self.assertFalse(self.meta()["usingDefaults"])
+
+
+class TwoMonthCeilingTests(unittest.TestCase):
+    """Nothing older than two months is ingested, kept, or shown.
+
+    The window used to be entirely the user's call and `all` resolved to None,
+    which every caller downstream read as "no limit". The ceiling binds whatever
+    the config says.
+    """
+
+    def test_all_resolves_to_the_ceiling_rather_than_no_limit(self):
+        days = search_config.posted_within_days({"postedWithin": "all"})
+        self.assertEqual(days, search_config.MAX_AGE_DAYS)
+        self.assertIsNotNone(days, "None reads as 'keep everything' downstream")
+
+    def test_no_offered_window_reaches_past_two_months(self):
+        for name in search_config.POSTED_WITHIN:
+            with self.subTest(window=name):
+                self.assertLessEqual(
+                    search_config.posted_within_days({"postedWithin": name}),
+                    search_config.MAX_AGE_DAYS)
+
+    def test_ninety_days_is_no_longer_on_offer(self):
+        self.assertNotIn("90d", search_config.POSTED_WITHIN)
+
+    def test_a_config_saved_before_the_ceiling_still_loads(self):
+        # There is a 90d config on disk in the live store. Raising on it would
+        # break the board rather than narrowing it.
+        out = search_config.validate(dict(search_config.DEFAULTS,
+                                          postedWithin="90d"))
+        self.assertEqual(out["postedWithin"], "60d")
+
+    def test_a_posting_past_the_ceiling_is_gated_out_even_on_all(self):
+        config = dict(search_config.DEFAULTS, postedWithin="all")
+        stale = {"title": "Product Manager", "company": "Northwind",
+                 "postedAt": "2026-05-01", "location": {"country": "US"}}
+        self.assertIn("posted more than", ingest.gate(stale, config, now=NOW) or "")
+        fresh = dict(stale, postedAt="2026-08-01")
+        self.assertFalse(ingest.gate(fresh, config, now=NOW))
+
+    def test_an_undated_posting_is_still_kept(self):
+        # Most ATS boards publish no date at all. Dropping those would drop the
+        # direct listings this lane exists to surface.
+        config = dict(search_config.DEFAULTS, postedWithin="all")
+        undated = {"title": "Product Manager", "company": "Northwind",
+                   "location": {"country": "US"}}
+        self.assertFalse(ingest.gate(undated, config, now=NOW))
+
+    def test_retention_never_keeps_past_the_ceiling(self):
+        for name in search_config.POSTED_WITHIN:
+            with self.subTest(window=name):
+                window = search_config.posted_within_days({"postedWithin": name})
+                kept = max(window, jobs_store.NEW_MAX_AGE_DAYS)
+                self.assertLessEqual(kept, search_config.MAX_AGE_DAYS)
 
 
 if __name__ == "__main__":

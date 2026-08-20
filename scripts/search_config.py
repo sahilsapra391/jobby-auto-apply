@@ -39,8 +39,15 @@ REGION_PACKS = {
     "SEA": ["SG", "MY", "PH", "ID", "TH", "VN"],
 }
 
+# Two months is a ceiling, not a preference. A posting older than that is
+# usually filled or abandoned, and applying to it wastes a slot. `all` means
+# "everything the board holds", which is already inside the ceiling because
+# nothing older is ever ingested or kept.
+MAX_AGE_DAYS = 60
 POSTED_WITHIN = {"6h": 0.25, "24h": 1, "7d": 7, "14d": 14, "30d": 30,
-                 "60d": 60, "90d": 90, "all": None}
+                 "60d": 60, "all": None}
+# Configs saved before the ceiling existed. Read, never offered.
+LEGACY_POSTED_WITHIN = {"90d": "60d"}
 SEARCH_SCOPES = ("title", "title+description")
 WORKPLACES = ("remote", "hybrid", "onsite")
 COMPANIES_MODES = ("all", "only", "hide")
@@ -122,6 +129,8 @@ def validate(config):
 
     if out["searchScope"] not in SEARCH_SCOPES:
         raise ConfigError(f"searchScope must be one of {list(SEARCH_SCOPES)}")
+    out["postedWithin"] = LEGACY_POSTED_WITHIN.get(out["postedWithin"],
+                                                   out["postedWithin"])
     if out["postedWithin"] not in POSTED_WITHIN:
         raise ConfigError(f"postedWithin must be one of {sorted(POSTED_WITHIN)}")
     if out["companiesMode"] not in COMPANIES_MODES:
@@ -211,8 +220,14 @@ def expand_locations(config):
 
 
 def posted_within_days(config):
-    """The date window in days, or None for no limit."""
-    return POSTED_WITHIN.get(config.get("postedWithin"), 7)
+    """The date window in days. Never wider than the two-month ceiling.
+
+    There is no "no limit" answer any more. `all` used to return None and every
+    caller read that as "keep everything", which is how a nine-month-old
+    posting reached the board.
+    """
+    days = POSTED_WITHIN.get(config.get("postedWithin"), 7)
+    return MAX_AGE_DAYS if days is None else min(days, MAX_AGE_DAYS)
 
 
 def load(root):

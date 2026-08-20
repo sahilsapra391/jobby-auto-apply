@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -210,6 +211,14 @@ const unknownNodes = ['experience', 'degree', 'workplace', 'postedAt'].map(funct
 const dateNode = makeNode('input');
 dateNode.value = CONTROLS.date || 'all';
 dateNode.checked = true;
+
+// A fixed clock. The date filters measure against Date.now(), so a fixture
+// written as a literal date silently ages out of its own window: "2026-08-19
+// is inside 30 days" stops being true thirty days after it was written, and
+// the test fails for a reason that has nothing to do with the code. Pinning
+// the clock is what makes a date fixture mean the same thing next year.
+const NOW = Date.parse(CONTROLS.now || '2026-08-20T00:00:00Z');
+Date.now = function () { return NOW; };
 
 // Checkboxes in this stub default to checked; the direct-only filter is an
 // opt-in, so it has to be turned off unless a test asks for it.
@@ -406,7 +415,9 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         self.assertEqual(hide["ids"], ["b"])
 
     def test_sorting_by_newest_reorders(self):
-        jobs = [self.job("old", pa="2026-01-01", sc=95),
+        # Both inside the two-month ceiling: this is about the sort, and a
+        # fixture that the date filter drops would pass for the wrong reason.
+        jobs = [self.job("old", pa="2026-07-01", sc=95),
                 self.job("new", pa="2026-08-18", sc=10)]
         self.assertEqual(self.run_script(jobs)["ids"], ["old", "new"])
         self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"], ["new", "old"])
@@ -460,6 +471,10 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
     """
 
     HOUR_AGO = 3600 * 1000
+    # The same instant the harness pins Date.now() to. A marker built from
+    # Python's own clock disagrees with the script's by however many hours
+    # into the day the suite happens to run.
+    NOW_MS = int(datetime(2026, 8, 20, tzinfo=timezone.utc).timestamp() * 1000)
 
     def test_a_save_that_landed_says_which_version_is_running(self):
         out = self.run_script([self.job("a")], {
@@ -481,18 +496,16 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
     def test_a_recent_save_with_nothing_pending_waits_rather_than_crying_wolf(self):
         # The watcher takes a config within three seconds but the board only
         # republishes every couple of minutes, so this window is normal.
-        import time
         out = self.run_script([self.job("a")], {
             "bannerVersion": 7,
-            "savedMarker": {"at": int(time.time() * 1000), "priorVersion": 7}})
+            "savedMarker": {"at": self.NOW_MS, "priorVersion": 7}})
         self.assertIn("Waiting for the board", out["saveState"])
         self.assertIn("waiting", out["saveClass"])
 
     def test_a_save_that_never_landed_says_so_and_asks_for_a_retry(self):
-        import time
         out = self.run_script([self.job("a")], {
             "bannerVersion": 7,
-            "savedMarker": {"at": int(time.time() * 1000) - self.HOUR_AGO,
+            "savedMarker": {"at": self.NOW_MS - self.HOUR_AGO,
                             "priorVersion": 7}})
         self.assertIn("did not land", out["saveState"])
         self.assertIn("lost", out["saveClass"])

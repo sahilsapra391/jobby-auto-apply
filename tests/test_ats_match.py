@@ -138,11 +138,6 @@ class RenderSourceTests(unittest.TestCase):
         self.assertEqual(out, "pdf text")
         self.assertEqual(len(calls), 1)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class StoryBankDefaultTests(unittest.TestCase):
     """The honesty gate has to see every sanctioned source, or it cries wolf.
 
@@ -173,3 +168,6 @@ class StoryBankDefaultTests(unittest.TestCase):
                 self.assertIsNone(ats.default_facts())
             finally:
                 os.environ.pop("JOB_APPLICATION_DIR", None)
+
+if __name__ == "__main__":
+    unittest.main()

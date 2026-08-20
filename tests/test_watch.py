@@ -695,6 +695,48 @@ class EyeAndPassTests(unittest.TestCase):
         self.assertEqual(session["seenOnBoards"], 2)
         self.assertEqual(session["coreSkills"], ["sql", "analytics"])
 
+    def test_the_eye_on_an_already_known_role_does_not_throw(self):
+        # store.py refuses a new watch entry for a posting already on record,
+        # and a sweep surfaces exactly those. Before this, the refusal came back
+        # as a JobsStoreError and the eye was a broken button on the lane.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting",
+                "url": "https://northwind.com/careers/4471002"}}))
+        out = self.promote.watch(self.root, "j1")
+        self.assertFalse(out["sessionCreated"])
+        self.assertTrue(out["alreadyKnown"])
+        self.assertIn("company and role", out["reason"])
+
+    def test_an_already_known_role_still_leaves_the_found_lane(self):
+        # Pressing the eye asked for the job to stop being offered. It does,
+        # whether or not a second session was the right way to honour that.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting", "url": ""}}))
+        self.promote.watch(self.root, "j1")
+        self.assertEqual(self.jobs_store.load_jobs(self.root)["j1"]["state"], "watched")
+
+    def test_an_already_known_role_creates_no_second_session(self):
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting", "url": ""}}))
+        self.promote.watch(self.root, "j1")
+        self.assertEqual(self.sessions(), [])
+
+    def test_an_unknown_role_is_unaffected_by_the_guard(self):
+        # The guard must not swallow the ordinary case: a role nobody has seen
+        # still gets its Watching session.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {"company": "Someone Else",
+                                  "role": "Warehouse Operative", "url": ""}}))
+        out = self.promote.watch(self.root, "j1")
+        self.assertTrue(out["sessionCreated"])
+        self.assertEqual(len(self.sessions()), 1)
+
     def test_passing_tombstones_and_is_idempotent(self):
         self.promote.passed(self.root, "j1", "wrong seniority")
         self.assertEqual(self.jobs_store.load_jobs(self.root)["j1"]["state"], "passed")

@@ -176,7 +176,10 @@ def gate(posting, config, now=None):
             if not unknowns.get("postedAt", True):
                 return "no posted date, and unknown dates are excluded"
         elif posted < now - timedelta(days=window):
-            return f"posted more than {config.get('postedWithin')} ago"
+            # Name the window that actually bound. On `all` the config's own
+            # label reads "posted more than all ago", and the two-month ceiling
+            # can bind under any label the user picked.
+            return f"posted more than {window:g} days ago"
 
     wanted = set(search_config.expand_locations(config))
     if wanted:

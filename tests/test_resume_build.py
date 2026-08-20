@@ -158,11 +158,6 @@ class ShippedTemplateTests(unittest.TestCase):
         self.assertIn("{{technical}}", t)
         self.assertGreater(len(base["technical"]), 0)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class VariableTechnicalTests(unittest.TestCase):
     """Regrouping Technical Proficiencies is part of the tailoring.
 
@@ -196,3 +191,6 @@ class VariableTechnicalTests(unittest.TestCase):
         out = self.rows(8)
         for i in range(8):
             self.assertIn(f"thing{i}", out)
+
+if __name__ == "__main__":
+    unittest.main()

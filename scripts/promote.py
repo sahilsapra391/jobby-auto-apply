@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jobs_store  # noqa: E402
 import match_score  # noqa: E402
+import seen  # noqa: E402
 import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
@@ -95,10 +96,32 @@ def watch(root, job_id):
 
     result = jobs_store.mark_watched(root, job_id)
     session = session_from_job(result["job"])
+
+    # `session-save` refuses a new watch entry for a posting already on record,
+    # and the sweep surfaces exactly those: a role that is in roles.json, or
+    # already applied to, or dropped months ago. Asking first is the difference
+    # between the eye reporting where the role already lives and the eye
+    # throwing. Not `--allow-known`: a second session for one role is the
+    # duplicate that guard exists to stop, and the job still leaves Found
+    # either way, which is what pressing the eye actually asked for.
+    verdict = seen.check(session, seen.known_records(root))
+    if verdict.get("known"):
+        return {"watched": job_id, "sessionCreated": False, "alreadyKnown": True,
+                "reason": verdict.get("reason"), "where": verdict.get("where"),
+                "company": session["company"], "role": session["role"]}
+
     saved = store_call(root, ["session-save", "--id", job_id], payload=session)
     if saved.returncode != 0:
+        # The check above is the same one the store runs, so this is a race or a
+        # rule that moved. Either way the job is already out of Found, and a
+        # refusal is not a failure of the click.
+        message = (saved.stderr or "").strip()[:200]
+        if "already" in message.lower() or "known" in message.lower():
+            return {"watched": job_id, "sessionCreated": False, "alreadyKnown": True,
+                    "reason": message, "company": session["company"],
+                    "role": session["role"]}
         raise jobs_store.JobsStoreError(
-            f"could not create the Watching session: {(saved.stderr or '').strip()[:200]}")
+            f"could not create the Watching session: {message}")
     return {"watched": job_id, "sessionCreated": True,
             "company": session["company"], "role": session["role"]}
 
