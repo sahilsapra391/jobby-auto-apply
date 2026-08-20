@@ -753,5 +753,67 @@ class SourceRegistryTests(unittest.TestCase):
         self.assertEqual(sources_registry._cell("a|b"), "a\\|b")
 
 
+class PostedCeilingPruneTests(unittest.TestCase):
+    """Retention has to judge on the same field the gate judged on.
+
+    The gate refuses a posting older than the ceiling on `postedAt`. Retention
+    measured staleness on `lastSeenAt` — how long since *we* looked — so a
+    February posting first seen yesterday was refused at the door and kept
+    forever once it was already inside. 1,253 of them were sitting in the live
+    store, 12% of everything dated.
+    """
+
+    NOW = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+    def job(self, job_id, **fields):
+        base = {"id": job_id, "state": "new", "company": "Northwind",
+                "title": "Product Manager",
+                "firstSeenAt": "2026-08-19T00:00:00Z",
+                "lastSeenAt": "2026-08-19T00:00:00Z"}
+        base.update(fields)
+        return base
+
+    def test_a_posting_older_than_the_ceiling_is_dropped_even_if_just_seen(self):
+        jobs = {"old": self.job("old", postedAt="2026-02-01T00:00:00Z")}
+        kept, dropped = jobs_store.prune(jobs, cap=None, at=self.NOW,
+                                         posted_ceiling_days=60)
+        self.assertEqual(kept, {})
+        self.assertIn("posted over 60 days ago", dropped[0]["why"])
+
+    def test_a_recent_posting_survives(self):
+        jobs = {"new": self.job("new", postedAt="2026-08-01T00:00:00Z")}
+        kept, _ = jobs_store.prune(jobs, cap=None, at=self.NOW, posted_ceiling_days=60)
+        self.assertEqual(list(kept), ["new"])
+
+    def test_an_undated_posting_survives(self):
+        # Most ATS boards publish no date. Dropping these would drop the direct
+        # listings the lane exists to surface.
+        jobs = {"undated": self.job("undated")}
+        kept, _ = jobs_store.prune(jobs, cap=None, at=self.NOW, posted_ceiling_days=60)
+        self.assertEqual(list(kept), ["undated"])
+
+    def test_a_decision_the_user_made_is_never_dropped(self):
+        # Watched, applied and passed are decisions. The ceiling does not get to
+        # eat them just because the posting aged.
+        jobs = {state: self.job(state, state=state, postedAt="2026-01-01T00:00:00Z")
+                for state in ("watched", "applied", "passed")}
+        kept, dropped = jobs_store.prune(jobs, cap=None, at=self.NOW,
+                                         posted_ceiling_days=60)
+        self.assertEqual(sorted(kept), ["applied", "passed", "watched"])
+        self.assertEqual(dropped, [])
+
+    def test_without_a_ceiling_nothing_changes(self):
+        jobs = {"old": self.job("old", postedAt="2020-01-01T00:00:00Z")}
+        kept, _ = jobs_store.prune(jobs, cap=None, at=self.NOW)
+        self.assertEqual(list(kept), ["old"])
+
+    def test_the_ingest_passes_the_ceiling_through(self):
+        # The gate and retention must judge on the same number. Reading it off
+        # search_config in one place and hardcoding it in the other is how they
+        # drift apart again.
+        source = (ROOT / "scripts" / "ingest.py").read_text()
+        self.assertIn("posted_ceiling_days=search_config.MAX_AGE_DAYS", source)
+
+
 if __name__ == "__main__":
     unittest.main()

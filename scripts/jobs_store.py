@@ -436,14 +436,27 @@ def keep_priority(job):
     return (direct, score, str(when))
 
 
-def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None):
+def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None,
+          posted_ceiling_days=None):
     """Drop unacted-on jobs that are stale or over the cap. Returns (jobs, dropped).
 
     Only `new` records are eligible. A watched, applied or passed record is a
     decision the user made and the cap does not get to eat it.
+
+    Two clocks, deliberately. `max_age_days` is how long we keep a job nobody
+    has acted on since we last saw it. `posted_ceiling_days` is how old the
+    posting itself is allowed to be. They are not the same question, and
+    conflating them is how a February posting first seen yesterday lived
+    forever: the gate refused to bring it in, and retention never looked at the
+    field the gate had judged it on.
+
+    An undated posting is kept. Most ATS boards publish no date at all, and
+    dropping those would drop the direct listings this lane exists to surface.
     """
     at = at or datetime.now(timezone.utc)
     cutoff = at - timedelta(days=max_age_days)
+    posted_cutoff = (at - timedelta(days=posted_ceiling_days)
+                     if posted_ceiling_days is not None else None)
     dropped = []
 
     for job_id, job in list(jobs.items()):
@@ -453,6 +466,13 @@ def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None):
         if seen and seen < cutoff:
             del jobs[job_id]
             dropped.append({"id": job_id, "why": f"unacted-on for over {max_age_days} days"})
+            continue
+        if posted_cutoff is not None:
+            posted = parse_stamp(job.get("postedAt"))
+            if posted is not None and posted < posted_cutoff:
+                del jobs[job_id]
+                dropped.append({"id": job_id,
+                                "why": f"posted over {posted_ceiling_days:g} days ago"})
 
     if cap is not None:
         newish = [(job_id, job) for job_id, job in jobs.items() if job.get("state") == "new"]
