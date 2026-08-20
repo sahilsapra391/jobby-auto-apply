@@ -56,7 +56,15 @@ class NormalisationTests(unittest.TestCase):
         self.assertEqual(seen.ats_key("https://jobs.lever.co/acme/"), "")
 
 
-class StoreBackedTests(unittest.TestCase):
+class StoreFixture:
+    """Setup and helpers only.
+
+    Deliberately NOT a TestCase. Subclassing a TestCase to reuse its setUp
+    re-runs every one of its test methods in the subclass: two subclasses here
+    were quietly running the same eleven tests three times over, which inflates
+    the suite count without adding a line of coverage.
+    """
+
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="jobby-seen-")
         self.root = pathlib.Path(self.dir)
@@ -85,6 +93,52 @@ class StoreBackedTests(unittest.TestCase):
              "--input", str(path)] + list(extra),
             capture_output=True, text=True)
 
+class RetentionTests(StoreFixture, unittest.TestCase):
+    """Dedupe must survive the role index being pruned.
+
+    roles.json is one of three sources seen.py reads, and the retention work on
+    the discovery side prunes records by age. Anything already applied to has to
+    stay un-sourceable even if its index entry is gone, or a sweep re-adds a job
+    that was already sent under the user's name.
+
+    It holds because applications.jsonl carries the company, role and URL on a
+    completed event, and history is append-only. This pins that, so a later
+    retention change cannot quietly remove the last thing holding it up.
+    """
+
+    def test_an_applied_role_stays_known_after_its_index_entry_is_pruned(self):
+        self.submitted("acme-pm", "Acme", "Product Manager",
+                       "https://boards.greenhouse.io/acme/jobs/123")
+        (self.root / "roles.json").write_text("{}")
+        by_pair = self.check(company="Acme", role="Product Manager",
+                             url="https://www.linkedin.com/jobs/view/9")
+        self.assertTrue(by_pair["known"])
+        self.assertIn("applied", by_pair["where"])
+
+    def test_the_url_still_matches_after_pruning_when_the_wording_differs(self):
+        # A second board words the title differently, so company+role misses and
+        # the URL is what is left.
+        self.submitted("acme-pm", "Acme", "Product Manager",
+                       "https://boards.greenhouse.io/acme/jobs/123")
+        (self.root / "roles.json").write_text("{}")
+        found = self.check(company="Acme Corp", role="PM, Growth",
+                           url="https://boards.greenhouse.io/acme/jobs/123?src=x")
+        self.assertTrue(found["known"])
+        self.assertIn("URL", found["reason"])
+
+    def test_a_role_only_ever_seen_becomes_sourceable_again_once_pruned(self):
+        # Deliberate, and the opposite of the two above. Something merely seen,
+        # never applied to and with no session, is a fresh candidate again. If
+        # it is too old the date gate refuses it; that is not this gate's job.
+        (self.root / "roles.json").write_text(json.dumps({"ghost-pm": {
+            "applicationId": "ghost-pm", "company": "Ghost", "role": "Product Manager",
+            "url": "https://x/1"}}))
+        self.assertTrue(self.check(company="Ghost", role="Product Manager")["known"])
+        (self.root / "roles.json").write_text("{}")
+        self.assertFalse(self.check(company="Ghost", role="Product Manager")["known"])
+
+
+class StoreBackedTests(StoreFixture, unittest.TestCase):
     def test_the_same_job_from_another_source_is_known(self):
         # No shared URL at all: the LinkedIn copy and the company's own listing.
         self.watch("acme-pm", "Acme", "Product Manager",
@@ -164,7 +218,7 @@ class StoreBackedTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
-class FilterTests(StoreBackedTests):
+class FilterTests(StoreFixture, unittest.TestCase):
     def filter(self, candidates):
         r = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "seen.py"), "--filter",
