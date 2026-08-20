@@ -135,19 +135,23 @@ Do this and nothing else:
    or ls: that is what it just did for you.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
    If `duplicate` is true, stop now and say so.
-2. If `documentsReady` is true, those documents go out as they are. Do not rebuild them, do
+2. If `documentsReady` is true, those documents go out as they are. If the brief reports
+   `ambiguous`, the folder holds documents for more than one role at this company and none
+   of them can be shown to be this role's, so build fresh ones and put the role in the
+   filename. Do not pick one out of `others` because it looks close: one role's name is
+   often a prefix of another's, and the wrong resume goes out under the user's name. Do not rebuild them, do
    not "improve" them. A run can be retried for reasons that have nothing to do with the
    documents (no browser, a crashed runner, a lost queue entry), and the standing
    rule from the user is that the first version built is the one that gets sent.
    Only if they are missing, build the tailored resume and cover letter for this role,
    following references/tailoring.md:
-   the region-matched base resume from profile.resumes, the identity block for that region,
+   the `baseResume` and `identity` the brief already returned for this posting's country,
    six sentences maximum on any free-text answer, every claim traceable to the base resume,
    the answer store or the story bank.
 
    BEFORE you write either document, work out which of the posting's words you are entitled
-   to use. Write the posting's text (the `extraction`) to a file and run:
-     {py} "{repo}/scripts/ats_match.py" --suggest --jd <that file> --base <base resume>.pdf
+   to use. The brief already wrote the posting to the file it returned as `jdPath`, so run:
+     {py} "{repo}/scripts/ats_match.py" --suggest --jd "<jdPath>" --base <base resume>.pdf
    `rewritable` is the posting's word for something he has genuinely done, each with the
    evidence behind it. Weave every one of those in, hard: re-pick and re-order Areas of
    Expertise for this posting, regroup Technical Proficiencies under the posting's names,
@@ -160,7 +164,7 @@ Do this and nothing else:
    means the content fix invalidates the layout you just cleared, and you render again.
 
    Content gate, and it reads the HTML, so this loop has no render in it:
-     {py} "{repo}/scripts/ats_match.py" --jd <the jd file> \
+     {py} "{repo}/scripts/ats_match.py" --jd "<jdPath>" \
        --resume "<Company>/.resume.html" --base "<base resume>.pdf"
    `unsourcedTerms` MUST be empty. A term in there is one lifted off the posting with nothing
    behind it: cut it and rebuild. High coverage with a non-empty unsourced list is not a good
@@ -283,8 +287,13 @@ Do this and nothing else:
    yourself. It has been done.
 5. Submit once. Then ONE call records it:
      {py} "{repo}/scripts/finish.py" --id {aid} --completed \
-       --confirmation '<the exact wording you saw, quoted>' \
-       --resume <tailored resume path> --cover <cover letter path>
+       --confirmation "<the exact wording you saw>" \
+       --resume "<tailored resume path>" --cover "<cover letter path>"
+   DOUBLE quotes, and quote the paths. Company folders have spaces in them
+   ("Community Brands", "Enterprise Health"), and an unquoted path silently becomes
+   two arguments. Confirmation wording usually contains an apostrophe, which is safe
+   inside double quotes and would have ended a single-quoted one. If the wording
+   itself contains a double quote or a dollar sign, single-quote that argument.
    It writes the completed event and syncs the board. The confirmation must be what the page
    actually said. If you cannot confirm the submission, do NOT run this: say so and leave the
    event at `submitting`, which is exactly what an unverified attempt should look like.
@@ -292,8 +301,8 @@ Do this and nothing else:
    or a binding legal agreement such as a background-check authorisation, a
    non-compete or an IP assignment), do NOT submit. ONE call parks it:
      {py} "{repo}/scripts/finish.py" --id {aid} --park \
-       --pending '<the blocker, as the user will read it>' \
-       --detail '<what to do, and what it buys them>'
+       --pending "<the blocker, as the user will read it>" \
+       --detail "<what to do, and what it buys them>"
    That sets status review, names the blocker and syncs the board, so it lands in Needs you.
    Repeat --pending if more than one thing blocks it.
 7. Nothing. Steps 5 and 6 already synced the board. Stop.

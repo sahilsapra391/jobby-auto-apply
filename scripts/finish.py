@@ -72,8 +72,18 @@ def append_event(payload):
 
 
 def set_phase(aid, phase, detail=""):
-    call([REPO / "scripts" / "phase.py", "--id", aid, "--phase", phase,
-          "--detail", detail])
+    """Update the phase, carrying the store root through.
+
+    phase.py republishes the board whenever --root is absent, so leaving it off
+    meant a run against a test store rendered that store's fixtures over the
+    real board. The sync_board guard below did not cover this second path out.
+    """
+    args = [REPO / "scripts" / "phase.py", "--id", aid, "--phase", phase,
+            "--detail", detail]
+    redirect = os.environ.get("JOB_APPLICATION_DIR")
+    if redirect:
+        args += ["--root", redirect]
+    call(args)
 
 
 def sync_board():
@@ -89,7 +99,19 @@ def sync_board():
     if os.environ.get("JOB_APPLICATION_DIR"):
         args.append("--no-publish")
     r = call(args)
-    return r.returncode == 0
+    if r.returncode != 0:
+        return {"synced": False, "error": (r.stderr or "").strip()[:200] or "sync failed"}
+    try:
+        out = json.loads((r.stdout or "").strip() or "{}")
+    except json.JSONDecodeError:
+        return {"synced": False, "error": "sync_board gave no readable result"}
+    if "--no-publish" in [str(a) for a in args]:
+        return {"synced": True, "published": False, "reason": "test store"}
+    # sync_board.py exits 0 even when the publish fails and only says so in its
+    # output. Reporting success off the exit code hid a dead board behind a
+    # cheerful result.
+    return {"synced": True, "published": bool(out.get("published")),
+            **({"error": out.get("error")} if out.get("error") else {})}
 
 
 def session(aid):
@@ -122,6 +144,11 @@ def pre_submit(aid):
                           "cleared to submit: " + ((r.stderr or "").strip()[:200] or
                                                    "no output"),
                 "guardExitCode": r.returncode}
+    if guard.get("duplicate") is None:
+        return {"proceed": False,
+                "reason": "the duplicate guard could not read the history, so this "
+                          "cannot be cleared to submit: "
+                          + str(guard.get("unavailable", "unknown"))[:200]}
     if guard.get("duplicate"):
         return {"proceed": False, "reason": "this would be a second application to the "
                                             "same job", "guard": guard}
@@ -170,6 +197,13 @@ def park(aid, blockers, reason):
     entry = session(aid)
     if not entry:
         raise SystemExit(f"finish: no session for {aid}, nothing to park")
+    if (entry.get("status") or "").lower() == "dropped":
+        # The same check pre-submit makes. Without it, parking overwrites the
+        # cancellation with "review", the application reappears in Needs you,
+        # and the next Retry sends something the user called off.
+        return {"parked": False,
+                "reason": "the user cancelled this application while you were "
+                          "working. Leave it dropped."}
     entry["applicationId"] = aid
     entry["status"] = "review"
     entry["pendingFields"] = [

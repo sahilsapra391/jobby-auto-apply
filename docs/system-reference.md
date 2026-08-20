@@ -99,7 +99,7 @@ What happens between a click and a submitted application.
 ```
 
 Each numbered stage reports a phase (`phase.py`), so the board shows live
-progress: Queued → Building documents → Documents ready → Filling the form →
+progress: Queued → Building documents → Filling the form →
 Submitting → Verifying.
 
 ---

@@ -106,20 +106,48 @@ def find_documents(folder, role):
     Only PDFs. The .resume.html render source is deliberately not offered as a
     document: uploading it would attach the wrong file type to an application.
     """
-    out = {"resume": None, "coverLetter": None, "others": []}
+    out = {"resume": None, "coverLetter": None, "others": [], "ambiguous": False}
     if not folder.is_dir():
         return out
     words = [w for w in re.split(r"\W+", (role or "").lower()) if len(w) > 3]
+
     def score(p):
         stem = p.stem.lower()
         return sum(1 for w in words if w in stem)
+
     pdfs = sorted(folder.glob("*.pdf"))
     covers = [p for p in pdfs if "cover" in p.stem.lower()]
     resumes = [p for p in pdfs if p not in covers]
-    if resumes:
-        out["resume"] = str(max(resumes, key=score))
-    if covers:
-        out["coverLetter"] = str(max(covers, key=score))
+
+    def choose(candidates):
+        """The document belonging to THIS role, or nothing.
+
+        Exactly one candidate means one role has been worked at this company, so
+        it is this one. That is the retry case, and it matters because filenames
+        often carry only the company: "Sahil_Sapra_Plaid_Resume.pdf" names no
+        role at all.
+
+        More than one and we decline, every time. Ranking by role words and
+        taking the best looks reasonable and is not: with no floor it returned
+        whichever sorted first when nothing matched, and with a floor it still
+        matched "Android Maps Reach" to a file named AndroidAuto, because one
+        role's words are a prefix of another's. There is no scoring rule here
+        that is worth the failure it protects against, since brief reporting
+        documentsReady tells the run not to rebuild, and the document it then
+        uploads is another role's resume under the user's name. Rebuilding costs
+        a few minutes; that costs the application.
+        """
+        if not candidates:
+            return None, False
+        if len(candidates) == 1:
+            return candidates[0], False
+        return None, True
+
+    resume, r_ambiguous = choose(resumes)
+    cover, c_ambiguous = choose(covers)
+    out["resume"] = str(resume) if resume else None
+    out["coverLetter"] = str(cover) if cover else None
+    out["ambiguous"] = r_ambiguous or c_ambiguous
     out["others"] = [str(p) for p in pdfs
                      if str(p) not in (out["resume"], out["coverLetter"])]
     return out
@@ -148,8 +176,17 @@ def build(aid):
         raise SystemExit(f"brief: no watch entry for {aid}")
 
     profile = run_json([REPO / "scripts" / "store.py", "profile-get"], default={})
-    guard = run_json([REPO / "scripts" / "dupe_check.py", "--guard", aid],
-                     default={"duplicate": False, "note": "guard unavailable"})
+    # dupe_check exits 1 precisely when it finds a duplicate, so its verdict
+    # has to be read from stdout rather than from the exit code. Defaulting on
+    # a non-zero exit reported every real duplicate as clear.
+    guard_run = subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "dupe_check.py"), "--guard", aid],
+        capture_output=True, text=True)
+    try:
+        guard = json.loads((guard_run.stdout or "").strip())
+    except json.JSONDecodeError:
+        guard = {"duplicate": None,
+                 "unavailable": (guard_run.stderr or "").strip()[:200] or "no output"}
 
     company = entry.get("company") or "Unknown"
     folder = company_folder(company)

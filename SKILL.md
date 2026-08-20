@@ -140,7 +140,7 @@ Two commands exist purely to collapse round trips, and neither drops a check:
 python3 scripts/brief.py --id <application-id>
 ```
 
-One call returns the watch entry, the posting extraction, whether this is a retry and what is pending, the duplicate verdict, the base resume and identity block for the posting's country, and which documents already exist. It creates the company folder and writes `jd.txt` on the way. Do not follow it with `session-load`, `profile-get` or `ls`; that is what it just did.
+One call returns the watch entry, the posting extraction, whether this is a retry and what is pending, the duplicate verdict, the base resume and identity block for the posting's country, and which documents already exist. It creates the company folder and writes the posting to `jd-<application-id>.txt`, returned as `jdPath` (per application, because several roles at one company share a folder). Do not follow it with `session-load`, `profile-get` or `ls`; that is what it just did.
 
 ```bash
 python3 scripts/finish.py --id <id> --pre-submit

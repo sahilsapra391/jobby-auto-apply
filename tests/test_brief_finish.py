@@ -186,6 +186,107 @@ class MissingSessionTests(StoreTemp):
         self.assertEqual(self.events(), [])
 
 
+class GuardRegressionTests(StoreTemp):
+    """The three ways this consolidation could have sent something it should not.
+
+    Each of these was found by review after the code was written and before it
+    was pushed, and each was reproducible.
+    """
+
+    def test_parking_does_not_resurrect_an_application_the_user_cancelled(self):
+        # drop.py keeps the session and sets status "dropped". park() used to
+        # overwrite that with "review", which puts it back in Needs you, and the
+        # next Retry sends something the user called off.
+        self.session("acme-pm", status="dropped")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park", "--pending", "Workday account"], self.root).stdout)
+        self.assertFalse(out["parked"])
+        saved = json.loads((self.root / "sessions" / "acme-pm.json").read_text())
+        self.assertEqual(saved["status"], "dropped")
+
+    def test_a_duplicate_is_refused_even_though_the_guard_exits_nonzero(self):
+        # dupe_check exits 1 exactly when it finds a duplicate, so reading its
+        # verdict from the exit code inverts the answer.
+        self.session("acme-pm")
+        (self.root / "applications.jsonl").write_text(json.dumps({
+            "event": "completed", "applicationId": "other-id", "company": "Acme",
+            "role": "Product Manager", "url": "https://example.com/jobs/1",
+            "at": "2026-08-01T00:00:00Z", "eventId": "x"}) + "\n")
+        out = json.loads(run_finish(["--id", "acme-pm", "--pre-submit"], self.root).stdout)
+        self.assertFalse(out["proceed"])
+        self.assertEqual(len(self.events()), 1, "a refusal must not append anything")
+
+    def test_an_unreadable_history_blocks_rather_than_clears(self):
+        # One truncated line used to read as "nothing has been applied to".
+        self.session("acme-pm")
+        (self.root / "applications.jsonl").write_text(
+            json.dumps({"event": "completed", "applicationId": "z", "company": "A",
+                        "role": "R", "at": "2026-08-01T00:00:00Z", "eventId": "y"})
+            + "\n{truncated\n")
+        out = json.loads(run_finish(["--id", "acme-pm", "--pre-submit"], self.root).stdout)
+        self.assertFalse(out["proceed"])
+        self.assertIn("could not read", out["reason"])
+
+    def test_the_phase_update_also_carries_the_store_root(self):
+        # phase.py republishes whenever --root is absent, so a test store would
+        # have rendered its fixtures over the real board through this path.
+        finish = load("finish")
+        seen = []
+        finish.call = lambda args, capture=True: seen.append([str(a) for a in args]) or \
+            subprocess.CompletedProcess(args, 0, "{}", "")
+        os.environ["JOB_APPLICATION_DIR"] = str(self.root)
+        try:
+            finish.set_phase("acme-pm", "Submitting", "x")
+        finally:
+            os.environ.pop("JOB_APPLICATION_DIR", None)
+        self.assertIn("--root", seen[0])
+        self.assertIn(str(self.root), seen[0])
+
+
+class DocumentOwnershipTests(unittest.TestCase):
+    def make(self, names):
+        d = tempfile.mkdtemp(prefix="jobby-docs-")
+        for n in names:
+            (pathlib.Path(d) / n).write_bytes(b"%PDF-1.4")
+        return pathlib.Path(d)
+
+    def test_a_second_role_is_not_handed_the_first_roles_documents(self):
+        # The folder is per company and three roles can share it. Ranking with
+        # no floor returned whichever sorted first, brief reported
+        # documentsReady, and the prompt forbids rebuilding, so the run would
+        # have uploaded another role's resume.
+        folder = self.make([
+            "Sahil_Sapra_Google_OperationsSolutions_Resume.pdf",
+            "Sahil_Sapra_Google_OperationsSolutions_CoverLetter.pdf",
+            "Sahil_Sapra_Google_AndroidAuto_Resume.pdf",
+            "Sahil_Sapra_Google_AndroidAuto_CoverLetter.pdf"])
+        docs = brief.find_documents(folder, "Product Manager, Android Maps Reach")
+        self.assertIsNone(docs["resume"])
+        self.assertTrue(docs["ambiguous"])
+
+    def test_the_only_pair_in_a_folder_is_reused_on_a_retry(self):
+        # Filenames often carry only the company, so requiring a role match
+        # everywhere would force a needless rebuild on every retry.
+        folder = self.make(["Sahil_Sapra_Plaid_Resume.pdf",
+                            "Sahil_Sapra_Plaid_CoverLetter.pdf"])
+        docs = brief.find_documents(folder, "Staff Product Manager, Internal AI")
+        self.assertTrue(docs["resume"].endswith("Plaid_Resume.pdf"))
+        self.assertFalse(docs["ambiguous"])
+
+    def test_one_roles_name_being_a_prefix_of_anothers_does_not_win(self):
+        # "Android Maps Reach" against a file named AndroidAuto: the role words
+        # overlap, the roles do not. Any scoring rule that picks here is one
+        # coincidence away from uploading the wrong resume.
+        folder = self.make([
+            "Sahil_Sapra_Google_AndroidAuto_Resume.pdf",
+            "Sahil_Sapra_Google_Operations_Resume.pdf",
+            "Sahil_Sapra_Google_AndroidAuto_CoverLetter.pdf",
+            "Sahil_Sapra_Google_Operations_CoverLetter.pdf"])
+        docs = brief.find_documents(folder, "Product Manager, Android Maps Reach")
+        self.assertIsNone(docs["resume"])
+        self.assertTrue(docs["ambiguous"])
+
+
 class PublishGuardTests(unittest.TestCase):
     def test_a_redirected_store_never_publishes(self):
         # Publishing a board built from a test store would overwrite the real
@@ -209,8 +310,14 @@ class BriefTests(unittest.TestCase):
     def test_an_existing_company_folder_is_reused_whatever_its_case(self):
         # A retry must write into the folder the first attempt made, not create
         # a second one beside it.
-        found = brief.company_folder("plaid")
-        self.assertEqual(found.name, "Plaid")
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "applications" / "Plaid").mkdir(parents=True)
+            os.environ["JOB_APPLICATION_DIR"] = d
+            try:
+                self.assertEqual(brief.company_folder("plaid").name, "Plaid")
+                self.assertEqual(brief.company_folder("PLAID").name, "Plaid")
+            finally:
+                os.environ.pop("JOB_APPLICATION_DIR", None)
 
     def test_the_base_resume_is_chosen_by_the_postings_country(self):
         profile = {"resumes": [
