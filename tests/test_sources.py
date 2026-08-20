@@ -1,0 +1,603 @@
+"""Tests for the Tier-1 connectors.
+
+The property every one of them has to hold is that **failure is never quiet**.
+An empty list is a legitimate answer — a board with nothing open returns one
+every hour — so "returned nothing" and "could not be asked" must be different
+values. That is §13 item 1 in a new place: a crashed check and an empty queue
+both looked like an empty queue, and it ran for hours.
+
+Fixtures for the ten channels reachable without a key are recorded from real
+responses on 2026-08-19. The five that need a key carry a `__fixture_note`
+saying they were written from the published contract instead, because no key
+is installed on this machine and pretending otherwise at review would be worse
+than saying so.
+
+No test here touches the network: every one runs against a fake opener.
+
+Run from the repo root: python3 -m pytest tests/ -q
+"""
+
+import importlib.util
+import json
+import pathlib
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import sources  # noqa: E402
+from sources import adzuna, ashby, base, careerjet, feeds, greenhouse  # noqa: E402
+from sources import jooble, lever, reed, themuse, usajobs  # noqa: E402
+
+
+def fixture(name):
+    return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+class FakeResponse:
+    def __init__(self, status, body, headers=None):
+        self.status = status
+        self._body = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.headers = headers or {}
+
+    def read(self, limit=None):
+        return self._body[:limit] if limit else self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeOpener:
+    """Serves canned responses by URL substring and records what was asked."""
+
+    def __init__(self, routes, default=(404, "not found")):
+        self.routes = routes
+        self.default = default
+        self.calls = []
+
+    def open(self, request, timeout=None):
+        self.calls.append(request)
+        for needle, reply in self.routes.items():
+            if needle in request.full_url:
+                if callable(reply):
+                    reply = reply(request, len([c for c in self.calls
+                                                if needle in c.full_url]))
+                status, body = reply[0], reply[1]
+                headers = reply[2] if len(reply) > 2 else {}
+                return FakeResponse(status, body, headers)
+        return FakeResponse(*self.default)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+    def tick(self):
+        return self.now
+
+
+def fetcher(routes, root=None, default=(404, "not found")):
+    clock = Clock()
+    opener = FakeOpener(routes, default)
+    f = base.Fetcher(root=root, opener=opener, sleep=clock.sleep, clock=clock.tick)
+    f.fake_clock = clock
+    f.fake_opener = opener
+    return f
+
+
+COMPANIES = {
+    "vercel": {"name": "Vercel", "ats": "greenhouse", "token": "vercel", "region": "US"},
+    "deputy": {"name": "Deputy", "ats": "lever", "token": "deputy", "region": "AU"},
+    "zapier": {"name": "Zapier", "ats": "ashby", "token": "zapier", "region": "US"},
+}
+NO_SETTINGS = {}
+
+
+class EnvelopeTests(unittest.TestCase):
+    """Every connector answers in the same shape, whatever happened."""
+
+    def test_every_registered_connector_is_callable(self):
+        self.assertEqual(len(sources.ALL), 14)
+        for name, fn in sources.ALL.items():
+            self.assertTrue(callable(fn), name)
+
+    def test_the_three_envelopes_carry_the_same_keys(self):
+        shapes = [base.ok("x", []), base.skipped("x", "why"), base.failed("x", "why")]
+        for shape in shapes:
+            self.assertEqual(sorted(shape),
+                             ["errors", "postings", "reason", "requests", "source", "status"])
+
+    def test_a_skip_is_never_an_empty_success(self):
+        # This is the whole rule. If a skipped channel returned status "ok" with
+        # no postings, a missing key would be indistinguishable from a quiet day.
+        self.assertEqual(base.skipped("adzuna", "no key")["status"], "skipped")
+        self.assertNotEqual(base.skipped("adzuna", "no key")["status"], "ok")
+
+
+class GreenhouseTests(unittest.TestCase):
+    def setUp(self):
+        self.board = fixture("greenhouse_board.json")
+
+    def test_a_board_normalises_into_job_records(self):
+        f = fetcher({"boards-api.greenhouse.io": (200, self.board)})
+        result = greenhouse.fetch(f, companies=COMPANIES)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["postings"]), 2)
+        job = result["postings"][0]
+        self.assertEqual(job["company"], "Vercel")
+        self.assertTrue(job["title"])
+        self.assertTrue(job["canonicalUrl"].startswith("https://"))
+        self.assertEqual(job["sources"][0]["source"], "greenhouse")
+        self.assertEqual(job["sources"][0]["sourceClass"], "ats")
+        self.assertTrue(job["postedAt"])
+
+    def test_the_posted_date_is_when_it_was_published_not_last_edited(self):
+        # updated_at moves whenever anyone fixes a typo. Using it would make
+        # every edited posting look brand new on a board sorted newest first.
+        raw = json.loads(self.board)["jobs"][0]
+        job = greenhouse.parse_job(raw, "Vercel", "vercel")
+        self.assertEqual(job["postedAt"], base.iso_stamp(raw["first_published"]))
+
+    def test_only_registry_companies_on_this_platform_are_asked(self):
+        f = fetcher({"boards-api.greenhouse.io": (200, self.board)})
+        greenhouse.fetch(f, companies=COMPANIES)
+        self.assertEqual(len(f.fake_opener.calls), 1)
+        self.assertIn("/vercel/", f.fake_opener.calls[0].full_url)
+
+    def test_an_empty_registry_is_a_skip_not_a_success(self):
+        f = fetcher({})
+        result = greenhouse.fetch(f, companies={})
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("registry", result["reason"])
+
+    def test_a_dead_token_is_reported_rather_than_swallowed(self):
+        # A 404 means the token is wrong, which is a registry problem that will
+        # never fix itself if nobody is told.
+        f = fetcher({"boards-api.greenhouse.io": (404, '{"error":"Job not found"}')})
+        result = greenhouse.fetch(f, companies={"vercel": COMPANIES["vercel"]})
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["errors"])
+        self.assertIn("404", result["errors"][0])
+
+    def test_one_dead_board_does_not_lose_the_others(self):
+        def route(request, n):
+            return (404, "nope") if "/deputy/" in request.full_url else (200, self.board)
+        f = fetcher({"boards-api.greenhouse.io": route})
+        companies = {**COMPANIES, "deputy": {"name": "Deputy", "ats": "greenhouse",
+                                             "token": "deputy"}}
+        result = greenhouse.fetch(f, companies=companies)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["postings"])
+        self.assertTrue(result["errors"], "the dead board still has to be reported")
+
+    def test_an_unchanged_board_costs_no_postings_and_no_error(self):
+        f = fetcher({"boards-api.greenhouse.io": (304, "")})
+        result = greenhouse.fetch(f, companies={"vercel": COMPANIES["vercel"]})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["postings"], [])
+        self.assertEqual(result["errors"], [])
+
+    def test_a_body_is_fetched_separately(self):
+        # The list is 59 KB for 83 jobs; the same list with content=true is
+        # 845 KB. Bodies are only worth fetching for jobs that survive the gate.
+        f = fetcher({"boards-api.greenhouse.io": (200, fixture("greenhouse_job.json"))})
+        body, error = greenhouse.fetch_body(f, None, "vercel", "6136160004")
+        self.assertEqual(error, "")
+        self.assertGreater(len(body), 500)
+
+    def test_a_failed_body_fetch_says_so_rather_than_returning_empty(self):
+        f = fetcher({"boards-api.greenhouse.io": (500, "boom")})
+        body, error = greenhouse.fetch_body(f, None, "vercel", "1")
+        self.assertEqual(body, "")
+        self.assertIn("500", error)
+
+
+class LeverTests(unittest.TestCase):
+    def test_a_board_normalises_with_its_own_workplace_and_country(self):
+        # Lever states both, so neither has to be guessed from a location string.
+        f = fetcher({"api.lever.co": (200, fixture("lever_board.json"))})
+        result = lever.fetch(f, companies=COMPANIES)
+        self.assertEqual(result["status"], "ok")
+        job = result["postings"][0]
+        self.assertIn(job["workplace"], ("remote", "hybrid", "onsite", None))
+        self.assertTrue(job["descriptionExcerpt"])
+        self.assertTrue(job["descFingerprint"])
+
+    def test_lever_workplace_words_map_onto_the_schema(self):
+        for raw, expected in (("remote", "remote"), ("hybrid", "hybrid"),
+                              ("on-site", "onsite"), ("unspecified", None)):
+            self.assertEqual(lever.WORKPLACE.get(raw), expected)
+
+    def test_a_response_of_the_wrong_shape_is_an_error_not_a_crash(self):
+        f = fetcher({"api.lever.co": (200, '{"ok": false}')})
+        result = lever.fetch(f, companies={"deputy": COMPANIES["deputy"]})
+        self.assertTrue(result["errors"])
+
+
+class AshbyTests(unittest.TestCase):
+    def test_a_board_normalises(self):
+        f = fetcher({"api.ashbyhq.com": (200, fixture("ashby_board.json"))})
+        result = ashby.fetch(f, companies=COMPANIES)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["postings"])
+        self.assertEqual(result["postings"][0]["sources"][0]["source"], "ashby")
+
+    def test_an_unlisted_posting_is_not_collected(self):
+        # isListed false is the company choosing not to show it publicly.
+        data = json.loads(fixture("ashby_board.json"))
+        for job in data["jobs"]:
+            job["isListed"] = False
+        f = fetcher({"api.ashbyhq.com": (200, json.dumps(data))})
+        result = ashby.fetch(f, companies={"zapier": COMPANIES["zapier"]})
+        self.assertEqual(result["postings"], [])
+        self.assertEqual(result["status"], "ok")
+
+    def test_a_plain_text_404_does_not_reach_the_json_parser(self):
+        f = fetcher({"api.ashbyhq.com": (404, "Not Found")})
+        result = ashby.fetch(f, companies={"zapier": COMPANIES["zapier"]})
+        self.assertEqual(result["status"], "error")
+
+
+class FeedTests(unittest.TestCase):
+    def test_remoteok_skips_its_own_legal_notice(self):
+        # The feed's first element is a legal notice, not a job. Without this it
+        # enters the pool as a posting with no title and no company.
+        f = fetcher({"remoteok.com": (200, fixture("remoteok.json"))})
+        result = feeds.remoteok(f)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["postings"])
+        for job in result["postings"]:
+            self.assertTrue(job["title"])
+            self.assertNotIn("legal", (job["title"] or "").lower())
+
+    def test_every_feed_posting_is_marked_remote(self):
+        cases = [(feeds.remoteok, "remoteok.com", "remoteok.json"),
+                 (feeds.remotive, "remotive.com", "remotive.json"),
+                 (feeds.himalayas, "himalayas.app", "himalayas.json"),
+                 (feeds.working_nomads, "workingnomads.com", "workingnomads.json")]
+        for fn, host, name in cases:
+            f = fetcher({host: (200, fixture(name))})
+            result = fn(f)
+            self.assertEqual(result["status"], "ok", name)
+            self.assertTrue(result["postings"], name)
+            for job in result["postings"]:
+                self.assertEqual(job["workplace"], "remote", name)
+
+    def test_the_rss_feed_splits_company_from_role(self):
+        # We Work Remotely writes "Company: Role" and that title is the only
+        # place the company name appears at all.
+        f = fetcher({"weworkremotely.com": (200, fixture("weworkremotely.rss"))})
+        result = feeds.weworkremotely(f)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["postings"])
+        self.assertTrue(result["postings"][0]["company"])
+        self.assertNotIn(":", result["postings"][0]["title"][:1])
+
+    def test_malformed_rss_is_an_error_not_a_crash(self):
+        f = fetcher({"weworkremotely.com": (200, "<rss><channel>truncated")})
+        result = feeds.weworkremotely(f)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("RSS", result["reason"])
+
+    def test_a_feed_outage_is_reported(self):
+        f = fetcher({"remotive.com": (500, "upstream error")})
+        result = feeds.remotive(f)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("500", result["reason"])
+
+    def test_the_limit_is_honoured(self):
+        f = fetcher({"remoteok.com": (200, fixture("remoteok.json"))})
+        self.assertEqual(len(feeds.remoteok(f, limit=1)["postings"]), 1)
+
+
+class KeyedConnectorTests(unittest.TestCase):
+    """A missing key is a normal state, and it is never silent."""
+
+    def test_every_keyed_connector_reports_a_visible_skip(self):
+        for name, fn, host in (
+            ("adzuna", adzuna.fetch, "api.adzuna.com"),
+            ("jooble", jooble.fetch, "jooble.org"),
+            ("careerjet", careerjet.fetch, "public.api.careerjet.net"),
+            ("reed", reed.fetch, "reed.co.uk"),
+            ("usajobs", usajobs.fetch, "data.usajobs.gov"),
+        ):
+            f = fetcher({host: (200, "{}")})
+            result = fn(f, config={}, settings=NO_SETTINGS, countries=["US", "GB"])
+            self.assertEqual(result["status"], "skipped", name)
+            self.assertIn("key", result["reason"], name)
+            self.assertEqual(len(f.fake_opener.calls), 0,
+                             f"{name} must not call out without a key")
+
+    def test_a_skip_names_the_variable_to_set(self):
+        f = fetcher({})
+        result = adzuna.fetch(f, config={}, settings=NO_SETTINGS, countries=["US"])
+        self.assertIn("JOBBY_ADZUNA_ID", result["reason"])
+
+    def test_adzuna_normalises_and_keeps_the_employer_link(self):
+        f = fetcher({"api.adzuna.com": (200, fixture("adzuna_search.json"))})
+        result = adzuna.fetch(f, config={"keywords": ["product manager"]},
+                              settings={"JOBBY_ADZUNA_ID": "id", "JOBBY_ADZUNA_KEY": "key"},
+                              countries=["US"])
+        self.assertEqual(result["status"], "ok")
+        job = result["postings"][0]
+        self.assertEqual(job["company"], "Northwind Analytics")
+        self.assertEqual(job["location"]["country"], "US")
+        self.assertEqual(job["sources"][0]["sourceClass"], "aggregator")
+        # The wrapper still carries the employer URL, which is what lets this
+        # merge with the Greenhouse sighting of the same job.
+        self.assertIn("greenhouse", job["canonicalUrl"])
+
+    def test_adzuna_says_which_selected_countries_it_cannot_answer_for(self):
+        f = fetcher({"api.adzuna.com": (200, fixture("adzuna_search.json"))})
+        result = adzuna.fetch(f, config={"keywords": ["pm"]},
+                              settings={"JOBBY_ADZUNA_ID": "id", "JOBBY_ADZUNA_KEY": "key"},
+                              countries=["US", "JP", "KR"])
+        self.assertIn("jp", result["reason"])
+        self.assertIn("kr", result["reason"])
+
+    def test_adzuna_skips_entirely_when_no_selected_country_is_covered(self):
+        f = fetcher({})
+        result = adzuna.fetch(f, config={}, settings={"JOBBY_ADZUNA_ID": "i",
+                                                      "JOBBY_ADZUNA_KEY": "k"},
+                              countries=["JP", "KR"])
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(len(f.fake_opener.calls), 0)
+
+    def test_jooble_posts_and_normalises(self):
+        f = fetcher({"jooble.org": (200, fixture("jooble_search.json"))})
+        result = jooble.fetch(f, config={"keywords": ["product manager"]},
+                              settings={"JOBBY_JOOBLE_KEY": "k"}, countries=["AE"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["postings"]), 2)
+        self.assertEqual(f.fake_opener.calls[0].get_method(), "POST")
+
+    def test_the_jooble_key_never_appears_in_an_error_line(self):
+        # The key is in the URL path, so an error that echoed the URL would put
+        # a live credential in a log and on the board.
+        f = fetcher({"jooble.org": (500, "boom")})
+        result = jooble.fetch(f, config={"keywords": ["pm"]},
+                              settings={"JOBBY_JOOBLE_KEY": "SECRETKEY123"}, countries=["AE"])
+        blob = json.dumps(result)
+        self.assertNotIn("SECRETKEY123", blob)
+
+    def test_careerjet_maps_countries_to_locales(self):
+        f = fetcher({"careerjet.net": (200, fixture("careerjet_search.json"))})
+        result = careerjet.fetch(f, config={"keywords": ["product owner"]},
+                                 settings={"JOBBY_CAREERJET_KEY": "k"}, countries=["IN"])
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("en_IN", f.fake_opener.calls[0].full_url)
+        self.assertEqual(result["postings"][0]["location"]["country"], "IN")
+
+    def test_careerjet_reports_its_own_error_envelope(self):
+        f = fetcher({"careerjet.net": (200, '{"type":"ERROR","error":"bad affid"}')})
+        result = careerjet.fetch(f, config={}, settings={"JOBBY_CAREERJET_KEY": "k"},
+                                 countries=["US"])
+        self.assertTrue(result["errors"])
+
+    def test_reed_is_not_asked_for_a_search_that_excludes_the_uk(self):
+        f = fetcher({"reed.co.uk": (200, fixture("reed_search.json"))})
+        result = reed.fetch(f, config={}, settings={"JOBBY_REED_KEY": "k"},
+                            countries=["US", "IN"])
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(len(f.fake_opener.calls), 0)
+
+    def test_reed_reads_a_uk_date(self):
+        f = fetcher({"reed.co.uk": (200, fixture("reed_search.json"))})
+        result = reed.fetch(f, config={}, settings={"JOBBY_REED_KEY": "k"}, countries=["GB"])
+        self.assertEqual(result["postings"][0]["postedAt"], "2026-08-18T00:00:00Z")
+
+    def test_usajobs_needs_both_the_key_and_the_email(self):
+        f = fetcher({})
+        result = usajobs.fetch(f, config={}, settings={"JOBBY_USAJOBS_KEY": "k"},
+                               countries=["US"])
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("JOBBY_USAJOBS_EMAIL", result["reason"])
+
+    def test_usajobs_normalises_and_the_citizenship_line_survives_for_the_gate(self):
+        f = fetcher({"data.usajobs.gov": (200, fixture("usajobs_search.json"))})
+        result = usajobs.fetch(f, config={}, settings={"JOBBY_USAJOBS_KEY": "k",
+                                                       "JOBBY_USAJOBS_EMAIL": "a@b.example"},
+                               countries=["US"])
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("citizenship", result["postings"][0]["descriptionExcerpt"].lower())
+
+    def test_themuse_runs_without_a_key_and_says_so(self):
+        # Appendix A lists The Muse as free-key. The public endpoint answers
+        # with no key; a key only raises the rate limit.
+        f = fetcher({"themuse.com": (200, fixture("themuse.json"))})
+        result = themuse.fetch(f, config={}, settings=NO_SETTINGS)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["postings"])
+        self.assertIn("no key needed", result["reason"])
+
+
+class FetcherTests(unittest.TestCase):
+    def test_requests_to_one_host_are_spaced_out(self):
+        f = fetcher({"example.test": (200, "{}")})
+        f.get("https://example.test/a")
+        f.get("https://example.test/b")
+        self.assertTrue(f.fake_clock.slept)
+        self.assertGreaterEqual(f.fake_clock.slept[0], base.MIN_INTERVAL_PER_HOST)
+
+    def test_different_hosts_do_not_wait_on_each_other(self):
+        f = fetcher({"a.test": (200, "{}"), "b.test": (200, "{}")})
+        f.get("https://a.test/1")
+        f.get("https://b.test/1")
+        self.assertEqual(f.fake_clock.slept, [])
+
+    def test_a_rate_limit_is_retried_with_growing_backoff(self):
+        f = fetcher({"example.test": (429, "slow down")})
+        response = f.get("https://example.test/a")
+        self.assertEqual(response.status, 429)
+        self.assertEqual(len(f.fake_opener.calls), base.MAX_ATTEMPTS)
+        waits = [s for s in f.fake_clock.slept if s >= base.BACKOFF_SECONDS]
+        self.assertEqual(waits, [base.BACKOFF_SECONDS, base.BACKOFF_SECONDS * 2])
+
+    def test_a_404_is_not_retried(self):
+        # A wrong token does not become right on the third attempt; retrying it
+        # just triples the traffic.
+        f = fetcher({"example.test": (404, "nope")})
+        f.get("https://example.test/a")
+        self.assertEqual(len(f.fake_opener.calls), 1)
+
+    def test_the_user_agent_names_the_project(self):
+        f = fetcher({"example.test": (200, "{}")})
+        f.get("https://example.test/a")
+        agent = f.fake_opener.calls[0].get_header("User-agent")
+        self.assertIn("Jobby", agent)
+        self.assertIn("github.com", agent)
+
+    def test_a_validator_is_stored_and_sent_back(self):
+        f = fetcher({"example.test": (200, "{}", {"ETag": 'W/"abc"'})})
+        f.get("https://example.test/a")
+        f.get("https://example.test/a")
+        self.assertEqual(f.fake_opener.calls[1].get_header("If-none-match"), 'W/"abc"')
+
+    def test_a_host_that_offers_no_validator_is_not_sent_a_null_header(self):
+        # Sending If-None-Match: None raises inside http.client with a message
+        # that names neither the header nor the URL. Greenhouse, Ashby and The
+        # Muse all returned no validator when this was checked.
+        f = fetcher({"example.test": (200, "{}")})
+        f.get("https://example.test/a")
+        f.get("https://example.test/a")
+        self.assertIsNone(f.fake_opener.calls[1].get_header("If-none-match"))
+
+    def test_a_network_error_becomes_a_reported_status_not_an_exception(self):
+        class Broken:
+            calls = []
+
+            def open(self, request, timeout=None):
+                self.calls.append(request)
+                raise OSError("connection reset")
+
+        clock = Clock()
+        f = base.Fetcher(opener=Broken(), sleep=clock.sleep, clock=clock.tick)
+        response = f.get("https://example.test/a")
+        self.assertEqual(response.status, 0)
+        self.assertIn("connection reset", response.error)
+
+    def test_a_non_json_body_is_reported_rather_than_raised(self):
+        f = fetcher({"example.test": (200, "<html>maintenance</html>")})
+        data, response = f.get_json("https://example.test/a")
+        self.assertIsNone(data)
+        self.assertIn("not JSON", response.error)
+
+    def test_the_validator_cache_survives_between_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            f = fetcher({"example.test": (200, "{}", {"ETag": '"v1"'})}, root=root)
+            f.get("https://example.test/a")
+            f.save_validators()
+            later = fetcher({"example.test": (304, "")}, root=root)
+            later.get("https://example.test/a")
+            self.assertEqual(later.fake_opener.calls[0].get_header("If-none-match"), '"v1"')
+
+    def test_a_corrupt_validator_cache_costs_speed_not_correctness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "source-cache.json").write_text("{not json")
+            f = fetcher({"example.test": (200, "{}")}, root=root)
+            self.assertEqual(f.validators, {})
+
+
+class NormalisationTests(unittest.TestCase):
+    def test_html_becomes_readable_text(self):
+        html = "<div><p>Own the <b>roadmap</b>.</p><script>evil()</script><li>SQL</li></div>"
+        text = base.strip_html(html)
+        self.assertIn("Own the roadmap", text)
+        self.assertNotIn("evil()", text)
+        self.assertNotIn("<", text)
+
+    def test_entities_are_unescaped(self):
+        self.assertEqual(base.strip_html("R&amp;D &mdash; product"), "R&D — product")
+
+    def test_a_country_is_only_set_when_the_string_says_so(self):
+        # Guessing a country from a city is how a London, Ontario role gets
+        # filtered as a UK one.
+        self.assertEqual(base.parse_location("London")["country"], None)
+        self.assertEqual(base.parse_location("London, United Kingdom")["country"], "GB")
+        self.assertEqual(base.parse_location("London, ON")["country"], "CA")
+        self.assertEqual(base.parse_location("New York, NY")["country"], "US")
+        self.assertEqual(base.parse_location("Bengaluru, India")["country"], "IN")
+        self.assertEqual(base.parse_location("Dubai, United Arab Emirates")["country"], "AE")
+
+    def test_an_empty_location_is_empty_not_a_guess(self):
+        self.assertEqual(base.parse_location("")["country"], None)
+        self.assertEqual(base.parse_location(None)["raw"], "")
+
+    def test_workplace_detection_prefers_the_more_specific_word(self):
+        self.assertEqual(base.detect_workplace("Hybrid - Remote friendly"), "hybrid")
+        self.assertEqual(base.detect_workplace("Remote (US)"), "remote")
+        self.assertEqual(base.detect_workplace("On-site in Berlin"), "onsite")
+        self.assertIsNone(base.detect_workplace("Berlin"))
+        self.assertIsNone(base.detect_workplace(""))
+
+    def test_dates_arrive_in_every_shape_and_leave_in_one(self):
+        self.assertEqual(base.iso_stamp("2026-08-13T09:12:41Z"), "2026-08-13T09:12:41Z")
+        self.assertEqual(base.iso_stamp("2026-08-13"), "2026-08-13T00:00:00Z")
+        self.assertEqual(base.iso_stamp(1755000000), "2025-08-12T12:00:00Z")
+        self.assertEqual(base.iso_stamp(1755000000000), "2025-08-12T12:00:00Z")
+
+    def test_an_unreadable_date_is_none_rather_than_today(self):
+        # A posting dated today because nobody could parse its date sorts
+        # straight to the top of a board ordered newest first.
+        for bad in ("not a date", "", None, 0, "yesterday"):
+            self.assertIsNone(base.iso_stamp(bad), bad)
+
+    def test_a_posting_carries_a_fingerprint_when_the_body_is_thick_enough(self):
+        long_body = " ".join(f"responsibility {i} owning the roadmap" for i in range(20))
+        record = base.posting("x", "ats", "1a", "Acme", "PM", "https://a.test/1",
+                              description=long_body)
+        self.assertTrue(record["descFingerprint"])
+        thin = base.posting("x", "ats", "1a", "Acme", "PM", "https://a.test/2",
+                            description="Apply now.")
+        self.assertIsNone(thin["descFingerprint"])
+
+    def test_a_posting_url_is_canonicalised_on_the_way_in(self):
+        record = base.posting("x", "ats", "1a", "Acme", "PM",
+                              "https://a.test/1?utm_source=x#apply")
+        self.assertEqual(record["canonicalUrl"], "https://a.test/1")
+
+    def test_the_excerpt_is_capped(self):
+        record = base.posting("x", "ats", "1a", "Acme", "PM", "https://a.test/1",
+                              description="word " * 5000)
+        self.assertLessEqual(len(record["descriptionExcerpt"]), base.EXCERPT_CHARS)
+
+
+class FixtureProvenanceTests(unittest.TestCase):
+    def test_the_unverified_fixtures_say_they_are_unverified(self):
+        # Five channels have no key on this machine, so their fixtures come
+        # from the published contract rather than a recorded response. Saying
+        # so is the difference between a known gap and a false claim.
+        for name in ("adzuna_search", "jooble_search", "careerjet_search",
+                     "reed_search", "usajobs_search"):
+            data = json.loads(fixture(f"{name}.json"))
+            self.assertIn("__fixture_note", data, name)
+            self.assertIn("not a recorded response", data["__fixture_note"], name)
+
+    def test_no_fixture_carries_personal_data(self):
+        # §13 item 11: Playwright wrote 33 snapshots into the repo carrying a
+        # real name, phone number and home address.
+        banned = ("sahil", "sapra", "216-848", "(216)", "charlotte, nc",
+                  "navi mumbai", "spechawk.ai")
+        for path in sorted(FIXTURES.iterdir()):
+            if path.name == "practice-form.html":
+                continue                       # pre-existing, not ours
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+            for needle in banned:
+                self.assertNotIn(needle, text, f"{path.name} contains {needle!r}")
+
+
+if __name__ == "__main__":
+    unittest.main()

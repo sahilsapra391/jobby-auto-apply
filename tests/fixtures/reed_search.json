@@ -1,0 +1,18 @@
+{
+  "__fixture_note": "hand-written from the published API contract; not a recorded response, because no key for this channel is installed on this machine",
+  "totalResults": 1,
+  "results": [
+    {
+      "jobId": 55512345,
+      "employerName": "Harbourline Group",
+      "jobTitle": "Product Manager",
+      "locationName": "London",
+      "minimumSalary": 65000.0,
+      "maximumSalary": 80000.0,
+      "date": "18/08/2026",
+      "expirationDate": "30/09/2026",
+      "jobUrl": "https://www.reed.co.uk/jobs/product-manager/55512345",
+      "jobDescription": "<p>Hybrid product manager role in central London.</p>"
+    }
+  ]
+}

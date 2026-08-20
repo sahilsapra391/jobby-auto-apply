@@ -1,0 +1,18 @@
+{
+  "__fixture_note": "hand-written from the published API contract; not a recorded response, because no key for this channel is installed on this machine",
+  "type": "JOBS",
+  "hits": 2,
+  "response_time": 12,
+  "pages": 1,
+  "jobs": [
+    {
+      "title": "Product Owner",
+      "company": "Sundial Retail",
+      "locations": "Bengaluru, Karnataka",
+      "url": "https://www.careerjet.co.in/jobad/inabc123",
+      "date": "2026-08-18",
+      "salary": "",
+      "description": "Product owner for our in-store analytics suite."
+    }
+  ]
+}

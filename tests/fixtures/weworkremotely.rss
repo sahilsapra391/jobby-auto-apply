@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss">
+  <channel>
+    <title>We Work Remotely: Remote jobs in design, programming, marketing and more</title>
+    <link>https://weworkremotely.com/remote-jobs.rss</link>
+    <description>We Work Remotely: Remote jobs in design, programming, marketing and more</description>
+    <language>en-US</language>
+    <ttl>60</ttl>
+    <item>
+      <media:content url="https://wwr-pro.s3.amazonaws.com/logos/0171/6218/logo.gif" type="image/png"/>
+      <title>TrainBrainSpace: Expert AI Trainers in Coding, Finance &amp; Accounting, and Medicine/Nursing</title>
+      <region>Anywhere in the World</region>
+      <country>🇦🇪 United Arab Emirates, 🇦🇺 Australia, 🇨🇦 Canada, 🇨🇭 Switzerland, 🇩🇪 Germany, 🇩🇰 Denmark, 🇫🇮 Finland, 🇫🇷 France, 🇬🇧 United Kingdom of Great Britain and Northern Ireland, 🇬🇭 Ghana, 🇮🇱 Israel, 🇮🇳 India, 🇮🇸 Iceland, 🇯🇵 Japan, 🇰🇷 Korea (Republic of), 🇱🇺 Luxembourg, 🇳🇬 Nigeria, 🇳🇱 Netherlands, 🇳🇿 New Zealand, 🇵🇭 Philippines, 🇵🇷 Puerto Rico, 🇷🇺 Russian Federation, 🇸🇪 Sweden, 🇸🇬 Singapore, 🇺🇦 Ukraine, 🇺🇸 United States of America, and 🇿🇦 South Africa</country>
+      <state>Nairobi City</state>
+      <skills></skills>
+      <category>All Other Remote</category>
+      <type>Contract</type>
+      <description>&lt;img src="https://we-work-remotely.imgix.net/logos/0171/6218/logo.gif?ixlib=rails-4.0.0&amp;w=50&amp;h=50&amp;dpr=2&amp;fit=fill&amp;auto=compress" /&gt;
+
+&lt;p&gt;
+  &lt;strong&gt;Headquarters:&lt;/strong&gt; Atlanta, AZ.
+    &lt;br /&gt;&lt;strong&gt;URL:&lt;/strong&gt; &lt;a href="https://trainbrain.space/"&gt;https://trainbrain.space/&lt;/a&gt;
+&lt;/p&gt;
+
+&lt;p class="MsoNormal"&gt;What if the work you already do every day — shipping code, closing books, reading charts — became the training signal that teaches frontier AI how to think in your field?&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;TrainBrain builds expert-authored training data and evaluations for AI labs. We're hiring practising professionals to write, solve, and grade the tasks advanced models are measured against. When a model returns a broken function, a wrong reconciliation, or an unsafe clinical suggestion, it's because no expert caught it during training. You'd be that expert.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;This isn't your day job in a new wrapper. There are no clients, no month-end close, no tickets, no on-call. You work in writing, on your own schedule, on problems chosen to sit right at the edge of what current models can handle.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;No AI background required — we train you on the tooling.&lt;/p&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Track 1 — Software Engineering&lt;/strong&gt;&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;Write, debug, and optimise code across languages and problem domains. Review AI-generated solutions for correctness, security, and performance, and design edge cases that expose model weaknesses. Provide structured feedback explaining why code works — or doesn't — and compare competing solutions on engineering quality.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;You'll need:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;Advanced proficiency in Python, JavaScript/TypeScript, Java, C/C++, Go, or Rust&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;A solid grasp of data structures, algorithms, and software design principles&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;A CS degree or equivalent professional experience&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Nice to have:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;Open-source contributions or competitive programming&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Distributed systems, cloud, or DevOps background&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Code review, technical writing, or mentoring experience&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Track 2 — Finance &amp;amp; Accounting&lt;/strong&gt;&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;Author reconciliation scenarios: payment-to-invoice matching, billing versus recognised revenue, margin and variance analysis. Build the underlying data and source documents so each scenario is realistic, write rubrics specifying exact figures and required reasoning steps, then solve every task yourself to confirm the numbers hold.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;You'll need:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;Hands-on experience as an accountant, financial analyst, controller, or auditor&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Working knowledge of revenue recognition, matching principles, and standard close workflows&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Comfort with financial documents, spreadsheets, and accounting system outputs&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Nice to have:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;&lt;span lang="ES-AR"&gt;CPA, CA, ACCA, CIMA, or CFA&lt;/span&gt;&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;IFRS or US GAAP depth&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;ERP familiarity (SAP, Oracle, NetSuite, QuickBooks)&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Audit, financial controls, or revenue assurance background&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Track 3 — Medical &amp;amp; Clinical&lt;/strong&gt;&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;Challenge models on differential diagnosis, drug interactions, treatment protocols, pathophysiology, and evidence appraisal. Write clinical vignettes with defensible, sourced answers, verify model outputs against current evidence, and document precisely where reasoning breaks down.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;You'll need:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;An MD, DO, MBBS, PharmD, RN/BSN, or advanced health sciences degree&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Real clinical or research experience&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Command of medical terminology and clinical reasoning&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Nice to have:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li class="MsoNormal"&gt;Board certification or active licensure&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;A specialty focus (internal medicine, oncology, psychiatry, emergency medicine, radiology, nursing practice)&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Peer-reviewed publications&lt;/li&gt;
+&lt;li class="MsoNormal"&gt;Clinical trial, epidemiology, or medical education experience&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;What the work demands&lt;/strong&gt;&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;Whatever your track, four things matter more than anything else.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Show your work.&lt;/strong&gt; Making your reasoning explicit matters as much as the answer itself.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Be verifiable.&lt;/strong&gt; Every task you write needs a correct answer someone else can confirm.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Iterate.&lt;/strong&gt; You'll refine tasks until difficulty and gradability are both right.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Flag uncertainty.&lt;/strong&gt; Saying "I'm not sure, and here's why" is a feature, not a failure.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;You'll also need excellent written English, sharp attention to detail, and a secure computer with reliable internet.&lt;/p&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Terms&lt;/strong&gt;&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;This is a 1099 independent contractor position, not W-2 employment.&lt;/strong&gt; You're responsible for your own taxes, and company-sponsored benefits such as health insurance, PTO, and retirement contributions don't apply. Contractors outside the US are engaged under the equivalent local arrangement.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Pay:&lt;/strong&gt; $45–$100/hr, set by domain, seniority, and assessment performance. Specialised and hard-to-source expertise sits at the top of the band, and you're paid on a regular cadence.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Schedule:&lt;/strong&gt; Choose your own projects, hours, and volume. Scale up in quiet weeks, scale down when your day job gets busy.&lt;/p&gt;
+&lt;p class="MsoNormal"&gt;&lt;strong&gt;Growth:&lt;/strong&gt; Strong contributors are invited into higher-rate specialist projects and review roles, with ongoing work as new engagements launch.&lt;/p&gt;
+&lt;div class="MsoNormal"&gt;&lt;hr width="100%"&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;strong&gt;To apply:&lt;/strong&gt; &lt;a href="https://weworkremotely.com/remote-jobs/trainbrainspace-expert-ai-trainers-in-coding-finance-accounting-and-medicine-nursing"&gt;https://weworkremotely.com/remote-jobs/trainbrainspace-expert-ai-trainers-in-coding-finance-accounting-and-medicine-nursing&lt;/a&gt;&lt;/p&gt;
+</description>
+      <pubDate>Thu, 20 Aug 2026 01:35:18 +0000</pubDate>
+      <expires_at>Sat, 19 Sep 2026 01:35:18 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/trainbrainspace-expert-ai-trainers-in-coding-finance-accounting-and-medicine-nursing</guid>
+      <link>https://weworkremotely.com/remote-jobs/trainbrainspace-expert-ai-trainers-in-coding-finance-accounting-and-medicine-nursing</link>
+    </item>
+</channel>
+</rss>

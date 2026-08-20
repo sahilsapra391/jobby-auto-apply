@@ -42,6 +42,11 @@ in `sources.json` until they are.
 | What | When | Evidence |
 |---|---|---|
 | Greenhouse, Lever and Ashby board tokens for the 96-company seed pack | 2026-08-19 | Each token fetched once against the platform's public board API; 96 of 104 candidates returned a parseable board and were kept, the other 8 were dropped rather than shipped unverified. |
+| Greenhouse payload cost | 2026-08-19 | `boards-api.greenhouse.io/v1/boards/vercel/jobs` returned 58,735 bytes for 83 jobs; the same URL with `content=true` returned 845,251 bytes. Fourteen times the traffic every hour, so bodies are fetched per job at `/jobs/{id}` and only for postings that survive the metadata gate. `internal_job_id` 404s on that route; `id` is the one that works. |
+| Conditional requests | 2026-08-19 | Lever returned `ETag: W/"25986-..."` and answered `If-None-Match` with a 304 and no body. Greenhouse, Ashby and The Muse returned no validator at all from this edge, having returned one from another edge minutes earlier. Conditional headers are therefore sent only when a validator was actually stored; sending `If-None-Match: None` raises inside `http.client` with a message naming neither the header nor the URL. |
+| Dead board tokens | 2026-08-19 | A nonexistent token returns 404 on all three ATS platforms: Greenhouse `{"status":404,"error":"Job not found"}`, Lever `{"ok":false,"error":"Document not found"}`, Ashby plain-text `Not Found`. A 404 is a wrong token rather than an outage and is counted separately. |
+| The Muse authentication | 2026-08-19 | `https://www.themuse.com/api/public/jobs?page=0` returned 200 with 20 results and no key supplied. Appendix A lists The Muse as class B free-key; **this is a correction** — the key raises the rate limit rather than unlocking access, so the connector runs either way and reports which. |
+| Adzuna, Jooble, Careerjet, Reed, USAJobs | not verified | No key for any of these is installed in `~/.job-application/config.env`, so none has ever had a live response here. Their connectors are written to each published contract and their fixtures are labelled `__fixture_note: "not a recorded response"`. Status is `needs-key`; the first run with a key installed is what confirms the shapes. |
 
 ## The catalog
 
@@ -49,20 +54,20 @@ in `sources.json` until they are.
 
 | Channel | id | Class | Tier | Phase | Status | Regions | Notes |
 |---|---|---|---|---|---|---|---|
-| Adzuna | `adzuna` | B | 1b | 1 | `planned` | US, CA, GB, AU, DE, FR, NL, PL, ES, IT, AT, BE, CH, SE, SG, NZ, BR, MX, ZA, IN | Per-country endpoints; app id + key. |
-| Ashby job boards | `ashby` | A | 1a | 1 | `planned` | * | Registry-driven. |
-| Careerjet | `careerjet` | B | 1b | 1 | `planned` | * | 60+ countries; affiliate key. |
-| Greenhouse job boards | `greenhouse` | A | 1a | 1 | `planned` | * | Registry-driven: one request per company token. |
-| Himalayas | `himalayas` | C | 1a | 1 | `planned` | REMOTE | Remote-only feed. |
-| Jooble | `jooble` | B | 1b | 1 | `planned` | * | 60+ countries including the Gulf, Japan and Korea. |
-| Lever job boards | `lever` | A | 1a | 1 | `planned` | * | Registry-driven. |
-| Reed | `reed` | B | 1b | 1 | `planned` | GB | UK only; free API key. |
-| RemoteOK | `remoteok` | C | 1a | 1 | `planned` | REMOTE | Remote-only feed. |
-| Remotive | `remotive` | C | 1a | 1 | `planned` | REMOTE | Remote-only feed. |
-| The Muse | `themuse` | B | 1b | 1 | `planned` | US, GB, DE | Curated; key raises the rate limit. |
-| USAJobs | `usajobs` | B | 1b | 1 | `planned` | US | US federal; key plus registered email. |
-| We Work Remotely | `weworkremotely` | C | 1a | 1 | `planned` | REMOTE | Remote-only feed. |
-| Working Nomads | `workingnomads` | C | 1a | 1 | `planned` | REMOTE | Remote-only feed. |
+| Adzuna | `adzuna` | B | 1b | 1 | `needs-key` | US, CA, GB, AU, DE, FR, NL, PL, ES, IT, AT, BE, CH, SE, SG, NZ, BR, MX, ZA, IN | Endpoint shape NOT verified live: no key installed. Written to the published contract; the first real run confirms it. Covers 19 countries. **Verify at build.** |
+| Ashby job boards | `ashby` | A | 1a | 1 | `connected` | * | One request returns descriptionPlain, workplaceType and isRemote. isListed=false postings are skipped. A wrong token returns a plain-text 404, not JSON. |
+| Careerjet | `careerjet` | B | 1b | 1 | `needs-key` | * | Endpoint shape NOT verified live: no key installed. Addressed by locale rather than country code. **Verify at build.** |
+| Greenhouse job boards | `greenhouse` | A | 1a | 1 | `connected` | * | List is 59 KB for 83 jobs; content=true is 845 KB, so bodies are fetched per job at /jobs/{id} only for postings that survive the metadata gate. No ETag offered when checked. A wrong token is 404. |
+| Himalayas | `himalayas` | C | 1a | 1 | `connected` | REMOTE | jobs[]; pubDate in epoch seconds. |
+| Jooble | `jooble` | B | 1b | 1 | `needs-key` | * | Endpoint shape NOT verified live: no key installed. POST with a JSON body; the key is in the URL path, so it must never reach an error line. **Verify at build.** |
+| Lever job boards | `lever` | A | 1a | 1 | `connected` | * | One request returns descriptions, workplaceType and a two-letter country. The only platform of the three that returned an ETag and answered a conditional request with 304. |
+| Reed | `reed` | B | 1b | 1 | `needs-key` | GB | Endpoint shape NOT verified live: no key installed. HTTP Basic with the key as username; dd/mm/yyyy dates. Only asked when the search selects the UK. **Verify at build.** |
+| RemoteOK | `remoteok` | C | 1a | 1 | `connected` | REMOTE | Bare array whose FIRST element is a legal notice rather than a job. |
+| Remotive | `remotive` | C | 1a | 1 | `connected` | REMOTE | jobs[] alongside two legal-notice keys. candidate_required_location is a restriction, not a location. |
+| The Muse | `themuse` | B | 1b | 1 | `connected` | US, GB, DE | CORRECTION to Appendix A, which lists this as free-key: the public endpoint answers with no key at all. A key raises the rate limit rather than unlocking access. |
+| USAJobs | `usajobs` | B | 1b | 1 | `needs-key` | US | Endpoint shape NOT verified live: no key installed. Needs the key AND the registered email, which goes in the User-Agent header. **Verify at build.** |
+| We Work Remotely | `weworkremotely` | C | 1a | 1 | `connected` | REMOTE | RSS, not JSON. Title is "Company: Role" and is the only place the company name appears. |
+| Working Nomads | `workingnomads` | C | 1a | 1 | `connected` | REMOTE | Bare array; tags is a comma-separated string rather than a list. |
 | BambooHR | `bamboohr` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
 | Personio | `personio` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
 | Recruitee | `recruitee` | A | 1a | 2 | `planned` | * | Public per-company JSON. |

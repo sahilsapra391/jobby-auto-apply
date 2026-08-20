@@ -1,0 +1,52 @@
+{
+  "__fixture_note": "hand-written from the published API contract; not a recorded response, because no key for this channel is installed on this machine",
+  "count": 2,
+  "mean": 118000.0,
+  "results": [
+    {
+      "id": "4471002",
+      "title": "Product Manager, Internal Reporting",
+      "created": "2026-08-13T09:12:41Z",
+      "redirect_url": "https://www.adzuna.com/land/ad/4471002?se=abc&v=1&url=https%3A%2F%2Fjob-boards.greenhouse.io%2Fnorthwind%2Fjobs%2F4471002",
+      "company": {
+        "display_name": "Northwind Analytics"
+      },
+      "location": {
+        "display_name": "New York, New York",
+        "area": [
+          "US",
+          "New York",
+          "New York"
+        ]
+      },
+      "category": {
+        "label": "IT Jobs",
+        "tag": "it-jobs"
+      },
+      "description": "Northwind Analytics is looking for a Product Manager to own our internal reporting platform. You will work with data engineering and analytics to define what the platform measures.",
+      "salary_min": 150000.0,
+      "salary_max": 190000.0,
+      "contract_time": "full_time"
+    },
+    {
+      "id": "9911",
+      "title": "Business Analyst",
+      "created": "2026-08-18T00:00:00Z",
+      "redirect_url": "https://www.adzuna.co.uk/land/ad/9911",
+      "company": {
+        "display_name": "Kestrel Logistics"
+      },
+      "location": {
+        "display_name": "Remote",
+        "area": [
+          "UK"
+        ]
+      },
+      "category": {
+        "label": "IT Jobs",
+        "tag": "it-jobs"
+      },
+      "description": "Fully remote business analyst role supporting our warehouse systems team."
+    }
+  ]
+}

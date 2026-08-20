@@ -1,0 +1,44 @@
+{
+  "__fixture_note": "hand-written from the published API contract; not a recorded response, because no key for this channel is installed on this machine",
+  "SearchResult": {
+    "SearchResultCount": 1,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "830000000",
+        "MatchedObjectDescriptor": {
+          "PositionTitle": "IT Specialist (Product Management)",
+          "PositionURI": "https://www.usajobs.gov/job/830000000",
+          "PositionLocation": [
+            {
+              "LocationName": "Washington, District of Columbia"
+            }
+          ],
+          "OrganizationName": "Office of Personnel Management",
+          "DepartmentName": "Other Agencies and Independent Organizations",
+          "JobCategory": [
+            {
+              "Name": "Information Technology Management",
+              "Code": "2210"
+            }
+          ],
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "117962",
+              "MaximumRange": "153354"
+            }
+          ],
+          "PublicationStartDate": "2026-08-15",
+          "QualificationSummary": "US citizenship is required for this position.",
+          "UserArea": {
+            "Details": {
+              "MajorDuties": [
+                "Lead product management for agency systems."
+              ],
+              "TeleworkEligible": true
+            }
+          }
+        }
+      }
+    ]
+  }
+}

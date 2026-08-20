@@ -4,154 +4,154 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
       "id": "greenhouse",
       "name": "Greenhouse job boards",
-      "notes": "Registry-driven: one request per company token.",
+      "notes": "List is 59 KB for 83 jobs; content=true is 845 KB, so bodies are fetched per job at /jobs/{id} only for postings that survive the metadata gate. No ETag offered when checked. A wrong token is 404.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://api.lever.co/v0/postings/{token}?mode=json",
       "id": "lever",
       "name": "Lever job boards",
-      "notes": "Registry-driven.",
+      "notes": "One request returns descriptions, workplaceType and a two-letter country. The only platform of the three that returned an ETag and answered a conditional request with 304.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/{token}",
       "id": "ashby",
       "name": "Ashby job boards",
-      "notes": "Registry-driven.",
+      "notes": "One request returns descriptionPlain, workplaceType and isRemote. isListed=false postings are skipped. A wrong token returns a plain-text 404, not JSON.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "C",
-      "endpoint": "",
+      "endpoint": "https://remoteok.com/api",
       "id": "remoteok",
       "name": "RemoteOK",
-      "notes": "Remote-only feed.",
+      "notes": "Bare array whose FIRST element is a legal notice rather than a job.",
       "phase": 1,
       "regions": [
         "REMOTE"
       ],
       "sourceClass": "feed",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "C",
-      "endpoint": "",
+      "endpoint": "https://weworkremotely.com/remote-jobs.rss",
       "id": "weworkremotely",
       "name": "We Work Remotely",
-      "notes": "Remote-only feed.",
+      "notes": "RSS, not JSON. Title is \"Company: Role\" and is the only place the company name appears.",
       "phase": 1,
       "regions": [
         "REMOTE"
       ],
       "sourceClass": "feed",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "C",
-      "endpoint": "",
+      "endpoint": "https://remotive.com/api/remote-jobs",
       "id": "remotive",
       "name": "Remotive",
-      "notes": "Remote-only feed.",
+      "notes": "jobs[] alongside two legal-notice keys. candidate_required_location is a restriction, not a location.",
       "phase": 1,
       "regions": [
         "REMOTE"
       ],
       "sourceClass": "feed",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "C",
-      "endpoint": "",
+      "endpoint": "https://himalayas.app/jobs/api?limit=200",
       "id": "himalayas",
       "name": "Himalayas",
-      "notes": "Remote-only feed.",
+      "notes": "jobs[]; pubDate in epoch seconds.",
       "phase": 1,
       "regions": [
         "REMOTE"
       ],
       "sourceClass": "feed",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "C",
-      "endpoint": "",
+      "endpoint": "https://www.workingnomads.com/api/exposed_jobs/",
       "id": "workingnomads",
       "name": "Working Nomads",
-      "notes": "Remote-only feed.",
+      "notes": "Bare array; tags is a comma-separated string rather than a list.",
       "phase": 1,
       "regions": [
         "REMOTE"
       ],
       "sourceClass": "feed",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://api.adzuna.com/v1/api/jobs/{country}/search/1",
       "id": "adzuna",
       "name": "Adzuna",
-      "notes": "Per-country endpoints; app id + key.",
+      "notes": "Endpoint shape NOT verified live: no key installed. Written to the published contract; the first real run confirms it. Covers 19 countries.",
       "phase": 1,
       "regions": [
         "US",
@@ -176,91 +176,91 @@
         "IN"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "needs-key",
       "statusReason": "",
       "tier": "1b",
       "verifiedAt": null,
-      "verifyAtBuild": false
+      "verifyAtBuild": true
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://jooble.org/api/{key}",
       "id": "jooble",
       "name": "Jooble",
-      "notes": "60+ countries including the Gulf, Japan and Korea.",
+      "notes": "Endpoint shape NOT verified live: no key installed. POST with a JSON body; the key is in the URL path, so it must never reach an error line.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "needs-key",
       "statusReason": "",
       "tier": "1b",
       "verifiedAt": null,
-      "verifyAtBuild": false
+      "verifyAtBuild": true
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://public.api.careerjet.net/search",
       "id": "careerjet",
       "name": "Careerjet",
-      "notes": "60+ countries; affiliate key.",
+      "notes": "Endpoint shape NOT verified live: no key installed. Addressed by locale rather than country code.",
       "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "needs-key",
       "statusReason": "",
       "tier": "1b",
       "verifiedAt": null,
-      "verifyAtBuild": false
+      "verifyAtBuild": true
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://www.reed.co.uk/api/1.0/search",
       "id": "reed",
       "name": "Reed",
-      "notes": "UK only; free API key.",
+      "notes": "Endpoint shape NOT verified live: no key installed. HTTP Basic with the key as username; dd/mm/yyyy dates. Only asked when the search selects the UK.",
       "phase": 1,
       "regions": [
         "GB"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "needs-key",
       "statusReason": "",
       "tier": "1b",
       "verifiedAt": null,
-      "verifyAtBuild": false
+      "verifyAtBuild": true
     },
     {
       "auth": "key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://data.usajobs.gov/api/search",
       "id": "usajobs",
       "name": "USAJobs",
-      "notes": "US federal; key plus registered email.",
+      "notes": "Endpoint shape NOT verified live: no key installed. Needs the key AND the registered email, which goes in the User-Agent header.",
       "phase": 1,
       "regions": [
         "US"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "needs-key",
       "statusReason": "",
       "tier": "1b",
       "verifiedAt": null,
-      "verifyAtBuild": false
+      "verifyAtBuild": true
     },
     {
-      "auth": "key",
+      "auth": "optional-key",
       "class": "B",
-      "endpoint": "",
+      "endpoint": "https://www.themuse.com/api/public/jobs?page={n}",
       "id": "themuse",
       "name": "The Muse",
-      "notes": "Curated; key raises the rate limit.",
+      "notes": "CORRECTION to Appendix A, which lists this as free-key: the public endpoint answers with no key at all. A key raises the rate limit rather than unlocking access.",
       "phase": 1,
       "regions": [
         "US",
@@ -268,10 +268,10 @@
         "DE"
       ],
       "sourceClass": "aggregator",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1b",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-19",
       "verifyAtBuild": false
     },
     {

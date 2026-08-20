@@ -1,0 +1,28 @@
+{
+  "__fixture_note": "hand-written from the published API contract; not a recorded response, because no key for this channel is installed on this machine",
+  "totalCount": 2,
+  "jobs": [
+    {
+      "title": "Product Manager",
+      "location": "Dubai, United Arab Emirates",
+      "snippet": "Own the roadmap for our payments product across the Gulf region.",
+      "salary": "",
+      "source": "careem.com",
+      "type": "Full-time",
+      "link": "https://ae.jooble.org/away/-123456",
+      "company": "Careem",
+      "updated": "2026-08-17T00:00:00.0000000"
+    },
+    {
+      "title": "Business Analyst",
+      "location": "Tokyo, Japan",
+      "snippet": "Analyst role supporting the merchant platform team.",
+      "salary": "",
+      "source": "example.jp",
+      "type": "Full-time",
+      "link": "https://jp.jooble.org/away/-987654",
+      "company": "Mercari",
+      "updated": "2026-08-16T00:00:00.0000000"
+    }
+  ]
+}
