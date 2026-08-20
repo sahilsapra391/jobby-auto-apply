@@ -345,8 +345,19 @@ def _best_class(job):
     return min(classes, key=jobs_store.canonical_rank, default="other")
 
 
-def job_id(job, alias_map=None):
-    return hashlib.sha1(dedupe_key(job, alias_map).encode("utf-8")).hexdigest()[:16]
+def job_id(job, alias_map=None, discriminator=""):
+    """The record id, derived from the canonical identity.
+
+    `discriminator` is only ever supplied when the identity alone is not enough
+    to tell two records apart — see resolve(), which is the one place that
+    decides that. Keeping it a parameter rather than folding it in
+    unconditionally means an ordinary record's id stays a pure function of what
+    the record *is*, and does not move because an employer fixed a typo.
+    """
+    key = dedupe_key(job, alias_map)
+    if discriminator:
+        key = f"{key}#{discriminator}"
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
 def sighting_urls(job):
@@ -457,8 +468,42 @@ def match(index, incoming, fetch=None):
 
 
 def resolve(index, incoming, fetch=None):
-    """(job_id, how). `how` is None when this is a job nobody has seen before."""
+    """(job_id, how). `how` is None when this is a job nobody has seen before.
+
+    This function owns one guarantee, and the guarantee is the whole reason it
+    exists rather than callers doing match() and job_id() themselves:
+
+        **an unmatched job never comes back with an id that is already taken.**
+
+    Without it there is a seam. The fallback dedupe key is exactly the tuple
+    rule 3 matches on — company, normalised title, location bucket — so two
+    aggregator-only requisitions that rule 3 looked at and *declined to merge*
+    still derive the same id, and an upsert keyed on id alone folds them
+    together anyway. The matcher's refusal is overruled by the id.
+
+    That is not hypothetical. Two Working Nomads postings for one role at one
+    company, one in Canada and one in Japan, bodies nine bits apart, came out of
+    a real thirteen-second run as a single record wearing a "seen on 2 boards"
+    chip — which is the most convincing possible disguise, because that chip
+    means exactly the thing that did not happen.
+
+    A collision here therefore implies rule 3 found this identity and refused
+    it, and rule 3 only refuses through the fingerprint veto, which requires
+    both fingerprints to be known. So there is always something to discriminate
+    with at the moment it is needed. Where there genuinely is not — a body too
+    thin to fingerprint — the old conservative merge is left exactly as it was,
+    because with no evidence, merging is the better guess.
+    """
     found, how = match(index, incoming, fetch=fetch)
     if found is not None:
         return found, how
-    return job_id(incoming, index.alias_map), None
+
+    candidate = job_id(incoming, index.alias_map)
+    if candidate not in index.jobs:
+        return candidate, None
+
+    fingerprint_ = incoming.get("descFingerprint")
+    if not fingerprint_:
+        # Nothing to tell them apart. Conservative, and unchanged.
+        return candidate, None
+    return job_id(incoming, index.alias_map, discriminator=fingerprint_), None

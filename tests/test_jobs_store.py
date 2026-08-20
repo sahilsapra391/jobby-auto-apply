@@ -167,6 +167,26 @@ class UpsertAndMergeTests(unittest.TestCase):
         merged = jobs_store.merge_records(watched, job("j1", state="new"))
         self.assertEqual(merged["state"], "watched")
 
+    def test_the_store_refuses_to_merge_what_the_matcher_declined(self):
+        # The defensive half of the fix. identity.resolve() makes this
+        # unreachable; if a future caller bypasses it, this refuses loudly
+        # rather than folding two requisitions into one where nobody sees it.
+        jobs, _ = jobs_store.upsert({}, job("j1"), matched=False)
+        with self.assertRaises(jobs_store.JobsStoreError) as ctx:
+            jobs_store.upsert(jobs, job("j1"), match_id="j1", matched=False)
+        self.assertIn("declined to match", str(ctx.exception))
+
+    def test_a_matched_job_still_merges(self):
+        jobs, _ = jobs_store.upsert({}, job("j1"), matched=False)
+        jobs, action = jobs_store.upsert(jobs, job("j1"), match_id="j1", matched=True)
+        self.assertEqual(action, "merged")
+
+    def test_an_unstated_verdict_keeps_the_old_behaviour(self):
+        # Callers that do their own matching are not forced to change.
+        jobs, _ = jobs_store.upsert({}, job("j1"))
+        jobs, action = jobs_store.upsert(jobs, job("j1"))
+        self.assertEqual(action, "merged")
+
     def test_a_job_without_an_id_is_refused(self):
         with self.assertRaises(jobs_store.JobsStoreError):
             jobs_store.upsert({}, {"company": "Acme"})

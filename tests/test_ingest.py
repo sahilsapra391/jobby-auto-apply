@@ -418,6 +418,86 @@ class TombstoneTests(IngestCase):
         self.assertTrue(any("passed on before" in why for why in report["gatedOutBy"]))
 
 
+class UnmatchedCollisionTests(IngestCase):
+    """The Major review finding, end to end through the real pipeline.
+
+    Aggregator-class postings carry no ATS URL, so their id falls back to
+    company + title + country — which is exactly the tuple the matcher already
+    looked at and declined. Every Tier-1b channel and every remote feed takes
+    this path, so it is not a corner.
+    """
+
+    def aggregator(self, url, body, **fields):
+        return posting(source="adzuna", sourceClass="aggregator", url=url,
+                       description=body, **fields)
+
+    def test_two_requisitions_that_the_matcher_declined_stay_two(self):
+        first = self.aggregator("https://www.adzuna.com/land/ad/111",
+                                SYNDICATED["sightings"][0]["body"])
+        second = self.aggregator("https://www.adzuna.com/land/ad/222",
+                                 SYNDICATED["sibling"]["body"])
+        report, jobs = self.run_ingest({"adzuna": channel([first, second], name="adzuna")},
+                                       config={"postedWithin": "all"})
+        self.assertEqual(report["kept"], 2)
+        self.assertEqual(report["deduped"], 0)
+        self.assertEqual(len(jobs), 2)
+        for job in jobs.values():
+            self.assertEqual(len(job["sources"]), 1)
+
+    def test_the_syndicated_trio_with_no_ats_url_still_collapses(self):
+        postings = [self.aggregator(f"https://agg{i}.example/ad/{i}", s["body"],
+                                    title=s["title"], company=s["company"])
+                    for i, s in enumerate(SYNDICATED["sightings"])]
+        report, jobs = self.run_ingest({"adzuna": channel(postings, name="adzuna")},
+                                       config={"postedWithin": "all"})
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(report["deduped"], 2)
+
+    def test_thin_bodies_still_merge_and_the_matcher_owns_that_decision(self):
+        # With no fingerprint on either side the veto cannot fire, so rule 3
+        # matches directly. Conservative, deliberate, and unchanged — the point
+        # is that the *matcher* decides it rather than the id colliding.
+        thin_a = self.aggregator("https://a.example/1", "Product Manager. Apply now.")
+        thin_b = self.aggregator("https://a.example/2", "Product Manager. Apply today.")
+        report, jobs = self.run_ingest({"adzuna": channel([thin_a, thin_b], name="adzuna")},
+                                       config={"postedWithin": "all"})
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(list(report["dedupedBy"]), ["company-title-location"])
+
+    def test_no_merge_is_ever_recorded_without_a_stated_reason(self):
+        # The invariant the fix buys. `dedupedBy: {"id": N}` used to mean "the
+        # ids collided and nobody agreed these were the same job", and it was
+        # indistinguishable in the report from a real merge.
+        postings = [self.aggregator(f"https://a.example/{i}", body)
+                    for i, body in enumerate([SYNDICATED["sightings"][0]["body"],
+                                              SYNDICATED["sibling"]["body"],
+                                              SYNDICATED["sightings"][1]["body"],
+                                              "Product Manager. Apply now."])]
+        report, _ = self.run_ingest({"adzuna": channel(postings, name="adzuna")},
+                                    config={"postedWithin": "all"})
+        for reason in (report.get("dedupedBy") or {}):
+            self.assertIn(reason, ("canonical-url", "redirect",
+                                   "company-title-location", "fingerprint"), reason)
+
+    def test_a_store_refusal_is_reported_rather_than_losing_the_run(self):
+        # identity.resolve() makes the guard unreachable, so this forces it and
+        # checks the run survives and says what happened.
+        original = ingest.identity.resolve
+        ingest.identity.resolve = lambda index, incoming, fetch=None: ("fixed-id", None)
+        try:
+            report, jobs = self.run_ingest(
+                {"adzuna": channel([self.aggregator("https://a.example/1",
+                                                    SYNDICATED["sightings"][0]["body"]),
+                                    self.aggregator("https://a.example/2",
+                                                    SYNDICATED["sibling"]["body"])],
+                                   name="adzuna")},
+                config={"postedWithin": "all"})
+        finally:
+            ingest.identity.resolve = original
+        self.assertEqual(len(jobs), 1)
+        self.assertTrue(any("declined to match" in e["why"] for e in report["errors"]))
+
+
 class PruneAndPersistTests(IngestCase):
     def test_stale_jobs_are_pruned_on_the_way_out(self):
         old = posting(company="Longsince Corp", title="Office Manager",

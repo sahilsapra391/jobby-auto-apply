@@ -326,11 +326,25 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
                 continue
 
             match_id, how = identity.resolve(index, posting)
-            jobs, action = jobs_store.upsert(jobs, posting, match_id=match_id)
+            try:
+                # `matched` carries the matcher's verdict through to the store,
+                # so a job it declined can never be folded onto an existing
+                # record by id alone.
+                jobs, action = jobs_store.upsert(jobs, posting, match_id=match_id,
+                                                 matched=how is not None)
+            except jobs_store.JobsStoreError as exc:
+                # identity.resolve() makes this unreachable. If it ever fires,
+                # it is a real defect and it says so rather than eating a job.
+                report["errors"].append({"channel": name, "why": str(exc)})
+                continue
             if action == "merged":
                 report["deduped"] += 1
                 report.setdefault("dedupedBy", {})
-                report["dedupedBy"][how or "id"] = report["dedupedBy"].get(how or "id", 0) + 1
+                # `how` is None only on the conservative path, where a body was
+                # too thin to fingerprint and there was nothing to tell two
+                # records apart.
+                label = how or "identity, no fingerprint to separate them"
+                report["dedupedBy"][label] = report["dedupedBy"].get(label, 0) + 1
             else:
                 kept += 1
                 report["kept"] += 1

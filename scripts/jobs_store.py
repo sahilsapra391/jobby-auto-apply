@@ -299,15 +299,26 @@ def _class_of(job):
                key=canonical_rank, default="other")
 
 
-def upsert(jobs, incoming, match_id=None):
+def upsert(jobs, incoming, match_id=None, matched=None):
     """Add a job, or fold it into the record it matched. Returns (jobs, action).
 
     `match_id` comes from identity resolution; without one the record's own id
     is the only match, which is the degenerate "same canonical URL twice" case.
+
+    `matched` says whether the matcher actually agreed these are the same job.
+    When it is explicitly False and the id is already taken, that is a
+    contract violation: the matcher looked at this job, declined to merge it,
+    and something handed it an occupied id anyway. identity.resolve() makes
+    that unreachable, so this refuses loudly rather than folding two
+    requisitions together where nobody would ever see it happen.
     """
     job_id = match_id or incoming.get("id")
     if not job_id:
         raise JobsStoreError("a job needs an id before it can be stored")
+    if matched is False and job_id in jobs:
+        raise JobsStoreError(
+            f"refusing to merge {job_id}: the matcher declined to match this job, "
+            "so folding it onto an existing record would lose one of them")
     if job_id in jobs:
         jobs[job_id] = merge_records(jobs[job_id], incoming)
         return jobs, "merged"

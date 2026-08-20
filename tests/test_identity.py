@@ -73,7 +73,8 @@ def ingest(sightings, companies=COMPANIES):
         incoming = record(sighting)
         job_id, how = identity.resolve(index, incoming)
         hows.append(how)
-        jobs, _ = jobs_store.upsert(jobs, incoming, match_id=job_id)
+        jobs, _ = jobs_store.upsert(jobs, incoming, match_id=job_id,
+                                    matched=how is not None)
         index.add(job_id, jobs[job_id])
     return jobs, hows
 
@@ -353,3 +354,179 @@ class NonMatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def aggregator(url, body, title="Product Manager, Internal Reporting",
+               company="Northwind Analytics", country="US", source="adzuna"):
+    """A posting with no ATS or careers URL anywhere, so the id falls back to
+    company + title + country. This is what Adzuna, Jooble, Careerjet, Reed and
+    every remote feed produce."""
+    job = jobs_store.blank_job("pending", company, title)
+    job.update({
+        "canonicalUrl": identity.canonical_url(url),
+        "canonicalSource": source,
+        "sources": [{"source": source, "sourceClass": "aggregator", "tier": "1b",
+                     "url": identity.canonical_url(url),
+                     "firstSeenAt": "2026-08-19T20:00:00Z"}],
+        "location": {"raw": "New York, NY", "city": "New York",
+                     "region": "NY", "country": country},
+        "workplace": "hybrid",
+        "postedAt": "2026-08-13T00:00:00Z",
+        "descriptionExcerpt": body[:1500],
+        "descFingerprint": identity.fingerprint(body),
+    })
+    return job
+
+
+def store(postings, companies=COMPANIES):
+    """resolve → upsert, exactly as ingest.py does it, verdict included."""
+    jobs = {}
+    index = identity.Index(jobs, companies)
+    hows, ids = [], []
+    for incoming in postings:
+        job_id, how = identity.resolve(index, incoming)
+        hows.append(how)
+        ids.append(job_id)
+        jobs, _ = jobs_store.upsert(jobs, incoming, match_id=job_id,
+                                    matched=how is not None)
+        index.add(job_id, jobs[job_id])
+    return jobs, hows, ids
+
+
+class UnmatchedIdCollisionTests(unittest.TestCase):
+    """The seam between the matcher and the id.
+
+    The fallback dedupe key is exactly the tuple rule 3 matches on, so two
+    aggregator-only requisitions that rule 3 *declined to merge* used to derive
+    the same id and get folded together by the upsert anyway. The matcher's
+    refusal was overruled by the id.
+
+    It came out of a real run: two Working Nomads postings for one role at one
+    company, Canada and Japan, bodies nine bits apart, stored as a single record
+    wearing a "seen on 2 boards" chip.
+    """
+
+    def test_two_aggregator_only_requisitions_stay_two(self):
+        first = aggregator("https://adzuna.com/details/111", SYNDICATED["sightings"][0]["body"])
+        second = aggregator("https://adzuna.com/details/222", SYNDICATED["sibling"]["body"])
+        self.assertGreater(
+            identity.hamming(identity.parse_fingerprint(first["descFingerprint"]),
+                             identity.parse_fingerprint(second["descFingerprint"])),
+            identity.SIMHASH_MAX_DISTANCE,
+            "the fixture must actually be two different bodies")
+
+        jobs, hows, ids = store([first, second])
+        self.assertEqual(hows, [None, None], "the matcher must decline both times")
+        self.assertNotEqual(ids[0], ids[1], "an unmatched job must not reuse a taken id")
+        self.assertEqual(len(jobs), 2)
+
+    def test_each_of_them_keeps_its_own_body_and_its_own_url(self):
+        # The tell of the old bug was the second body being discarded while its
+        # URL survived as an extra sighting on the first record.
+        first = aggregator("https://adzuna.com/details/111", SYNDICATED["sightings"][0]["body"])
+        second = aggregator("https://adzuna.com/details/222", SYNDICATED["sibling"]["body"])
+        jobs, _, _ = store([first, second])
+        bodies = sorted(job["descriptionExcerpt"][:40] for job in jobs.values())
+        self.assertEqual(len(set(bodies)), 2)
+        for job in jobs.values():
+            self.assertEqual(len(job["sources"]), 1,
+                             "neither may claim to have been seen on two boards")
+
+    def test_the_real_world_shape_that_produced_this(self):
+        # One role, two countries, both from a feed that marks everything
+        # remote — so the location bucket is identical and deviation #2's
+        # country guard cannot help. Only the bodies separate them.
+        canada = aggregator("https://www.workingnomads.com/job/go/1775628",
+                            "Maps evaluation work assessing local search results and "
+                            "points of interest across Canadian cities and regions, "
+                            "using public transport knowledge and local familiarity.",
+                            title="Data Analyst (No Experience Required)",
+                            company="Peroptyx", country=None, source="workingnomads")
+        japan = aggregator("https://www.workingnomads.com/job/go/1775548",
+                           "Maps evaluation work assessing local search results and "
+                           "points of interest across Japanese prefectures and cities, "
+                           "requiring native Japanese reading and local familiarity.",
+                           title="Data Analyst (No Experience Required)",
+                           company="Peroptyx", country=None, source="workingnomads")
+        canada["workplace"] = japan["workplace"] = "remote"
+        jobs, hows, ids = store([canada, japan])
+        self.assertEqual(identity.location_bucket(canada), identity.location_bucket(japan),
+                         "the bucket really is the same; that is the point")
+        self.assertEqual(len(jobs), 2, "the Japan requisition must not be eaten")
+
+    def test_the_same_jd_across_aggregators_is_still_one_record(self):
+        # The counterpart. With no ATS URL anywhere, dedupe still has to work.
+        postings = [aggregator(f"https://agg{i}.example/ad/{i}", sighting["body"],
+                               title=sighting["title"], company=sighting["company"],
+                               source=sighting["source"])
+                    for i, sighting in enumerate(SYNDICATED["sightings"])]
+        jobs, hows, _ = store(postings)
+        self.assertEqual(len(jobs), 1, f"merged via {hows}")
+        self.assertEqual(len(next(iter(jobs.values()))["sources"]), 3)
+
+    def test_a_body_too_thin_to_fingerprint_keeps_the_conservative_merge(self):
+        # With nothing to discriminate on, merging is the better guess, and
+        # that behaviour is deliberately unchanged.
+        thin_a = aggregator("https://adzuna.com/details/1", "Product Manager. Apply now.")
+        thin_b = aggregator("https://adzuna.com/details/2", "Product Manager. Apply today.")
+        self.assertIsNone(thin_a["descFingerprint"])
+        self.assertIsNone(thin_b["descFingerprint"])
+        jobs, hows, ids = store([thin_a, thin_b])
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(ids[0], ids[1])
+
+    def test_one_thin_and_one_thick_body_also_merges(self):
+        # The veto needs *both* fingerprints. One missing means no evidence of
+        # difference, so rule 3 still matches.
+        thick = aggregator("https://adzuna.com/details/1", SYNDICATED["sightings"][0]["body"])
+        thin = aggregator("https://adzuna.com/details/2", "Product Manager. Apply now.")
+        jobs, hows, _ = store([thick, thin])
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(hows[1], "company-title-location")
+
+
+class IdStabilityTests(unittest.TestCase):
+    """What the ids are allowed to depend on."""
+
+    def test_an_ordinary_id_does_not_move_when_a_posting_is_edited(self):
+        # The discriminator is only applied where it is needed. Folding a
+        # fingerprint into every fallback id would make a fixed typo change the
+        # record's identity.
+        first = aggregator("https://adzuna.com/details/1", SYNDICATED["sightings"][0]["body"])
+        edited = aggregator("https://adzuna.com/details/1",
+                            SYNDICATED["sightings"][0]["body"] + " We also offer free lunch.")
+        self.assertEqual(identity.job_id(first), identity.job_id(edited))
+
+    def test_the_discriminated_id_is_deterministic(self):
+        second = aggregator("https://adzuna.com/details/222", SYNDICATED["sibling"]["body"])
+        a = identity.job_id(second, discriminator=second["descFingerprint"])
+        b = identity.job_id(second, discriminator=second["descFingerprint"])
+        self.assertEqual(a, b)
+        self.assertEqual(len(a), 16)
+        self.assertNotEqual(a, identity.job_id(second))
+
+    def test_both_records_keep_their_ids_on_the_next_run(self):
+        # The hourly scan re-sees everything. If the second requisition got a
+        # new id each hour it would pile up a new record every time.
+        first = aggregator("https://adzuna.com/details/111", SYNDICATED["sightings"][0]["body"])
+        second = aggregator("https://adzuna.com/details/222", SYNDICATED["sibling"]["body"])
+        jobs, _, ids = store([first, second])
+
+        index = identity.Index(jobs, COMPANIES)
+        again = []
+        for incoming in (aggregator("https://adzuna.com/details/111",
+                                    SYNDICATED["sightings"][0]["body"]),
+                         aggregator("https://adzuna.com/details/222",
+                                    SYNDICATED["sibling"]["body"])):
+            found, how = identity.resolve(index, incoming)
+            again.append(found)
+            self.assertIsNotNone(how, "a second sighting must match, not create")
+        self.assertEqual(sorted(again), sorted(ids))
+        self.assertEqual(len(jobs), 2)
+
+    def test_arrival_order_does_not_change_how_many_records_exist(self):
+        first = aggregator("https://adzuna.com/details/111", SYNDICATED["sightings"][0]["body"])
+        second = aggregator("https://adzuna.com/details/222", SYNDICATED["sibling"]["body"])
+        forward, _, _ = store([first, second])
+        backward, _, _ = store([second, first])
+        self.assertEqual(len(forward), len(backward), 2)
