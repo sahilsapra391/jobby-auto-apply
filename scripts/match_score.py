@@ -158,11 +158,17 @@ def score_experience(job, config):
     ceiling = config.get("maxExperienceYears")
     if ceiling is None:
         return 1.0, "open to all experience levels", False
-    stated = (job.get("extracted") or {}).get("yearsMax")
+    extracted = job.get("extracted") or {}
+    # The floor is what a screen rejects on. Nobody is ever turned down for
+    # having too few years above a stated ceiling, so "5–8 years" is judged on
+    # the 5.
+    stated = extracted.get("yearsMin")
+    if stated is None:
+        stated = extracted.get("yearsMax")
     if not isinstance(stated, (int, float)):
         return NEUTRAL, "the posting does not state a requirement", True
     if stated <= ceiling:
-        return 1.0, f"asks for up to {stated:g} years", False
+        return 1.0, f"asks for {extracted.get('yearsText') or f'{stated:g} years'}", False
     over = stated - ceiling
     for limit, value in OVERSHOOT_BANDS:
         if over <= limit:

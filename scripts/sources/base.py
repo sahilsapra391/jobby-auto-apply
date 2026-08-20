@@ -43,6 +43,7 @@ from html import unescape
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import extract  # noqa: E402
 import identity  # noqa: E402
 import jobs_store  # noqa: E402
 import toolpath  # noqa: E402
@@ -431,6 +432,11 @@ def posting(source, source_class, tier, company, title, url, *, location=None,
         "lang": lang,
         "descriptionExcerpt": body[:EXCERPT_CHARS],
         "descFingerprint": identity.fingerprint(body),
+        # Extracted here, from the whole body, because the requirements section
+        # is almost always below the excerpt cap: only 4 of 195 stored excerpts
+        # in the supervised run carried a year figure at all. The full text is
+        # in hand exactly once, right now, and only the number is kept.
+        "extracted": {**record["extracted"], **extract.extract(body)},
         "tags": sorted({str(t).strip().lower() for t in (tags or []) if str(t).strip()}),
         "salary": salary,
     })

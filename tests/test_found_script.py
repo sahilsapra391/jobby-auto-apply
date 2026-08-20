@@ -56,6 +56,20 @@ class ScriptSyntaxTests(unittest.TestCase):
         self.assertNotIn("=>", found_lane.SCRIPT)
         self.assertNotIn("`", found_lane.SCRIPT)
 
+    def test_the_eye_is_drawn_not_an_emoji(self):
+        # The eye emoji renders as a photoreal eyeball on macOS, which is an
+        # odd thing to put on a card about a job.
+        self.assertNotIn("\\u{1F441}", found_lane.SCRIPT)
+        self.assertNotIn("\U0001F441", found_lane.SCRIPT)
+        self.assertIn("createElementNS", found_lane.SCRIPT)
+
+    def test_every_action_shares_one_button_shape(self):
+        # Watch, Apply, Pass, Posting and Details were five different controls.
+        self.assertNotIn("jb-small", found_lane.SCRIPT)
+        self.assertNotIn("jb-eye", found_lane.SCRIPT)
+        self.assertNotIn("jb-apply", found_lane.SCRIPT)
+        self.assertIn("'jb-btn'", found_lane.SCRIPT)
+
     def test_no_job_text_is_ever_concatenated_into_markup(self):
         # Titles and descriptions are written by strangers. innerHTML with any
         # of them is the whole attack, and textContent is the whole defence.
@@ -78,18 +92,36 @@ const CONTROLS = %s;
 
 // A DOM small enough to be obviously correct and big enough for the script.
 function makeNode(tag, id) {
-  return {
+  const node = {
     tagName: tag, id: id || '', className: '', textContent: '', title: '',
     style: {}, hidden: false, checked: true, value: '', options: [],
-    selectedOptions: [], children: [], disabled: false,
+    selectedOptions: [], children: [], disabled: false, href: '', target: '', rel: '',
     appendChild(c) { this.children.push(c); return c; },
     remove() {},
     setAttribute(k, v) { this['attr_' + k] = v; },
     getAttribute(k) { return this['attr_' + k] === undefined ? null : this['attr_' + k]; },
     addEventListener() {},
-    querySelector() { return null; },
+    // Depth-first over real children, enough for `button.querySelector('span')`.
+    querySelector(sel) {
+      const want = String(sel).replace(/^\./, '');
+      for (const c of this.children) {
+        if (c.tagName === sel || (c.className || '').split(' ').indexOf(want) !== -1) return c;
+        const deeper = c.querySelector ? c.querySelector(sel) : null;
+        if (deeper) return deeper;
+      }
+      return null;
+    },
     querySelectorAll() { return []; },
   };
+  node.classList = {
+    add(c) { if ((node.className || '').split(' ').indexOf(c) === -1)
+               node.className = (node.className ? node.className + ' ' : '') + c; },
+    remove(c) { node.className = (node.className || '').split(' ')
+               .filter(function (x) { return x !== c; }).join(' '); },
+    toggle(c, on) { on ? this.add(c) : this.remove(c); },
+    contains(c) { return (node.className || '').split(' ').indexOf(c) !== -1; },
+  };
+  return node;
 }
 const nodes = {};
 function node(id) {
@@ -152,6 +184,7 @@ nodes['jb-savestate'] = makeNode('span', 'jb-savestate');
 global.document = {
   getElementById(id) { return nodes[id] || null; },
   createElement(tag) { return makeNode(tag); },
+  createElementNS(ns, tag) { return makeNode(tag); },
   querySelector(sel) {
     if (sel === '.jb-banner') return banner;
     if (sel.indexOf('input[name="jb-date"]:checked') === 0) return dateNode;

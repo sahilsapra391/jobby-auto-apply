@@ -486,15 +486,15 @@ def build(state, generated):
 
     total_todo = sum(len(s.get("pendingFields", [])) for s in blocked)
 
+    # Ordered the way the work actually flows: what was found, what is being
+    # watched, what is running, what is stuck, what went out. Dropped sits apart
+    # at the end because nothing in it is waiting on anyone.
     tabs = [
-        # Found leads when it has anything, because it is the only lane whose
-        # contents are new since the user last looked. Needs you stays visible
-        # in the header line either way.
         ("found", "Found", found_total),
-        ("act", "Needs you", len(blocked)),
-        ("done", "Submitted", len(submitted)),
         ("watch", "Watching", len(watch)),
         ("flight", "In flight", len(inflight)),
+        ("act", "Needs you", len(blocked)),
+        ("done", "Submitted", len(submitted)),
         # Set apart from the four working lanes: nothing here is waiting on
         # anyone, it is a record of decisions already made.
         ("dropped", "Dropped", len(dropped)),

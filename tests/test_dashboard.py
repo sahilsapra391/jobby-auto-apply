@@ -356,6 +356,64 @@ class FoundLaneTests(unittest.TestCase):
         start = html.index('id="jb-found-data">') + len('id="jb-found-data">')
         return html[start:html.index("</script>", start)]
 
+    def test_the_tabs_run_in_the_order_the_work_flows(self):
+        html = self.render([self.job()])
+        order = re.findall(r'data-tab="(\w+)"', html)
+        seen, tabs = set(), []
+        for name in order:
+            if name not in seen:
+                seen.add(name); tabs.append(name)
+        self.assertEqual(tabs, ["found", "watch", "flight", "act", "done", "dropped"])
+
+    def test_the_lane_breaks_out_to_the_full_page_width(self):
+        # A grid of cards inside an 860px prose column is two per row.
+        html = self.render([self.job()])
+        self.assertIn('<div class="jb-wide">', html)
+        self.assertIn(".jb-wide {", html)
+
+    def test_the_advanced_filters_are_folded_away(self):
+        html = self.render([self.job()])
+        self.assertIn('<details class="jb-adv">', html)
+        self.assertIn("Advanced search", html)
+        # The two anyone actually changes stay out in the open.
+        basic = html[html.index('class="jb-row jb-basic"'):html.index('<details class="jb-adv">')]
+        self.assertIn('id="jb-kw"', basic)
+        self.assertIn('name="jb-date"', basic)
+        self.assertNotIn('id="jb-deg"', basic)
+
+    def test_the_card_carries_a_place_and_the_stated_experience(self):
+        rows = json.loads(self.payload(self.render([self.job(
+            extracted={"yearsMin": 3, "yearsMax": 5, "yearsText": "3–5 years",
+                       "degree": None, "employmentType": None, "roleCategory": None})])))
+        self.assertEqual(rows[0]["place"], "New York, United States")
+        self.assertEqual(rows[0]["yrt"], "3–5 years")
+        self.assertEqual(rows[0]["yr"], 3, "the filter compares against the floor")
+
+    def test_a_country_code_becomes_a_country_name(self):
+        self.assertEqual(found_lane.place({"location": {"country": "GB", "city": "London"}}),
+                         "London, United Kingdom")
+        self.assertEqual(found_lane.place({"location": {"country": "AE"}}), "UAE")
+
+    def test_anywhere_in_the_world_reads_as_worldwide(self):
+        self.assertEqual(found_lane.place({"location": {"raw": "Anywhere in the World"}}),
+                         "Worldwide")
+
+    def test_a_continent_is_not_used_as_a_city(self):
+        # An aggregator queried for the US returning a posting located "Europe"
+        # gave city "Europe", country "US", and the chip read "Europe, United
+        # States" — worse than saying nothing.
+        self.assertEqual(found_lane.place({"location": {"raw": "Europe", "city": "Europe",
+                                                        "country": "US"}}),
+                         "United States")
+        self.assertEqual(found_lane.place({"location": {"raw": "Italia", "city": "Italia",
+                                                        "country": "IT"}}), "Italy")
+
+    def test_a_city_with_no_country_stays_a_city(self):
+        # Inferring the country from a city is how a London, Ontario role gets
+        # filtered as a British one.
+        self.assertEqual(found_lane.place({"location": {"raw": "Sydney,", "city": "Sydney"}}),
+                         "Sydney")
+
     def test_found_is_the_first_tab_and_leads_when_it_has_anything(self):
         html = self.render([self.job()])
         self.assertLess(html.index('data-tab="found"'), html.index('data-tab="act"'))

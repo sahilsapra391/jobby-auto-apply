@@ -76,6 +76,7 @@ def compact(job):
             sightings.append({"s": source.get("source") or "", "u": link})
     extracted = job.get("extracted") or {}
     return {
+        "place": place(job),
         "id": job.get("id"),
         "co": job.get("company") or "",
         "ti": job.get("title") or "",
@@ -100,12 +101,80 @@ def compact(job):
         "sg": sightings,
         "tg": (job.get("tags") or [])[:MAX_TAGS],
         "ex": (job.get("descriptionExcerpt") or "")[:EMBED_EXCERPT_CHARS],
-        "yr": extracted.get("yearsMax"),
+        # The floor the posting demands: that is what a screen rejects on, and
+        # what "up to N years" in the filter bar has to compare against.
+        "yr": extracted.get("yearsMin") if extracted.get("yearsMin") is not None
+              else extracted.get("yearsMax"),
+        "yrt": extracted.get("yearsText"),
         "dg": extracted.get("degree"),
         "rc": extracted.get("roleCategory"),
         "et": extracted.get("employmentType"),
         "sal": job.get("salary"),
     }
+
+
+# Codes are for filtering; a card says the name. Only the countries the region
+# packs and the connectors can actually produce.
+COUNTRY_NAMES = {
+    "US": "United States", "GB": "United Kingdom", "IN": "India", "CA": "Canada",
+    "AU": "Australia", "NZ": "New Zealand", "IE": "Ireland", "DE": "Germany",
+    "FR": "France", "NL": "Netherlands", "ES": "Spain", "IT": "Italy",
+    "PT": "Portugal", "PL": "Poland", "AT": "Austria", "BE": "Belgium",
+    "CH": "Switzerland", "SE": "Sweden", "NO": "Norway", "DK": "Denmark",
+    "FI": "Finland", "IS": "Iceland", "CZ": "Czechia", "SK": "Slovakia",
+    "HU": "Hungary", "RO": "Romania", "BG": "Bulgaria", "GR": "Greece",
+    "HR": "Croatia", "SI": "Slovenia", "EE": "Estonia", "LV": "Latvia",
+    "LT": "Lithuania", "LU": "Luxembourg", "MT": "Malta", "CY": "Cyprus",
+    "AE": "UAE", "SA": "Saudi Arabia", "QA": "Qatar", "KW": "Kuwait",
+    "BH": "Bahrain", "OM": "Oman", "JO": "Jordan", "EG": "Egypt",
+    "IL": "Israel", "TR": "Turkey", "JP": "Japan", "KR": "South Korea",
+    "CN": "China", "HK": "Hong Kong", "TW": "Taiwan", "SG": "Singapore",
+    "MY": "Malaysia", "PH": "Philippines", "ID": "Indonesia", "TH": "Thailand",
+    "VN": "Vietnam", "BR": "Brazil", "MX": "Mexico", "AR": "Argentina",
+    "CL": "Chile", "CO": "Colombia", "ZA": "South Africa", "UA": "Ukraine",
+}
+
+WORLDWIDE = ("anywhere in the world", "worldwide", "anywhere", "global")
+
+# Strings that arrive in the city slot and are not cities. An aggregator
+# queried for the US that returns a posting located "Europe" yields city
+# "Europe", country "US", and the chip then reads "Europe, United States",
+# which is worse than saying nothing.
+NOT_A_CITY = {
+    "europe", "emea", "apac", "latam", "americas", "asia", "africa",
+    "north america", "south america", "middle east", "worldwide", "global",
+    "remote", "anywhere", "anywhere in the world", "eu", "usa", "us",
+    "united states", "uk", "united kingdom", "italia", "espana", "españa",
+    "deutschland", "polska", "nationwide", "various", "multiple locations",
+}
+
+
+# Acronyms that .title() would mangle into "Emea".
+REGION_LABELS = {"emea": "EMEA", "apac": "APAC", "latam": "LATAM", "eu": "EU",
+                 "us": "US", "uk": "UK", "usa": "USA"}
+
+
+def place(job):
+    """One line of the best real location information the posting gave.
+
+    Never a guess. A city with no country stays a city, because inferring the
+    country from a city name is how a London, Ontario role gets filtered as a
+    British one.
+    """
+    location = job.get("location") or {}
+    country = (location.get("country") or "").upper()
+    city = (location.get("city") or "").strip().rstrip(",")
+    raw = (location.get("raw") or "").strip()
+    if country:
+        name = COUNTRY_NAMES.get(country, country)
+        usable = (city and city.lower() not in NOT_A_CITY
+                  and city.lower() != name.lower())
+        return f"{city}, {name}" if usable else name
+    if raw and raw.lower() in WORLDWIDE:
+        return "Worldwide"
+    if city and city.lower() in NOT_A_CITY:
+        return REGION_LABELS.get(city.lower(), city.title())
+    return city or raw or ""
 
 
 def sort_key(job):
@@ -198,7 +267,7 @@ def banner(config, meta):
                 '<span>Set the filters below and press Save search. Until then the '
                 'hourly scan stays off and nothing runs on its own.</span>'
                 '<span class="jb-savestate" id="jb-savestate"></span></div>'
-                '<button class="btn scan" id="jb-scan">Scan now</button></div>')
+                '<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
     nxt = (meta or {}).get("nextTier1ScanAt")
     when = f"next run {esc(nxt[11:16])} UTC" if nxt else "next run shortly"
     sweeps = config.get("tier2SweepsPerDay") or 6
@@ -208,7 +277,7 @@ def banner(config, meta):
             f'is live.</strong> <span>Every {esc(every)} minutes, plus {esc(sweeps)} '
             f'sweeps a day &middot; {esc(when)}</span>'
             f'<span class="jb-savestate" id="jb-savestate"></span></div>'
-            f'<button class="btn scan" id="jb-scan">Scan now</button></div>')
+            f'<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
 
 
 def filter_bar(jobs, config):
@@ -235,63 +304,66 @@ def filter_bar(jobs, config):
 
     return f"""
     <div class="jb-filters">
-      <div class="jb-row">
+      <div class="jb-row jb-basic">
         <input type="search" id="jb-kw" placeholder="Add a keyword and press Enter&hellip;"
                aria-label="Add a keyword">
-        <div class="jb-pills" id="jb-pills"></div>
-      </div>
-      <div class="jb-row">
-        <input type="search" id="jb-ex" placeholder="Hide jobs mentioning&hellip;"
-               aria-label="Hide jobs mentioning">
-        <select id="jb-scope" aria-label="Where to search">
-          <option value="title+description">Title and description</option>
-          <option value="title">Title only</option>
-        </select>
+        <div class="jb-radios">{dates}</div>
         <select id="jb-sort" aria-label="Sort">
           <option value="score">Match %</option>
           <option value="new">Newest</option>
         </select>
-      </div>
-      <div class="jb-row jb-radios">{dates}</div>
-      <div class="jb-row">
-        <select id="jb-loc" multiple size="4" aria-label="Locations">
-          {packs}{country_options}
-        </select>
-        <div class="jb-stack">
-          <label class="jb-check"><input type="checkbox" id="jb-remote" checked>
-            <span>include remote for this selection</span></label>
-          <div class="jb-checks">{workplaces}</div>
-        </div>
-      </div>
-      <div class="jb-row">
-        <select id="jb-cmode" aria-label="Companies">
-          <option value="all">All companies</option>
-          <option value="only">Only these companies</option>
-          <option value="hide">Hide these companies</option>
-        </select>
-        <input type="search" id="jb-companies" placeholder="Company names, comma separated"
-               aria-label="Company names">
-      </div>
-      <div class="jb-row">
-        <label class="jb-lab">Max experience
-          <select id="jb-exp">{_options(EXPERIENCE_OPTIONS)}</select></label>
-        <label class="jb-lab">Degree
-          <select id="jb-deg">{_options(DEGREE_OPTIONS)}</select></label>
-        <label class="jb-lab">Role
-          <select id="jb-role">{_options(ROLE_CATEGORIES)}</select></label>
-        <label class="jb-lab">Employment
-          <select id="jb-emp">{_options(EMPLOYMENT_TYPES)}</select></label>
-        <label class="jb-lab">Job type
-          <select id="jb-jt">{_options(JOB_TYPES)}</select></label>
-      </div>
-      <div class="jb-row jb-checks">{unknowns}
-        <span class="jb-note">these four are not extracted yet, so they filter the
-          unknown bucket honestly</span>
-      </div>
-      <div class="jb-row jb-actions">
-        <button class="btn" id="jb-save">Save search</button>
-        <button class="btn ghost" id="jb-clear">Clear</button>
         <span class="jb-count" id="jb-count"></span>
+      </div>
+      <div class="jb-pills" id="jb-pills"></div>
+      <details class="jb-adv">
+        <summary>Advanced search</summary>
+        <div class="jb-advbody">
+          <div class="jb-row">
+            <input type="search" id="jb-ex" placeholder="Hide jobs mentioning&hellip;"
+                   aria-label="Hide jobs mentioning">
+            <select id="jb-scope" aria-label="Where to search">
+              <option value="title+description">Title and description</option>
+              <option value="title">Title only</option>
+            </select>
+            <select id="jb-cmode" aria-label="Companies">
+              <option value="all">All companies</option>
+              <option value="only">Only these companies</option>
+              <option value="hide">Hide these companies</option>
+            </select>
+            <input type="search" id="jb-companies" placeholder="Company names, comma separated"
+                   aria-label="Company names">
+          </div>
+          <div class="jb-row">
+            <select id="jb-loc" multiple size="4" aria-label="Locations">
+              {packs}{country_options}
+            </select>
+            <div class="jb-stack">
+              <label class="jb-check"><input type="checkbox" id="jb-remote" checked>
+                <span>include remote for this selection</span></label>
+              <div class="jb-checks">{workplaces}</div>
+            </div>
+          </div>
+          <div class="jb-row">
+            <label class="jb-lab">Max experience
+              <select id="jb-exp">{_options(EXPERIENCE_OPTIONS)}</select></label>
+            <label class="jb-lab">Degree
+              <select id="jb-deg">{_options(DEGREE_OPTIONS)}</select></label>
+            <label class="jb-lab">Role
+              <select id="jb-role">{_options(ROLE_CATEGORIES)}</select></label>
+            <label class="jb-lab">Employment
+              <select id="jb-emp">{_options(EMPLOYMENT_TYPES)}</select></label>
+            <label class="jb-lab">Job type
+              <select id="jb-jt">{_options(JOB_TYPES)}</select></label>
+          </div>
+          <div class="jb-row jb-checks">{unknowns}
+            <span class="jb-note">degree, role and job type are not extracted yet,
+              so they filter the unknown bucket honestly</span>
+          </div>
+        </div>
+      </details>
+      <div class="jb-row jb-actions">
+        <button class="jb-btn primary" id="jb-save">Save search</button>
+        <button class="jb-btn" id="jb-clear">Clear</button>
       </div>
     </div>"""
 
@@ -299,23 +371,25 @@ def filter_bar(jobs, config):
 def panel(jobs, total, config, meta):
     """The whole Found tab."""
     if not total:
-        return (f'{banner(config, meta)}{last_ingest_line(meta)}'
+        return (f'<div class="jb-wide">{banner(config, meta)}{last_ingest_line(meta)}'
                 '<p class="empty"><strong>Nothing found yet.</strong>'
                 '<span>Save a search and the hourly scan will start filling this. '
                 'Scan now runs one immediately.</span></p>'
-                f'{add_link_card()}')
+                f'{add_link_card()}</div>')
     shown = len(jobs)
     footer = ""
     if total > shown:
         footer = (f'<p class="jb-footer">Showing {shown} of {total} &mdash; refine the '
                   f'filters or save a narrower search. The rest stay on disk.</p>')
-    return f"""{banner(config, meta)}
+    return f"""<div class="jb-wide">
+    {banner(config, meta)}
     {last_ingest_line(meta)}
     {filter_bar(jobs, config)}
     <div class="jb-grid" id="jb-grid"></div>
     <p class="jb-footer" id="jb-none" hidden>Nothing matches these filters.</p>
     {footer}
-    {add_link_card()}"""
+    {add_link_card()}
+    </div>"""
 
 
 def add_link_card():
@@ -325,7 +399,7 @@ def add_link_card():
       <p>Paste a posting and the next sweep starts there.</p>
       <div class="jb-row">
         <input type="url" id="jb-link" placeholder="https://&hellip;" aria-label="Posting link">
-        <button class="btn ghost" id="jb-addlink">Add</button>
+        <button class="jb-btn" id="jb-addlink">Add</button>
         <span class="jb-linkmsg" id="jb-linkmsg"></span>
       </div>
     </div>"""
@@ -333,99 +407,137 @@ def add_link_card():
 
 CSS = """
   /* --- Found lane ------------------------------------------------------- */
+  /* The lane breaks out of the prose column the way the table lanes do. A
+     grid of cards in an 860px column is two per row and a lot of scrolling. */
+  .jb-wide { width:min(1800px, calc(100vw - 2.5rem));
+    margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
+    margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }
+
   .jb-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem;
-    flex-wrap:wrap; background:var(--card); border-radius:16px; padding:.85rem 1.15rem;
-    box-shadow:var(--sh); margin-bottom:.85rem; font-size:.92rem; }
+    flex-wrap:wrap; background:var(--card); border-radius:14px; padding:.7rem 1.1rem;
+    box-shadow:var(--sh); margin-bottom:.6rem; font-size:.9rem; }
   .jb-banner strong { font-weight:620; }
   .jb-banner span { color:var(--ink-2); }
   .jb-savestate { display:block; font-size:.82rem; margin-top:.15rem; }
   .jb-savestate.waiting { color:var(--ink-3); }
   .jb-savestate.landed { color:var(--green); }
   .jb-savestate.lost { color:var(--orange); }
-  .jb-ingest { margin:0 0 1.1rem; font-size:.84rem; color:var(--ink-2);
-    line-height:1.5; }
+  .jb-ingest { margin:0 0 .75rem; font-size:.82rem; color:var(--ink-2); line-height:1.5; }
   .jb-ingest.none { color:var(--ink-3); }
   .jb-skipped { color:var(--orange); }
   .jb-errored { color:var(--red-ink); }
-  .jb-filters { background:var(--card); border-radius:16px; padding:1rem 1.15rem;
-    box-shadow:var(--sh); margin-bottom:1.25rem; display:flex; flex-direction:column;
-    gap:.7rem; }
-  .jb-row { display:flex; gap:.55rem; flex-wrap:wrap; align-items:center; }
-  .jb-row input[type=search], .jb-row input[type=url] { flex:1 1 200px; min-width:150px;
-    font:inherit; font-size:.9rem; padding:.45rem .85rem; border-radius:100px;
+
+  /* Filter bar: one line of the two things anyone actually changes, and the
+     rest folded away. It was a wall. */
+  .jb-filters { background:var(--card); border-radius:14px; padding:.7rem .9rem;
+    box-shadow:var(--sh); margin-bottom:1rem; display:flex; flex-direction:column; gap:.5rem; }
+  .jb-row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .jb-basic { gap:.75rem; }
+  .jb-row input[type=search], .jb-row input[type=url] { flex:1 1 220px; min-width:170px;
+    font:inherit; font-size:.9rem; padding:.42rem .85rem; border-radius:100px;
     border:1px solid var(--hair); background:var(--bg); color:var(--ink); }
-  .jb-row select { font:inherit; font-size:.86rem; padding:.4rem .65rem; border-radius:10px;
+  .jb-row select { font:inherit; font-size:.85rem; padding:.38rem .6rem; border-radius:9px;
     border:1px solid var(--hair); background:var(--bg); color:var(--ink); }
-  .jb-row select[multiple] { border-radius:10px; min-width:190px; padding:.3rem; }
+  .jb-row select[multiple] { border-radius:9px; min-width:200px; padding:.3rem; }
   .jb-stack { display:flex; flex-direction:column; gap:.35rem; }
   .jb-checks { display:flex; gap:.7rem; flex-wrap:wrap; }
-  .jb-radios { gap:.9rem; }
-  .jb-radio, .jb-check { display:inline-flex; align-items:center; gap:.3rem;
-    font-size:.83rem; color:var(--ink-2); cursor:pointer; }
-  .jb-lab { display:inline-flex; flex-direction:column; gap:.2rem; font-size:.74rem;
+  .jb-radios { display:flex; gap:.1rem; background:var(--sunk); border-radius:100px; padding:2px; }
+  .jb-radio { display:inline-flex; align-items:center; cursor:pointer; }
+  .jb-radio input { position:absolute; opacity:0; width:0; height:0; }
+  .jb-radio span { display:inline-block; font-size:.8rem; color:var(--ink-2);
+    padding:.28rem .65rem; border-radius:100px; white-space:nowrap; }
+  .jb-radio input:checked + span { background:var(--card); color:var(--ink); font-weight:560;
+    box-shadow:0 1px 2px rgba(0,0,0,.12); }
+  .jb-radio input:focus-visible + span { outline:2px solid var(--blue); outline-offset:1px; }
+  .jb-check { display:inline-flex; align-items:center; gap:.3rem; font-size:.82rem;
+    color:var(--ink-2); cursor:pointer; }
+  .jb-lab { display:inline-flex; flex-direction:column; gap:.15rem; font-size:.72rem;
     color:var(--ink-3); }
   .jb-note { font-size:.75rem; color:var(--ink-3); }
   .jb-count { margin-left:auto; font-size:.82rem; color:var(--ink-3);
-    font-variant-numeric:tabular-nums; }
+    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .jb-adv > summary { cursor:pointer; font-size:.82rem; color:var(--blue);
+    list-style:none; padding:.15rem 0; width:max-content; }
+  .jb-adv > summary::-webkit-details-marker { display:none; }
+  .jb-adv > summary::before { content:"\25B8  "; }
+  .jb-adv[open] > summary::before { content:"\25BE  "; }
+  .jb-adv > summary:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+  .jb-advbody { display:flex; flex-direction:column; gap:.5rem; padding-top:.5rem;
+    margin-top:.35rem; border-top:1px solid var(--hair); }
   .jb-pills { display:flex; gap:.35rem; flex-wrap:wrap; }
+  .jb-pills:empty { display:none; }
   .jb-pill { display:inline-flex; align-items:center; gap:.3rem; font-size:.78rem;
-    background:var(--sunk); color:var(--ink); border-radius:100px; padding:.2rem .5rem .2rem .7rem; }
+    background:var(--sunk); color:var(--ink); border-radius:100px;
+    padding:.2rem .5rem .2rem .7rem; }
   .jb-pill button { border:none; background:none; color:var(--ink-3); cursor:pointer;
     font:inherit; line-height:1; padding:0 .1rem; }
   .jb-pill button:hover { color:var(--red-ink); }
-  .jb-grid { display:grid; gap:.9rem; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
-  .jb-card { background:var(--card); border-radius:18px; padding:1.1rem 1.2rem 1rem;
-    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.7rem; }
-  .jb-head { display:flex; gap:.85rem; align-items:flex-start; }
-  .jb-ring { width:48px; height:48px; border-radius:50%; flex:none; display:grid;
+
+  /* One button shape everywhere on this lane. */
+  .jb-btn { font:inherit; font-size:.83rem; font-weight:520; line-height:1;
+    padding:.42rem .85rem; border-radius:100px; cursor:pointer;
+    border:1px solid var(--hair); background:var(--bg); color:var(--ink);
+    display:inline-flex; align-items:center; gap:.32rem; text-decoration:none;
+    transition:border-color .18s, color .18s, background .18s; }
+  .jb-btn:hover { border-color:var(--ink-3); }
+  .jb-btn:active { transform:scale(.97); }
+  .jb-btn:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .jb-btn[disabled] { opacity:.5; cursor:default; }
+  .jb-btn.primary { background:var(--btn-g); border-color:var(--btn-g);
+    color:var(--btn-g-ink); }
+  .jb-btn.on { background:var(--t-g); border-color:var(--green); color:var(--green); }
+  .jb-btn.danger:hover { border-color:var(--red-ink); color:var(--red-ink); }
+  .jb-btn svg { width:.95rem; height:.95rem; display:block; }
+
+  .jb-grid { display:grid; gap:.75rem;
+    grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
+  .jb-card { background:var(--card); border-radius:16px; padding:1rem 1.1rem .85rem;
+    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.6rem; }
+  .jb-head { display:flex; gap:.8rem; align-items:flex-start; }
+  .jb-ring { width:44px; height:44px; border-radius:50%; flex:none; display:grid;
     place-items:center; background:var(--sunk); }
-  .jb-ring i { width:38px; height:38px; border-radius:50%; background:var(--card);
-    display:grid; place-items:center; font-style:normal; font-size:.8rem; font-weight:640;
+  .jb-ring i { width:35px; height:35px; border-radius:50%; background:var(--card);
+    display:grid; place-items:center; font-style:normal; font-size:.76rem; font-weight:640;
     font-variant-numeric:tabular-nums; color:var(--ink); }
-  .jb-co { font-size:.8rem; color:var(--ink-2); margin:0; }
-  .jb-ti { font-size:1rem; font-weight:610; letter-spacing:-.02em; margin:.1rem 0 0;
-    line-height:1.28; }
-  .jb-chips { display:flex; gap:.3rem; flex-wrap:wrap; }
-  .jb-chip { font-size:.71rem; font-weight:560; padding:.16rem .5rem; border-radius:100px;
+  .jb-co { font-size:.78rem; color:var(--ink-2); margin:0; }
+  .jb-ti { font-size:.97rem; font-weight:610; letter-spacing:-.02em; margin:.1rem 0 0;
+    line-height:1.3; }
+  .jb-chips { display:flex; gap:.28rem; flex-wrap:wrap; }
+  .jb-chip { font-size:.71rem; font-weight:540; padding:.15rem .48rem; border-radius:100px;
     background:var(--sunk); color:var(--ink-2); white-space:nowrap; }
-  .jb-chip.unknown { background:var(--t-o); color:var(--orange); }
+  .jb-chip.unknown { background:transparent; color:var(--ink-3);
+    border:1px dashed var(--hair); }
   .jb-chip.gate { background:var(--t-red); color:var(--red-ink); }
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
-  .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
-    padding-top:.75rem; border-top:1px solid var(--hair); }
-  .jb-eye { border:1px solid var(--hair); background:var(--bg); color:var(--ink);
-    border-radius:100px; cursor:pointer; font:inherit; font-size:.86rem;
-    padding:.35rem .75rem; }
-  .jb-eye:hover { border-color:var(--green); color:var(--green); }
-  .jb-eye[data-on] { background:var(--t-g); color:var(--green); border-color:var(--green); }
-  .jb-small { font:inherit; font-size:.82rem; padding:.35rem .8rem; border-radius:100px;
-    border:none; cursor:pointer; }
-  .jb-apply { background:var(--btn-g); color:var(--btn-g-ink); }
-  .jb-pass { background:var(--bg); color:var(--ink-2); border:1px solid var(--hair); }
-  .jb-pass:hover { color:var(--red-ink); border-color:var(--red-ink); }
-  .jb-det { background:none; border:none; color:var(--blue); cursor:pointer; font:inherit;
-    font-size:.82rem; margin-left:auto; }
-  .jb-panel { border-top:1px solid var(--hair); padding-top:.7rem; font-size:.84rem;
-    color:var(--ink-2); display:flex; flex-direction:column; gap:.5rem; }
-  .jb-bars { display:flex; flex-direction:column; gap:.25rem; }
-  .jb-bar { display:grid; grid-template-columns:5.5rem 1fr 2.4rem; align-items:center;
-    gap:.5rem; font-size:.76rem; }
+  .jb-chip.years { background:var(--t-o); color:var(--orange); }
+  .jb-acts { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-top:auto;
+    padding-top:.65rem; border-top:1px solid var(--hair); }
+  .jb-acts .jb-det { margin-left:auto; }
+  .jb-panel { border-top:1px solid var(--hair); padding-top:.6rem; font-size:.83rem;
+    color:var(--ink-2); display:flex; flex-direction:column; gap:.45rem; }
+  .jb-bars { display:flex; flex-direction:column; gap:.22rem; }
+  .jb-bar { display:grid; grid-template-columns:5.2rem 1fr 2.4rem; align-items:center;
+    gap:.5rem; font-size:.75rem; }
   .jb-bar u { text-decoration:none; color:var(--ink-3); }
   .jb-bar span { height:5px; border-radius:100px; background:var(--sunk); display:block; }
   .jb-bar span i { display:block; height:100%; border-radius:100px; background:var(--blue); }
   .jb-bar em { font-style:normal; text-align:right; color:var(--ink-3);
     font-variant-numeric:tabular-nums; }
-  .jb-sight { display:flex; gap:.5rem; flex-wrap:wrap; }
+  .jb-sight { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
   .jb-excerpt { margin:0; line-height:1.45; }
-  .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.2rem 0 0; }
-  .jb-addlink { background:var(--card); border-radius:16px; padding:1rem 1.15rem;
-    box-shadow:var(--sh); margin-top:1.4rem; }
-  .jb-addlink h4 { margin:0 0 .2rem; font-size:.95rem; font-weight:620; }
-  .jb-addlink p { margin:0 0 .6rem; font-size:.85rem; color:var(--ink-2); }
+  .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0; }
+  .jb-addlink { background:var(--card); border-radius:14px; padding:.85rem 1.1rem;
+    box-shadow:var(--sh); margin-top:1.2rem; }
+  .jb-addlink h4 { margin:0 0 .15rem; font-size:.92rem; font-weight:620; }
+  .jb-addlink p { margin:0 0 .5rem; font-size:.84rem; color:var(--ink-2); }
   .jb-linkmsg { font-size:.82rem; color:var(--ink-2); }
   .jb-linkmsg.err { color:var(--orange); }
   .jb-linkmsg.ok { color:var(--green); }
-  @media (max-width:600px) { .jb-grid { grid-template-columns:1fr; } }
+  @media (max-width:900px) {
+    .jb-wide { width:auto; margin-left:0; margin-right:0; }
+    .jb-grid { grid-template-columns:1fr; }
+    .jb-count { margin-left:0; }
+  }
 """
 
 
@@ -534,6 +646,31 @@ SCRIPT = r"""
     return panel;
   }
 
+  // An inline SVG eye, not the emoji. The emoji renders as a photoreal
+  // eyeball on macOS and it is unsettling on a card about a job.
+  function eyeIcon() {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    var lid = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    lid.setAttribute('d', 'M1.8 12S5.4 5.2 12 5.2 22.2 12 22.2 12 18.6 18.8 12 18.8 1.8 12 1.8 12Z');
+    var iris = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    iris.setAttribute('cx', '12'); iris.setAttribute('cy', '12'); iris.setAttribute('r', '3.1');
+    svg.appendChild(lid); svg.appendChild(iris);
+    return svg;
+  }
+  function button(cls, label, icon) {
+    var b = el('button', 'jb-btn' + (cls ? ' ' + cls : ''));
+    if (icon) b.appendChild(icon);
+    b.appendChild(el('span', null, label));
+    return b;
+  }
+
   function card(job) {
     var article = el('article', 'jb-card');
     article.setAttribute('data-id', job.id);
@@ -550,52 +687,53 @@ SCRIPT = r"""
     head.appendChild(titles);
     article.appendChild(head);
 
+    // Chips carry what the posting actually said, and say plainly when it said
+    // nothing. A row of "unknown" is honest; a row of invented detail is not.
     var chips = el('div', 'jb-chips');
-    if (job.loc) chips.appendChild(chip(job.loc));
+    if (job.place) chips.appendChild(chip(job.place));
     if (job.wp) chips.appendChild(chip(job.wp));
-    else chips.appendChild(chip('workplace unknown', 'unknown'));
+    if (job.yrt) chips.appendChild(chip(job.yrt, 'years'));
+    else chips.appendChild(chip('experience not stated', 'unknown'));
     var when = ago(job);
     if (when) chips.appendChild(chip(when));
     else chips.appendChild(chip('no date', 'unknown'));
-    if (job.bd > 1) chips.appendChild(chip('seen on ' + job.bd + ' boards', 'boards'));
-    (job.un || []).forEach(function (name) {
-      if (name !== 'workplace' && name !== 'postedAt') chip(name, 'unknown');
-    });
-    (job.un || []).forEach(function (name) {
-      if (name === 'experience') chips.appendChild(chip('experience unknown', 'unknown'));
-    });
+    if (job.bd > 1) chips.appendChild(chip('on ' + job.bd + ' boards', 'boards'));
     (job.ga || []).forEach(function (label) { chips.appendChild(chip(label, 'gate')); });
-    (job.tg || []).forEach(function (tag) { chips.appendChild(chip(tag)); });
+    (job.tg || []).slice(0, 3).forEach(function (tag) { chips.appendChild(chip(tag)); });
     article.appendChild(chips);
 
     var acts = el('div', 'jb-acts');
-    var eye = el('button', 'jb-eye', '\u{1F441} Watch');
+    var eye = button('', 'Watch', eyeIcon());
     eye.title = 'Move this to Watching';
     eye.addEventListener('click', function () { doWatch(job, article, eye); });
     acts.appendChild(eye);
 
-    var apply = el('button', 'jb-small jb-apply', 'Apply');
+    var apply = button('primary', 'Apply');
     apply.addEventListener('click', function () { doApply(job, article, apply); });
     acts.appendChild(apply);
 
-    var pass = el('button', 'jb-small jb-pass', 'Pass');
+    var pass = button('danger', 'Pass');
     pass.addEventListener('click', function () { doPass(job, article); });
     acts.appendChild(pass);
 
     if (job.url) {
-      var open = document.createElement('a');
-      open.className = 'go'; open.href = job.url; open.target = '_blank';
-      open.rel = 'noopener'; open.textContent = 'Posting \u2197';
+      var open = el('a', 'jb-btn');
+      open.href = job.url; open.target = '_blank'; open.rel = 'noopener';
+      open.appendChild(el('span', null, 'Posting'));
       acts.appendChild(open);
     }
 
-    var details = el('button', 'jb-det', 'Details');
+    var details = button('jb-det', 'Details');
     var panel = null;
     details.addEventListener('click', function () {
-      if (panel) { panel.remove(); panel = null; details.textContent = 'Details'; return; }
+      if (panel) {
+        panel.remove(); panel = null;
+        details.querySelector('span').textContent = 'Details';
+        return;
+      }
       panel = detailPanel(job);
       article.appendChild(panel);
-      details.textContent = 'Hide';
+      details.querySelector('span').textContent = 'Hide';
     });
     acts.appendChild(details);
     article.appendChild(acts);
@@ -611,8 +749,8 @@ SCRIPT = r"""
     }
     render();
   }
-  function doWatch(job, article, button) {
-    button.setAttribute('data-on', '1');
+  function doWatch(job, article, btn) {
+    btn.classList.add('on');
     remember(WATCH_KEY, job.id);
     hidden[job.id] = true;
     post('/api/watch', { applicationId: job.id }).catch(function () {});
@@ -629,9 +767,10 @@ SCRIPT = r"""
     post('/api/pass', { applicationId: job.id }).catch(function () {});
     leave(article);
   }
-  function doApply(job, article, button) {
-    button.disabled = true;
-    button.textContent = 'Queueing\u2026';
+  function doApply(job, article, btn) {
+    btn.disabled = true;
+    var label = btn.querySelector('span');
+    if (label) label.textContent = 'Queueing\u2026';
     remember(WATCH_KEY, job.id);
     hidden[job.id] = true;
     post('/api/watch', { applicationId: job.id })
