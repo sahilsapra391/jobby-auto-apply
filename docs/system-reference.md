@@ -689,15 +689,38 @@ remembers to run is how it drifts.
   currently records.
 - **Outcome tracking is manual.** `response` / `interview` / `offer` / `rejected`
   events exist in the schema but nothing ingests them from email.
-- **No Tier-1b API keys are installed.** Adzuna, Jooble, Careerjet, Reed and
-  USAJobs all report *skipped (no key)*, so Phase 1's international reach comes
-  entirely from the 140 fetchable company boards. Roughly twenty minutes of
-  registration closes this, and it is the single highest-value thing outstanding.
-- **Five connectors have never had a live response.** The same five. They are
-  written to each published contract and their fixtures are labelled as
-  contract-derived rather than recorded; the first run with a key is what
-  confirms the shapes.
-- **Four Found filters have nothing to filter on.** Required experience, degree,
+- **~~No Tier-1b API keys are installed.~~ Closed.** All six are in
+  `~/.job-application/config.env` and all five keyed connectors have been
+  verified against live responses. Adzuna, Jooble, Careerjet, Reed and USAJobs
+  all return real postings.
+- **Aggregators fail in bulk when they fail at all.** The first automatic cycle
+  took six `HTTP 503`s from Adzuna across two countries in one run. Nothing is
+  wrong on this side — the polite-fetch backoff does its job — but it costs wall
+  clock: that run took 24.5 minutes against the 16.1-minute ceiling, 1.92s per
+  request against 1.17s. A third-party bad hour is the largest single source of
+  variance in a sweep's duration.
+- **The sweep ceiling is 16.1 minutes, and it is throttle-bound.** A cold run —
+  nothing conditional-cached — is 965 seconds over 752 requests. That is 1.17
+  seconds per request against a 1-second-per-host floor, so the run is
+  essentially sleeping. Requests per host, inferred from each channel's own
+  reason line, come to 749 against the 752 the fetcher counted, and the binding
+  chain is Greenhouse's 222 boards.
+
+  Parallelism across hosts, with the 1-second floor preserved *within* each
+  host, takes the wall clock to roughly 222 seconds — Greenhouse's own chain,
+  which then becomes the constraint. That is 4.3x for a change that removes only
+  the waiting between unrelated hosts and relaxes no politeness at all.
+  Splitting the sweep across the hour is the more complex lever and buys less:
+  it does not reduce total work, only hides it, and it makes "what did the last
+  scan find" a question with no single answer.
+
+  Phase 3 needs this, because agent sweeps add wall clock on top. Phase 1 does
+  not: at six sweeps a day the scan occupies 16 minutes of every 240, and it
+  takes the scan lock rather than an apply slot, so it never contends with an
+  application. Confirmed live — five queued applications waited out a 24.5-minute
+  scan and all five spawned within 8 seconds of the lock releasing.
+
+- **Three Found filters have nothing to filter on.** Degree,
   role category and employment type are not extracted until Phase 2, so those
   controls filter the `unknown` bucket and the filter bar says so.
 - **Twenty registry companies have no derivable ATS.** They carry a careers URL

@@ -391,6 +391,48 @@ The implementing session does not sign this off, and does not merge.
 **Independent review:** APPROVE WITH CONDITIONS — 1 Major, 3 Minor, 0 Blocking.
 All four closed above, each with the test that pins it.
 
-**Sahil:** ______________________  date: ____________
+**Merged:** 2026-08-20, commit `a5565ab`, on Sahil's call. The reviewer's note:
+the core went through the gate twice and the delta since was UI and location
+parsing, a lower-risk surface than the identity, ingest and scoring work.
+Anything a further pass finds is a follow-up, not a blocker.
 
 Merging to `main` deploys.
+
+## What landing it actually did
+
+The merge alone did not arm anything, and that is worth writing down because it
+surprised everyone including the reviewer. The launchd agent runs
+`watch.py --interval 3` as **one long-lived process**. Python does not reload a
+module already in memory, so merging changed the file on disk and the running
+watcher — up since 12:09, three and a half hours before the merge — never saw
+it. The scheduler and the Found lane's decision-draining both live in-process,
+so both stayed dark. Publishing was unaffected, because that shells out.
+
+The arming event is the daemon restart, not the merge.
+
+Restarted 19:57:26 with nothing in flight. What followed, from the daemon's own
+log rather than from anything anyone typed:
+
+    20:00:01  tier1ScanStarted  pid 91984, nextAt 2026-08-20T23:56:41Z
+    20:01:03  board published, three apply requests queued behind the scan lock
+    20:17:14  board published again, mid-scan
+    20:24:30  scan lock released after 24m29s
+    20:24:41  five apply runners spawned, within 8s of the lock freeing
+
+**The first automatic cycle:** 19,589 found, 121 kept, 11,856 merged, 7,610
+filtered, 0 pruned, 14,292 stored, 767 requests, 1,469.7s, 8 errors. Merge
+reasons were 6,001 canonical-url, 4,520 company-title-location and 1,335
+fingerprint.
+
+Six of the eight errors were `HTTP 503` from Adzuna across two countries, which
+is a third-party bad hour rather than anything on this side — and it is also why
+the run took 24.5 minutes against the 16.1-minute ceiling. 1.92 seconds per
+request against 1.17 in the manual runs: the retry backoff dominating, which is
+what a throttle-bound sweep looks like when a host misbehaves. The other two are
+the Careerjet identity refusals of question 14, the same two ids as every run
+before.
+
+The interaction worth remembering: a scan holds the lock for its whole duration
+and applies wait behind it. Five queued applications sat through 24 minutes and
+then all five started at once. That is the design working, not a fault, but at
+six sweeps a day it is a real window.
