@@ -363,7 +363,13 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # body enrichment happens outside them, and under-reporting our own traffic
     # is exactly the number nobody should be able to fool themselves with.
     report["requests"] = fetcher.requests - requests_before
-    jobs, dropped = jobs_store.prune(jobs, at=now)
+    # The cap is the user's call. null keeps everything, and the staleness
+    # window follows the date filter: a posting the gate would refuse to bring
+    # in is a posting not worth keeping either.
+    max_age = search_config.posted_within_days(config) or jobs_store.NEW_MAX_AGE_DAYS
+    jobs, dropped = jobs_store.prune(jobs, cap=config.get("storedCap"),
+                                     max_age_days=max(max_age, jobs_store.NEW_MAX_AGE_DAYS),
+                                     at=now)
     report["pruned"] = len(dropped)
     report["storedTotal"] = len(jobs)
     report["bodiesFetched"] = bodies_fetched

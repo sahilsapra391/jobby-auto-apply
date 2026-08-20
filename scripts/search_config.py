@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import jobs_store  # noqa: E402
 import store  # noqa: E402
 
 # Country groups the board offers as one pill, so a user picking "Europe" does
@@ -38,7 +39,8 @@ REGION_PACKS = {
     "SEA": ["SG", "MY", "PH", "ID", "TH", "VN"],
 }
 
-POSTED_WITHIN = {"6h": 0.25, "24h": 1, "7d": 7, "14d": 14, "30d": 30, "all": None}
+POSTED_WITHIN = {"6h": 0.25, "24h": 1, "7d": 7, "14d": 14, "30d": 30,
+                 "60d": 60, "90d": 90, "all": None}
 SEARCH_SCOPES = ("title", "title+description")
 WORKPLACES = ("remote", "hybrid", "onsite")
 COMPANIES_MODES = ("all", "only", "hide")
@@ -72,6 +74,11 @@ DEFAULTS = {
     "minScoreToKeep": 40,
     "tier1IntervalMinutes": 60,
     "tier2SweepsPerDay": MIN_TIER2_SWEEPS_PER_DAY,
+    # How many jobs to keep on disk. null means keep everything, which is a
+    # real choice with a real cost: the pool is one JSON file, read and
+    # rewritten whole on every ingest, so the run gets slower and hungrier as
+    # it grows. Measured numbers are in docs/plans/ats-coverage-triage.md.
+    "storedCap": jobs_store.STORED_CAP,
 }
 
 
@@ -167,6 +174,12 @@ def validate(config):
     if not isinstance(score, (int, float)) or isinstance(score, bool) or not 0 <= score <= 100:
         raise ConfigError("minScoreToKeep must be a number between 0 and 100")
     out["minScoreToKeep"] = int(score)
+
+    cap = out.get("storedCap")
+    if cap is not None:
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap < 100:
+            raise ConfigError("storedCap must be an integer of at least 100, "
+                              "or null to keep everything")
 
     interval = out.get("tier1IntervalMinutes")
     if not isinstance(interval, int) or isinstance(interval, bool) or interval < MIN_TIER1_INTERVAL_MINUTES:

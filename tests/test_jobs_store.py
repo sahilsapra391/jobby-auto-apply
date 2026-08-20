@@ -375,6 +375,23 @@ class PruneTests(unittest.TestCase):
         jobs, _ = jobs_store.prune(jobs, cap=1, at=self.now)
         self.assertEqual(sorted(jobs), ["scored"])
 
+    def test_no_cap_means_no_cap(self):
+        # The user's call, and a real one: the pool is a single JSON file
+        # rewritten whole on every ingest, so it is the store design rather
+        # than the number that eventually bites. Measured: 50,000 jobs is a
+        # 150 MB file, 1.6s to save, 0.4s to load, 539 MB peak.
+        jobs = {f"j{i}": job(f"j{i}", score={"total": i}, lastSeenAt=self.stamp(1))
+                for i in range(50)}
+        kept, dropped = jobs_store.prune(jobs, cap=None, at=self.now)
+        self.assertEqual(len(kept), 50)
+        self.assertEqual(dropped, [])
+
+    def test_the_staleness_window_can_be_widened(self):
+        jobs = {"old": job("old", lastSeenAt=self.stamp(80)),
+                "ancient": job("ancient", lastSeenAt=self.stamp(200))}
+        kept, _ = jobs_store.prune(jobs, cap=None, max_age_days=90, at=self.now)
+        self.assertEqual(sorted(kept), ["old"], "80 days survives a 90-day window")
+
     def test_the_agreed_volume_knobs_are_what_ships(self):
         self.assertEqual(jobs_store.STORED_CAP, 3000)
         self.assertEqual(jobs_store.NEW_MAX_AGE_DAYS, 30)
@@ -507,6 +524,19 @@ class SearchConfigTests(TempStore):
             search_config.validate({"postedWithin": "3d"})
         self.assertEqual(search_config.posted_within_days({"postedWithin": "24h"}), 1)
         self.assertIsNone(search_config.posted_within_days({"postedWithin": "all"}))
+
+    def test_the_longer_windows_exist(self):
+        # A dated posting older than three months is not worth bringing in; an
+        # undated one still is, which is what includeUnknowns.postedAt governs.
+        self.assertEqual(search_config.posted_within_days({"postedWithin": "90d"}), 90)
+        self.assertEqual(search_config.posted_within_days({"postedWithin": "60d"}), 60)
+
+    def test_the_stored_cap_can_be_turned_off_but_not_set_absurdly_low(self):
+        self.assertIsNone(search_config.validate({"storedCap": None})["storedCap"])
+        self.assertEqual(search_config.validate({"storedCap": 100000})["storedCap"], 100000)
+        for bad in (5, 0, -1, "lots", 3.5):
+            with self.assertRaises(search_config.ConfigError):
+                search_config.validate({"storedCap": bad})
 
     def test_workplace_values_are_checked(self):
         with self.assertRaises(search_config.ConfigError):
