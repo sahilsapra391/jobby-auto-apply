@@ -756,5 +756,53 @@ class EyeAndPassTests(unittest.TestCase):
             self.promote.watch(self.root, "j1")
 
 
+class SlotReleaseTests(unittest.TestCase):
+    """A slot must not be lost when something throws before the runner starts.
+
+    reserve() writes the watcher's OWN pid on purpose, so the slot cannot be
+    mistaken for stale in the moment between reserving it and the runner
+    starting. The consequence is that a lock left behind in that window holds a
+    live pid, so lock_holder never clears it and the slot is gone until the
+    watcher restarts. claim_one raises on a failed KV write, and a KV write did
+    fail in production, so this is a path that really loses slots.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="jobby-slots-")
+        self.original = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.dir)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original
+
+    def test_a_reserved_slot_holds_this_processes_pid(self):
+        self.assertTrue(watch.reserve("apply-1", note="starting"))
+        held = watch.lock_holder("apply-1")
+        self.assertEqual(held["pid"], os.getpid())
+
+    def test_a_lock_holding_a_live_pid_is_never_cleared_as_stale(self):
+        # This is why the release has to be explicit rather than left to the
+        # staleness sweep.
+        watch.reserve("apply-2", note="starting")
+        self.assertIsNotNone(watch.lock_holder("apply-2"))
+        self.assertIsNotNone(watch.lock_holder("apply-2"))
+
+    def test_releasing_the_slot_frees_it_for_the_next_tick(self):
+        watch.reserve("apply-3", note="starting")
+        watch.lock_path("apply-3").unlink(missing_ok=True)
+        self.assertIsNone(watch.lock_holder("apply-3"))
+        self.assertTrue(watch.reserve("apply-3", note="starting"))
+
+    def test_the_claim_is_wrapped_so_a_failure_releases_the_slot(self):
+        # Structural: the window between reserve() and spawn() must release the
+        # lock on any exception. Asserted on the source because driving a real
+        # KV failure in a unit test would need the network.
+        source = (pathlib.Path(watch.__file__).read_text())
+        window = source[source.index("for slot in free_apply_slots():"):]
+        window = window[:window.index("applyStarted")]
+        self.assertIn("except Exception:", window)
+        self.assertGreaterEqual(window.count("lock_path(slot).unlink(missing_ok=True)"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

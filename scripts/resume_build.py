@@ -116,6 +116,33 @@ def extract(html):
     return template, content
 
 
+def redact(value):
+    """Enough of a value to tell two apart, never enough to use.
+
+    Verification output gets pasted into commit messages, issues and chat. The
+    39 screenshots removed from this repository were verification artifacts too:
+    proof that a form had been filled correctly, carrying the contents of the
+    form. A check that prints the phone number to prove the phone number is
+    right has the same shape and one step to the same outcome. Digits go, the
+    structure stays, and a hash carries the actual comparison.
+    """
+    text = str(value or "")
+    out = []
+    for ch in text:
+        if ch.isdigit():
+            out.append("#")
+        elif ch.isalpha():
+            out.append(ch if len(out) < 2 or not out[-1].isalpha() else "\u00b7")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def fingerprint(value):
+    import hashlib
+    return hashlib.sha256(str(value or "").encode()).hexdigest()[:12]
+
+
 def identity_block(region=None, root=None):
     """The name and contact line, read from the profile at render time.
 
@@ -301,6 +328,11 @@ def main():
     s = sub.add_parser("slots", help="what this template expects")
     s.add_argument("--template", required=True)
 
+    k = sub.add_parser("check", help="does the rendered identity match the profile, "
+                                     "without printing it")
+    k.add_argument("--template", required=True)
+    k.add_argument("--region", help="the posting's country, e.g. US or IN")
+
     args = ap.parse_args()
 
     if args.cmd == "extract":
@@ -312,6 +344,24 @@ def main():
                           "areasOfExpertise": len(content["areasOfExpertise"]),
                           "technical": len(content["technical"]),
                           "roles": len(content["roles"])}, indent=2))
+        return
+
+    if args.cmd == "check":
+        template = Path(args.template).expanduser().read_text()
+        name, contact = identity_block(args.region)
+        rendered = template.replace("{{name}}", safe(name)).replace("{{contact}}", contact)
+        block = ""
+        if '<div class="contact">' in rendered:
+            block = rendered.split('<div class="contact">')[1].split("</div>")[0]
+        print(json.dumps({
+            "region": args.region or "(default)",
+            "name": redact(name),
+            "contact": redact(re.sub(r"<[^>]+>", "", block)),
+            "fingerprint": fingerprint(block),
+            "matchesProfile": block.strip() == contact.strip(),
+            "note": "values are redacted on purpose; the fingerprint is what "
+                    "distinguishes one region's block from another",
+        }, indent=2))
         return
 
     if args.cmd == "slots":
