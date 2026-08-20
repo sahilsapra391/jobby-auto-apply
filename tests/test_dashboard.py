@@ -15,9 +15,11 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("dashboard", ROOT / "scripts" / "dashboard.py")
 dashboard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dashboard)
+import found_lane  # noqa: E402
 
 
 def build(sessions=(), history=(), profile=None):
@@ -305,3 +307,278 @@ class DocumentLinkTests(unittest.TestCase):
         for link in self.links():
             self.assertNotIn("/", link)
             self.assertNotIn("%2F", link)
+
+
+class FoundLaneTests(unittest.TestCase):
+    """The Found lane.
+
+    It is the only lane rendered on the client, which changes what can go
+    wrong. Job titles and descriptions come off the open internet, and they
+    travel to the browser inside a script element — so the tests that matter
+    most here are the ones about a posting being unable to escape the box it
+    arrives in.
+    """
+
+    def job(self, job_id="j1", **fields):
+        base = {
+            "id": job_id, "company": "Northwind Analytics",
+            "title": "Product Manager, Internal Reporting",
+            "canonicalUrl": "https://job-boards.greenhouse.io/northwind/jobs/4471002",
+            "canonicalSource": "greenhouse", "state": "new",
+            "location": {"raw": "New York, NY", "city": "New York",
+                         "region": "NY", "country": "US"},
+            "workplace": "hybrid", "postedAt": "2026-08-13T00:00:00Z",
+            "firstSeenAt": "2026-08-19T20:00:00Z",
+            "descriptionExcerpt": "Own the internal reporting platform.",
+            "tags": ["sql", "analytics"],
+            "sources": [{"source": "greenhouse", "sourceClass": "ats",
+                         "url": "https://job-boards.greenhouse.io/northwind/jobs/4471002"}],
+            "extracted": {"yearsMax": None, "degree": None,
+                          "employmentType": None, "roleCategory": None},
+            "score": {"total": 82, "raw": 82,
+                      "parts": {"title": 35, "experience": 10, "location": 15,
+                                "keywords": 14, "freshness": 8},
+                      "weights": {"title": 35, "experience": 20, "location": 15,
+                                  "keywords": 20, "freshness": 10},
+                      "why": {"title": "title matches a searched title"},
+                      "unknowns": ["experience"], "gates": []},
+        }
+        base.update(fields)
+        return base
+
+    def render(self, jobs=(), meta=None, config=None, **state):
+        return dashboard.build({
+            "profile": {}, "sessions": [], "history": [], "roles": {},
+            "meta": meta or {}, "jobs": {j["id"]: j for j in jobs},
+            "searchConfig": config, **state}, "test")
+
+    def payload(self, html):
+        start = html.index('id="jb-found-data">') + len('id="jb-found-data">')
+        return html[start:html.index("</script>", start)]
+
+    def test_found_is_the_first_tab_and_leads_when_it_has_anything(self):
+        html = self.render([self.job()])
+        self.assertLess(html.index('data-tab="found"'), html.index('data-tab="act"'))
+        self.assertIn('class="tab on" data-tab="found"', html)
+        self.assertIn('<div class="panel on" id="p-found"', html)
+
+    def test_needs_you_still_leads_when_nothing_has_been_found(self):
+        # The lane is new; the habit of opening the board to see what is
+        # blocking is not.
+        html = self.render([])
+        self.assertIn('class="tab on" data-tab="act"', html)
+        self.assertIn('<div class="panel on" id="p-act"', html)
+
+    def test_the_header_line_still_says_what_is_waiting(self):
+        html = dashboard.build({
+            "profile": {}, "sessions": [{"company": "A", "role": "PM", "status": "review",
+                                         "pendingFields": [{"question": "x"}]}],
+            "history": [], "roles": {}, "meta": {},
+            "jobs": {"j1": self.job()}, "searchConfig": None}, "test")
+        self.assertIn("1 waiting on you", html)
+
+    def test_only_unacted_on_jobs_reach_the_lane(self):
+        jobs = [self.job("a"), self.job("b", state="watched"),
+                self.job("c", state="passed"), self.job("d", state="applied")]
+        html = self.render(jobs)
+        self.assertEqual(len(json.loads(self.payload(html))), 1)
+        tab = re.search(r'data-tab="found"[^>]*>Found<span class="n">(\d+)</span>', html)
+        self.assertEqual(tab.group(1), "1", "the tab count must match what the lane holds")
+
+    def test_a_hostile_title_cannot_escape_the_data_block(self):
+        # This is the one that matters. The blob rides inside a script element,
+        # and `</` is the only sequence that can terminate one from inside a
+        # string. A posting is untrusted text written by a stranger.
+        nasty = self.job(title='</script><img src=x onerror=alert(1)>')
+        html = self.render([nasty])
+        self.assertNotIn("</script><img", html)
+        self.assertIn("<\\/script>", self.payload(html))
+        # And the blob still parses, so the lane is not broken by the escaping.
+        json.loads(self.payload(html).replace("<\\/", "</"))
+
+    def test_hostile_text_anywhere_in_a_posting_is_escaped(self):
+        html = self.render([self.job(
+            company="<script>x</script>",
+            descriptionExcerpt='</script><script>alert(1)</script>',
+            tags=["</script>"])])
+        self.assertNotIn("<script>x</script>", html)
+        self.assertNotIn("</script><script>alert(1)", html)
+
+    def test_a_javascript_url_never_becomes_a_link(self):
+        html = self.render([self.job(
+            canonicalUrl="javascript:alert(1)",
+            sources=[{"source": "x", "sourceClass": "ats", "url": "javascript:alert(1)"}])])
+        self.assertNotIn("javascript:", html)
+
+    def test_the_payload_carries_what_the_card_needs(self):
+        rows = json.loads(self.payload(self.render([self.job()])))
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        for key in ("id", "co", "ti", "url", "sc", "pt", "wt", "un", "bd", "sg", "ex"):
+            self.assertIn(key, row)
+        self.assertEqual(row["sc"], 82)
+        self.assertEqual(row["un"], ["experience"])
+
+    def test_the_embed_cap_holds_and_the_footer_says_what_is_missing(self):
+        # The stored pool is 3,000. Showing a slice as though it were
+        # everything is the failure; saying which slice is the fix.
+        jobs = [self.job(f"j{i}", score={"total": i % 100, "parts": {}, "weights": {},
+                                         "why": {}, "unknowns": [], "gates": []})
+                for i in range(found_lane.EMBED_CAP + 120)]
+        html = self.render(jobs)
+        self.assertEqual(len(json.loads(self.payload(html))), found_lane.EMBED_CAP)
+        self.assertIn(f"Showing {found_lane.EMBED_CAP} of {found_lane.EMBED_CAP + 120}", html)
+
+    def test_the_highest_scoring_jobs_are_the_ones_embedded(self):
+        jobs = [self.job(f"j{i}", score={"total": i, "parts": {}, "weights": {},
+                                         "why": {}, "unknowns": [], "gates": []})
+                for i in range(found_lane.EMBED_CAP + 50)]
+        rows = json.loads(self.payload(self.render(jobs)))
+        self.assertEqual(min(r["sc"] for r in rows), 50)
+
+    def test_the_page_stays_under_four_megabytes_at_the_cap(self):
+        long_body = "Own the internal reporting platform. " * 60
+        jobs = [self.job(f"j{i}", descriptionExcerpt=long_body,
+                         tags=[f"tag{n}" for n in range(12)])
+                for i in range(found_lane.EMBED_CAP)]
+        size = len(self.render(jobs).encode("utf-8"))
+        self.assertLess(size, 4 * 1024 * 1024, f"page is {size / 1024 / 1024:.2f} MB")
+
+    def test_the_embedded_excerpt_is_trimmed(self):
+        rows = json.loads(self.payload(self.render([self.job(descriptionExcerpt="x" * 5000)])))
+        self.assertLessEqual(len(rows[0]["ex"]), found_lane.EMBED_EXCERPT_CHARS)
+
+    def test_a_merged_job_says_how_many_boards_carried_it(self):
+        rows = json.loads(self.payload(self.render([self.job(sources=[
+            {"source": "greenhouse", "sourceClass": "ats", "url": "https://a.test/1"},
+            {"source": "adzuna", "sourceClass": "aggregator", "url": "https://b.test/1"},
+            {"source": "linkedin", "sourceClass": "aggregator", "url": "https://c.test/1"}])])))
+        self.assertEqual(rows[0]["bd"], 3)
+        self.assertEqual(len(rows[0]["sg"]), 3)
+
+
+class FoundHeaderTests(unittest.TestCase):
+    """The last-ingest line, which is where a silent failure would show up."""
+
+    def render(self, meta=None, config=None, jobs=()):
+        return dashboard.build({
+            "profile": {}, "sessions": [], "history": [], "roles": {},
+            "meta": meta or {}, "jobs": {j["id"]: j for j in jobs},
+            "searchConfig": config}, "test")
+
+    def test_no_scan_yet_says_so_rather_than_nothing(self):
+        self.assertIn("No scan has run yet", self.render())
+
+    def test_a_scan_that_found_nothing_reads_differently_from_one_that_never_ran(self):
+        quiet = self.render(meta={"lastIngest": {
+            "at": "2026-08-19T20:58:00Z", "found": 0, "kept": 0, "deduped": 0,
+            "gatedOut": 0, "byChannel": {}, "channelsSkipped": [], "errors": []}})
+        self.assertIn("Last scan 20:58", quiet)
+        self.assertNotIn("No scan has run yet", quiet)
+
+    def test_skipped_channels_are_named_on_the_board(self):
+        # A missing key that is only visible in a log is a missing key nobody
+        # ever installs.
+        html = self.render(meta={"lastIngest": {
+            "at": "2026-08-19T20:58:00Z", "found": 12, "kept": 9, "deduped": 2,
+            "gatedOut": 1, "byChannel": {},
+            "channelsSkipped": [{"channel": "adzuna", "why": "no key (JOBBY_ADZUNA_ID is not set)"},
+                                {"channel": "reed", "why": "the saved search does not include the UK"}],
+            "errors": []}})
+        self.assertIn("2 channels skipped", html)
+        self.assertIn("adzuna", html)
+        self.assertIn("JOBBY_ADZUNA_ID", html)
+
+    def test_a_connector_outage_is_on_the_board(self):
+        html = self.render(meta={"lastIngest": {
+            "at": "2026-08-19T20:58:00Z", "found": 0, "kept": 0, "deduped": 0,
+            "gatedOut": 0, "byChannel": {}, "channelsSkipped": [],
+            "errors": [{"channel": "remotive", "why": "HTTP 503"}]}})
+        self.assertIn("1 problem", html)
+        self.assertIn("remotive", html)
+        self.assertIn("503", html)
+
+    def test_a_failed_scan_says_the_scan_failed(self):
+        html = self.render(meta={"lastIngest": {
+            "at": "2026-08-19T20:58:00Z", "found": 0, "kept": 0, "deduped": 0,
+            "gatedOut": 0, "byChannel": {}, "channelsSkipped": [],
+            "errors": [{"channel": "ingest", "why": "store unreadable"}], "failed": True}})
+        self.assertIn("the scan itself failed", html)
+
+    def test_running_on_defaults_is_admitted(self):
+        html = self.render(meta={"lastIngest": {
+            "at": "2026-08-19T20:58:00Z", "found": 3, "kept": 3, "deduped": 0,
+            "gatedOut": 0, "byChannel": {}, "channelsSkipped": [], "errors": [],
+            "usingDefaults": True}})
+        self.assertIn("no saved search yet", html)
+
+    def test_no_saved_search_says_the_hourly_scan_is_off(self):
+        html = self.render()
+        self.assertIn("No saved search", html)
+        self.assertIn("stays off", html)
+
+    def test_a_saved_search_shows_its_version_and_next_run(self):
+        html = self.render(config={"version": 7, "tier1IntervalMinutes": 60,
+                                   "tier2SweepsPerDay": 6},
+                           meta={"nextTier1ScanAt": "2026-08-19T21:58:00Z"})
+        self.assertIn("Search v7 is live", html)
+        self.assertIn("next run 21:58", html)
+        self.assertIn("6 sweeps a day", html)
+
+    def test_the_add_your_own_link_card_is_there(self):
+        html = self.render()
+        self.assertIn('id="jb-link"', html)
+        self.assertIn('id="jb-addlink"', html)
+
+
+class ThemeCompletenessTests(unittest.TestCase):
+    """Every colour defined in all three theme blocks.
+
+    A colour defined only inside the media query disappears the moment somebody
+    picks the other theme explicitly, and the failure is invisible until then.
+    """
+
+    def blocks(self, html):
+        style = html[html.index("<style>"):html.index("</style>")]
+        light = style[style.index(":root {"):style.index("@media (prefers-color-scheme:dark)")]
+        dark_auto = style[style.index("@media (prefers-color-scheme:dark)"):
+                          style.index(':root[data-theme="dark"]')]
+        dark_set = style[style.index(':root[data-theme="dark"]'):
+                         style.index("*,*::before,*::after")]
+        return light, dark_auto, dark_set
+
+    def names(self, block):
+        return set(re.findall(r"(--[a-z0-9-]+):", block))
+
+    def test_the_two_dark_blocks_define_the_same_colours(self):
+        light, dark_auto, dark_set = self.blocks(dashboard.build(
+            {"profile": {}, "sessions": [], "history": [], "roles": {}, "meta": {},
+             "jobs": {}, "searchConfig": None}, "test"))
+        self.assertEqual(self.names(dark_auto), self.names(dark_set))
+
+    def test_every_dark_override_has_a_light_definition(self):
+        light, dark_auto, _ = self.blocks(dashboard.build(
+            {"profile": {}, "sessions": [], "history": [], "roles": {}, "meta": {},
+             "jobs": {}, "searchConfig": None}, "test"))
+        self.assertEqual(self.names(dark_auto) - self.names(light), set())
+
+    def test_the_found_lane_colours_exist_in_all_three(self):
+        light, dark_auto, dark_set = self.blocks(dashboard.build(
+            {"profile": {}, "sessions": [], "history": [], "roles": {}, "meta": {},
+             "jobs": {}, "searchConfig": None}, "test"))
+        for name in ("--t-red", "--red-ink"):
+            for block in (light, dark_auto, dark_set):
+                self.assertIn(f"{name}:", block)
+
+
+class CspTests(unittest.TestCase):
+    def test_the_page_loads_nothing_from_anywhere(self):
+        # default-src 'none' means a posting that smuggled markup through still
+        # cannot phone home. Any external reference would break under it.
+        html = dashboard.build({"profile": {}, "sessions": [], "history": [], "roles": {},
+                                "meta": {}, "jobs": {}, "searchConfig": None}, "test")
+        for banned in ("src=\"http", "src='http", "@import", "href=\"http://cdn",
+                       "fonts.googleapis", "unpkg.com", "jsdelivr"):
+            self.assertNotIn(banned, html)
+        for link in re.findall(r'<link[^>]+href="([^"]+)"', html):
+            self.assertFalse(link.startswith("http"), link)

@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 # path (which the tests do), where scripts/ would not be on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand  # noqa: E402
+import found_lane  # noqa: E402
 
 
 def root_dir(override=None):
@@ -74,6 +75,11 @@ def load_state(root):
         "history": list(latest.values()),
         "roles": read_json(root / "roles.json", {}),
         "meta": read_json(root / "meta.json", {}),
+        # The discovery pool. A corrupt file here must not take the whole board
+        # down, but it must not silently render as an empty Found lane either:
+        # the last-ingest line says when the last scan ran regardless.
+        "jobs": read_json(root / "jobs.json", {}),
+        "searchConfig": read_json(root / "search-config.json", None),
     }
 
 
@@ -123,6 +129,9 @@ def build(state, generated):
             if r.get("company") == entry.get("company") and r.get("role") == entry.get("role"):
                 return r.get("url", "")
         return ""
+
+    found, found_total = found_lane.select(state.get("jobs") or {})
+    search_config_saved = state.get("searchConfig")
 
     blocked = [s for s in sessions if s.get("status") in ("active", "review")]
     blocked.sort(key=lambda s: len(s.get("pendingFields", [])))
@@ -478,6 +487,10 @@ def build(state, generated):
     total_todo = sum(len(s.get("pendingFields", [])) for s in blocked)
 
     tabs = [
+        # Found leads when it has anything, because it is the only lane whose
+        # contents are new since the user last looked. Needs you stays visible
+        # in the header line either way.
+        ("found", "Found", found_total),
         ("act", "Needs you", len(blocked)),
         ("done", "Submitted", len(submitted)),
         ("watch", "Watching", len(watch)),
@@ -493,11 +506,15 @@ def build(state, generated):
         f'{esc(stopped)}</div>'
     ) if stopped else ""
 
+    # Found is the default tab when it holds anything; otherwise Needs you
+    # leads, exactly as it did before there was a Found lane.
+    default_tab = "found" if found_total else "act"
     tabnav = "".join(
-        f'<button class="tab{" on" if i == 0 else ""}{" aside" if k == "dropped" else ""}" data-tab="{k}" role="tab" '
-        f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="p-{k}">'
+        f'<button class="tab{" on" if k == default_tab else ""}'
+        f'{" aside" if k == "dropped" else ""}" data-tab="{k}" role="tab" '
+        f'aria-selected="{"true" if k == default_tab else "false"}" aria-controls="p-{k}">'
         f'{esc(label)}<span class="n">{n}</span></button>'
-        for i, (k, label, n) in enumerate(tabs)
+        for k, label, n in tabs
     )
 
     return f"""<meta charset="utf-8">
@@ -526,6 +543,7 @@ def build(state, generated):
     --hair:rgba(0,0,0,.07);
     --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9; --red:#b3261e; --btn-g:#047857; --btn-g-ink:#fff;
     --t-o:rgba(234,88,12,.08); --t-g:rgba(5,150,105,.08); --t-p:rgba(109,40,217,.07);
+    --t-red:rgba(179,38,30,.08); --red-ink:#b3261e;
     --sh:0 1px 3px rgba(0,0,0,.05), 0 6px 20px rgba(0,0,0,.05);
     /* One logo in every theme: the pack's primary, white mark knocked out of
        an ink circle. Deliberately not themed, so the mark reads the same on
@@ -539,6 +557,7 @@ def build(state, generated):
       --hair:rgba(255,255,255,.1);
       --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
       --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
+      --t-red:rgba(201,55,44,.16); --red-ink:#ff6961;
       --sh:0 1px 3px rgba(0,0,0,.5);
     }}
   }}
@@ -548,6 +567,7 @@ def build(state, generated):
     --hair:rgba(255,255,255,.1);
     --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
     --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
+    --t-red:rgba(201,55,44,.16); --red-ink:#ff6961;
     --sh:0 1px 3px rgba(0,0,0,.5);
   }}
   *,*::before,*::after {{ box-sizing:border-box; }}
@@ -823,6 +843,7 @@ def build(state, generated):
   .sysbanner {{ background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
     line-height:1.45; text-align:center; }}
   .sysbanner strong {{ font-weight:650; }}
+{found_lane.CSS}
 </style>
 
 {brand.defs()}
@@ -855,7 +876,11 @@ def build(state, generated):
 
   <div class="segwrap"><div class="seg" role="tablist">{tabnav}</div></div>
 
-  <div class="panel on" id="p-act" role="tabpanel">
+  <div class="panel{" on" if default_tab == "found" else ""}" id="p-found" role="tabpanel">
+    {found_lane.panel(found, found_total, search_config_saved, state.get("meta") or {})}
+  </div>
+
+  <div class="panel{" on" if default_tab == "act" else ""}" id="p-act" role="tabpanel">
     {'<p class="hint">Each opens straight to where it is blocked.</p>' if cards else ''}
     {filter_bar("act", [("ready", "Ready to submit"), ("hold", "Still blocked")], len(cards))}
     {f'<div class="grid">{"".join(cards)}</div>' if cards else empty_state("act")}
@@ -902,6 +927,7 @@ def build(state, generated):
   </div>
 </div>
 
+<script type="application/json" id="jb-found-data">{found_lane.payload(found)}</script>
 <script>
   // Theme: auto, light or dark. Only an explicit choice is stored, so auto
   // keeps following the OS if it flips later in the day.
@@ -1411,6 +1437,7 @@ def build(state, generated):
   }});
   ['act', 'flight', 'done', 'watch'].forEach(applyFilter);
 
+{found_lane.SCRIPT}
   document.querySelectorAll('.copy').forEach(function (b) {{
     b.addEventListener('click', function () {{
       navigator.clipboard.writeText(b.dataset.msg).then(function () {{

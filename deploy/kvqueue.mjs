@@ -47,7 +47,7 @@ export async function writeQueue(env, data) {
   return kvPut(env, KEY, JSON.stringify(data));
 }
 
-export async function enqueue(env, queue, applicationId) {
+export async function enqueue(env, queue, applicationId, extra = {}) {
   const data = await readQueue(env);
   const list = data[queue] || (data[queue] = []);
   // Idempotent per application, so the board can safely re-send a click it
@@ -55,7 +55,9 @@ export async function enqueue(env, queue, applicationId) {
   if (list.some((x) => x.applicationId === applicationId)) {
     return { queued: applicationId, deduped: true };
   }
-  list.push({ applicationId, at: new Date().toISOString() });
+  // `extra` carries the pasted URL from "add your own link". Optional, so an
+  // entry written before this existed still reads correctly.
+  list.push({ applicationId, at: new Date().toISOString(), ...extra });
   await writeQueue(env, data);
   return { queued: applicationId };
 }

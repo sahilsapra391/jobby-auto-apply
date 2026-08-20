@@ -105,9 +105,19 @@ async function handleQueue(request, queue) {
         id = new Date().toISOString().replace(/[:.]/g, '-');
       }
       if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) return json({ ok: false, error: 'bad applicationId' }, 400);
+      // "Add your own link" rides the scan queue rather than growing an
+      // endpoint of its own. Only http(s) is accepted: the value ends up in an
+      // agent's prompt and in an href, and neither should take a javascript:.
+      const extra = {};
+      if (queue === 'scan' && body.url) {
+        const link = String(body.url).trim();
+        if (!/^https?:\/\//i.test(link)) return json({ ok: false, error: 'the link must be http or https' }, 400);
+        if (link.length > 2000) return json({ ok: false, error: 'that link is too long' }, 400);
+        extra.url = link;
+      }
       // Idempotent per application id, so the board can re-send a click it
       // remembers without the role being applied to twice.
-      return json({ ok: true, ...(await kvEnqueue(process.env, queue, id)) }, 202);
+      return json({ ok: true, ...(await kvEnqueue(process.env, queue, id, extra)) }, 202);
     }
     if (request.method === 'GET') {
       return json({ ok: true, pending: (await readQueue(process.env))[queue] || [] }, 200);
