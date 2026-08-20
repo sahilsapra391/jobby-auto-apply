@@ -288,13 +288,31 @@ class ConfigGateTests(IngestCase):
         self.assertTrue(self.gate(config, description="We are a staffing agency."))
         self.assertFalse(self.gate(config))
 
-    def test_exclusion_respects_the_search_scope(self):
-        # Title-only scope must not reject on a word that is only in the body.
+    def test_an_exclusion_searches_the_body_whatever_the_scope_says(self):
+        # Deliberately reversed. This used to follow searchScope, which was
+        # invisible while the scope defaulted to title-and-description and
+        # became a silent widening of what gets stored the moment the default
+        # moved to titles.
+        #
+        # An exclusion is a veto and a veto should look everywhere. "staffing
+        # agency" almost never appears in a job title and almost always appears
+        # in the body, so a title-scoped exclusion list stops rejecting exactly
+        # what it exists to reject.
         body = {"description": "This is a staffing agency posting."}
-        self.assertTrue(self.gate({"excludeKeywords": ["staffing agency"],
-                                   "searchScope": "title+description"}, **body))
-        self.assertFalse(self.gate({"excludeKeywords": ["staffing agency"],
-                                    "searchScope": "title"}, **body))
+        for scope in ("title", "title+description"):
+            with self.subTest(scope=scope):
+                self.assertTrue(self.gate({"excludeKeywords": ["staffing agency"],
+                                           "searchScope": scope}, **body))
+
+    def test_an_include_keyword_still_respects_the_scope(self):
+        # The other half: narrowing the scope narrows what *matches*, it just
+        # does not narrow what gets rejected.
+        body = {"title": "Warehouse Operative",
+                "description": "You will work with our product manager daily."}
+        self.assertTrue(self.gate({"keywords": ["product manager"],
+                                   "searchScope": "title"}, **body))
+        self.assertFalse(self.gate({"keywords": ["product manager"],
+                                    "searchScope": "title+description"}, **body))
 
     def test_a_posting_matching_no_search_term_is_dropped(self):
         config = {"keywords": ["product manager"], "searchScope": "title"}
@@ -599,6 +617,90 @@ class TwoMonthCeilingTests(unittest.TestCase):
                 window = search_config.posted_within_days({"postedWithin": name})
                 kept = max(window, jobs_store.NEW_MAX_AGE_DAYS)
                 self.assertLessEqual(kept, search_config.MAX_AGE_DAYS)
+
+
+class AddToFoundTests(IngestCase):
+    """A scan fills Found. Only the eye moves a job to Watching.
+
+    The agent sweep wrote `status: "watch"` sessions directly, so everything it
+    found landed on the user's shelf without them ever seeing it in Found. 44 of
+    49 live watch entries arrived that way. Sahil's rule is that a scan can only
+    offer; choosing is the eye's job.
+    """
+
+    def posting(self, **fields):
+        base = {"title": "Product Manager, Payments", "company": "Northwind",
+                "canonicalUrl": "https://boards.greenhouse.io/northwind/jobs/99",
+                "canonicalSource": "greenhouse",
+                "descriptionExcerpt": "Own the payments roadmap.",
+                "location": {"raw": "Chicago"}, "postedAt": "2026-08-19T00:00:00Z",
+                "sources": [{"source": "greenhouse", "sourceClass": "ats",
+                             "url": "https://boards.greenhouse.io/northwind/jobs/99"}]}
+        base.update(fields)
+        return base
+
+    def test_an_added_posting_lands_in_found_as_new(self):
+        report = ingest.add_postings(self.root, [self.posting()], now=NOW)
+        self.assertEqual(report["kept"], 1)
+        jobs = jobs_store.load_jobs(self.root)
+        self.assertEqual([j["state"] for j in jobs.values()], ["new"])
+
+    def test_it_creates_no_session_at_all(self):
+        ingest.add_postings(self.root, [self.posting()], now=NOW)
+        sessions = list((self.root / "sessions").glob("*.json"))
+        self.assertEqual(sessions, [], "a scan must not put anything in Watching")
+
+    def test_adding_the_same_posting_twice_merges(self):
+        ingest.add_postings(self.root, [self.posting()], now=NOW)
+        again = ingest.add_postings(self.root, [self.posting()], now=NOW)
+        self.assertEqual(again["kept"], 0)
+        self.assertEqual(again["deduped"], 1)
+        self.assertEqual(len(jobs_store.load_jobs(self.root)), 1)
+
+    def test_it_is_scored_by_the_same_rubric(self):
+        ingest.add_postings(self.root, [self.posting()], now=NOW)
+        job = list(jobs_store.load_jobs(self.root).values())[0]
+        self.assertIn("score", job)
+        self.assertIn("total", job["score"])
+        self.assertIn("parts", job["score"])
+
+    def test_something_the_user_passed_on_stays_passed(self):
+        ingest.add_postings(self.root, [self.posting()], now=NOW)
+        job_id = list(jobs_store.load_jobs(self.root))[0]
+        jobs_store.mark_passed(self.root, job_id, "not for me")
+        report = ingest.add_postings(self.root, [self.posting()], now=NOW)
+        self.assertEqual(report["kept"], 0)
+        self.assertIn("dropped by the user before", json.dumps(report))
+
+    def test_the_gate_still_applies(self):
+        stale = self.posting(postedAt="2026-01-01T00:00:00Z")
+        report = ingest.add_postings(self.root, [stale], now=NOW)
+        self.assertEqual(report["kept"], 0)
+        self.assertEqual(report["gatedOut"], 1)
+
+
+class ScanPromptTests(unittest.TestCase):
+    """The prompt is the only thing standing between the sweep and Watching."""
+
+    def prompt(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "run_scan", ROOT / "scripts" / "run_scan.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.PROMPT
+
+    def test_it_sends_findings_to_found(self):
+        self.assertIn("--add", self.prompt())
+
+    def test_it_never_asks_for_a_watch_entry(self):
+        prompt = self.prompt()
+        self.assertNotIn("session-save", prompt)
+        self.assertNotIn('status "watch"', prompt)
+
+    def test_it_says_so_in_words_as_well(self):
+        # The instruction that matters is the one a reader acts on.
+        self.assertIn("do not add", self.prompt().lower())
 
 
 if __name__ == "__main__":

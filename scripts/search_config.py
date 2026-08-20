@@ -69,7 +69,11 @@ DEFAULTS = {
     "version": 0,
     "keywords": [],
     "excludeKeywords": [],
-    "searchScope": "title+description",
+    # Titles. The keyword box is how someone types a job title, and matching
+    # it against the description too meant "product manager" hit every posting
+    # that merely mentioned working with one. Widening to the description is a
+    # deliberate choice in Advanced search, not the default.
+    "searchScope": "title",
     "roleCategories": [],
     "locations": [],                 # empty means every country
     "includeRemoteForSelection": True,
