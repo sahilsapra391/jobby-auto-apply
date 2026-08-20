@@ -184,9 +184,12 @@ class PostedDateTests(unittest.TestCase):
         return re.findall(r"<strong>([^<]+)</strong>", self.render())
 
     def test_a_relative_only_posting_still_gets_a_date(self):
+        # Two hours before the sweep, not "today": at 00:30 UTC that is
+        # yesterday, and asserting on today fails once a day for the wrong
+        # reason.
         self.add("zeta", postedAgo="2 hours ago")
-        today = datetime.now(timezone.utc).date().isoformat()
-        self.assertIn(today, self.render())
+        expected = (datetime.now(timezone.utc) - timedelta(hours=2)).date().isoformat()
+        self.assertIn(expected, self.render())
 
     def test_hours_ago_sorts_above_an_older_dated_posting(self):
         self.add("older", postedDate="2020-01-01")
@@ -241,7 +244,9 @@ class PostedDateTests(unittest.TestCase):
         session = json.loads(path.read_text())
         session["updatedAt"] = old_scan.strftime("%Y-%m-%dT%H:%M:%SZ")
         path.write_text(json.dumps(session))
-        self.assertIn(old_scan.date().isoformat(), self.render())
+        expected = (old_scan - timedelta(hours=2)).date().isoformat()
+        self.assertIn(expected, self.render())
+        self.assertNotIn(datetime.now(timezone.utc).date().isoformat(), self.render())
 
     def test_unparseable_text_is_shown_rather_than_invented(self):
         self.add("vague", postedAgo="not shown")
