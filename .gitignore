@@ -27,3 +27,7 @@ deploy/node_modules/
 
 # Local board render used for browser-testing the dashboard JS.
 .board-preview.html
+
+# Agent screenshots land at the repo root. They are confirmation pages
+# carrying a real name and address, and they are not part of the project.
+/*.png

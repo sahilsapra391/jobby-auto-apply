@@ -67,22 +67,54 @@ def store(args):
     return subprocess.run([sys.executable, str(STORE)] + args, capture_output=True, text=True)
 
 
-# The interpreter is passed in explicitly rather than written as `python3`. Under
-# launchd, bare `python3` resolves to /usr/bin/python3 (3.9), which does not have
-# pymupdf, so resume verification failed with ModuleNotFoundError for a package
-# that is in fact installed under the interpreter everything else runs on.
+# The prompt says `python3`, and agent_env() below guarantees that name resolves
+# to this same interpreter by putting its directory first on the child's PATH.
+#
+# It used to pass sys.executable instead, because under a bare launchd PATH
+# `python3` found /usr/bin/python3 (3.9) without pymupdf and resume verification
+# died on ModuleNotFoundError. That is now handled in two places rather than by
+# spelling the path out: the plist sets a full PATH, and agent_env pins the
+# interpreter's own directory ahead of it. Spelling it out cost more than it
+# saved, because --allowedTools grants Bash(python3:*), which is a prefix match
+# on the literal command that an absolute path cannot satisfy, so every call the
+# prompt asked for was refused.
+def agent_env():
+    """The spawned agent's environment, with `python3` pinned to this interpreter.
+
+    The agent is told to run `python3`, so which one that name finds decides
+    whether resume verification can import pymupdf. Putting sys.executable's own
+    directory first makes that independent of the plist, of launchd's default
+    PATH, and of whichever python happens to sit in /usr/bin.
+    """
+    env = toolpath.enriched_env()
+    own = str(Path(sys.executable).parent)
+    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p and p != own]
+    env["PATH"] = os.pathsep.join([own] + parts)
+    return env
+
+
 PROMPT = """Use the job-application skill and apply to exactly ONE job, end to end, then stop.
 
 APPLICATION ID: {aid}
 
-REPORT YOUR PHASE as you go, after finishing each stage, so the board shows live progress:
+HOW TO WORK: act, act, act, then review. Not act, wait, review, act, wait, review.
+Every tool call is a round trip where nothing happens until you decide again, and the
+median run has spent over a hundred of them. So:
+  - Independent shell commands go in ONE Bash call, separated by ; or &&. If two commands
+    do not need each other's output, they are one call.
+  - Independent tool calls go out together in one message.
+  - Never re-read something you already read. The brief below does not change while you
+    work. Re-running it, or re-loading the session to "check", is a wasted round trip.
+  - Never probe the environment. python3 is the right interpreter and pymupdf is installed.
+    Do not test imports, run `which`, or look for a different python.
+  - Read a file with Read, not `cat`. List with Glob, not `ls`.
+
+REPORT YOUR PHASE only at the two points the brief and finish commands do not cover:
    {py} "{repo}/scripts/phase.py" --id {aid} --phase "<stage>" --detail "<short detail>"
-Use exactly these stage names, in order:
-   "Building documents"   after you start tailoring
-   "Documents ready"      once both PDFs verify against the base
+   "Building documents"   once, as you start tailoring
    "Filling the form"     once the form is open, detail like "12 of 18 fields"
-   "Submitting"           immediately before the submit click
-   "Verifying"            immediately after, while checking the confirmation
+Nothing else. brief.py sets the run going and finish.py handles Submitting and Verifying,
+so a separate phase call for those is a round trip that buys nothing.
 The role is already marked in flight, so it has left Watching. Do not set it back to watch
 unless you park it for the user.
 
@@ -92,13 +124,20 @@ Do this and nothing else:
    legal agreement). Re-open the form, confirm what is already filled, and carry on from
    there rather than starting over.
 
-1. Read the watch entry: {py} "{repo}/scripts/store.py" session-load --id {aid}
-   It carries the company, role, url, region, ats and an `extraction` summarising the posting.
+1. ONE call gets you everything you need to start:
+     {py} "{repo}/scripts/brief.py" --id {aid}
+   It returns the company, role, url, region, ats, the posting `extraction`, whether this is
+   a retry and what is pending, the duplicate-guard verdict, the base resume and identity
+   block for the posting's country, the story bank path, and which documents already exist.
+   It has also created the company folder and written the posting to jd.txt, so ats_match
+   can read it immediately (the file is named jd-{aid}.txt, one per application, because
+   several roles at one company share a folder). Do not re-run it. Do not follow it with session-load, profile-get
+   or ls: that is what it just did for you.
    Do NOT re-open the posting to re-read it; the extraction is what you tailor from.
-2. FIRST check whether the documents already exist: ls "{repo}/applications/<Company>/".
-   If a resume and cover letter for THIS role are already there, use them as they are. Do not
-   rebuild them, do not "improve" them. A run can be retried for reasons that have nothing to
-   do with the documents (no browser, a crashed runner, a lost queue entry), and the standing
+   If `duplicate` is true, stop now and say so.
+2. If `documentsReady` is true, those documents go out as they are. Do not rebuild them, do
+   not "improve" them. A run can be retried for reasons that have nothing to do with the
+   documents (no browser, a crashed runner, a lost queue entry), and the standing
    rule from the user is that the first version built is the one that gets sent.
    Only if they are missing, build the tailored resume and cover letter for this role,
    following references/tailoring.md:
@@ -200,8 +239,8 @@ Do this and nothing else:
      CAPTCHA: "Press Open & finish. Everything is filled and checked. Clear the CAPTCHA and
       press Submit."
 
-   Then run sync_board.py and stop. The tailored documents are the valuable part and they are
-   already kept, so a park is a decent outcome, not a failure.
+   Then park it with the finish.py --park call in step 6 and stop. The tailored documents are
+   the valuable part and they are already kept, so a park is a decent outcome, not a failure.
    If no browser tool is available at all, park the same way and say so.
 
    The browser is shared and outlives you, so whatever you leave on screen is what the user
@@ -220,23 +259,29 @@ Do this and nothing else:
    stated, use the stored expectation. The separate "do you agree this range works" checkbox
    is always Yes and is not this field.
 
-4. Before you submit, re-read the session:
-     {py} "{repo}/scripts/store.py" session-load --id {aid}
-   If its status is now "dropped", the user cancelled this application while you were
-   working. Stop immediately. Do not submit, do not change the status back.
-
-   Then confirm this is not a second application to the same job:
-   {py} "{repo}/scripts/dupe_check.py" --guard {aid}
-   If it reports duplicate, stop without submitting and say so.
-5. If every required field is answerable truthfully, log a write-ahead `submitting` event,
-   submit once, then verify. Log `completed` ONLY with the exact confirmation you observed,
-   quoted, in the `confirmation` field, plus resumeVariant and coverLetter. If you cannot
-   confirm, say so and leave the event at `submitting`.
+4. ONE call clears you to submit:
+     {py} "{repo}/scripts/finish.py" --id {aid} --pre-submit
+   It re-reads the session, stops if the user cancelled while you were working, runs the
+   duplicate guard, and only if both pass writes the `submitting` write-ahead event and sets
+   the phase. If it returns proceed:false, stop: do not submit and do not change the status
+   back. Do not run session-load or dupe_check yourself, and do not log `submitting`
+   yourself. It has been done.
+5. Submit once. Then ONE call records it:
+     {py} "{repo}/scripts/finish.py" --id {aid} --completed \
+       --confirmation '<the exact wording you saw, quoted>' \
+       --resume <tailored resume path> --cover <cover letter path>
+   It writes the completed event and syncs the board. The confirmation must be what the page
+   actually said. If you cannot confirm the submission, do NOT run this: say so and leave the
+   event at `submitting`, which is exactly what an unverified attempt should look like.
 6. If something only the user can do blocks it (account creation, password, OTP, CAPTCHA,
    or a binding legal agreement such as a background-check authorisation, a
-   non-compete or an IP assignment), do NOT submit. Save the session with status "review"
-   and pendingFields naming the blocker, so it lands in Needs you.
-7. Run: {py} "{repo}/scripts/sync_board.py"
+   non-compete or an IP assignment), do NOT submit. ONE call parks it:
+     {py} "{repo}/scripts/finish.py" --id {aid} --park \
+       --pending '<the blocker, as the user will read it>' \
+       --detail '<what to do, and what it buys them>'
+   That sets status review, names the blocker and syncs the board, so it lands in Needs you.
+   Repeat --pending if more than one thing blocks it.
+7. Nothing. Steps 5 and 6 already synced the board. Stop.
 
 Never solve a CAPTCHA, create an account, type a password, enter an OTP, or agree to a binding
 legal document that grants rights over the user: background-check and consumer-report
@@ -346,7 +391,7 @@ def main():
              "--allowedTools", APPLY_TOOLS,
              "--mcp-config", str(browser.config_path(args.slot))],
             cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
-            env=toolpath.enriched_env())
+            env=agent_env())
 
     # A run that dies on auth must not leave the card sitting at "Queued" forever
     # with the reason buried in a log file.

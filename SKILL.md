@@ -130,6 +130,26 @@ Draft the referral message and put it in the dashboard for the user to send. Sen
 
 If a form asks "were you referred by an employee," and a referral is realistically obtainable, raise it before answering — answering "no" forecloses something worth having.
 
+## The working rhythm
+
+Act, act, act, then review. Not act, wait, review, act, wait. Every tool call is a round trip where nothing happens until the model decides again, and a measured run made 102 of them. Independent shell commands belong in one call separated by `;`; independent tool calls belong in one message. Never re-read what has not changed, and never probe the environment: `python3` is the interpreter and pymupdf is installed.
+
+Two commands exist purely to collapse round trips, and neither drops a check:
+
+```bash
+python3 scripts/brief.py --id <application-id>
+```
+
+One call returns the watch entry, the posting extraction, whether this is a retry and what is pending, the duplicate verdict, the base resume and identity block for the posting's country, and which documents already exist. It creates the company folder and writes `jd.txt` on the way. Do not follow it with `session-load`, `profile-get` or `ls`; that is what it just did.
+
+```bash
+python3 scripts/finish.py --id <id> --pre-submit
+python3 scripts/finish.py --id <id> --completed --confirmation '<exact wording>' --resume <path> --cover <path>
+python3 scripts/finish.py --id <id> --park --pending '<blocker>' --detail '<what to do>'
+```
+
+`--pre-submit` re-reads the session, stops if the user cancelled mid-run, runs the duplicate guard, and only then writes the `submitting` write-ahead. If it refuses, it writes nothing. The guard fails closed: no answer from it means no submission. `--completed` refuses to log without the confirmation actually observed, because an unverified completion is what makes the board disagree with reality.
+
 ## Phase 4: Filling
 
 Identify the ATS and read `references/platforms.md` for its known blockers, so you can tell the user upfront what will need them.
