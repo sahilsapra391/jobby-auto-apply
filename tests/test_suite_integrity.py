@@ -59,5 +59,33 @@ class SuiteShapeTests(unittest.TestCase):
                     f"{path.name} has code after unittest.main()")
 
 
+    def test_no_test_case_inherits_another_test_cases_tests(self):
+        """Subclassing a TestCase to reuse its setUp re-runs all of its tests.
+
+        Two classes in test_seen.py did that, so eleven tests ran three times
+        over and the suite reported 313 where it had 305. Nothing failed; the
+        number was just wrong, and a count nobody can trust is worse than a
+        smaller one. Put shared setup in a plain mixin instead.
+        """
+        import ast
+        offenders = []
+        for path in sorted(TESTS.glob("test_*.py")):
+            tree = ast.parse(path.read_text())
+            classes = {c.name: c for c in tree.body if isinstance(c, ast.ClassDef)}
+            for name, node in classes.items():
+                for base in node.bases:
+                    parent = classes.get(getattr(base, "id", None))
+                    if not parent:
+                        continue
+                    inherited = [f.name for f in parent.body
+                                 if isinstance(f, ast.FunctionDef)
+                                 and f.name.startswith("test_")]
+                    if inherited:
+                        offenders.append(
+                            f"{path.name}: {name} re-runs {len(inherited)} tests "
+                            f"inherited from {parent.name}")
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+
 if __name__ == "__main__":
     unittest.main()
