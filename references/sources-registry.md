@@ -78,46 +78,63 @@ part of Phase 1.
 |---|---|---|---|---|---|---|---|
 | Adzuna | `adzuna` | B | 1b | 1 | `connected` | US, CA, GB, AU, DE, FR, NL, PL, ES, IT, AT, BE, CH, SE, SG, NZ, BR, MX, ZA, IN | Verified live 2026-08-20. Covers 19 countries; a selected country outside that set is reported rather than dropped silently. Country x term queries are capped per run and rotate, so a day covers what an hour cannot. |
 | Ashby job boards | `ashby` | A | 1a | 1 | `connected` | * | One request returns descriptionPlain, workplaceType and isRemote. isListed=false postings are skipped. A wrong token returns a plain-text 404, not JSON. |
+| Breezy HR | `breezy` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. A bare array; location is an object carrying is_remote. The list has no description field at all, so its records are thin. |
 | Careerjet | `careerjet` | B | 1b | 1 | `connected` | * | Verified live 2026-08-20, with TWO CORRECTIONS. The endpoint is plain HTTP: it refuses TLS outright (connection refused on 443) and answers on port 80, so the affiliate key travels in plaintext. And it rejects an undeclared caller with 403 and the body 'Undeclared referrer. Please add a Referer header so we know who is calling this API and from which page.' - so the connector declares itself with a Referer naming the project, which is the same honest-identification rule as the User-Agent. Locale x term queries capped and rotating. |
 | Greenhouse job boards | `greenhouse` | A | 1a | 1 | `connected` | * | List is 59 KB for 83 jobs; content=true is 845 KB, so bodies are fetched per job at /jobs/{id} only for postings that survive the metadata gate. No ETag offered when checked. A wrong token is 404. |
 | Himalayas | `himalayas` | C | 1a | 1 | `connected` | REMOTE | jobs[]; pubDate in epoch seconds. |
 | Jooble | `jooble` | B | 1b | 1 | `connected` | * | Verified live 2026-08-20. POST with a JSON body; the key is in the URL path and never reaches an error line. Location x term queries capped and rotating. |
 | Lever job boards | `lever` | A | 1a | 1 | `connected` | * | One request returns descriptions, workplaceType and a two-letter country. The only platform of the three that returned an ETag and answered a conditional request with 304. |
+| Personio | `personio` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. XML, not JSON. Descriptions nest two levels down under jobDescriptions/jobDescription/value. The only platform of the six that states years of experience as its own field. |
+| Recruitee | `recruitee` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. {offers:[...]}, HTML descriptions, country_code, and its own remote/hybrid/on_site flags. |
 | Reed | `reed` | B | 1b | 1 | `connected` | GB | Verified live 2026-08-20. HTTP Basic with the key as username; dd/mm/yyyy dates. Only asked when the saved search includes the UK. |
 | RemoteOK | `remoteok` | C | 1a | 1 | `connected` | REMOTE | Bare array whose FIRST element is a legal notice rather than a job. |
 | Remotive | `remotive` | C | 1a | 1 | `connected` | REMOTE | jobs[] alongside two legal-notice keys. candidate_required_location is a restriction, not a location. |
+| Rippling ATS | `rippling` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. A bare array with five keys, no description and no date, so its records are thin by construction. Lists one requisition once per location under a single URL, which canonical-URL matching folds correctly. |
+| SmartRecruiters | `smartrecruiters` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. {content:[...]}. The postings list carries NO description, so these records score on their title and report experience as not stated. A detail fetch per posting would fix that and is a Phase 2 refinement. |
 | The Muse | `themuse` | B | 1b | 1 | `connected` | US, GB, DE | CORRECTION to Appendix A, which lists this as free-key: the public endpoint answers with no key at all. A key raises the rate limit rather than unlocking access. |
 | USAJobs | `usajobs` | B | 1b | 1 | `connected` | US | Verified live 2026-08-20. Needs the key AND the registered email, which goes in the User-Agent header. |
 | We Work Remotely | `weworkremotely` | C | 1a | 1 | `connected` | REMOTE | RSS, not JSON. Title is "Company: Role" and is the only place the company name appears. |
+| Workable | `workable` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. {jobs:[...]}, country and city as separate fields, full descriptions. The richest of the six: experience extracts cleanly from its bodies. |
 | Working Nomads | `workingnomads` | C | 1a | 1 | `connected` | REMOTE | Bare array; tags is a comma-separated string rather than a list. |
 | BambooHR | `bamboohr` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
-| Personio | `personio` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
-| Recruitee | `recruitee` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
-| SmartRecruiters | `smartrecruiters` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
+| Factorial | `factorial` | A | 1a | 2 | `planned` | * | Per-tenant, European tech; shape unverified. **Verify at build.** |
+| Freshteam | `freshteam` | A | 1a | 2 | `planned` | * | Per-tenant, Freshworks; shape unverified. **Verify at build.** |
+| Gem | `gem` | A | 1a | 2 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
+| JazzHR | `jazzhr` | A | 1a | 2 | `planned` | * | Per-tenant on applytojob.com; the RSS path redirects, shape unverified. **Verify at build.** |
+| Pinpoint | `pinpoint` | A | 1a | 2 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
 | Teamtailor | `teamtailor` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
-| Workable | `workable` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
+| ADP Workforce Now | `adp` | B | 1a | 3 | `planned` | * | Per-tenant portal, North America. **Verify at build.** |
 | Akhtaboot | `akhtaboot` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | APEC | `apec` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | apna | `apna` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
+| Applied | `applied` | A | 1a | 3 | `planned` | * | Per-tenant, UK/Europe blind hiring; shape unverified. **Verify at build.** |
+| Apploi | `apploi` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
 | Arbeitsagentur (Germany) | `arbeitsagentur` | C | 1a | 3 | `planned` | DE | Endpoint shape not confirmed; verify before connecting. **Verify at build.** |
+| Avature | `avature` | E | 1a | 3 | `blocked` | * | No public JSON board; JavaScript-rendered per-tenant portals. **Verify at build.** |
 | Bayt | `bayt` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | Berlin Startup Jobs | `berlin_startup_jobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | BizReach | `bizreach` | E | 2 | 3 | `blocked` | JP | auth wall: account required to see listings |
 | Built In | `builtin` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
 | CareerBuilder | `careerbuilder` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | CareerOne | `careerone` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
+| CEIPAL | `ceipal` | B | 1a | 3 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
+| ClearCompany | `clearcompany` | B | 1a | 3 | `planned` | * | Per-tenant. **Verify at build.** |
+| Cornerstone OnDemand | `cornerstone` | B | 1a | 3 | `planned` | * | Per-tenant. Regulated sectors. **Verify at build.** |
 | Cutshort | `cutshort` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | CV-Library | `cvlibrary` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | CWJobs | `cwjobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Daijob | `daijob` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Darwinbox boards | `darwinbox` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
+| Ceridian Dayforce | `dayforce` | B | 1a | 3 | `planned` | * | Per-tenant, US/CA/AU. **Verify at build.** |
 | Dice | `dice` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | Doda | `doda` | E | 2 | 3 | `blocked` | JP | auth wall |
 | Duunitori | `duunitori_fi` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Eluta | `eluta` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
 | EURES (EU-wide) | `eures` | C | 1a | 3 | `planned` | EU | Endpoint shape not confirmed; verify before connecting. **Verify at build.** |
 | Finn.no | `finn_no` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
+| Flatchr | `flatchr` | A | 1a | 3 | `planned` | * | Per-tenant, continental Europe; shape unverified. **Verify at build.** |
 | Foundit | `foundit` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
+| Fountain | `fountain` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
 | France Travail | `france_travail` | C | 1a | 3 | `planned` | FR | Endpoint shape not confirmed; verify before connecting. **Verify at build.** |
 | GaijinPot | `gaijinpot` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Glassdoor | `glassdoor` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
@@ -143,28 +160,40 @@ part of Phase 1.
 | Jobs.cz | `jobs_cz` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | JobsDB | `jobsdb` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | JobStreet | `jobstreet` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
+| Jobvite | `jobvite` | B | 1a | 3 | `planned` | * | Per-tenant. **Verify at build.** |
 | Jora | `jora` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | JustJoin.IT | `justjoin` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Kalibrr | `kalibrr` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Keka Hire boards | `keka` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | Landing.jobs | `landing_jobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | LinkedIn | `linkedin` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
+| Loxo | `loxo` | E | 1a | 3 | `blocked` | * | Sourcing tool; no public job board. **Verify at build.** |
+| Manatal | `manatal` | A | 1a | 3 | `planned` | * | Per-tenant, SEA/Europe/UAE; shape unverified. **Verify at build.** |
 | Monster | `monster` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | MyCareersFuture (Singapore) | `mycareersfuture` | C | 1a | 3 | `planned` | SG | Endpoint shape not confirmed; verify before connecting. **Verify at build.** |
 | Naukri | `naukri` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | Naukrigulf | `naukrigulf` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | NodeFlair | `nodeflair` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | NoFluffJobs | `nofluffjobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
+| Oleeo | `oleeo` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
 | Oracle Recruiting Cloud | `oracle_orc` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
 | Otta | `otta` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
+| PageUp | `pageup` | B | 1a | 3 | `planned` | * | Per-tenant, dominant in Australia and APAC. **Verify at build.** |
+| Paycom | `paycom` | B | 1a | 3 | `planned` | * | Per-tenant. **Verify at build.** |
+| Paylocity | `paylocity` | B | 1a | 3 | `planned` | * | Per-tenant, US mid-market. **Verify at build.** |
+| PeopleFluent | `peoplefluent` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
+| PeopleStrong | `peoplestrong` | B | 1a | 3 | `planned` | * | Per-tenant, India and APAC; shape unverified. **Verify at build.** |
+| Phenom People | `phenom` | E | 1a | 3 | `blocked` | * | No public JSON board; JavaScript-rendered career portals. **Verify at build.** |
 | Platsbanken (Sweden) | `platsbanken` | C | 1a | 3 | `planned` | SE | Endpoint shape not confirmed; verify before connecting. **Verify at build.** |
 | Pracuj.pl | `pracuj` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Profesia | `profesia` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Programmers | `programmers_kr` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
+| In-house corporate portals | `proprietary` | E | 1a | 3 | `blocked` | * | Google, Apple, Netflix, Meta and similar build their own. One bespoke connector per company; no leverage across them. **Verify at build.** |
 | Qureos | `qureos` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | Rikunabi NEXT | `rikunabi` | E | 2 | 3 | `blocked` | JP | auth wall |
 | RippleHire boards | `ripplehire` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | RocketPunch | `rocketpunch` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
+| Sage People | `sagehr` | B | 1a | 3 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
 | Saramin | `saramin` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | SEEK | `seek` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Shine | `shine` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
@@ -172,12 +201,16 @@ part of Phase 1.
 | StepStone | `stepstone` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | SAP SuccessFactors | `successfactors` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
 | Talent.com | `talent_com` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
+| TalentReef | `talentreef` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
 | Tech in Asia | `techinasia` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | TimesJobs | `timesjobs` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | TokyoDev | `tokyodev` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | TopCV | `topcv` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Totaljobs | `totaljobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Trade Me Jobs | `trademe` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
+| Trakstar Hire | `trakstar` | A | 1a | 3 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
+| Tribepad | `tribepad` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
+| UKG Pro | `ukg` | B | 1a | 3 | `planned` | * | Per-tenant, high-volume healthcare. **Verify at build.** |
 | VC portfolio boards | `vc_boards` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
 | VietnamWorks | `vietnamworks` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Wanted | `wanted_kr` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
@@ -188,6 +221,7 @@ part of Phase 1.
 | Wuzzuf | `wuzzuf` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | XING Jobs | `xing` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Y Combinator (workatastartup) | `ycombinator` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
+| Zimyo | `zimyo` | B | 1a | 3 | `planned` | * | Per-tenant, India and UAE; shape unverified. **Verify at build.** |
 | ZipRecruiter | `ziprecruiter` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | Zoho Recruit boards | `zoho_recruit` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | FlexJobs | `flexjobs` | X | - | 0 | `excluded` | * | paywall: listings are behind a paid subscription |

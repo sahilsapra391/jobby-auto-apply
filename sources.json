@@ -277,55 +277,55 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://api.smartrecruiters.com/v1/companies/{token}/postings",
       "id": "smartrecruiters",
       "name": "SmartRecruiters",
-      "notes": "Public per-company JSON.",
-      "phase": 2,
+      "notes": "Verified live 2026-08-20. {content:[...]}. The postings list carries NO description, so these records score on their title and report experience as not stated. A detail fetch per posting would fix that and is a Phase 2 refinement.",
+      "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-20",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://apply.workable.com/api/v1/widget/accounts/{token}?details=true",
       "id": "workable",
       "name": "Workable",
-      "notes": "Public per-company JSON.",
-      "phase": 2,
+      "notes": "Verified live 2026-08-20. {jobs:[...]}, country and city as separate fields, full descriptions. The richest of the six: experience extracts cleanly from its bodies.",
+      "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-20",
       "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}.recruitee.com/api/offers/",
       "id": "recruitee",
       "name": "Recruitee",
-      "notes": "Public per-company JSON.",
-      "phase": 2,
+      "notes": "Verified live 2026-08-20. {offers:[...]}, HTML descriptions, country_code, and its own remote/hybrid/on_site flags.",
+      "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-20",
       "verifyAtBuild": false
     },
     {
@@ -367,19 +367,19 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}.jobs.personio.de/xml",
       "id": "personio",
       "name": "Personio",
-      "notes": "Public per-company JSON.",
-      "phase": 2,
+      "notes": "Verified live 2026-08-20. XML, not JSON. Descriptions nest two levels down under jobDescriptions/jobDescription/value. The only platform of the six that states years of experience as its own field.",
+      "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-20",
       "verifyAtBuild": false
     },
     {
@@ -2457,6 +2457,618 @@
       "tier": "-",
       "verifiedAt": null,
       "verifyAtBuild": false
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "https://{token}.breezy.hr/json",
+      "id": "breezy",
+      "name": "Breezy HR",
+      "notes": "Verified live 2026-08-20. A bare array; location is an object carrying is_remote. The list has no description field at all, so its records are thin.",
+      "phase": 1,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "connected",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "https://api.rippling.com/platform/api/ats/v1/board/{token}/jobs",
+      "id": "rippling",
+      "name": "Rippling ATS",
+      "notes": "Verified live 2026-08-20. A bare array with five keys, no description and no date, so its records are thin by construction. Lists one requisition once per location under a single URL, which canonical-URL matching folds correctly.",
+      "phase": 1,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "connected",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": "2026-08-20",
+      "verifyAtBuild": false
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "cornerstone",
+      "name": "Cornerstone OnDemand",
+      "notes": "Per-tenant. Regulated sectors.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "adp",
+      "name": "ADP Workforce Now",
+      "notes": "Per-tenant portal, North America.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "paycom",
+      "name": "Paycom",
+      "notes": "Per-tenant.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "dayforce",
+      "name": "Ceridian Dayforce",
+      "notes": "Per-tenant, US/CA/AU.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "ukg",
+      "name": "UKG Pro",
+      "notes": "Per-tenant, high-volume healthcare.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "paylocity",
+      "name": "Paylocity",
+      "notes": "Per-tenant, US mid-market.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "jobvite",
+      "name": "Jobvite",
+      "notes": "Per-tenant.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "avature",
+      "name": "Avature",
+      "notes": "No public JSON board; JavaScript-rendered per-tenant portals.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board; JavaScript-rendered per-tenant portals.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "phenom",
+      "name": "Phenom People",
+      "notes": "No public JSON board; JavaScript-rendered career portals.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board; JavaScript-rendered career portals.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "pageup",
+      "name": "PageUp",
+      "notes": "Per-tenant, dominant in Australia and APAC.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "clearcompany",
+      "name": "ClearCompany",
+      "notes": "Per-tenant.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "pinpoint",
+      "name": "Pinpoint",
+      "notes": "Per-tenant; shape unverified.",
+      "phase": 2,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "gem",
+      "name": "Gem",
+      "notes": "Per-tenant; shape unverified.",
+      "phase": 2,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "jazzhr",
+      "name": "JazzHR",
+      "notes": "Per-tenant on applytojob.com; the RSS path redirects, shape unverified.",
+      "phase": 2,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "apploi",
+      "name": "Apploi",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "fountain",
+      "name": "Fountain",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "peoplefluent",
+      "name": "PeopleFluent",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "oleeo",
+      "name": "Oleeo",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "flatchr",
+      "name": "Flatchr",
+      "notes": "Per-tenant, continental Europe; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "talentreef",
+      "name": "TalentReef",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "zimyo",
+      "name": "Zimyo",
+      "notes": "Per-tenant, India and UAE; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "factorial",
+      "name": "Factorial",
+      "notes": "Per-tenant, European tech; shape unverified.",
+      "phase": 2,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "trakstar",
+      "name": "Trakstar Hire",
+      "notes": "Per-tenant; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "loxo",
+      "name": "Loxo",
+      "notes": "Sourcing tool; no public job board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "Sourcing tool; no public job board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "manatal",
+      "name": "Manatal",
+      "notes": "Per-tenant, SEA/Europe/UAE; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "peoplestrong",
+      "name": "PeopleStrong",
+      "notes": "Per-tenant, India and APAC; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "sagehr",
+      "name": "Sage People",
+      "notes": "Per-tenant; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "B",
+      "endpoint": "",
+      "id": "ceipal",
+      "name": "CEIPAL",
+      "notes": "Per-tenant; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "freshteam",
+      "name": "Freshteam",
+      "notes": "Per-tenant, Freshworks; shape unverified.",
+      "phase": 2,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "A",
+      "endpoint": "",
+      "id": "applied",
+      "name": "Applied",
+      "notes": "Per-tenant, UK/Europe blind hiring; shape unverified.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "planned",
+      "statusReason": "",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "tribepad",
+      "name": "Tribepad",
+      "notes": "No public JSON board.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "No public JSON board.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
+    },
+    {
+      "auth": "none",
+      "class": "E",
+      "endpoint": "",
+      "id": "proprietary",
+      "name": "In-house corporate portals",
+      "notes": "Google, Apple, Netflix, Meta and similar build their own. One bespoke connector per company; no leverage across them.",
+      "phase": 3,
+      "regions": [
+        "*"
+      ],
+      "sourceClass": "ats",
+      "status": "blocked",
+      "statusReason": "Google, Apple, Netflix, Meta and similar build their own. One bespoke connector per company; no leverage across them.",
+      "tier": "1a",
+      "verifiedAt": null,
+      "verifyAtBuild": true
     }
   ],
   "statuses": {

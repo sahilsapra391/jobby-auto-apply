@@ -666,7 +666,17 @@ class CompanyRegistryTests(unittest.TestCase):
             self.assertTrue(token, name)
             self.assertNotIn((ats, token), seen, f"{name} duplicates a board")
             seen.add((ats, token))
-            self.assertTrue(2 <= len(region) <= 2 and region.isupper(), name)
+            # "unknown" is a legal value and an honest one: the pack is built
+            # from live verification, not from a country lookup, and inventing
+            # a headquarters for an entry with no evidence would be worse.
+            self.assertTrue(region == "unknown" or (len(region) == 2 and region.isupper()),
+                            f"{name}: {region!r}")
+
+    def test_most_of_the_pack_has_a_known_region(self):
+        regions = [r for _, _, _, r in seed_companies.SEED_PACK]
+        unknown = sum(1 for r in regions if r == "unknown")
+        self.assertLess(unknown / len(regions), 0.25,
+                        "region is informational, but mostly-unknown would make it useless")
 
     def test_the_pack_reaches_every_region_the_plan_names(self):
         # US, India, Canada, Australia, Europe, Middle East, Japan, Korea, SEA.
