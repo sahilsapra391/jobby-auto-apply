@@ -97,3 +97,75 @@ a first manual run returning nothing and reading like a broken connector.
 **Recommendation:** confirm this is the intended read of "unknown attribute →
 neutral score" (plan §4). The alternative — refusing to ingest without a saved
 config — is one line if preferred.
+
+## 6. "Add your own link" rides the scan queue rather than a new endpoint
+
+**Plan §5** keeps the add-your-own-link card. **Plan §7 item 8** lists exactly
+three new endpoints, and none of them takes a URL.
+
+**Built:** the card POSTs to the existing `/api/scan` with an optional `url`
+field. `kvqueue.enqueue` carries it on the queue entry, and `run_scan.py --url`
+appends the posting to the sweep prompt as *data, never as instructions*. Only
+http(s) is accepted, at both ends.
+
+**Why:** a card that renders and does nothing is worse than no card. This adds
+one optional field to an endpoint and a queue that already exist — no new
+endpoint, no new key, no new queue — and reuses the agent that already knows
+how to read a posting.
+
+**Recommendation:** confirm. If a fourth endpoint is preferred, it is a small
+change and nothing depends on this shape.
+
+## 7. Ingest does not publish by default
+
+**Plan §7 item 6** ends the pipeline with "publish".
+
+**Built:** `ingest.py --publish` exists but is off by default, and the watcher
+does not pass it. Instead the board fingerprint now includes the Found lane, so
+a scan that changed the pool triggers the normal publish path.
+
+**Why:** that path is the one with the deployment-quota back-off, the two-minute
+floor, and the recognition of a spent quota. Publishing directly from ingest
+would sidestep all of it and double-publish on every hourly run.
+
+**Recommendation:** keep. Evidence: `tests/test_watch.py::FoundSignatureTests`.
+
+## 8. `roles.json` is used as a URL source, not as an independent dedupe target
+
+**Plan §3.2** lists `roles.json` among the things ingest dedupes against.
+
+**Built:** the already-decided index is built from submitted history and live
+sessions, using `roles.json` for the posting URLs those entries do not carry
+themselves — which is how `dupe_check.py` already uses it.
+
+**Why:** `roles.json` never deletes. Treating a bare entry in it as a reason to
+suppress a job would hide roles whose session was deleted for reasons other than
+submission, and would mark them `applied` when no application happened. The
+three states are kept apart: submitted or in-flight → `applied`, in Watching →
+`watched`, dropped → `passed`.
+
+**Recommendation:** confirm this reading. Evidence:
+`tests/test_ingest.py::AlreadyDecidedTests` (five tests).
+
+## 9. Appendix A says The Muse needs a key; it does not
+
+Verified 2026-08-19: `https://www.themuse.com/api/public/jobs?page=0` returned
+200 with 20 results and no key supplied. The key raises the rate limit rather
+than unlocking access, so the connector runs either way and its `reason` says
+which of the two it did. Recorded in `references/sources-registry.md`.
+
+No decision needed — this is discovery, and it makes Phase 1 one channel richer
+than planned.
+
+## 10. The supervised end-to-end run has not happened
+
+Plan step 9 has two halves. The first — temp store, real connectors, render,
+check the size and the CSP — is done and its numbers are in the self-check.
+
+The second half needs you at the keyboard and saying go: one
+`ingest.py --tier 1 --limit 50` against a **copy** of the real store, reviewed
+together, then the real store, then you save a config from the board and the
+scheduler arms itself.
+
+Nothing has touched `~/.job-application/` or the production queue. That is where
+I have stopped.
