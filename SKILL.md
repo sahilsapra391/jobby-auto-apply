@@ -134,6 +134,16 @@ If a form asks "were you referred by an employee," and a referral is realistical
 
 Identify the ATS and read `references/platforms.md` for its known blockers, so you can tell the user upfront what will need them.
 
+**Fill in batches, not field by field.** One snapshot to read the form, then one
+`browser_fill_form` call carrying every field it supports (textbox, checkbox, radio,
+combobox, slider), then **one** snapshot to verify the lot. Values are still read back from
+the page rather than trusted; what changes is paying for that once instead of once per
+field. Every snapshot returns the page's whole accessibility tree, and on a Workday form
+that is thousands of tokens charged twenty times over. Use `browser_find` to re-check a
+single disagreeing field rather than another full snapshot. File uploads, react-select
+comboboxes, native selects and multi-step wizards are handled separately, as
+`references/platforms.md` describes; batching does not change those rules.
+
 **Resolve the whole form before touching it.** Read the form once, list its questions, and resolve them in a single call — `store.py answers-resolve --input questions.json` — rather than one lookup per field. That produces the fill plan upfront: which fields have confirmed answers, which are inferred and need confirming, which are missing and block the application. Ask the user for everything missing in one message, not field by field. Treat a `fuzzy` match as a candidate you must confirm means the same thing, never as an authority — the score measures wording overlap, not meaning.
 
 Work in order, and **verify every few fields rather than at the end.** Long forms re-render as you fill: dropdowns shift, clicks land on neighbouring options, scroll position moves a target between reading its coordinate and clicking. Silent mis-fills are the normal failure mode.

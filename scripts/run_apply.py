@@ -117,8 +117,38 @@ Do this and nothing else:
    resume, it is one that started inventing.
    Write them to applications/<Company>/ with the role in the filename if that company has
    more than one open application.
-3. Open the posting with the `mcp__browser__*` tools and fill the application, verifying
-   values by reading them back from the page rather than trusting your own plan.
+3. Open the posting with the `mcp__browser__*` tools.
+
+   RESOLVE THE WHOLE FORM BEFORE YOU TOUCH IT. Read it once, write every question it asks
+   to a JSON list, and resolve them in ONE call:
+     "{py}" "{repo}/scripts/store.py" answers-resolve --input questions.json
+   That returns the fill plan: which fields have confirmed answers, which came back fuzzy
+   and need confirming, which are missing. One lookup per field instead is a round trip
+   per field and it is most of why filling a form takes ten minutes. Treat a `fuzzy` match
+   as a candidate to confirm, never as an authority: the score measures wording overlap,
+   not meaning.
+
+   FILL IN BATCHES, NOT FIELD BY FIELD. Take ONE snapshot to read the form, then fill
+   everything it supports in a SINGLE `browser_fill_form` call, passing an array of fields,
+   each with target, name, type and value. type is one of textbox, checkbox, radio,
+   combobox, slider. Filling one field at a time and re-snapshotting after each is the
+   single biggest reason a form takes ten minutes: every snapshot returns the whole
+   accessibility tree of the page, and on a Workday or Greenhouse form that is thousands
+   of tokens you pay for twenty times over.
+
+   Four things `browser_fill_form` does not do, and the existing rules for them still hold:
+     - FILE UPLOADS: `browser_file_upload` with the absolute path.
+     - REACT-SELECT and other custom comboboxes (Greenhouse, Ashby): click the field, then
+       click the [role="option"] node. NEVER press Enter to accept one. A stray Enter has
+       already submitted an application early, and `browser_fill_form` cannot drive them.
+     - NATIVE <select>: `browser_select_option`.
+     - MULTI-STEP FORMS: one batch per step, not one batch for the whole wizard.
+
+   THEN VERIFY, ONCE. After the batch, take ONE snapshot and check every value you set is
+   actually on the page. Values are still read back from the page rather than trusted, that
+   rule has not changed; what changed is doing it once for the whole form instead of once
+   per field. Use `browser_find` to re-check a single field that disagrees, rather than
+   another full snapshot. Fix only what is wrong, and verify the fix.
 
    That browser runs a profile of its own at ~/.job-application/browser-profile, shared by
    every run and signed in to whatever the user has signed it in to. Check before assuming:
