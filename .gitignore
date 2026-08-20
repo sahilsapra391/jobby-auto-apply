@@ -39,3 +39,12 @@ deploy/node_modules/
 .bodies.json
 .candidates.json
 .picks.txt
+
+# Agent screenshots, anywhere in the tree. These are filled application forms
+# and confirmation pages: names, addresses, phone numbers, and in at least one
+# case a completed EEO section with race and gender selected. A screenshot of
+# an application form cannot be shown to be safe, so none of them are tracked.
+# The scan in tests/test_no_pii.py fails any tracked image by rule.
+**/*.png
+!assets/**/*.png
+!deploy/public/*.png
