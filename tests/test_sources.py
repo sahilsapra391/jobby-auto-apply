@@ -29,7 +29,7 @@ FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import sources  # noqa: E402
-from sources import adzuna, ashby, base, careerjet, feeds, greenhouse  # noqa: E402
+from sources import adzuna, ashby, base, boards, careerjet, feeds, greenhouse  # noqa: E402
 from sources import jooble, lever, reed, themuse, usajobs  # noqa: E402
 
 
@@ -108,7 +108,7 @@ class EnvelopeTests(unittest.TestCase):
     """Every connector answers in the same shape, whatever happened."""
 
     def test_every_registered_connector_is_callable(self):
-        self.assertEqual(len(sources.ALL), 14)
+        self.assertEqual(len(sources.ALL), 20)
         for name, fn in sources.ALL.items():
             self.assertTrue(callable(fn), name)
 
@@ -689,3 +689,130 @@ class FixtureProvenanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoardPlatformTests(unittest.TestCase):
+    """The six company-board platforms added after Phase 1's first review.
+
+    Every endpoint here was confirmed against a live tenant before the
+    connector was written, and none of the shapes is what a reasonable person
+    would guess. Fixtures are recorded from those tenants.
+
+    These are registry-driven, which is the point worth remembering: there is
+    no endpoint that returns every SmartRecruiters job, only
+    /v1/companies/{token}/postings. A connector adds as many companies as the
+    registry knows tenants for.
+    """
+
+    COMPANIES = {
+        "ifs": {"name": "IFS", "ats": "smartrecruiters", "token": "IFS1"},
+        "innovaccer": {"name": "Innovaccer", "ats": "workable",
+                       "token": "innovaccer-analytics"},
+        "dss": {"name": "Consult DSS", "ats": "recruitee", "token": "consultdss"},
+        "personio": {"name": "Personio", "ats": "personio", "token": "personio"},
+        "breezy": {"name": "Breezy", "ats": "breezy", "token": "breezy"},
+        "rippling": {"name": "Rippling", "ats": "rippling", "token": "rippling"},
+    }
+
+    def run_one(self, name, host, fixture_name, accept_xml=False):
+        body = fixture(fixture_name)
+        f = fetcher({host: (200, body)})
+        return boards.CONNECTORS[name](f, companies=self.COMPANIES), f
+
+    def test_each_platform_normalises_its_own_shape(self):
+        cases = [("smartrecruiters", "api.smartrecruiters.com", "smartrecruiters_board.json"),
+                 ("workable", "apply.workable.com", "workable_board.json"),
+                 ("recruitee", "recruitee.com", "recruitee_board.json"),
+                 ("personio", "personio.de", "personio_board.xml"),
+                 ("breezy", "breezy.hr", "breezy_board.json"),
+                 ("rippling", "api.rippling.com", "rippling_board.json")]
+        for name, host, fx in cases:
+            result, _ = self.run_one(name, host, fx)
+            self.assertEqual(result["status"], "ok", f"{name}: {result.get('reason')}")
+            self.assertTrue(result["postings"], name)
+            for job in result["postings"]:
+                self.assertTrue(job["title"], name)
+                self.assertTrue(job["company"], name)
+                self.assertEqual(job["sources"][0]["source"], name)
+                self.assertEqual(job["sources"][0]["sourceClass"], "ats",
+                                 f"{name} is a direct listing, not an aggregator copy")
+
+    def test_every_one_of_them_counts_as_a_direct_listing(self):
+        # This is why they were added: they rank above aggregator copies in
+        # both retention and the lane's ordering.
+        for name in boards.CONNECTORS:
+            self.assertIn(name, sources.REGISTRY_CONNECTORS)
+
+    def test_an_empty_registry_is_a_visible_skip_not_a_success(self):
+        for name, fn in boards.CONNECTORS.items():
+            f = fetcher({})
+            result = fn(f, companies={})
+            self.assertEqual(result["status"], "skipped", name)
+            self.assertIn("registry", result["reason"], name)
+            self.assertEqual(len(f.fake_opener.calls), 0, name)
+
+    def test_a_dead_token_is_reported(self):
+        f = fetcher({"apply.workable.com": (404, "not found")})
+        result = boards.workable(f, companies={"innovaccer": self.COMPANIES["innovaccer"]})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("404", result["errors"][0])
+
+    def test_smartrecruiters_carries_no_description_and_does_not_pretend_to(self):
+        # The postings list genuinely has no body. Saying so beats inventing one.
+        result, _ = self.run_one("smartrecruiters", "api.smartrecruiters.com",
+                                 "smartrecruiters_board.json")
+        job = result["postings"][0]
+        self.assertEqual(job["descriptionExcerpt"], "")
+        self.assertIsNone(job["descFingerprint"])
+        self.assertTrue(job["location"]["country"], "but the location is real")
+
+    def test_workable_gives_a_body_and_the_experience_comes_out_of_it(self):
+        result, _ = self.run_one("workable", "apply.workable.com", "workable_board.json")
+        job = result["postings"][0]
+        self.assertGreater(len(job["descriptionExcerpt"]), 500)
+        self.assertTrue(job["descFingerprint"])
+        self.assertTrue(job["extracted"]["yearsText"])
+
+    def test_recruitee_reads_its_own_workplace_flags(self):
+        result, _ = self.run_one("recruitee", "recruitee.com", "recruitee_board.json")
+        places = {j["workplace"] for j in result["postings"]}
+        self.assertTrue(places & {"remote", "hybrid", "onsite"})
+
+    def test_personio_is_xml_rather_than_json(self):
+        result, f = self.run_one("personio", "personio.de", "personio_board.xml")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(f.fake_opener.calls[0].get_header("Accept"), "application/xml")
+
+    def test_malformed_xml_is_an_error_not_a_crash(self):
+        f = fetcher({"personio.de": (200, "<workzag-jobs><position>truncated")})
+        result = boards.personio(f, companies={"personio": self.COMPANIES["personio"]})
+        self.assertTrue(result["errors"])
+
+    def test_rippling_records_are_thin_and_honest_about_it(self):
+        # Its payload has five keys and carries no description or date at all.
+        result, _ = self.run_one("rippling", "api.rippling.com", "rippling_board.json")
+        job = result["postings"][0]
+        self.assertIsNone(job["postedAt"])
+        self.assertIsNone(job["descFingerprint"])
+        self.assertTrue(job["title"])
+
+    def test_rippling_lists_one_requisition_once_per_location(self):
+        # Same uuid and same URL across several locations, so canonical-URL
+        # matching folds them rather than showing the same job five times.
+        result, _ = self.run_one("rippling", "api.rippling.com", "rippling_board.json")
+        urls = [j["canonicalUrl"] for j in result["postings"]]
+        self.assertLess(len(set(urls)), len(urls) + 1)
+
+
+class TrailingCountryCodeTests(unittest.TestCase):
+    def test_a_trailing_two_letter_code_is_a_country(self):
+        # Rippling writes "Remote (New Jersey, US)" and that was being thrown
+        # away, leaving the country unknown on every one of its postings.
+        self.assertEqual(base.parse_location("Remote (New Jersey, US)")["country"], "US")
+        self.assertEqual(base.parse_location("Bengaluru, IN")["country"], "IN")
+
+    def test_a_two_letter_word_mid_sentence_is_not_a_country(self):
+        self.assertIsNone(base.parse_location("Please contact us")["country"])
+
+    def test_a_us_state_still_wins_where_it_applies(self):
+        self.assertEqual(base.parse_location("New York, NY")["country"], "US")

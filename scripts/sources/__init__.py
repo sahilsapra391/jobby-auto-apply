@@ -7,7 +7,8 @@ channel that exists in the catalog but not here is a gap the ingest reports
 rather than one nobody notices.
 """
 
-from . import adzuna, ashby, careerjet, feeds, greenhouse, jooble, lever, reed, themuse, usajobs
+from . import adzuna, ashby, boards, careerjet, feeds, greenhouse, jooble, lever
+from . import reed, themuse, usajobs
 
 # Tier 1a: no key, no limit worth worrying about. These carry Phase 1 on their
 # own if every key is missing.
@@ -15,6 +16,7 @@ REGISTRY_CONNECTORS = {
     "greenhouse": greenhouse.fetch,
     "lever": lever.fetch,
     "ashby": ashby.fetch,
+    **boards.CONNECTORS,
 }
 
 FEED_CONNECTORS = dict(feeds.CONNECTORS)

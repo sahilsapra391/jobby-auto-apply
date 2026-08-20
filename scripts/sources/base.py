@@ -320,6 +320,10 @@ US_STATES = {
 }
 CA_PROVINCES = {"ab", "bc", "mb", "nb", "nl", "ns", "nt", "nu", "on", "pe", "qc", "sk", "yt"}
 
+# Every ISO code the country map yields, for recognising a trailing code.
+KNOWN_CODES = set(COUNTRY_NAMES.values()) | US_STATES.union() | set()
+KNOWN_CODES = {c.upper() for c in COUNTRY_NAMES.values()}
+
 REMOTE_WORDS = ("remote", "anywhere", "work from home", "distributed", "wfh")
 HYBRID_WORDS = ("hybrid", "flexible")
 ONSITE_WORDS = ("on-site", "onsite", "in office", "in-office", "on site")
@@ -341,7 +345,14 @@ def parse_location(raw, fallback_country=None):
         if re.search(rf"(?:^|[,\s(]){re.escape(name)}(?:$|[,\s)])", lowered):
             location["country"] = code
             break
-    parts = [p.strip() for p in re.split(r"[,/|]", text) if p.strip()]
+    if not location["country"]:
+        # A trailing two-letter code is a country: "Remote (New Jersey, US)",
+        # "Bengaluru, IN". Only checked at the end of a segment, so "US" inside
+        # a sentence cannot trigger it.
+        tail = re.search(r"[,(]\s*([A-Za-z]{2})\s*\)?\s*$", text)
+        if tail and tail.group(1).upper() in KNOWN_CODES:
+            location["country"] = tail.group(1).upper()
+    parts = [p.strip() for p in re.split(r"[,/|()]", text) if p.strip()]
     if parts:
         head = parts[0]
         if not any(word in head.lower() for word in REMOTE_WORDS):

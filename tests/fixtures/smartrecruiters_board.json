@@ -1,0 +1,299 @@
+{
+  "offset": 0,
+  "limit": 2,
+  "totalFound": 266,
+  "content": [
+    {
+      "id": "744000144450849",
+      "name": "Finance Business Partner \u2013 Global Customer Services (GCS), APJMEA ",
+      "uuid": "5578d0c8-cc07-4189-a69a-b9e4564dda11",
+      "jobAdId": "fcc0dd1e-56d4-43a2-b593-08229a457338",
+      "defaultJobAd": true,
+      "refNumber": "REF10408P",
+      "company": {
+        "identifier": "IFS1",
+        "name": "IFS"
+      },
+      "releasedDate": "2026-08-20T03:17:49.503Z",
+      "location": {
+        "city": "Dubai",
+        "region": "Dubai",
+        "country": "ae",
+        "remote": false,
+        "hybrid": false,
+        "fullLocation": "Dubai, Dubai, United Arab Emirates"
+      },
+      "industry": {
+        "id": "it_and_services",
+        "label": "Information Technology And Services"
+      },
+      "department": {
+        "id": "1535277",
+        "label": "Finance"
+      },
+      "function": {
+        "id": "finance",
+        "label": "Finance"
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "mid_senior_level",
+        "label": "Mid-Senior Level"
+      },
+      "customField": [
+        {
+          "fieldId": "5fec299521dedc60e1fe0b10",
+          "fieldLabel": "Default Job Ad Type",
+          "valueId": "9da6d30b-9075-4610-857b-27ae6cd78524",
+          "valueLabel": "Internal"
+        },
+        {
+          "fieldId": "5e67c8ea20b84c432fea755f",
+          "fieldLabel": "IFS Region",
+          "valueId": "878cb8bb-3d5a-4e11-b2bc-ce59084cc348",
+          "valueLabel": "APJMEA"
+        },
+        {
+          "fieldId": "5e67c9bf336cbf68dd5d5755",
+          "fieldLabel": "Cost Center",
+          "valueId": "7000",
+          "valueLabel": "7000 - Finance - Global - Go-To-Market Finance"
+        },
+        {
+          "fieldId": "5e67cb9ff735ac2800068f1a",
+          "fieldLabel": "Job Type",
+          "valueId": "cfd12cd9-c8d9-4846-98ae-48f888821fdb",
+          "valueLabel": "Full-time"
+        },
+        {
+          "fieldId": "5e1864a69ac9c52e787ed9a5",
+          "fieldLabel": "Brands",
+          "valueId": "default",
+          "valueLabel": "IFS"
+        },
+        {
+          "fieldId": "5e67c87120b84c432fea755e",
+          "fieldLabel": "IFS Market Unit",
+          "valueId": "MiddleEast",
+          "valueLabel": "MENA"
+        },
+        {
+          "fieldId": "5e1864a69ac9c52e787ed9a6",
+          "fieldLabel": "Department",
+          "valueId": "1535277",
+          "valueLabel": "Finance"
+        },
+        {
+          "fieldId": "6a1d397099e716687de3f310",
+          "fieldLabel": "Employment Type",
+          "valueId": "20c399f5-bb8e-42bf-bf7c-f665a530c685",
+          "valueLabel": "IFS - Permanent Employee"
+        },
+        {
+          "fieldId": "COUNTRY",
+          "fieldLabel": "Country/Region",
+          "valueId": "ae",
+          "valueLabel": "United Arab Emirates"
+        },
+        {
+          "fieldId": "5e67c92f336cbf68dd5d5754",
+          "fieldLabel": "IFS Company",
+          "valueId": "AE10",
+          "valueLabel": "AE10 - IFS Middle East FZ-LLC"
+        },
+        {
+          "fieldId": "5ffd8b148565d83fc08f0f0e",
+          "fieldLabel": "Cost Center Range",
+          "valueId": "ca3195f1-8467-4a53-b88b-76502f1ff133",
+          "valueLabel": "7000 - Finance - Global - Go-To-Market Finance"
+        },
+        {
+          "fieldId": "609bb02fe329662bb05fc944",
+          "fieldLabel": "Additional Pay Type",
+          "valueId": "db61310f-206b-4844-82a3-f1e27b05bd20",
+          "valueLabel": "NCF - IFS Bonus Pl (Non Customer Facing - IFS Bonus Plan)"
+        },
+        {
+          "fieldId": "5e67cfbb336cbf68dd5d575d",
+          "fieldLabel": "Reporting Person's Title",
+          "valueLabel": "Regional CFO"
+        },
+        {
+          "fieldId": "5e67cd38f735ac2800068f1d",
+          "fieldLabel": "Reporting Person's Name",
+          "valueLabel": "Lenka Nikolaidis"
+        },
+        {
+          "fieldId": "60f3c22213ba090b9ccd27fe",
+          "fieldLabel": "Incumbent End Date",
+          "valueLabel": "Oct-26"
+        }
+      ],
+      "visibility": "PUBLIC",
+      "ref": "https://api.smartrecruiters.com/v1/companies/IFS1/postings/744000144450849",
+      "language": {
+        "code": "en",
+        "label": "English",
+        "labelNative": "English (US)"
+      }
+    },
+    {
+      "id": "744000144291651",
+      "name": "Account Executive- Johannesburg, South Africa",
+      "uuid": "a9513bb2-c373-4aed-8a87-2c080003a3e3",
+      "jobAdId": "42f511ca-227f-42bd-aa84-6a0a08998726",
+      "defaultJobAd": true,
+      "refNumber": "REF10389A",
+      "company": {
+        "identifier": "IFS1",
+        "name": "IFS"
+      },
+      "releasedDate": "2026-08-19T11:35:09.710Z",
+      "location": {
+        "city": "Johannesburg",
+        "region": "Gauteng",
+        "country": "za",
+        "remote": false,
+        "hybrid": false,
+        "fullLocation": "Johannesburg, Gauteng, South Africa"
+      },
+      "industry": {
+        "id": "computer_software",
+        "label": "Computer Software"
+      },
+      "department": {
+        "id": "1535124",
+        "label": "Sales"
+      },
+      "function": {
+        "id": "business_development",
+        "label": "Business Development"
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "mid_senior_level",
+        "label": "Mid-Senior Level"
+      },
+      "customField": [
+        {
+          "fieldId": "5fec299521dedc60e1fe0b10",
+          "fieldLabel": "Default Job Ad Type",
+          "valueId": "d3e9b028-c4d5-4dfd-83b0-3d416affbf8b",
+          "valueLabel": "Private"
+        },
+        {
+          "fieldId": "5e67c8ea20b84c432fea755f",
+          "fieldLabel": "IFS Region",
+          "valueId": "878cb8bb-3d5a-4e11-b2bc-ce59084cc348",
+          "valueLabel": "APJMEA"
+        },
+        {
+          "fieldId": "5e67c9bf336cbf68dd5d5755",
+          "fieldLabel": "Cost Center",
+          "valueId": "2200",
+          "valueLabel": "2200 - Sales - Local - Core"
+        },
+        {
+          "fieldId": "5e67cb9ff735ac2800068f1a",
+          "fieldLabel": "Job Type",
+          "valueId": "cfd12cd9-c8d9-4846-98ae-48f888821fdb",
+          "valueLabel": "Full-time"
+        },
+        {
+          "fieldId": "5e1864a69ac9c52e787ed9a5",
+          "fieldLabel": "Brands",
+          "valueId": "default",
+          "valueLabel": "IFS"
+        },
+        {
+          "fieldId": "5e67c87120b84c432fea755e",
+          "fieldLabel": "IFS Market Unit",
+          "valueId": "c33c943b-f8f2-4062-a98c-53845eb78935",
+          "valueLabel": "Indirect Markets"
+        },
+        {
+          "fieldId": "5e1864a69ac9c52e787ed9a6",
+          "fieldLabel": "Department",
+          "valueId": "1535124",
+          "valueLabel": "Sales"
+        },
+        {
+          "fieldId": "6a1d397099e716687de3f310",
+          "fieldLabel": "Employment Type",
+          "valueId": "20c399f5-bb8e-42bf-bf7c-f665a530c685",
+          "valueLabel": "IFS - Permanent Employee"
+        },
+        {
+          "fieldId": "COUNTRY",
+          "fieldLabel": "Country/Region",
+          "valueId": "za",
+          "valueLabel": "South Africa"
+        },
+        {
+          "fieldId": "6836812958006d2115edc53c",
+          "fieldLabel": "Quota Carrying Type",
+          "valueId": "11222d58-8206-4ae6-9d95-f8b130c1e3d2",
+          "valueLabel": "Install Base and Net New"
+        },
+        {
+          "fieldId": "5e67c92f336cbf68dd5d5754",
+          "fieldLabel": "IFS Company",
+          "valueId": "ZA10",
+          "valueLabel": "ZA10 - Application Software IFS South Africa (Pty) Ltd"
+        },
+        {
+          "fieldId": "5ffd8b148565d83fc08f0f0e",
+          "fieldLabel": "Cost Center Range",
+          "valueId": "472d9fb4-5be9-4e3c-97af-c96a6ead3fec",
+          "valueLabel": "Sales - Local - Core"
+        },
+        {
+          "fieldId": "609bb02fe329662bb05fc944",
+          "fieldLabel": "Additional Pay Type",
+          "valueId": "a42adc03-7743-4b44-828a-97902df72414",
+          "valueLabel": "SP - Sales Exec NS (Sales and Pre-sales - Sales Executive - New Sales)"
+        },
+        {
+          "fieldId": "6a2180b315514ac8fad8b77e",
+          "fieldLabel": "Sales Leader",
+          "valueId": "d1a78ae2-3724-4368-a1b4-0ae7ad9ed9d0",
+          "valueLabel": "Hannes Liebe"
+        },
+        {
+          "fieldId": "6a2294e317fd02e5b9626aca",
+          "fieldLabel": "Is this an Overhire?",
+          "valueId": "8c6180f7-dcf7-4796-9df5-7146539cb517",
+          "valueLabel": "Yes"
+        },
+        {
+          "fieldId": "5e67cfbb336cbf68dd5d575d",
+          "fieldLabel": "Reporting Person's Title",
+          "valueLabel": "Sales Director"
+        },
+        {
+          "fieldId": "5e67cd38f735ac2800068f1d",
+          "fieldLabel": "Reporting Person's Name",
+          "valueLabel": "Johnny Aucamp "
+        },
+        {
+          "fieldId": "60f3c22213ba090b9ccd27fe",
+          "fieldLabel": "Incumbent End Date",
+          "valueLabel": "TBC"
+        }
+      ],
+      "visibility": "PUBLIC",
+      "ref": "https://api.smartrecruiters.com/v1/companies/IFS1/postings/744000144291651",
+      "language": {
+        "code": "en",
+        "label": "English",
+        "labelNative": "English (US)"
+      }
+    }
+  ]
+}

@@ -50,9 +50,21 @@ ATS_URL_PATTERNS = [
     ("workable", re.compile(r"^apply\.workable\.com/([A-Za-z0-9_.-]+)")),
     ("recruitee", re.compile(r"^([A-Za-z0-9-]+)\.recruitee\.com")),
     ("zoho", re.compile(r"^([A-Za-z0-9-]+)\.zohorecruit\.(?:com|in|eu)")),
+    ("personio", re.compile(r"^([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)")),
+    ("breezy", re.compile(r"^([A-Za-z0-9-]+)\.breezy\.hr")),
+    ("teamtailor", re.compile(r"^([A-Za-z0-9-]+)\.teamtailor\.com")),
+    ("bamboohr", re.compile(r"^([A-Za-z0-9-]+)\.bamboohr\.com")),
+    ("jazzhr", re.compile(r"^([A-Za-z0-9-]+)\.applytojob\.com")),
+    ("rippling", re.compile(r"^api\.rippling\.com/platform/api/ats/v1/board/([A-Za-z0-9-]+)")),
+    ("smartrecruiters", re.compile(r"^careers\.smartrecruiters\.com/([A-Za-z0-9_.-]+)")),
     ("workday", re.compile(r"^([A-Za-z0-9-]+)\.wd\d+\.myworkdayjobs\.com")),
     ("darwinbox", re.compile(r"^([A-Za-z0-9-]+)\.darwinbox\.in")),
 ]
+
+# Platforms with a connector that can fetch a board directly. Everything else
+# in the registry is recorded but not yet reachable without a resolver.
+TIER1_PLATFORMS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable",
+                   "recruitee", "personio", "breezy", "rippling")
 
 # Aggregator and search hosts. A posting reached through one of these says
 # nothing about the employer's ATS, so it must not become a board token.
@@ -327,7 +339,7 @@ def seed(existing, incoming):
             registry[key] = record
             added += 1
     fetchable = sum(1 for c in registry.values()
-                    if c.get("ats") in ("greenhouse", "lever", "ashby") and c.get("token"))
+                    if c.get("ats") in TIER1_PLATFORMS and c.get("token"))
     return registry, {
         "companies": len(registry), "added": added, "updated": updated,
         "tier1Fetchable": fetchable,
