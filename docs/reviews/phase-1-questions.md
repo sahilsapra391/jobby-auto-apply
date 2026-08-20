@@ -379,3 +379,62 @@ One thing that got in the way of measuring this: `companies.json` records no
 country, so all 516 entries read as `??`. The registry cannot currently answer
 "how many Indian employers do we poll", which is the number lever (2) is judged
 on. Worth a field.
+
+## 16. The two errors on the run that counts
+
+Named, since `errors 2` on its own is not a report.
+
+Both were Careerjet, both the same thing, and both are question 14:
+
+    careerjet: refusing to merge d5b21b33a586845b
+    careerjet: refusing to merge 54ee22a2779fd0ee
+
+`upsert` refusing to fold an incoming posting onto a record the matcher had
+already declined to match. The refusal is correct — the alternative is silently
+merging two different jobs — but the posting is dropped rather than stored under
+a fresh id, and the run reports it as a channel error.
+
+**Coverage cost: two postings of 17,874 found, 0.011%.** Both Careerjet, which
+is a Tier-1b aggregator, so both are near-certain to exist in the store already
+from a direct board: Careerjet syndicates rather than originates. Neither was a
+company the registry does not otherwise reach.
+
+They are classified as errors rather than as merges because the connector
+envelope has no third state for "found something, chose not to keep it". That is
+the part worth changing whenever question 14 is taken up: an `error` no operator
+can act on is the kind that teaches people to stop reading the error list.
+
+## 17. The sweep ceiling, measured
+
+Run 1 was cold — nothing conditional-cached — and is the honest ceiling:
+**965 seconds, 16.1 minutes, over 752 requests.** Run 3, with ETags warm, was
+878.9s over 752. The 14.8-minute figure already in the gaps list was a prediction
+from the temp-store runs and it was close; the real number is 16.1 minutes.
+
+It is throttle-bound, not bandwidth-bound. 752 requests over 965 seconds is 1.17
+seconds per request against a 1-second-per-host floor, so the run is essentially
+sleeping. Requests per host, inferred from each channel's own reason line, come
+to 749 against the 752 the fetcher counted, so the model is sound:
+
+| channel | requests to one host | serial floor |
+|---|---:|---:|
+| greenhouse | 222 | 222s |
+| ashby | 135 | 135s |
+| jooble | 80 | 80s |
+| careerjet | 80 | 80s |
+| adzuna | 80 | 80s |
+| lever | 70 | 70s |
+
+Parallelism across hosts, with the 1-second floor preserved *within* each host,
+takes the wall clock from 965s to about 222s — Greenhouse's own chain, which is
+then the binding constraint. That is 4.3x for a change that removes only the
+waiting between unrelated hosts and relaxes no politeness at all.
+
+Splitting the sweep across the hour is the more complex lever and buys less: it
+does not reduce total work, it only hides it, and it makes "what did the last
+scan find" a question with no single answer.
+
+Phase 3 needs this, because agent sweeps add wall clock on top. Phase 1 does
+not: at six sweeps a day the scan occupies 16 minutes of every 240, and it takes
+the scan lock rather than an apply slot, so it never contends with an
+application.
