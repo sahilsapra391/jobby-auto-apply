@@ -6,6 +6,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 import collections
 import importlib.util
 import pathlib
+import html
 import json
 import os
 import re
@@ -974,6 +975,59 @@ class PageWeightAtCapTests(unittest.TestCase):
         self.assertEqual(doc["w"], [35, 20, 15, 20, 10])
         self.assertLess(len(doc["y"]), 12, "the explanations repeat; they are interned")
         self.assertNotIn("wt", doc["j"][0], "weights are identical on every job")
+
+
+class IngestErrorLineTests(unittest.TestCase):
+    """The status line is read, not debugged.
+
+    Two identity refusals put their raw text on the board, record ids and all,
+    and wrapped it to two full lines of something no operator can act on. A
+    status line that costs more to read than it returns is a status line people
+    learn to skip, which is worse than not having one.
+    """
+
+    def line(self, errors):
+        return found_lane.last_ingest_line(
+            {"lastIngest": {"at": "2026-08-20T17:33:00Z", "found": 17874,
+                            "kept": 58, "deduped": 11466, "gatedOut": 6348,
+                            "errors": errors}})
+
+    def test_a_record_id_never_reaches_the_board(self):
+        out = self.line([{"channel": "careerjet", "why":
+                          "refusing to merge d5b21b33a586845b: the matcher declined "
+                          "to match this job, so folding it onto an existing record "
+                          "would lose one of them"}])
+        self.assertNotIn("d5b21b33a586845b", out)
+        self.assertIn("the matcher declined", out)
+
+    def test_repeats_from_one_channel_collapse_to_a_count(self):
+        out = self.line([{"channel": "careerjet", "why": "refusing to merge aaaa1111: nope"},
+                         {"channel": "careerjet", "why": "refusing to merge bbbb2222: nope"}])
+        self.assertEqual(out.count("careerjet"), 1)
+        self.assertIn("&times;2", out)
+        self.assertIn("2 problems", out)
+
+    def test_a_short_reason_is_left_alone(self):
+        self.assertIn("HTTP 503", self.line([{"channel": "reed", "why": "HTTP 503"}]))
+
+    def test_the_line_stays_one_line(self):
+        many = [{"channel": f"src{i}", "why": "something went wrong here " * 6}
+                for i in range(9)]
+        out = self.line(many)
+        self.assertIn("9 problems", out)
+        self.assertIn("and 6 more", out)
+        # The error span alone, and entities decoded. The stats sit on their own
+        # line above a <br>, so measuring the whole paragraph measures two
+        # lines; and "&middot;" is nine source characters that render as one,
+        # so measuring the source passes a line twice as long as it looks.
+        span = re.search(r'<span class="jb-errored">(.*?)</span>', out, re.S).group(1)
+        text = html.unescape(re.sub(r"<[^>]+>", "", span))
+        self.assertLess(len(text), 280, f"{len(text)} chars: {text}")
+
+    def test_a_channel_with_no_reason_still_names_itself(self):
+        out = self.line([{"channel": "jooble", "why": ""}])
+        self.assertIn("jooble", out)
+        self.assertIn("no reason given", out)
 
 
 if __name__ == "__main__":

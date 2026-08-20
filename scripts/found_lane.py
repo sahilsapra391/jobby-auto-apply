@@ -504,6 +504,26 @@ def _options(pairs, selected=""):
         for v, label in pairs)
 
 
+# Long enough to say what went wrong, short enough not to wrap the status line.
+REASON_CHARS = 72
+
+
+def short_reason(why):
+    """One clause of an error, for a line the user reads rather than debugs."""
+    why = " ".join(str(why or "").split())
+    if not why:
+        return "no reason given"
+    # These read as "refusing to merge <16 hex chars>: <the actual reason>".
+    # The id is for the log, not the board.
+    head, sep, tail = why.partition(": ")
+    if sep and len(head.split()) <= 4 and any(c.isdigit() for c in head):
+        why = tail or why
+    if len(why) <= REASON_CHARS:
+        return why
+    cut = why[:REASON_CHARS].rsplit(" ", 1)[0]
+    return (cut or why[:REASON_CHARS]).rstrip(",;") + "\u2026"
+
+
 def last_ingest_line(meta):
     """What the last scan did, or an honest admission that none has run.
 
@@ -530,9 +550,25 @@ def last_ingest_line(meta):
                       f'{"s" if len(skipped) != 1 else ""} skipped: {names}</span>')
     errors = report.get("errors") or []
     if errors:
-        names = ", ".join(esc(f"{e.get('channel')}: {e.get('why')}") for e in errors[:4])
+        # Which channels, and one reason each — not four sentences of internals.
+        # Two of these were rendering the raw refusal text with record ids in
+        # it, wrapping to two full lines of something nobody can act on, which
+        # is how a status line teaches people to stop reading the status line.
+        # The full text stays in meta.lastIngest for whoever is debugging.
+        per_channel = {}
+        for entry in errors:
+            channel = str(entry.get("channel") or "a source")
+            per_channel.setdefault(channel, []).append(entry.get("why") or "")
+        parts = []
+        for channel, whys in list(per_channel.items())[:3]:
+            reason = short_reason(whys[0])
+            count = f" &times;{len(whys)}" if len(whys) > 1 else ""
+            parts.append(f"{esc(channel)}{count} &mdash; {esc(reason)}")
+        more = len(per_channel) - 3
+        if more > 0:
+            parts.append(f"and {more} more")
         extras.append(f'<span class="jb-errored">{len(errors)} problem'
-                      f'{"s" if len(errors) != 1 else ""}: {names}</span>')
+                      f'{"s" if len(errors) != 1 else ""}: {" &middot; ".join(parts)}</span>')
     if report.get("usingDefaults"):
         extras.append('<span class="jb-skipped">no saved search yet, so this ran on defaults'
                       '</span>')
