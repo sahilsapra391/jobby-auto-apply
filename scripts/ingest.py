@@ -372,6 +372,12 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # to be enforced here as well as at the gate: the gate only sees postings
     # arriving, so without this a posting that predates the ceiling and was
     # stored before it existed stays on the board forever.
+    # Before retention, because a record that just gained a country should be
+    # counted under it. Cheap, and it means a parser fix reaches records whose
+    # board has not changed since they were stored.
+    jobs, backfilled = jobs_store.refresh_locations(jobs)
+    report["locationsBackfilled"] = backfilled
+
     max_age = search_config.posted_within_days(config) or jobs_store.NEW_MAX_AGE_DAYS
     jobs, dropped = jobs_store.prune(jobs, cap=config.get("storedCap"),
                                      max_age_days=max(max_age, jobs_store.NEW_MAX_AGE_DAYS),

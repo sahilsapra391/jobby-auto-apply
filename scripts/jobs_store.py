@@ -436,6 +436,40 @@ def keep_priority(job):
     return (direct, score, str(when))
 
 
+def refresh_locations(jobs):
+    """Re-read the country from each stored record's own location string.
+
+    A parser improvement only reaches new sightings, and conditional requests
+    mean an unchanged board is never re-fetched, so its jobs are never re-parsed.
+    When `parse_location` learned to read "Chicago" and "Remote - US", 938
+    stored records kept the empty country they were saved with and went on
+    answering a search for every country.
+
+    Only ever fills a blank. A country already on the record was read from a
+    string this function is looking at again, and second-guessing it would let a
+    parser regression quietly rewrite the store.
+
+    Cheap enough to run every ingest: a hundred milliseconds over fourteen
+    thousand records, and it means the next parser fix needs no migration.
+    """
+    from sources.base import parse_location
+
+    filled = 0
+    for job in jobs.values():
+        location = job.get("location") or {}
+        if location.get("country"):
+            continue
+        raw = location.get("raw")
+        if not raw:
+            continue
+        country = parse_location(raw).get("country")
+        if country:
+            location["country"] = country
+            job["location"] = location
+            filled += 1
+    return jobs, filled
+
+
 def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None,
           posted_ceiling_days=None):
     """Drop unacted-on jobs that are stale or over the cap. Returns (jobs, dropped).

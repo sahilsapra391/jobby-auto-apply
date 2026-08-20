@@ -1408,10 +1408,15 @@ SCRIPT = r"""
       // old rule let any remote posting through any country filter, so
       // selecting India showed "Remote - Canada: select locations" — a job that
       // is remote *within Canada* and cannot be done from India.
-      if (job.cty && countries.indexOf(job.cty) === -1) return false;
-      // Remote jobs that name no country are the ones the toggle is about:
-      // genuinely location-free, so they answer any selection.
-      if (!job.cty && job.wp === 'remote' && !checked('jb-remote')) return false;
+      if (job.cty) {
+        if (countries.indexOf(job.cty) === -1) return false;
+      } else if (job.wp !== 'remote' || !checked('jb-remote')) {
+        // No country at all. Only genuinely location-free remote work answers
+        // a search for somewhere specific, and only when asked for. A "Hybrid"
+        // posting whose city nobody could parse is not an India job, and
+        // letting it through is how Chicago ended up in an India search.
+        return false;
+      }
     }
     var places = activeWorkplaces();
     if (job.wp) { if (places.indexOf(job.wp) === -1) return false; }

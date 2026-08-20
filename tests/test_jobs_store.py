@@ -815,5 +815,43 @@ class PostedCeilingPruneTests(unittest.TestCase):
         self.assertIn("posted_ceiling_days=search_config.MAX_AGE_DAYS", source)
 
 
+class LocationBackfillTests(unittest.TestCase):
+    """A parser fix has to reach records that are already stored.
+
+    Conditional requests mean an unchanged board is never re-fetched, so its
+    jobs are never re-parsed. When the parser learned to read "Chicago", 938
+    live records kept the empty country they were saved with and went on
+    answering a search for every country.
+    """
+
+    def test_a_blank_country_is_filled_from_the_stored_string(self):
+        jobs = {"a": {"id": "a", "location": {"raw": "Chicago", "country": None}}}
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 1)
+        self.assertEqual(jobs["a"]["location"]["country"], "US")
+
+    def test_a_country_already_on_the_record_is_never_second_guessed(self):
+        # It was read from this same string once. Rewriting it would let a
+        # parser regression quietly reshape the store.
+        jobs = {"a": {"id": "a", "location": {"raw": "Chicago", "country": "CA"}}}
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 0)
+        self.assertEqual(jobs["a"]["location"]["country"], "CA")
+
+    def test_a_string_the_parser_still_cannot_read_is_left_alone(self):
+        jobs = {"a": {"id": "a", "location": {"raw": "London", "country": None}},
+                "b": {"id": "b", "location": {"raw": "", "country": None}},
+                "c": {"id": "c"}}
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 0)
+        self.assertIsNone(jobs["a"]["location"]["country"])
+
+    def test_the_ingest_runs_it_before_retention(self):
+        # A record that just gained a country should be counted under it.
+        source = (ROOT / "scripts" / "ingest.py").read_text()
+        self.assertIn("refresh_locations", source)
+        self.assertLess(source.index("refresh_locations"), source.index("jobs_store.prune"))
+
+
 if __name__ == "__main__":
     unittest.main()

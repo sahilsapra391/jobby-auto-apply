@@ -942,11 +942,31 @@ class LocationCountryTests(unittest.TestCase):
                 self.assertIsNone(self.country(city), city)
 
     def test_an_explicit_country_still_wins_over_the_city(self):
-        # "London, Ontario" must never become GB, and a stated country beats
-        # any inference.
+        # "London, Ontario" must never become GB. It reads as CA now, off the
+        # province name, which is the right answer and the reason the city
+        # table refuses London on its own.
         self.assertEqual(self.country("Toronto, ON"), "CA")
         self.assertEqual(self.country("Bengaluru, India"), "IN")
-        self.assertIsNone(self.country("London, Ontario"))
+        self.assertEqual(self.country("London, Ontario"), "CA")
+
+    def test_a_spelled_out_state_or_province_names_its_country(self):
+        for raw, code in (("California - Remote", "US"), ("Texas", "US"),
+                          ("Remote - Washington, D.C.", "US"),
+                          ("New Jersey", "US"), ("Ontario, Canada", "CA")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.country(raw), code)
+
+    def test_georgia_is_refused_because_it_is_also_a_country(self):
+        # The one state name that cannot be read as a state. Paired with a city
+        # the answer comes from the city instead, which is what should happen.
+        self.assertIsNone(self.country("Georgia"))
+        self.assertIsNone(self.country("Tbilisi, Georgia"))
+        self.assertEqual(self.country("Atlanta, Georgia"), "US")
+
+    def test_a_region_nobody_can_place_stays_unknown(self):
+        for raw in ("Remote-AMER", "NAMER", "Remote - International", "EMEA"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.country(raw), raw)
 
     def test_a_string_with_nothing_in_it_stays_unknown(self):
         self.assertIsNone(self.country("Remote"))

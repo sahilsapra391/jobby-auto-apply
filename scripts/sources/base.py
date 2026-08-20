@@ -362,6 +362,27 @@ REMOTE_WORDS = ("remote", "anywhere", "work from home", "distributed", "wfh")
 #
 # This exists because "Chicago", "San Francisco" and "New York" were reaching
 # the board with no country at all, so they answered a search for India.
+# State and province names spelled out. "California - Remote" and "Ontario,
+# Canada" name a country as surely as a code does. Georgia is deliberately
+# absent: it is also a country. Washington is kept — DC and the state are both
+# in the United States, so the country is unambiguous either way.
+US_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "hawaii", "idaho", "illinois",
+    "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland",
+    "massachusetts", "michigan", "minnesota", "mississippi", "missouri",
+    "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "north carolina", "north dakota", "ohio", "oklahoma",
+    "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west virginia", "wisconsin", "wyoming", "district of columbia",
+}
+CA_PROVINCE_NAMES = {
+    "alberta", "british columbia", "manitoba", "new brunswick",
+    "newfoundland", "nova scotia", "ontario", "prince edward island",
+    "quebec", "saskatchewan",
+}
+
 UNAMBIGUOUS_CITIES = {
     # United States
     "chicago": "US", "san francisco": "US", "new york": "US",
@@ -418,7 +439,7 @@ def parse_location(raw, fallback_country=None):
         return location
     lowered = text.lower()
     for name, code in sorted(COUNTRY_NAMES.items(), key=lambda kv: -len(kv[0])):
-        if re.search(rf"(?:^|[,\s(]){re.escape(name)}(?:$|[,\s)])", lowered):
+        if re.search(rf"(?:^|[^a-z]){re.escape(name)}(?:$|[^a-z])", lowered):
             location["country"] = code
             break
     if not location["country"]:
@@ -436,11 +457,23 @@ def parse_location(raw, fallback_country=None):
             if token in KNOWN_CODES:
                 location["country"] = token
                 break
-    parts = [p.strip() for p in re.split(r"[,/|()]", text) if p.strip()]
+    parts = [p.strip(" -\u2013\u2014")
+             for p in re.split(r"[,/|();\u2013\u2014]|\s-\s|-(?=[A-Z])", text)
+             if p.strip(" -\u2013\u2014")]
     if parts:
-        head = parts[0]
-        if not any(word in head.lower() for word in REMOTE_WORDS):
-            location["city"] = head
+        # "Hybrid - New York City" splits to ["Hybrid", "New York City"], and
+        # the arrangement is not the city. Take the first segment that is not
+        # one of the words describing how the job is worked.
+        arrangement = REMOTE_WORDS + HYBRID_WORDS + ONSITE_WORDS
+        for part in parts:
+            token = part.strip().lower().rstrip(".")
+            if any(word in token for word in arrangement):
+                continue
+            # A country is not a city: "Remote - US" has no city in it.
+            if part.strip().upper() in KNOWN_CODES or token in COUNTRY_NAMES:
+                continue
+            location["city"] = part
+            break
     for part in parts[1:]:
         token = part.strip().lower().rstrip(".")
         if len(token) == 2 and token in US_STATES:
@@ -457,6 +490,24 @@ def parse_location(raw, fallback_country=None):
             name = part.strip().lower().rstrip(".")
             if name in UNAMBIGUOUS_CITIES:
                 location["country"] = UNAMBIGUOUS_CITIES[name]
+                break
+    if not location["country"]:
+        for part in parts:
+            name = part.strip().lower().rstrip(".")
+            if name in US_STATE_NAMES:
+                location["country"] = "US"
+                break
+            if name in CA_PROVINCE_NAMES:
+                location["country"] = "CA"
+                break
+    if not location["country"]:
+        # "San Francisco Bay Area", "Greater Toronto". The city name is in
+        # there as a whole phrase; it just is not the whole segment. Word
+        # boundaries on both sides, so "Berlin" cannot match "Berliner".
+        lowered_text = " " + re.sub(r"[^a-z ]+", " ", lowered) + " "
+        for name, code in sorted(UNAMBIGUOUS_CITIES.items(), key=lambda kv: -len(kv[0])):
+            if " " + name + " " in lowered_text:
+                location["country"] = code
                 break
     return location
 

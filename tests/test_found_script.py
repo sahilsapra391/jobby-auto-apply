@@ -485,6 +485,24 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
                                      "jb-remote": False})
         self.assertEqual(out["ids"], ["us"])
 
+    def test_a_job_with_no_country_at_all_is_not_an_india_job(self):
+        # The complaint. A "Hybrid" posting whose city nobody could parse has
+        # no business in a search for India, whatever the remote toggle says.
+        jobs = [self.job("in", cty="IN"),
+                self.job("nowhere", cty="", wp="hybrid"),
+                self.job("blank", cty="", wp="")]
+        for toggle in (True, False):
+            out = self.run_script(jobs, {"allLocations": ["IN"], "locations": ["IN"],
+                                         "jb-remote": toggle})
+            with self.subTest(includeRemote=toggle):
+                self.assertEqual(out["ids"], ["in"])
+
+    def test_with_no_country_selected_everything_is_in_scope(self):
+        # The filter only narrows when the user has asked for somewhere.
+        jobs = [self.job("in", cty="IN"), self.job("nowhere", cty="", wp="hybrid")]
+        out = self.run_script(jobs, {"allLocations": ["IN"], "locations": []})
+        self.assertEqual(sorted(out["ids"]), ["in", "nowhere"])
+
     def test_two_keywords_are_or_not_and(self):
         # Three job titles in the box means "show me all three kinds of job".
         # Requiring every word emptied the board on the second title, because
