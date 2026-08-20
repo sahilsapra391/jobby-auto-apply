@@ -15,7 +15,9 @@ Run from the repo root: python3 -m pytest tests/ -q
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,6 +30,9 @@ spec = importlib.util.spec_from_file_location("toolpath", ROOT / "scripts" / "to
 toolpath = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(toolpath)
 import found_lane  # noqa: E402
+import jobs_store  # noqa: E402
+import store  # noqa: E402
+import search_config  # noqa: E402
 
 
 def node_or_skip(case):
@@ -208,6 +213,15 @@ const unknownNodes = ['experience', 'degree', 'workplace', 'postedAt'].map(funct
     .indexOf(u) !== -1;
   return n;
 });
+// Locations are toggle chips now: a native multi-select cannot deselect by
+// clicking, which is the thing the control is for.
+const locNodes = (CONTROLS.allLocations || CONTROLS.locations || []).map(function (v) {
+  const n = makeNode('button');
+  n.setAttribute('data-loc', v);
+  n.setAttribute('aria-pressed',
+    (CONTROLS.locations || []).indexOf(v) !== -1 ? 'true' : 'false');
+  return n;
+});
 const dateNode = makeNode('input');
 dateNode.value = CONTROLS.date || 'all';
 dateNode.checked = true;
@@ -220,9 +234,14 @@ dateNode.checked = true;
 const NOW = Date.parse(CONTROLS.now || '2026-08-20T00:00:00Z');
 Date.now = function () { return NOW; };
 
-// Checkboxes in this stub default to checked; the direct-only filter is an
-// opt-in, so it has to be turned off unless a test asks for it.
+// The direct-only filter ships checked on the real page. Most tests here are
+// about something else and use aggregator-ranked fixtures, so the stub leaves
+// it off unless a test asks; DirectListingTests covers the shipped default.
 node('jb-direct').checked = !!CONTROLS['jb-direct'];
+// "include remote for this selection" ships on, and it lets a remote job
+// past a country filter on purpose. A test about the country filter alone
+// has to turn it off, or it is testing both at once.
+node('jb-remote').checked = CONTROLS['jb-remote'] !== false;
 global.localStorage = {
   store: {},
   getItem(k) { return this.store[k] || null; },
@@ -261,13 +280,10 @@ global.document = {
       return wpNodes.concat(unknownNodes).concat([dateNode]);
     }
     if (sel === '[data-wp]') return wpNodes;
+    if (sel === '[data-loc]') return locNodes;
     return [];
   },
 };
-if (CONTROLS.locations) {
-  const loc = node('jb-loc');
-  loc.selectedOptions = CONTROLS.locations.map(function (v) { return { value: v }; });
-}
 
 %s
 
@@ -286,9 +302,25 @@ function dumpText(node) {
     (node.children || []).map(dumpText)).join(' ').replace(/\s+/g, ' ').trim();
 }
 
+// Hover and click, in order, so a test can assert the disclosure's actual
+// behaviour rather than the presence of a string in the source.
+(CONTROLS.interact || []).forEach(function (step) {
+  const card = grid.children[step.index];
+  if (!card) return;
+  if (step.event === 'click') card.querySelector('.jb-det').dispatch('click', {});
+  else card.dispatch(step.event, {});
+});
+
 setTimeout(function () {
   console.log(JSON.stringify({
     shown: grid.children.length,
+    cards: grid.children.map(function (c) {
+      const slot = c.querySelector('.jb-slot');
+      return { id: c.getAttribute('data-id'), cls: c.className,
+               open: (c.className || '').indexOf('open') !== -1,
+               panels: slot ? slot.children.length : 0,
+               expanded: (c.querySelector('.jb-det') || {})['attr_aria-expanded'] };
+    }),
     text: dumpText(grid),
     ids: grid.children.map(function (c) { return c.getAttribute('data-id'); }),
     count: (nodes['jb-count'] || {}).textContent || '',
@@ -516,6 +548,325 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
         out = self.run_script([self.job("a")], {"bannerVersion": 7})
         self.assertEqual(out["saveState"], "")
         self.assertNotIn("GET /api/search-config", out["fetched"])
+
+
+class DisclosureTests(ScriptHarness, unittest.TestCase):
+    """Details opens on hover, stays open on click, and only for its own card.
+
+    It was a fifth full-size button sitting under Posting, and opening it grew
+    every card in the row, because grid items stretch to the tallest sibling by
+    default. Both of those are the complaint.
+    """
+
+    def test_the_details_control_is_not_a_button_in_the_action_row(self):
+        self.assertNotIn("button('jb-det'", found_lane.SCRIPT)
+        self.assertNotIn("acts.appendChild(details)", found_lane.SCRIPT)
+
+    def test_each_card_sizes_itself(self):
+        # Without this a card that opens drags its three row-mates taller.
+        self.assertIn("align-items:start", found_lane.CSS)
+
+    def test_the_panel_animates_from_a_measured_height(self):
+        # Never a guessed ceiling: the panel's own scrollHeight, released to
+        # `none` once the transition ends so a reflow cannot clip it.
+        self.assertIn("transition:max-height", found_lane.CSS)
+        self.assertIn("slot.scrollHeight + 'px'", found_lane.SCRIPT)
+        self.assertIn("maxHeight = 'none'", found_lane.SCRIPT)
+        self.assertIn("prefers-reduced-motion", found_lane.CSS)
+
+    def test_the_grid_trick_is_not_used_here(self):
+        # It needs a grid parent. The card is a flex column, so 1fr resolves
+        # against no free space and computes to zero: a panel that opens in the
+        # DOM, reports aria-expanded=true, and stays visually shut.
+        self.assertNotIn("grid-template-rows:1fr", found_lane.CSS)
+
+    def cards(self, interact):
+        jobs = [self.job("a"), self.job("b"), self.job("c")]
+        out = self.run_script(jobs, {"jb-direct": False, "interact": interact})
+        return {c["id"]: c for c in out["cards"]}
+
+    def test_nothing_is_open_and_no_panel_is_built_until_asked(self):
+        # 3,400 detail panels built up front is what the windowing exists to
+        # avoid, and it is the reason this is built lazily rather than hidden.
+        cards = self.cards([])
+        self.assertTrue(all(not c["open"] for c in cards.values()))
+        self.assertTrue(all(c["panels"] == 0 for c in cards.values()))
+        self.assertTrue(all(c["expanded"] == "false" for c in cards.values()))
+
+    def test_hover_opens_that_card_and_only_that_card(self):
+        cards = self.cards([{"index": 0, "event": "mouseenter"}])
+        self.assertTrue(cards["a"]["open"])
+        self.assertEqual(cards["a"]["panels"], 1)
+        self.assertFalse(cards["b"]["open"])
+        self.assertFalse(cards["c"]["open"])
+
+    def test_leaving_closes_what_hover_opened(self):
+        cards = self.cards([{"index": 0, "event": "mouseenter"},
+                            {"index": 0, "event": "mouseleave"}])
+        self.assertFalse(cards["a"]["open"])
+        self.assertEqual(cards["a"]["expanded"], "false")
+
+    def test_a_click_survives_the_mouse_leaving(self):
+        # Hover is a preview. It must never close what a click opened.
+        cards = self.cards([{"index": 0, "event": "mouseenter"},
+                            {"index": 0, "event": "click"},
+                            {"index": 0, "event": "mouseleave"}])
+        self.assertTrue(cards["a"]["open"])
+        self.assertEqual(cards["a"]["expanded"], "true")
+
+    def test_clicking_again_closes_it(self):
+        cards = self.cards([{"index": 0, "event": "click"},
+                            {"index": 0, "event": "click"}])
+        self.assertFalse(cards["a"]["open"])
+
+    def test_the_panel_is_built_once_however_often_it_is_opened(self):
+        cards = self.cards([{"index": 0, "event": "mouseenter"},
+                            {"index": 0, "event": "mouseleave"},
+                            {"index": 0, "event": "mouseenter"},
+                            {"index": 0, "event": "click"}])
+        self.assertEqual(cards["a"]["panels"], 1)
+
+    def test_two_cards_open_independently(self):
+        cards = self.cards([{"index": 0, "event": "click"},
+                            {"index": 2, "event": "mouseenter"}])
+        self.assertTrue(cards["a"]["open"])
+        self.assertTrue(cards["c"]["open"])
+        self.assertFalse(cards["b"]["open"])
+
+
+class LocationChipTests(ScriptHarness, unittest.TestCase):
+    """Clicking a location adds it; clicking it again removes it.
+
+    A <select multiple> needs cmd-click to add a second country, and clicking a
+    selected one replaces the selection rather than clearing it, so the control
+    could not do either thing it was for.
+    """
+
+    def test_two_countries_can_be_selected_at_once(self):
+        jobs = [self.job("us", cty="US"), self.job("in", cty="IN"),
+                self.job("de", cty="DE")]
+        out = self.run_script(jobs, {"allLocations": ["US", "IN", "DE"],
+                                     "locations": ["US", "IN"], "jb-direct": False})
+        self.assertEqual(sorted(out["ids"]), ["in", "us"])
+
+    def test_selecting_none_means_no_location_filter(self):
+        jobs = [self.job("us", cty="US"), self.job("in", cty="IN")]
+        out = self.run_script(jobs, {"allLocations": ["US", "IN"], "locations": [],
+                                     "jb-direct": False})
+        self.assertEqual(sorted(out["ids"]), ["in", "us"])
+
+    def test_a_pack_still_expands_to_its_countries(self):
+        jobs = [self.job("de", cty="DE"), self.job("us", cty="US")]
+        out = self.run_script(jobs, {"allLocations": ["pack:EU"],
+                                     "locations": ["pack:EU"], "jb-direct": False})
+        self.assertEqual(out["ids"], ["de"])
+
+
+class ShippedDefaultTests(ScriptHarness, unittest.TestCase):
+    """The two defaults Sahil asked for, asserted on the rendered controls."""
+
+    def test_the_sort_ships_on_newest(self):
+        bar = found_lane.filter_bar([], {})
+        self.assertIn('<option value="new" selected>Newest</option>', bar)
+
+    def test_direct_listings_only_ships_checked(self):
+        bar = found_lane.filter_bar([], {})
+        self.assertIn('id="jb-direct" checked', bar)
+
+    def test_clear_restores_both_rather_than_wiping_them(self):
+        script = found_lane.SCRIPT
+        clear = script[script.index("jb-clear"):]
+        clear = clear[:clear.index("var save =")]
+        self.assertIn("sort.value = 'new'", clear)
+        self.assertIn("direct.checked = true", clear)
+
+
+class DateVocabularyTests(ScriptHarness, unittest.TestCase):
+    """Every window the config can save has a chip, and one is always checked.
+
+    A search saved as "60d" matched no chip, so none was checked, so the client
+    read "no answer" and fell back to seven days. The board showed a tenth of
+    what the saved search asked for and said nothing about it. That is the same
+    shape as the workplace mismatch: a producer vocabulary the consumer never
+    learned.
+    """
+
+    def test_every_config_window_has_a_chip(self):
+        offered = dict(found_lane.DATE_WINDOWS)
+        for name in search_config.POSTED_WITHIN:
+            if name == "all":
+                continue      # a pre-ceiling save; it names the same window as 60d
+            with self.subTest(window=name):
+                self.assertIn(name, offered)
+
+    def test_a_saved_window_is_the_one_checked(self):
+        for name, _ in found_lane.DATE_WINDOWS:
+            with self.subTest(window=name):
+                bar = found_lane.filter_bar([], {"postedWithin": name})
+                self.assertIn(f'value="{name}" checked', bar)
+
+    def test_a_window_the_chips_do_not_offer_falls_back_to_the_widest(self):
+        # Never to nothing: an unchecked set reads to the client as seven days.
+        bar = found_lane.filter_bar([], {"postedWithin": "all"})
+        self.assertEqual(len(re.findall(r'value="\w+" checked', bar)), 1)
+        self.assertIn('value="60d" checked', bar)
+
+    def test_the_client_knows_every_chip_value(self):
+        script = found_lane.SCRIPT
+        table = script[script.index("var DAYS ="):]
+        table = table[:table.index("};")]
+        for name, _ in found_lane.DATE_WINDOWS:
+            with self.subTest(window=name):
+                self.assertIn("'" + name + "'", table)
+
+    def test_no_chip_applies_a_wider_window_than_the_ceiling(self):
+        script = found_lane.SCRIPT
+        table = script[script.index("var DAYS ="):]
+        table = table[:table.index("};")]
+        self.assertNotIn("null", table)
+        for value in re.findall(r":\s*([\d.]+)", table):
+            self.assertLessEqual(float(value), search_config.MAX_AGE_DAYS)
+
+
+class EndToEndFacetTests(ScriptHarness, unittest.TestCase):
+    """Render the real page, take the payload back out, filter it with the real
+    script, and check the counts against the store.
+
+    This is the test that would have caught the workplace mismatch. The tests
+    above hand-build their payload rows, so they asserted the client against a
+    payload `compact` does not produce; `test_dashboard` asserted the producer
+    in isolation and pinned the wrong spelling. Two green suites either side of
+    a seam neither crossed, and 41% of the cards were invisible.
+
+    Nothing here knows what the fields are called. It counts by facet in Python,
+    straight off the store, then asks the client for the same facet and compares.
+    A producer that renames a value, or a consumer that stops recognising one,
+    fails here whatever the field is.
+    """
+
+    WORKPLACES = ("remote", "hybrid", "onsite")
+    COUNTRIES = ("US", "IN", "DE")
+
+    def store(self):
+        """A store whose jobs span every facet, built through the real writers."""
+        root = pathlib.Path(tempfile.mkdtemp(prefix="jobby-e2e-"))
+        (root / "sessions").mkdir()
+        jobs = {}
+        n = 0
+        for workplace in self.WORKPLACES + ("",):
+            for country in self.COUNTRIES:
+                n += 1
+                jid = f"j{n:03d}"
+                jobs[jid] = {
+                    "id": jid, "company": f"Company {n}",
+                    "title": "Product Manager", "normTitle": "product manager",
+                    "canonicalUrl": f"https://boards.greenhouse.io/c{n}/jobs/{n}",
+                    "canonicalSource": "greenhouse", "state": "new",
+                    "workplace": workplace,
+                    "location": {"country": country, "city": "Somewhere"},
+                    "postedAt": "2026-08-18T00:00:00Z",
+                    "firstSeenAt": "2026-08-19T00:00:00Z",
+                    "score": {"total": 90 - n, "parts": {}, "weights": {}},
+                    "sources": [{"source": "greenhouse", "sourceClass": "ats",
+                                 "url": f"https://boards.greenhouse.io/c{n}/jobs/{n}"}],
+                }
+        jobs_store.save_jobs(root, jobs)
+        store.write_private(root / "meta.json", {})
+        return root, jobs
+
+    def payload_rows(self, root):
+        """The rows the real page actually ships."""
+        out = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "dashboard.py"),
+             "--out", str(root / "board.html"), "--root", str(root)],
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+        html = (root / "board.html").read_text()
+        blob = re.search(
+            r'<script type="application/json" id="jb-found-data">(.*?)</script>',
+            html, re.S)
+        self.assertIsNotNone(blob, "the page shipped no Found payload")
+        return json.loads(blob.group(1).replace("<\\/", "</"))["j"]
+
+    def test_every_stored_job_reaches_the_page(self):
+        root, jobs = self.store()
+        try:
+            rows = self.payload_rows(root)
+            self.assertEqual(sorted(r["id"] for r in rows), sorted(jobs))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_filtering_by_workplace_returns_what_the_store_holds(self):
+        root, jobs = self.store()
+        try:
+            rows = self.payload_rows(root)
+            for workplace in self.WORKPLACES:
+                expected = sorted(jid for jid, j in jobs.items()
+                                  if j["workplace"] == workplace)
+                out = self.run_script(rows, {"workplaces": [workplace],
+                                             "unknowns": ["experience", "degree",
+                                                          "postedAt"],
+                                             "jb-direct": False, "date": "60d"})
+                with self.subTest(workplace=workplace):
+                    self.assertEqual(sorted(out["ids"]), expected)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_filtering_by_country_returns_what_the_store_holds(self):
+        root, jobs = self.store()
+        try:
+            rows = self.payload_rows(root)
+            for country in self.COUNTRIES:
+                expected = sorted(jid for jid, j in jobs.items()
+                                  if j["location"]["country"] == country)
+                out = self.run_script(rows, {"allLocations": list(self.COUNTRIES),
+                                             "locations": [country],
+                                             "jb-remote": False,
+                                             "jb-direct": False, "date": "60d"})
+                with self.subTest(country=country):
+                    self.assertEqual(sorted(out["ids"]), expected)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_remote_jobs_cross_the_country_filter_when_asked_to(self):
+        # Not a bug: "include remote for this selection" means a remote posting
+        # anywhere answers a search for anywhere. Worth pinning, because the
+        # country counts look wrong until you know it.
+        root, jobs = self.store()
+        try:
+            rows = self.payload_rows(root)
+            out = self.run_script(rows, {"allLocations": list(self.COUNTRIES),
+                                         "locations": ["US"], "jb-remote": True,
+                                         "jb-direct": False, "date": "60d"})
+            expected = sorted(jid for jid, j in jobs.items()
+                              if j["location"]["country"] == "US"
+                              or j["workplace"] == "remote")
+            self.assertEqual(sorted(out["ids"]), expected)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_a_workplace_the_page_ships_is_never_unselectable(self):
+        # The mismatch itself: every distinct `wp` on the page has to be a value
+        # the checkboxes can select, or those cards can never be shown.
+        root, _ = self.store()
+        try:
+            rows = self.payload_rows(root)
+            shipped = {r.get("wp") for r in rows} - {"", None}
+            self.assertTrue(shipped, "no workplace reached the page at all")
+            self.assertLessEqual(shipped, set(found_lane.WORKPLACE_LABELS))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_the_whole_pool_is_reachable_with_the_filters_open(self):
+        # The 41% that were invisible would fail here: with every facet allowed,
+        # every row the page ships must be on the board.
+        root, jobs = self.store()
+        try:
+            rows = self.payload_rows(root)
+            out = self.run_script(rows, {"jb-direct": False, "date": "60d"})
+            self.assertEqual(sorted(out["ids"]), sorted(jobs))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class RealPayloadTests(ScriptHarness, unittest.TestCase):

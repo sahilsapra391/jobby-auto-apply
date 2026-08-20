@@ -69,10 +69,16 @@ COMPONENTS = ("title", "experience", "location", "keywords", "freshness")
 # because there will be far fewer weight sets than jobs.
 MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 
-# "Any time" would be a lie: nothing older than two months is ingested or kept,
-# so the widest the board goes is the ceiling, and the chip says so.
+# The same vocabulary search_config offers, so a saved value always has a chip.
+# It used not to: a search saved as "60d" matched no chip, none was checked, and
+# the client fell back to seven days — a board quietly showing a tenth of what
+# the saved search asked for, with nothing on screen saying so.
+#
+# "Any time" is gone rather than relabelled. Nothing older than two months is
+# ingested or kept, so "all" and "60d" name the same window, and two chips for
+# one window is a choice the user cannot get right.
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
-                ("14d", "14 days"), ("30d", "30 days"), ("all", "2 months")]
+                ("14d", "14 days"), ("30d", "30 days"), ("60d", "2 months")]
 WORKPLACES = [("remote", "Remote"), ("hybrid", "Hybrid"), ("onsite", "Onsite")]
 EXPERIENCE_OPTIONS = [("", "Open to all"), ("0", "No experience"), ("1", "Up to 1 year"),
                       ("2", "Up to 2 years"), ("3", "Up to 3 years"),
@@ -545,9 +551,16 @@ def last_ingest_line(meta):
     extras = []
     skipped = report.get("channelsSkipped") or []
     if skipped:
-        names = ", ".join(esc(f"{s.get('channel')} ({s.get('why')})") for s in skipped[:6])
-        extras.append(f'<span class="jb-skipped">{len(skipped)} channel'
-                      f'{"s" if len(skipped) != 1 else ""} skipped: {names}</span>')
+        names = ", ".join(esc(str(s.get("channel"))) for s in skipped[:6])
+        if len(skipped) > 6:
+            names += f", and {len(skipped) - 6} more"
+        rows = "".join(
+            f'<li><b>{esc(str(s.get("channel")))}</b>'
+            f'<span>{esc(short_reason(s.get("why")))}</span></li>' for s in skipped)
+        extras.append(
+            f'<details class="jb-skipped jb-probs"><summary>{len(skipped)} channel'
+            f'{"s" if len(skipped) != 1 else ""} skipped: {names}</summary>'
+            f'<ul class="jb-problist">{rows}</ul></details>')
     errors = report.get("errors") or []
     if errors:
         # Which channels, and one reason each — not four sentences of internals.
@@ -567,8 +580,15 @@ def last_ingest_line(meta):
         more = len(per_channel) - 3
         if more > 0:
             parts.append(f"and {more} more")
-        extras.append(f'<span class="jb-errored">{len(errors)} problem'
-                      f'{"s" if len(errors) != 1 else ""}: {" &middot; ".join(parts)}</span>')
+        rows = "".join(
+            f'<li><b>{esc(channel)}</b>'
+            f'{f" &times;{len(whys)}" if len(whys) > 1 else ""}'
+            f'<span>{esc(short_reason(whys[0]))}</span></li>'
+            for channel, whys in per_channel.items())
+        extras.append(
+            f'<details class="jb-errored jb-probs"><summary>{len(errors)} problem'
+            f'{"s" if len(errors) != 1 else ""}: {" &middot; ".join(parts)}</summary>'
+            f'<ul class="jb-problist">{rows}</ul></details>')
     if report.get("usingDefaults"):
         extras.append('<span class="jb-skipped">no saved search yet, so this ran on defaults'
                       '</span>')
@@ -576,6 +596,20 @@ def last_ingest_line(meta):
         extras.append('<span class="jb-errored">the scan itself failed</span>')
     detail = f'<br>{" &middot; ".join(extras)}' if extras else ""
     return f'<p class="jb-ingest">{line}{detail}</p>'
+
+
+def cadence(minutes):
+    """"Every 4 hours, 6 times a day" reads; "Every 240 minutes" does not."""
+    minutes = int(minutes or 0) or 60
+    if minutes % 60 == 0 and minutes >= 60:
+        hours = minutes // 60
+        every = "Every hour" if hours == 1 else f"Every {hours} hours"
+    else:
+        every = f"Every {minutes} minutes"
+    a_day = (24 * 60) // minutes
+    if a_day >= 2:
+        return f"{every}, {a_day} times a day"
+    return every
 
 
 def banner(config, meta):
@@ -597,12 +631,11 @@ def banner(config, meta):
                 '<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
     nxt = (meta or {}).get("nextTier1ScanAt")
     when = f"next run {esc(nxt[11:16])} UTC" if nxt else "next run shortly"
-    sweeps = config.get("tier2SweepsPerDay") or 6
-    every = config.get("tier1IntervalMinutes") or 60
+    every = config.get("tier1IntervalMinutes") or search_config.DEFAULTS[
+        "tier1IntervalMinutes"]
     return (f'<div class="jb-banner" data-version="{esc(version)}">'
             f'<div><strong>Search v{esc(version)} '
-            f'is live.</strong> <span>Every {esc(every)} minutes, plus {esc(sweeps)} '
-            f'sweeps a day &middot; {esc(when)}</span>'
+            f'is live.</strong> <span>{esc(cadence(every))} &middot; {esc(when)}</span>'
             f'<span class="jb-savestate" id="jb-savestate"></span></div>'
             f'<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
 
@@ -612,15 +645,29 @@ def filter_bar(jobs, config):
     cannot yet answer."""
     config = config or {}
     countries = _countries(jobs)
-    country_options = "".join(
-        f'<option value="{esc(c)}">{esc(c)}</option>' for c in countries)
-    packs = "".join(f'<option value="pack:{esc(p)}">{esc(label)}</option>'
+    # Toggles, not a <select multiple>. Selecting a second country in a native
+    # multi-select needs cmd-click, and clicking a selected one replaces the
+    # selection rather than removing it, so the control could not do the two
+    # things it is for.
+    picked = {(e.get("country") or "pack:" + (e.get("regionPack") or ""))
+              for e in (config.get("locations") or [])}
+    def loc_chip(value, label):
+        on = " aria-pressed=\"true\"" if value in picked else ' aria-pressed="false"'
+        return (f'<button type="button" class="jb-loc" data-loc="{esc(value)}"'
+                f'{on}>{esc(label)}</button>')
+    country_options = "".join(loc_chip(c, c) for c in countries)
+    packs = "".join(loc_chip(f"pack:{p}", label)
                     for p, label in (("EU", "Europe (EU/EEA/UK)"),
                                      ("MIDDLE_EAST", "Middle East"),
                                      ("SEA", "South-East Asia")))
+    # Whatever the saved search says, exactly one chip is checked. An unchecked
+    # set reads to the client as "no answer" and it falls back to seven days.
+    saved_window = config.get("postedWithin") or "7d"
+    if saved_window not in dict(DATE_WINDOWS):
+        saved_window = DATE_WINDOWS[-1][0]
     dates = "".join(
         f'<label class="jb-radio"><input type="radio" name="jb-date" value="{esc(v)}"'
-        f'{" checked" if v == (config.get("postedWithin") or "7d") else ""}>'
+        f'{" checked" if v == saved_window else ""}>'
         f'<span>{esc(label)}</span></label>' for v, label in DATE_WINDOWS)
     workplaces = "".join(
         f'<label class="jb-check"><input type="checkbox" data-wp="{esc(v)}" checked>'
@@ -635,12 +682,12 @@ def filter_bar(jobs, config):
         <input type="search" id="jb-kw" placeholder="Add a keyword and press Enter&hellip;"
                aria-label="Add a keyword">
         <div class="jb-radios">{dates}</div>
-        <label class="jb-check"><input type="checkbox" id="jb-direct">
+        <label class="jb-check"><input type="checkbox" id="jb-direct" checked>
           <span>direct listings only</span></label>
         <select id="jb-sort" aria-label="Sort">
+          <option value="new" selected>Newest</option>
           <option value="direct">Direct first</option>
           <option value="score">Match %</option>
-          <option value="new">Newest</option>
         </select>
         <span class="jb-count" id="jb-count"></span>
       </div>
@@ -664,9 +711,9 @@ def filter_bar(jobs, config):
                    aria-label="Company names">
           </div>
           <div class="jb-row">
-            <select id="jb-loc" multiple size="4" aria-label="Locations">
+            <div class="jb-locs" id="jb-loc" role="group" aria-label="Locations">
               {packs}{country_options}
-            </select>
+            </div>
             <div class="jb-stack">
               <label class="jb-check"><input type="checkbox" id="jb-remote" checked>
                 <span>include remote for this selection</span></label>
@@ -796,12 +843,36 @@ CSS = """
   .jb-adv > summary { cursor:pointer; font-size:.82rem; color:var(--blue);
     list-style:none; padding:.15rem 0; width:max-content; }
   .jb-adv > summary::-webkit-details-marker { display:none; }
-  .jb-adv > summary::before { content:"\25B8  "; }
-  .jb-adv[open] > summary::before { content:"\25BE  "; }
+  .jb-adv > summary::before { content:"\\25B8  "; }
+  .jb-adv[open] > summary::before { content:"\\25BE  "; }
   .jb-adv > summary:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
   .jb-advbody { display:flex; flex-direction:column; gap:.5rem; padding-top:.5rem;
     margin-top:.35rem; border-top:1px solid var(--hair); }
   .jb-pills { display:flex; gap:.35rem; flex-wrap:wrap; }
+
+  /* Location toggles. Click adds, click again removes, which is what the
+     <select multiple> here could not do without a modifier key. */
+  .jb-locs { display:flex; flex-wrap:wrap; gap:.35rem; flex:1 1 22rem; }
+  .jb-loc { font:inherit; font-size:.78rem; padding:.24rem .6rem; cursor:pointer;
+    border-radius:999px; border:1px solid var(--hair); background:var(--card);
+    color:var(--ink-2); transition:background .14s, color .14s, border-color .14s; }
+  .jb-loc:hover { border-color:var(--ink-3); }
+  .jb-loc[aria-pressed="true"] { background:var(--blue); border-color:var(--blue);
+    color:#fff; font-weight:560; }
+  .jb-loc:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+
+  /* "2 problems" with no way to see which two is a number you can only worry
+     about. It opens. */
+  .jb-probs > summary { cursor:pointer; list-style:none; width:max-content; }
+  .jb-probs > summary::-webkit-details-marker { display:none; }
+  .jb-probs > summary::before { content:"\\25B8  "; }
+  .jb-probs[open] > summary::before { content:"\\25BE  "; }
+  .jb-probs > summary:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .jb-problist { margin:.4rem 0 .1rem; padding:0 0 0 1rem; list-style:none;
+    display:flex; flex-direction:column; gap:.2rem; }
+  .jb-problist li { display:flex; gap:.45rem; align-items:baseline;
+    font-size:.8rem; color:var(--ink-2); }
+  .jb-problist b { font-weight:600; color:var(--ink-1); }
   .jb-pills:empty { display:none; }
   .jb-pill { display:inline-flex; align-items:center; gap:.3rem; font-size:.78rem;
     background:var(--sunk); color:var(--ink); border-radius:100px;
@@ -868,7 +939,35 @@ CSS = """
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
   .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
     padding-top:.9rem; border-top:1px solid var(--hair); }
-  .jb-acts .jb-det { margin-left:auto; }
+  /* Each card sizes itself. Grid items stretch to the tallest in the row by
+     default, so opening one used to grow the three beside it — which is what
+     "all the boxes next to it also expand" was. */
+  .jb-grid { align-items:start; }
+
+  /* The disclosure. Small, lowercase, no button chrome: it is a way in, not an
+     action, and it sat under Posting looking like a fifth control. */
+  .jb-det { display:inline-flex; align-items:center; gap:.35rem; background:none;
+    border:0; padding:.15rem 0; margin:.15rem 0 0; cursor:pointer; font:inherit;
+    font-size:.78rem; color:var(--ink-3); width:max-content; }
+  .jb-det:hover, .jb-card.open .jb-det { color:var(--ink-2); }
+  .jb-det:focus-visible { outline:2px solid var(--blue); outline-offset:3px;
+    border-radius:4px; }
+  .jb-caret { width:0; height:0; border-left:4px solid currentColor;
+    border-top:3.5px solid transparent; border-bottom:3.5px solid transparent;
+    transition:transform .22s ease; transform-origin:30% 50%; }
+  .jb-card.open .jb-caret { transform:rotate(90deg); }
+
+  /* The height is measured and set in script. The tidier 0fr-to-1fr grid trick
+     needs a grid parent, and the card is a flex column, so `1fr` there resolves
+     against no free space and computes to zero — an open panel that stays shut.
+     The ceiling is never guessed: it is this panel's own scrollHeight, and it
+     is released to `none` once the transition ends so a reflow cannot clip it. */
+  .jb-slot { max-height:0; overflow:hidden;
+    transition:max-height .26s cubic-bezier(.4,0,.2,1); }
+
+  @media (prefers-reduced-motion:reduce) {
+    .jb-slot, .jb-caret { transition:none; }
+  }
   .jb-panel { border-top:1px solid var(--hair); padding-top:.6rem; font-size:.83rem;
     color:var(--ink-2); display:flex; flex-direction:column; gap:.45rem; }
   .jb-bars { display:flex; flex-direction:column; gap:.22rem; }
@@ -931,7 +1030,11 @@ SCRIPT = r"""
   // The widest chip is 60 days, not null. Null meant "skip the date check",
   // which was only ever safe because the payload is already inside the
   // ceiling, and a chip that says two months while applying no limit lies.
-  var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30, all: 60 };
+  // 'all' is kept for a search saved before the ceiling existed; it names the
+  // same window as '60d' now. Null would mean "skip the date check", and a
+  // chip that says two months while applying no limit lies.
+  var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30,
+               '60d': 60, all: 60 };
   var WATCH_KEY = 'jobby.watching', PASS_KEY = 'jobby.passed';
   var keywords = [];
 
@@ -1127,21 +1230,47 @@ SCRIPT = r"""
       acts.appendChild(open);
     }
 
-    var details = button('jb-det', 'Details', ICONS.details());
-    details.title = 'Why this percentage, and where else it was seen';
-    var panel = null;
-    details.addEventListener('click', function () {
-      if (panel) {
-        panel.remove(); panel = null;
-        details.querySelector('span').textContent = 'Details';
-        return;
-      }
-      panel = detailPanel(job);
-      article.appendChild(panel);
-      details.querySelector('span').textContent = 'Hide';
-    });
-    acts.appendChild(details);
     article.appendChild(acts);
+
+    // Details is a disclosure, not a button. It opens on hover and stays open
+    // on click, so a glance costs nothing and a read does not have to be
+    // undone. The panel is built once, on first open, because building three
+    // thousand of them up front is the whole reason this page is windowed.
+    var toggle = el('button', 'jb-det');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.appendChild(el('span', 'jb-caret'));
+    toggle.appendChild(el('span', null, 'details'));
+    toggle.title = 'Why this percentage, and where else it was seen';
+
+    var slot = el('div', 'jb-slot');
+
+    var pinned = false, built = false;
+    function show(on) {
+      if (on && !built) { slot.appendChild(detailPanel(job)); built = true; }
+      // Closing from the released state needs a real number to animate from,
+      // so put one back and force layout before flipping to zero.
+      if (!on && slot.style.maxHeight === 'none') {
+        slot.style.maxHeight = slot.scrollHeight + 'px';
+        void slot.offsetHeight;
+      }
+      article.classList.toggle('open', on);
+      toggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+      slot.style.maxHeight = on ? slot.scrollHeight + 'px' : '0px';
+    }
+    // Once open, stop capping it. A card that reflows taller than the height we
+    // measured would otherwise have its last line cut off.
+    slot.addEventListener('transitionend', function (e) {
+      if (e.propertyName !== 'max-height') return;
+      if (article.classList.contains('open')) slot.style.maxHeight = 'none';
+    });
+    toggle.addEventListener('click', function () { pinned = !pinned; show(pinned); });
+    // Hover is a preview; it must never close what a click opened.
+    article.addEventListener('mouseenter', function () { if (!pinned) show(true); });
+    article.addEventListener('mouseleave', function () { if (!pinned) show(false); });
+
+    article.appendChild(toggle);
+    article.appendChild(slot);
     return article;
   }
 
@@ -1206,14 +1335,17 @@ SCRIPT = r"""
   // --- filtering ------------------------------------------------------------
   function value(id) { var n = document.getElementById(id); return n ? n.value : ''; }
   function checked(id) { var n = document.getElementById(id); return n ? n.checked : true; }
+  function pickedLocations() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('[data-loc]'),
+      function (n) { return n.getAttribute('aria-pressed') === 'true'; }
+    ).map(function (n) { return n.getAttribute('data-loc'); });
+  }
   function selectedCountries() {
-    var node = document.getElementById('jb-loc');
-    if (!node) return [];
     var out = [];
-    Array.prototype.forEach.call(node.selectedOptions || [], function (o) {
-      if (o.value.indexOf('pack:') === 0) {
-        out = out.concat(PACKS[o.value.slice(5)] || []);
-      } else if (o.value) { out.push(o.value); }
+    pickedLocations().forEach(function (value) {
+      if (value.indexOf('pack:') === 0) out = out.concat(PACKS[value.slice(5)] || []);
+      else if (value) out.push(value);
     });
     return out;
   }
@@ -1415,7 +1547,15 @@ SCRIPT = r"""
       drawPills(); render();
     });
   }
-  ['jb-ex','jb-scope','jb-sort','jb-loc','jb-remote','jb-cmode','jb-companies',
+  Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'), function (n) {
+    n.addEventListener('click', function () {
+      var on = n.getAttribute('aria-pressed') === 'true';
+      n.setAttribute('aria-pressed', on ? 'false' : 'true');
+      render();
+    });
+  });
+
+  ['jb-ex','jb-scope','jb-sort','jb-remote','jb-cmode','jb-companies',
    'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-direct'].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) { node.addEventListener('input', render); node.addEventListener('change', render); }
@@ -1430,8 +1570,8 @@ SCRIPT = r"""
       ['jb-kw','jb-ex','jb-companies'].forEach(function (id) {
         var n = document.getElementById(id); if (n) n.value = '';
       });
-      var loc = document.getElementById('jb-loc');
-      if (loc) Array.prototype.forEach.call(loc.options, function (o) { o.selected = false; });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'),
+        function (n) { n.setAttribute('aria-pressed', 'false'); });
       ['jb-exp','jb-deg','jb-role','jb-emp','jb-jt'].forEach(function (id) {
         var n = document.getElementById(id); if (n) n.value = '';
       });
@@ -1439,9 +1579,13 @@ SCRIPT = r"""
         n.checked = true;
       });
       var direct = document.getElementById('jb-direct');
-      if (direct) direct.checked = false;
-      var week = document.querySelector('input[name="jb-date"][value="7d"]');
-      if (week) week.checked = true;
+      if (direct) direct.checked = true;
+      // Back to what the page shipped with, which is the saved search's window.
+      // Clearing to a hardcoded week silently narrowed a two-month search.
+      var shipped = document.querySelector('input[name="jb-date"][data-shipped]');
+      if (shipped) shipped.checked = true;
+      var sort = document.getElementById('jb-sort');
+      if (sort) sort.value = 'new';
       drawPills(); render();
     });
   }
@@ -1451,10 +1595,9 @@ SCRIPT = r"""
     save.addEventListener('click', function () {
       var node = document.querySelector('input[name="jb-date"]:checked');
       var locations = [];
-      var loc = document.getElementById('jb-loc');
-      Array.prototype.forEach.call((loc && loc.selectedOptions) || [], function (o) {
-        if (o.value.indexOf('pack:') === 0) locations.push({ regionPack: o.value.slice(5) });
-        else if (o.value) locations.push({ country: o.value });
+      pickedLocations().forEach(function (value) {
+        if (value.indexOf('pack:') === 0) locations.push({ regionPack: value.slice(5) });
+        else if (value) locations.push({ country: value });
       });
       var years = value('jb-exp');
       var config = {

@@ -79,7 +79,10 @@ DEFAULTS = {
     "includeUnknowns": {key: True for key in UNKNOWN_KEYS},
     "sponsorsVisaOnly": False,
     "minScoreToKeep": 40,
-    "tier1IntervalMinutes": 60,
+    # Six sweeps a day, Sahil's call: hourly was more polite traffic than the
+    # boards change, and a four-hour gap still puts a morning posting on the
+    # board the same morning.
+    "tier1IntervalMinutes": 4 * 60,
     "tier2SweepsPerDay": MIN_TIER2_SWEEPS_PER_DAY,
     # How many jobs to keep on disk. null means keep everything, which is a
     # real choice with a real cost: the pool is one JSON file, read and

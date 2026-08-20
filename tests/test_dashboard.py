@@ -632,12 +632,15 @@ class FoundHeaderTests(unittest.TestCase):
         self.assertIn("stays off", html)
 
     def test_a_saved_search_shows_its_version_and_next_run(self):
-        html = self.render(config={"version": 7, "tier1IntervalMinutes": 60,
-                                   "tier2SweepsPerDay": 6},
+        html = self.render(config={"version": 7, "tier1IntervalMinutes": 4 * 60},
                            meta={"nextTier1ScanAt": "2026-08-19T21:58:00Z"})
         self.assertIn("Search v7 is live", html)
         self.assertIn("next run 21:58", html)
-        self.assertIn("6 sweeps a day", html)
+        # The cadence in hours. "Every 240 minutes" is arithmetic homework, and
+        # the line used to read "Every 60 minutes, plus 6 sweeps a day", which
+        # put the Tier-1 interval and the Phase-3 agent sweeps in one sentence
+        # as though they were the same schedule.
+        self.assertIn("Every 4 hours, 6 times a day", html)
 
     def test_the_banner_carries_the_version_the_page_was_rendered_from(self):
         # The client compares against this to tell a save that landed from one
@@ -1003,9 +1006,29 @@ class IngestErrorLineTests(unittest.TestCase):
     def test_repeats_from_one_channel_collapse_to_a_count(self):
         out = self.line([{"channel": "careerjet", "why": "refusing to merge aaaa1111: nope"},
                          {"channel": "careerjet", "why": "refusing to merge bbbb2222: nope"}])
-        self.assertEqual(out.count("careerjet"), 1)
-        self.assertIn("&times;2", out)
-        self.assertIn("2 problems", out)
+        summary = re.search(r"<summary>(.*?)</summary>", out, re.S).group(1)
+        self.assertEqual(summary.count("careerjet"), 1)
+        self.assertIn("&times;2", summary)
+        self.assertIn("2 problems", summary)
+
+    def test_the_problems_open_to_name_every_channel(self):
+        # "2 problems" you cannot open is a number you can only worry about.
+        out = self.line([{"channel": "careerjet", "why": "HTTP 500"},
+                         {"channel": "jooble", "why": "HTTP 503"},
+                         {"channel": "reed", "why": "HTTP 429"},
+                         {"channel": "adzuna", "why": "HTTP 401"}])
+        self.assertIn("<details", out)
+        body = out[out.index("</summary>"):]
+        for channel in ("careerjet", "jooble", "reed", "adzuna"):
+            self.assertIn(channel, body, channel)
+
+    def test_skipped_channels_open_the_same_way(self):
+        out = found_lane.last_ingest_line({"lastIngest": {
+            "at": "2026-08-20T17:33:00Z", "found": 1, "kept": 1,
+            "channelsSkipped": [{"channel": "himalayas", "why": "unchanged since the last run"},
+                                {"channel": "remotive", "why": "unchanged since the last run"}]}})
+        self.assertIn("2 channels skipped", out)
+        self.assertIn("himalayas", out[out.index("</summary>"):])
 
     def test_a_short_reason_is_left_alone(self):
         self.assertIn("HTTP 503", self.line([{"channel": "reed", "why": "HTTP 503"}]))
@@ -1020,8 +1043,8 @@ class IngestErrorLineTests(unittest.TestCase):
         # line above a <br>, so measuring the whole paragraph measures two
         # lines; and "&middot;" is nine source characters that render as one,
         # so measuring the source passes a line twice as long as it looks.
-        span = re.search(r'<span class="jb-errored">(.*?)</span>', out, re.S).group(1)
-        text = html.unescape(re.sub(r"<[^>]+>", "", span))
+        summary = re.search(r"<summary>(.*?)</summary>", out, re.S).group(1)
+        text = html.unescape(re.sub(r"<[^>]+>", "", summary))
         self.assertLess(len(text), 280, f"{len(text)} chars: {text}")
 
     def test_a_channel_with_no_reason_still_names_itself(self):
