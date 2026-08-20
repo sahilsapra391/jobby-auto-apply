@@ -68,7 +68,7 @@ const text = (body, status, extra = {}) =>
     headers: { 'content-type': 'text/plain; charset=utf-8', ...BASE_HEADERS, ...extra },
   });
 
-import { readQueue, enqueue as kvEnqueue, claimOne, configured } from '../kvqueue.mjs';
+import { readQueue, enqueue as kvEnqueue, claimOne, putConfig, takeConfig, configured, CONFIG_FIELD } from '../kvqueue.mjs';
 
 // Vercel Blob suspended this store once the watcher started polling it. The
 // queue now lives in Cloudflare Workers KV under a single key, because KV
@@ -77,9 +77,12 @@ import { readQueue, enqueue as kvEnqueue, claimOne, configured } from '../kvqueu
 // /api/retry is deliberately the apply queue: re-running the agent after the
 // user has cleared a blocker is the same operation as applying, and the
 // runner already reuses documents rather than rebuilding them.
+// /api/watch and /api/pass carry a job id from the Found lane rather than an
+// application id. Same shape, same idempotency rule, same single key.
 const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/retry': 'apply',
                  '/api/submitted': 'marked', '/api/drop': 'drop',
-                 '/api/restore': 'restore', '/api/focus': 'focus' };
+                 '/api/restore': 'restore', '/api/focus': 'focus',
+                 '/api/watch': 'watch', '/api/pass': 'pass' };
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },
@@ -112,6 +115,39 @@ async function handleQueue(request, queue) {
     if (request.method === 'DELETE') {
       const claimed = await claimOne(process.env, queue);
       return json({ ok: true, claimed: claimed[0] || null }, 200);
+    }
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+  return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
+}
+
+// The saved search rides the same key as the queues. Read-modify-write, so a
+// save landing at the same instant as a claim can be lost — the same bargain
+// every other field here already makes, and the board re-sends what it
+// remembers.
+async function handleSearchConfig(request) {
+  if (!configured(process.env)) {
+    return json({ ok: false, error: 'queue not configured' }, 503);
+  }
+  try {
+    if (request.method === 'GET') {
+      const held = (await readQueue(process.env))[CONFIG_FIELD];
+      return json({ ok: true, pending: held || null }, 200);
+    }
+    if (request.method === 'POST') {
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ ok: false, error: 'the search config must be a JSON object' }, 400);
+      }
+      // Validated on the machine that owns the schema, not here. This endpoint
+      // parks it; scripts/search_config.py refuses anything it cannot accept,
+      // and a board that could write an invalid config straight into the store
+      // would be a board that can break every later scan.
+      return json({ ok: true, ...(await putConfig(process.env, body)) }, 202);
+    }
+    if (request.method === 'DELETE') {
+      return json({ ok: true, taken: await takeConfig(process.env) }, 200);
     }
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) }, 502);
@@ -153,11 +189,18 @@ export default {
       });
     }
 
-    // The three board buttons. A page on Vercel cannot start a process on the
+    // The board buttons. A page on Vercel cannot start a process on the
     // user's machine, so each click is parked in the queue and the local
     // watcher claims it and spawns the agent that does the work.
     if (QUEUES[pathname]) {
       return handleQueue(request, QUEUES[pathname]);
+    }
+
+    // The saved search. Not a queue: one object, written by the board and
+    // taken by the watcher, living in the same key as everything else because
+    // a second key would be a second read on every three-second poll.
+    if (pathname === '/api/search-config') {
+      return handleSearchConfig(request);
     }
 
     // Application documents: the exact resume and cover letter an employer

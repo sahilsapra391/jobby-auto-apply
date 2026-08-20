@@ -320,6 +320,29 @@ def score(job, config=None, now=None, flags=None):
     }
 
 
+def explain(score):
+    """One honest line summarising a score, for a card that has no fit read yet.
+
+    Phase 1 promotes a job to Watching before any prose about it exists. The
+    card has to say something, and the something has to be the rubric rather
+    than a sentence implying somebody read the posting.
+    """
+    if not score:
+        return "Not scored yet."
+    parts = score.get("parts") or {}
+    weights = score.get("weights") or WEIGHTS
+    breakdown = ", ".join(f"{name} {parts.get(name, 0)}/{weights.get(name, 0)}"
+                          for name in ("title", "experience", "location",
+                                       "keywords", "freshness") if name in parts)
+    line = f"Match {score.get('total', 0)}% — {breakdown}."
+    unknowns = score.get("unknowns") or []
+    if unknowns:
+        line += f" Unknown: {', '.join(unknowns)}."
+    for gate in score.get("gates") or []:
+        line += f" Capped: {gate.get('label')}."
+    return line + " Rubric only; no fit read written yet."
+
+
 def main():
     ap = argparse.ArgumentParser(description="Score one job against a saved search.")
     ap.add_argument("--job", required=True, help="job record JSON, or - for stdin")
