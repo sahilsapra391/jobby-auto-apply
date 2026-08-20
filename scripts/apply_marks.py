@@ -46,6 +46,23 @@ def store(args):
     return subprocess.run([sys.executable, str(STORE)] + args, capture_output=True, text=True)
 
 
+def currently_submitted(history):
+    """What is submitted right now, by the latest event for each application.
+
+    Latest event wins. A `completed` can be retracted by a later `abandoned`,
+    which is how a mark logged in error is undone. Counting every `completed`
+    ever written meant a retracted application could never be confirmed again:
+    the click was skipped as "already submitted" while the board correctly
+    showed it as not submitted, so it sat in Needs you with a button that
+    appeared to do nothing.
+    """
+    latest = {}
+    for event in sorted(history, key=lambda e: e.get("at") or ""):
+        if event.get("applicationId"):
+            latest[event["applicationId"]] = event
+    return {aid for aid, event in latest.items() if event.get("event") == "completed"}
+
+
 def apply_one(aid):
     """Log the submission and let sync_board retire the session."""
     detail = {}
@@ -90,17 +107,19 @@ def main():
         print(json.dumps({"pending": len(pending)}, indent=2))
         return 0 if pending else 1
 
-    claimed = queue("claim")
-    # A user clicking twice must not log two submissions, and anything already
-    # submitted is a no-op rather than a duplicate history entry.
+    # Read the history BEFORE claiming. Claiming removes the marks from the
+    # queue, so failing the duplicate check afterwards threw away the user's
+    # clicks: they had pressed Confirm, the card left Needs you, and nothing
+    # was ever written. The old comment here claimed the queue was left
+    # "claimed-but-unapplied", which is not a state that exists.
     hist = store(["history-list"])
     if hist.returncode != 0:
-        # Without history there is no duplicate check, and a mark would be
-        # logged a second time. Better to leave the queue claimed-but-unapplied
-        # than to write a submission twice.
         raise SystemExit(f"apply_marks: cannot read history: {(hist.stderr or '').strip()[:200]}")
     history = json.loads(hist.stdout or "[]")
-    already = {e.get("applicationId") for e in history if e.get("event") == "completed"}
+
+    already = currently_submitted(history)
+
+    claimed = queue("claim")
     seen, applied, skipped = set(), [], []
     for mark in claimed:
         aid = mark.get("applicationId")

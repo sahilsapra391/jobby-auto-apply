@@ -184,7 +184,8 @@ def build(state, generated):
             <button class="btn ghost finish" data-id="{esc(aid)}"
                     data-url="{esc(safe_url(posting_url(s)))}"
                     title="Bring up the tab the agent left, with the form still filled">Open &amp; finish</button>
-            <button class="btn ghost mark" data-id="{esc(aid)}">Mark submitted</button>
+            <button class="btn mark" data-id="{esc(aid)}"
+                    title="I submitted this myself. Move it to Submitted.">Confirm submitted</button>
             <button class="btn drop" data-id="{esc(aid)}" title="Do not pursue this one">Drop</button>
             <span class="ats">{esc(s.get('ats', ''))}</span>
           </div>
@@ -809,6 +810,7 @@ def build(state, generated):
   .tab.aside.on {{ opacity:1; }}
   /* Destructive controls are filled, not outlined. .btn already sets a blue
      background, so colouring only the text left red-on-blue. */
+  .btn.mark {{ background:var(--btn-g); color:var(--btn-g-ink); }}
   .btn.drop {{ background:var(--red); color:#fff; border-color:var(--red); }}
   .xbtn {{ appearance:none; border:1px solid var(--red); background:var(--red);
     color:#fff; border-radius:6px; cursor:pointer; line-height:1; font-weight:600;
@@ -957,7 +959,7 @@ def build(state, generated):
       if (p) p.classList.add('on');
     }});
   }});
-  // "Mark submitted" moves a card out of Needs you and into Submitted. The
+  // "Confirm submitted" moves a card out of Needs you and into Submitted. The
   // board cannot write to the store on the agent's machine, so the change is
   // queued and a local poller applies it. The card is moved optimistically so
   // the tab reflects reality immediately, and the queue makes it durable.
@@ -1034,14 +1036,14 @@ def build(state, generated):
           if (res.b && res.b.ok) {{ rememberMark(card.dataset.id); moveToSubmitted(card); }}
           else {{
             b.disabled = false;
-            b.textContent = 'Mark submitted';
+            b.textContent = 'Confirm submitted';
             var msg = (res.b && res.b.error) === 'queue not configured'
               ? 'Queue not set up on this deployment' : 'Could not save';
             b.insertAdjacentHTML('afterend', '<span class="scanmsg err"> ' + msg + '</span>');
           }}
         }})
         .catch(function () {{
-          b.disabled = false; b.textContent = 'Mark submitted';
+          b.disabled = false; b.textContent = 'Confirm submitted';
           b.insertAdjacentHTML('afterend', '<span class="scanmsg err"> Could not reach the board</span>');
         }});
     }});
