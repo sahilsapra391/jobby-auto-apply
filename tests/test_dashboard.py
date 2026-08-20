@@ -152,6 +152,7 @@ class BrandTest(unittest.TestCase):
         self.assertNotIn('href="/favicon', html)
 
 
+
 class PostedDateTests(unittest.TestCase):
     """The Posted column has to lead with a real date, because it is the sort key.
 

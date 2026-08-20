@@ -92,6 +92,7 @@ class GuardTests(unittest.TestCase):
         self.assertTrue(any(d["kind"] == "same posting url" for d in report["duplicates"]))
 
 
+
 class InFlightGuardTests(unittest.TestCase):
     """Submitted history is not enough when three runs overlap.
 
