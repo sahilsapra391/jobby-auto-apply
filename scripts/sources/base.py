@@ -56,9 +56,13 @@ TIMEOUT_SECONDS = 20
 # deepens one.
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = 2.0
-# A board with ten thousand jobs and a full description each is not a board we
-# can read in an hourly budget, and it must not be able to exhaust memory.
-MAX_RESPONSE_BYTES = 12_000_000
+# A misbehaving endpoint must not be able to exhaust memory, but the cap has to
+# clear the boards that actually exist. OpenAI's Ashby board is 12.1 MB — 737
+# jobs at a mean description of 8,600 characters — and the old 12 MB cap cut it
+# mid-document, so it arrived as unparseable JSON reported as "HTTP 200". One
+# real company was silently absent from every sweep. 48 MB clears it four times
+# over and is still a bounded read.
+MAX_RESPONSE_BYTES = 48_000_000
 # How much of a description is worth storing. The rest is benefits boilerplate.
 EXCERPT_CHARS = 1500
 
@@ -197,6 +201,13 @@ class Fetcher:
                     body = raw.read(MAX_RESPONSE_BYTES)
                     self.bytes += len(body)
                     last = Response(raw.status, body, dict(raw.headers))
+                    if len(body) >= MAX_RESPONSE_BYTES:
+                        # Reading exactly the cap almost always means the body
+                        # was longer. Saying so beats letting it surface as a
+                        # JSON parse error, which names neither the cause nor
+                        # the fix.
+                        last.error = (f"response hit the {MAX_RESPONSE_BYTES // 1_000_000} MB "
+                                      "cap and was truncated")
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 last = Response(0, error=f"{type(exc).__name__}: {exc}"[:200])
             if last.status not in RETRY_STATUSES and last.status != 0:
@@ -254,6 +265,12 @@ def describe(response, what):
         return f"{what}: rate limited after {MAX_ATTEMPTS} attempts"
     if response.status == 0:
         return f"{what}: {response.error or 'no response'}"
+    if response.error:
+        # A 200 whose body will not parse is the confusing one: without this it
+        # reported as "HTTP 200", which reads like a success sitting in the
+        # error list. Seen live — one Ashby board answers 200 with something
+        # that is not its usual JSON.
+        return f"{what}: HTTP {response.status} but {response.error}"
     return f"{what}: HTTP {response.status}"
 
 

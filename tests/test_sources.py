@@ -162,6 +162,35 @@ class GreenhouseTests(unittest.TestCase):
         self.assertEqual(result["status"], "skipped")
         self.assertIn("registry", result["reason"])
 
+    def test_a_response_that_hits_the_byte_cap_says_so(self):
+        # Found live: OpenAI's Ashby board is 12.1 MB and the cap was 12 MB, so
+        # it arrived cut mid-document and surfaced as a JSON parse error on an
+        # HTTP 200. One real company was silently missing from every sweep, and
+        # the error line named neither the cause nor the fix.
+        original = base.MAX_RESPONSE_BYTES
+        base.MAX_RESPONSE_BYTES = 64
+        try:
+            f = fetcher({"example.test": (200, "x" * 200)})
+            response = f.get("https://example.test/a")
+            self.assertIn("truncated", response.error)
+            self.assertIn("cap", response.error)
+        finally:
+            base.MAX_RESPONSE_BYTES = original
+
+    def test_the_cap_clears_the_largest_board_we_have_seen(self):
+        # 12.1 MB, and boards only grow.
+        self.assertGreaterEqual(base.MAX_RESPONSE_BYTES, 24_000_000)
+
+    def test_a_200_with_an_unparseable_body_does_not_read_as_success(self):
+        # Seen live: one Ashby board answers 200 with something that is not its
+        # usual JSON, and the error line read "HTTP 200" — a success code
+        # sitting in the error list, which is the sort of thing a person scans
+        # past.
+        f = fetcher({"api.ashbyhq.com": (200, "<html>maintenance</html>")})
+        result = ashby.fetch(f, companies={"zapier": COMPANIES["zapier"]})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("not JSON", result["errors"][0])
+
     def test_a_dead_token_is_reported_rather_than_swallowed(self):
         # A 404 means the token is wrong, which is a registry problem that will
         # never fix itself if nobody is told.
