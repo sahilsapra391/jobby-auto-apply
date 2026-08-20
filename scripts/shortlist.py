@@ -27,11 +27,17 @@ def norm(s):
 
 
 def known():
-    out = subprocess.run(["python3", "scripts/store.py", "roles-list"],
-                         capture_output=True, text=True).stdout
-    d = json.loads(out)
-    items = list(d.values()) if isinstance(d, dict) else d
-    return {(norm(r.get("company")), norm(r.get("role"))) for r in items}
+    """Role index plus the live watch list: a watched role is not a new find."""
+    pairs = set()
+    for cmd in ("roles-list", "session-list"):
+        out = subprocess.run(["python3", "scripts/store.py", cmd],
+                             capture_output=True, text=True).stdout
+        d = json.loads(out)
+        items = list(d.values()) if isinstance(d, dict) else d
+        for r in items:
+            if isinstance(r, dict):
+                pairs.add((norm(r.get("company")), norm(r.get("role"))))
+    return pairs
 
 
 def main():
