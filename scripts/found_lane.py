@@ -179,19 +179,31 @@ def last_ingest_line(meta):
 
 
 def banner(config, meta):
-    """The saved-search banner: which search runs next, and when."""
+    """The saved-search banner: which search runs next, and when.
+
+    `data-version` is the version this page was rendered from. The client keeps
+    it so it can tell a save that landed from one the single-key
+    read-modify-write quietly lost — a lost click is re-sent by the replay, but
+    a lost save would otherwise leave the banner reading "saved" while the next
+    scan ran the old search.
+    """
+    version = (config or {}).get("version", 0)
     if not config:
-        return ('<div class="jb-banner"><div><strong>No saved search.</strong> '
+        return (f'<div class="jb-banner" data-version="{esc(version)}">'
+                '<div><strong>No saved search.</strong> '
                 '<span>Set the filters below and press Save search. Until then the '
-                'hourly scan stays off and nothing runs on its own.</span></div>'
+                'hourly scan stays off and nothing runs on its own.</span>'
+                '<span class="jb-savestate" id="jb-savestate"></span></div>'
                 '<button class="btn scan" id="jb-scan">Scan now</button></div>')
     nxt = (meta or {}).get("nextTier1ScanAt")
     when = f"next run {esc(nxt[11:16])} UTC" if nxt else "next run shortly"
     sweeps = config.get("tier2SweepsPerDay") or 6
     every = config.get("tier1IntervalMinutes") or 60
-    return (f'<div class="jb-banner"><div><strong>Search v{esc(config.get("version", 0))} '
+    return (f'<div class="jb-banner" data-version="{esc(version)}">'
+            f'<div><strong>Search v{esc(version)} '
             f'is live.</strong> <span>Every {esc(every)} minutes, plus {esc(sweeps)} '
-            f'sweeps a day &middot; {esc(when)}</span></div>'
+            f'sweeps a day &middot; {esc(when)}</span>'
+            f'<span class="jb-savestate" id="jb-savestate"></span></div>'
             f'<button class="btn scan" id="jb-scan">Scan now</button></div>')
 
 
@@ -322,6 +334,10 @@ CSS = """
     box-shadow:var(--sh); margin-bottom:.85rem; font-size:.92rem; }
   .jb-banner strong { font-weight:620; }
   .jb-banner span { color:var(--ink-2); }
+  .jb-savestate { display:block; font-size:.82rem; margin-top:.15rem; }
+  .jb-savestate.waiting { color:var(--ink-3); }
+  .jb-savestate.landed { color:var(--green); }
+  .jb-savestate.lost { color:var(--orange); }
   .jb-ingest { margin:0 0 1.1rem; font-size:.84rem; color:var(--ink-2);
     line-height:1.5; }
   .jb-ingest.none { color:var(--ink-3); }
@@ -834,7 +850,15 @@ SCRIPT = r"""
       var was = save.textContent;
       save.textContent = 'Saving\u2026';
       post('/api/search-config', config).then(function (res) {
-        save.textContent = (res && res.ok) ? 'Saved \u2713' : 'Could not save';
+        var ok = res && res.ok;
+        save.textContent = ok ? 'Saved \u2713' : 'Could not save';
+        // Remember which version was live when this was written. The board is a
+        // snapshot, so "the server accepted it" is not the same as "it is now
+        // the saved search", and only the version moving proves the latter.
+        if (ok) {
+          writeIds(SAVE_KEY, [{ at: Date.now(), priorVersion: renderedVersion() }]);
+          reconcileSave();
+        }
         setTimeout(function () { save.disabled = false; save.textContent = was; }, 3000);
       }).catch(function () {
         save.disabled = false; save.textContent = was;
@@ -873,6 +897,47 @@ SCRIPT = r"""
       }).catch(function () { say('Could not reach the board.', 'err'); addLink.disabled = false; });
     });
   }
+
+  // --- did the saved search actually land? ---------------------------------
+  // The single-key design is read-modify-write with no compare-and-swap, so a
+  // save landing in the same instant as a claim can be lost. A lost *click* is
+  // re-sent by the replay above and heals itself. A lost *save* would not: the
+  // banner would keep reading "saved", and the next scan would quietly run the
+  // old search. That asymmetry is the whole reason this exists.
+  var SAVE_KEY = 'jobby.searchSaved';
+  // The watcher picks a config up within three seconds and the board
+  // republishes within a couple of minutes. Ten minutes is generous enough that
+  // a slow cycle never reads as a loss.
+  var SAVE_GRACE_MS = 10 * 60 * 1000;
+
+  function renderedVersion() {
+    var el2 = document.querySelector('.jb-banner');
+    var v = el2 && parseInt(el2.getAttribute('data-version'), 10);
+    return isNaN(v) ? 0 : v;
+  }
+  function saySave(text, cls) {
+    var node = document.getElementById('jb-savestate');
+    if (node) { node.textContent = text; node.className = 'jb-savestate ' + (cls || ''); }
+  }
+  function reconcileSave() {
+    var held = readIds(SAVE_KEY)[0];
+    if (!held) return;
+    var landed = renderedVersion() > held.priorVersion;
+    if (landed) { writeIds(SAVE_KEY, []); saySave('Saved search v' + renderedVersion() + ' is the one running.', 'landed'); return; }
+    fetch('/api/search-config').then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.pending) {
+          saySave('Saved. Waiting for the next check to pick it up.', 'waiting');
+        } else if (Date.now() - held.at > SAVE_GRACE_MS) {
+          // Nothing waiting, and the version never moved. It was lost.
+          writeIds(SAVE_KEY, []);
+          saySave('That save did not land. Press Save search again.', 'lost');
+        } else {
+          saySave('Saved. Waiting for the board to catch up.', 'waiting');
+        }
+      }).catch(function () {});
+  }
+  reconcileSave();
 
   drawPills();
   render();

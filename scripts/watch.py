@@ -484,6 +484,20 @@ def apply_found_decisions(q):
     for queue, flag in (("watch", []), ("pass", ["--pass"])):
         if not q.get(queue):
             continue
+        # Claim-all, then promote each. A promote that fails has already had its
+        # queue entry taken, so the click is not re-queued here — and that is
+        # deliberate rather than an oversight.
+        #
+        # **The recovery path is the board's localStorage replay.** It remembers
+        # every eye and pass, re-sends them on load, and prunes the ones the
+        # published board no longer carries. So a transient failure is retried
+        # within seconds, and a permanent one (a job id the pool has never heard
+        # of) is retried at most once more and then forgotten, because the id is
+        # not in the next payload. Re-queueing here instead would race that
+        # replay and promote the same job twice.
+        #
+        # If you are about to "fix" this into a re-queue: that is the `claim`
+        # bug's shape in reverse, and the board already handles it.
         claimed = json.loads(subprocess.run(
             [toolpath.node(), "queue.mjs", "claim", f"{queue}/"], cwd=DEPLOY,
             capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
@@ -495,12 +509,20 @@ def apply_found_decisions(q):
                 continue
             result = run([sys.executable, str(REPO / "scripts" / "promote.py"),
                           "--id", job_id] + flag)
-            (done if result.returncode == 0 else failed).append(job_id)
+            if result.returncode == 0:
+                done.append(job_id)
+            else:
+                # Carry the reason, not just the id: "no job with that id" and
+                # "the store would not write" want very different responses,
+                # and a bare id in a log line tells you neither.
+                failed.append({"jobId": job_id,
+                               "why": (result.stderr or "").strip()[:160] or "unknown"})
         if done:
             changed[f"{queue}ed"] = done
         if failed:
-            # A job id the store cannot find is worth seeing: it means the
-            # board and the pool have drifted apart.
+            # Board and pool have drifted apart. Visible in the tick line and in
+            # the healthchecks payload, which is where a standing condition is
+            # meant to show up.
             changed[f"{queue}Failed"] = failed
     return changed
 

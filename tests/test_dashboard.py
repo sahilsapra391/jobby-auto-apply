@@ -525,6 +525,20 @@ class FoundHeaderTests(unittest.TestCase):
         self.assertIn("next run 21:58", html)
         self.assertIn("6 sweeps a day", html)
 
+    def test_the_banner_carries_the_version_the_page_was_rendered_from(self):
+        # The client compares against this to tell a save that landed from one
+        # the single-key read-modify-write lost.
+        html = self.render(config={"version": 7, "tier1IntervalMinutes": 60,
+                                   "tier2SweepsPerDay": 6})
+        self.assertIn('data-version="7"', html)
+        self.assertIn('id="jb-savestate"', html)
+
+    def test_the_version_attribute_is_present_even_with_no_saved_search(self):
+        # Absent would read as NaN on the client and every save would look lost.
+        html = self.render()
+        self.assertIn('data-version="0"', html)
+        self.assertIn('id="jb-savestate"', html)
+
     def test_the_add_your_own_link_card_is_there(self):
         html = self.render()
         self.assertIn('id="jb-link"', html)

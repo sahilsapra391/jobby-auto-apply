@@ -658,6 +658,14 @@ remembers to run is how it drifts.
 - **A promoted job has no fit read.** 👁 creates the Watching session
   immediately and the card shows the rubric breakdown, labelled as the rubric.
   The lazy enrichment that writes real prose is not built.
+- **The company alias list is load-bearing for cross-source dedupe.** Rule 4
+  only compares fingerprints within a company bucket, so an ATS calling a
+  company "Northwind" and an aggregator calling it "Northwind Analytics Inc."
+  stay two records unless `companies.json` carries an alias joining them. A
+  missing alias shows up as a duplicate rather than as an error, and nothing
+  warns. Widening the company match is not the fix: merging two real companies
+  is worse and harder to spot. Seeding aliases from observed variants is a
+  Phase 2 candidate.
 - **Country is unknown for most remote-feed postings.** "Remote — US only" is a
   restriction rather than a location, so those jobs bucket as `remote` and their
   country stays null rather than being guessed.

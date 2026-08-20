@@ -48,6 +48,26 @@ in `sources.json` until they are.
 | The Muse authentication | 2026-08-19 | `https://www.themuse.com/api/public/jobs?page=0` returned 200 with 20 results and no key supplied. Appendix A lists The Muse as class B free-key; **this is a correction** — the key raises the rate limit rather than unlocking access, so the connector runs either way and reports which. |
 | Adzuna, Jooble, Careerjet, Reed, USAJobs | not verified | No key for any of these is installed in `~/.job-application/config.env`, so none has ever had a live response here. Their connectors are written to each published contract and their fixtures are labelled `__fixture_note: "not a recorded response"`. Status is `needs-key`; the first run with a key installed is what confirms the shapes. |
 
+## The alias list is load-bearing
+
+Cross-source dedupe matches a company by name before it ever looks at a
+description: rule 4 of identity resolution only compares fingerprints *within a
+company bucket*, because comparing every posting against every other one would
+merge unrelated companies that happen to share boilerplate.
+
+That makes `companies.json`'s `aliases[]` load-bearing. `norm_company` strips
+legal furniture — "Datadog, Inc." meets "Datadog" — but it cannot bridge two
+genuinely different strings. If an ATS says "Northwind" and an aggregator says
+"Northwind Analytics Inc.", and no alias connects them, they stay two records.
+
+**A missing alias shows up as a duplicate, never as an error.** Nothing warns.
+This is deliberate: widening the company match risks merging two real companies
+into one, which is the worse failure and much harder to notice.
+
+Seeding aliases from company-name variants observed across sources is a
+sensible **Phase 2** candidate. It is not built, and should not be built as
+part of Phase 1.
+
 ## The catalog
 
 <!-- generated:sources begin -->

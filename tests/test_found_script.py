@@ -64,8 +64,12 @@ class ScriptSyntaxTests(unittest.TestCase):
         self.assertNotIn("document.write", found_lane.SCRIPT)
 
 
-class FilterBehaviourTests(unittest.TestCase):
-    """Run the real script against a DOM stub and check what it shows."""
+class ScriptHarness:
+    """Shared rig for running the real script under node.
+
+    Deliberately not a TestCase: subclassing one to borrow its helpers reruns
+    every test it owns, which is how a suite quietly doubles a count.
+    """
 
     HARNESS = r"""
 const assert = require('node:assert/strict');
@@ -130,11 +134,26 @@ global.localStorage = {
   getItem(k) { return this.store[k] || null; },
   setItem(k, v) { this.store[k] = v; },
 };
-global.fetch = function () { return Promise.resolve({ json: function () { return Promise.resolve({ ok: true }); } }); };
+if (CONTROLS.savedMarker) {
+  global.localStorage.setItem('jobby.searchSaved', JSON.stringify([CONTROLS.savedMarker]));
+}
+const posted = [];
+global.fetch = function (url, opts) {
+  posted.push({ url: url, method: (opts && opts.method) || 'GET' });
+  const body = (url === '/api/search-config' && (!opts || !opts.method || opts.method === 'GET'))
+    ? { ok: true, pending: CONTROLS.pending || null }
+    : { ok: true };
+  return Promise.resolve({ json: function () { return Promise.resolve(body); } });
+};
+const banner = makeNode('div');
+banner.className = 'jb-banner';
+banner.setAttribute('data-version', String(CONTROLS.bannerVersion === undefined ? 0 : CONTROLS.bannerVersion));
+nodes['jb-savestate'] = makeNode('span', 'jb-savestate');
 global.document = {
   getElementById(id) { return nodes[id] || null; },
   createElement(tag) { return makeNode(tag); },
   querySelector(sel) {
+    if (sel === '.jb-banner') return banner;
     if (sel.indexOf('input[name="jb-date"]:checked') === 0) return dateNode;
     if (sel.indexOf('[data-unknown=') === 0) {
       const want = sel.split('"')[1];
@@ -157,11 +176,17 @@ if (CONTROLS.locations) {
 
 %s
 
-console.log(JSON.stringify({
-  shown: grid.children.length,
-  ids: grid.children.map(function (c) { return c.getAttribute('data-id'); }),
-  count: (nodes['jb-count'] || {}).textContent || '',
-}));
+setTimeout(function () {
+  console.log(JSON.stringify({
+    shown: grid.children.length,
+    ids: grid.children.map(function (c) { return c.getAttribute('data-id'); }),
+    count: (nodes['jb-count'] || {}).textContent || '',
+    saveState: nodes['jb-savestate'].textContent,
+    saveClass: nodes['jb-savestate'].className,
+    savedMarker: global.localStorage.getItem('jobby.searchSaved'),
+    fetched: posted.map(function (p) { return p.method + ' ' + p.url; }),
+  }));
+}, 10);
 """
 
     def job(self, job_id, **fields):
@@ -187,6 +212,10 @@ console.log(JSON.stringify({
             return json.loads(result.stdout.strip().splitlines()[-1])
         finally:
             pathlib.Path(path).unlink()
+
+
+class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
+    """Run the real script against a DOM stub and check what it shows."""
 
     def test_every_job_renders_a_card_by_default(self):
         out = self.run_script([self.job("a"), self.job("b"), self.job("c")])
@@ -258,3 +287,59 @@ console.log(JSON.stringify({
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SaveReconciliationTests(ScriptHarness, unittest.TestCase):
+    """Review finding 3: a lost saved search must not read as a saved one.
+
+    The single-key design is read-modify-write with no compare-and-swap, so a
+    save landing in the same instant as a claim can be lost. A lost *click* is
+    re-sent by the board's replay and heals itself. A lost *save* would not: the
+    banner would keep reading "saved" while the next scan quietly ran the old
+    search. That asymmetry is the whole reason this exists.
+    """
+
+    HOUR_AGO = 3600 * 1000
+
+    def test_a_save_that_landed_says_which_version_is_running(self):
+        out = self.run_script([self.job("a")], {
+            "bannerVersion": 8,
+            "savedMarker": {"at": 1, "priorVersion": 7}})
+        self.assertIn("v8 is the one running", out["saveState"])
+        self.assertIn("landed", out["saveClass"])
+        self.assertEqual(json.loads(out["savedMarker"]), [],
+                         "a landed save must stop being tracked")
+
+    def test_a_save_still_waiting_to_be_picked_up_says_so(self):
+        out = self.run_script([self.job("a")], {
+            "bannerVersion": 7,
+            "savedMarker": {"at": 1, "priorVersion": 7},
+            "pending": {"config": {"keywords": ["pm"]}, "at": "2026-08-19T20:00:00Z"}})
+        self.assertIn("Waiting for the next check", out["saveState"])
+        self.assertIn("waiting", out["saveClass"])
+
+    def test_a_recent_save_with_nothing_pending_waits_rather_than_crying_wolf(self):
+        # The watcher takes a config within three seconds but the board only
+        # republishes every couple of minutes, so this window is normal.
+        import time
+        out = self.run_script([self.job("a")], {
+            "bannerVersion": 7,
+            "savedMarker": {"at": int(time.time() * 1000), "priorVersion": 7}})
+        self.assertIn("Waiting for the board", out["saveState"])
+        self.assertIn("waiting", out["saveClass"])
+
+    def test_a_save_that_never_landed_says_so_and_asks_for_a_retry(self):
+        import time
+        out = self.run_script([self.job("a")], {
+            "bannerVersion": 7,
+            "savedMarker": {"at": int(time.time() * 1000) - self.HOUR_AGO,
+                            "priorVersion": 7}})
+        self.assertIn("did not land", out["saveState"])
+        self.assertIn("lost", out["saveClass"])
+        self.assertEqual(json.loads(out["savedMarker"]), [],
+                         "a lost save is reported once, not on every load")
+
+    def test_nothing_is_said_when_no_save_is_outstanding(self):
+        out = self.run_script([self.job("a")], {"bannerVersion": 7})
+        self.assertEqual(out["saveState"], "")
+        self.assertNotIn("GET /api/search-config", out["fetched"])
