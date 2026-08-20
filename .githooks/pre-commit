@@ -1,0 +1,67 @@
+#!/bin/sh
+# Refuse accidental additions.
+#
+# Three times in one day a `git add -A` swept files this session did not write
+# onto a branch: another agent's sourcing scripts twice, and once its live
+# working copy of a file it was editing at the time. Also 39 screenshots of
+# filled application forms, carrying a home address, phone numbers and a
+# completed EEO section.
+#
+# Saying "I have stopped using git add -A" is the same category as a prompt
+# instruction: a note the next session drops. This is the version that holds.
+#
+# Modifying a tracked file is untouched. Only ADDING a new file is gated, and
+# adding a file is rare enough that asking for it to be deliberate costs
+# nothing:
+#
+#     JOBBY_ADD="scripts/thing.py tests/test_thing.py" git commit -m "..."
+#     JOBBY_ADD=all git commit -m "..."      # escape hatch, still explicit
+
+added=$(git diff --cached --name-only --diff-filter=A)
+[ -z "$added" ] && exit 0
+
+fail=0
+
+# Never, whatever anyone says. Screenshots are application forms.
+for f in $added; do
+  case "$f" in
+    assets/*|deploy/public/*) ;;
+    *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.tiff|*.heic)
+      echo "refusing to add an image: $f"
+      echo "  Agent screenshots are filled application forms. They carry a name,"
+      echo "  an address and sometimes a completed EEO section."
+      fail=1 ;;
+  esac
+  case "$f" in
+    .sweep*|.bodies.json|.candidates.json|.picks.txt|.build/*)
+      echo "refusing to add sweep scratch data: $f"
+      fail=1 ;;
+  esac
+done
+
+if [ "$JOBBY_ADD" = "all" ]; then
+  [ "$fail" = "1" ] && exit 1
+  exit 0
+fi
+
+for f in $added; do
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.tiff|*.heic|.sweep*|.bodies.json|.candidates.json|.picks.txt|.build/*) continue ;;
+  esac
+  found=0
+  for ok in $JOBBY_ADD; do
+    [ "$f" = "$ok" ] && found=1
+  done
+  if [ "$found" = "0" ]; then
+    echo "refusing to add a file this commit did not declare: $f"
+    fail=1
+  fi
+done
+
+if [ "$fail" = "1" ]; then
+  echo
+  echo "If these are yours, name them:"
+  echo "  JOBBY_ADD=\"$(echo $added | tr '\n' ' ')\" git commit ..."
+  exit 1
+fi
+exit 0

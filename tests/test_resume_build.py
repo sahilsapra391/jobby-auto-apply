@@ -196,3 +196,32 @@ class VariableTechnicalTests(unittest.TestCase):
         out = self.rows(8)
         for i in range(8):
             self.assertIn(f"thing{i}", out)
+
+
+class RedactionTests(unittest.TestCase):
+    """Verification output must not reproduce what it is verifying.
+
+    The 39 screenshots removed from this repository were verification artifacts
+    too: proof a form had been filled correctly, carrying the contents of the
+    form. A check that prints the phone number to prove the phone number is
+    right is the same shape, one step from the same outcome.
+    """
+
+    def test_no_digit_survives_redaction(self):
+        for value in ("(555) 010-1234", "+91 5550101234", "Springfield, IL 62704",
+                      "12 Example Street"):
+            self.assertFalse(any(c.isdigit() for c in rb.redact(value)), value)
+
+    def test_structure_survives_so_two_regions_are_distinguishable(self):
+        us = rb.redact("(555) 010-1234")
+        india = rb.redact("+91 5550101234")
+        self.assertNotEqual(us, india)
+        self.assertIn("(", us)
+        self.assertIn("+", india)
+
+    def test_the_fingerprint_separates_values_and_matches_itself(self):
+        a = rb.fingerprint("Springfield, IL 62704 | (555) 010-1234")
+        b = rb.fingerprint("Elsewhere, XX - 123456 | +91 5550101234")
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, rb.fingerprint("Springfield, IL 62704 | (555) 010-1234"))
+        self.assertEqual(len(a), 12)

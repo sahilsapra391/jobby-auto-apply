@@ -574,7 +574,18 @@ def tick(force_publish=False):
             # would take a request off the queue with nothing to run it.
             if not reserve(slot, note="starting"):
                 continue
-            claimed = claim_one("apply/")
+            # Everything from here to the spawn has to release the slot if it
+            # throws. reserve() writes THIS process's pid on purpose, so the
+            # slot is not mistaken for stale in the moment before the runner
+            # starts, which means a lock left behind here holds a live pid and
+            # lock_holder will never clear it. The slot would be gone until the
+            # watcher restarted. claim_one raises on a failed KV write, and a
+            # KV write did fail today, so this is the path that loses a slot.
+            try:
+                claimed = claim_one("apply/")
+            except Exception:
+                lock_path(slot).unlink(missing_ok=True)
+                raise
             if not claimed:
                 lock_path(slot).unlink(missing_ok=True)
                 break
@@ -612,10 +623,16 @@ def tick(force_publish=False):
                     {"applicationId": aid, "why": reason})
                 continue
             q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
-            browser.serve(slot)
-            pid = spawn(slot, [sys.executable, str(REPO / "scripts" / "run_apply.py"),
-                               "--id", aid, "--slot", slot],
-                        f"{slot}.log", note=aid)
+            try:
+                browser.serve(slot)
+                pid = spawn(slot, [sys.executable, str(REPO / "scripts" / "run_apply.py"),
+                                   "--id", aid, "--slot", slot],
+                            f"{slot}.log", note=aid)
+            except Exception:
+                # Same window: a browser that will not start, or a spawn that
+                # fails, must not cost the slot permanently.
+                lock_path(slot).unlink(missing_ok=True)
+                raise
             changed.setdefault("applyStarted", []).append(
                 {"slot": slot, "pid": pid, "applicationId": aid})
 
