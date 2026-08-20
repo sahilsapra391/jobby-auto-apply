@@ -78,7 +78,8 @@ def session_from_job(job):
         "foundAt": job.get("firstSeenAt"),
         "fitScore": (job.get("score") or {}).get("total"),
         "alignment": match_score.explain(job.get("score")),
-        "seenOnBoards": len(job.get("sources") or []),
+        "seenOnBoards": len({s.get("source") for s in (job.get("sources") or [])
+                            if s.get("source")}),
         "promotedFrom": "found",
     }
 

@@ -448,6 +448,16 @@ class FoundLaneTests(unittest.TestCase):
         rows = json.loads(self.payload(self.render([self.job(descriptionExcerpt="x" * 5000)])))
         self.assertLessEqual(len(rows[0]["ex"]), found_lane.EMBED_EXCERPT_CHARS)
 
+    def test_two_listings_on_one_board_is_still_one_board(self):
+        # Adzuna lists the same job twice; two adzuna.it URLs for one posting
+        # came out of the supervised run. "Seen on 2 boards" has to mean two
+        # boards or it means nothing.
+        rows = json.loads(self.payload(self.render([self.job(sources=[
+            {"source": "adzuna", "sourceClass": "aggregator", "url": "https://a.test/1"},
+            {"source": "adzuna", "sourceClass": "aggregator", "url": "https://a.test/2"}])])))
+        self.assertEqual(rows[0]["bd"], 1)
+        self.assertEqual(len(rows[0]["sg"]), 2, "both listings stay linkable")
+
     def test_a_merged_job_says_how_many_boards_carried_it(self):
         rows = json.loads(self.payload(self.render([self.job(sources=[
             {"source": "greenhouse", "sourceClass": "ats", "url": "https://a.test/1"},

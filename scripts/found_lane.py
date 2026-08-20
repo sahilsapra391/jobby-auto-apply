@@ -92,7 +92,11 @@ def compact(job):
         "wy": score.get("why") or {},
         "un": score.get("unknowns") or [],
         "ga": [g.get("label") for g in (score.get("gates") or []) if g.get("label")],
-        "bd": len(job.get("sources") or []),
+        # Boards, not sightings. One aggregator listing the same job twice is
+        # one board, and Adzuna does exactly that — two adzuna.it URLs for one
+        # posting came out of the supervised run. "Seen on 2 boards" has to
+        # mean two boards or it means nothing.
+        "bd": len({s.get("source") for s in (job.get("sources") or []) if s.get("source")}),
         "sg": sightings,
         "tg": (job.get("tags") or [])[:MAX_TAGS],
         "ex": (job.get("descriptionExcerpt") or "")[:EMBED_EXCERPT_CHARS],

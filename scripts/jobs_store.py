@@ -219,14 +219,28 @@ def merge_sources(existing, incoming):
 
     Re-seeing the same posting on the same board must not grow the list, or the
     "seen on N boards" chip inflates every hour and stops meaning anything.
+
+    Some channels make that harder than it sounds. Careerjet answers with a
+    per-request tracking redirect — `jobviewtrack.com/v2/<opaque>` — and the
+    same posting gets a different token every time it is asked for, verified by
+    running one query twice a second apart and getting three different URLs for
+    three unchanged jobs. Keyed on the URL, that appends a fresh sighting every
+    hour, and by tomorrow the job claims to have been seen on twenty-four
+    boards.
+
+    So a connector may declare its URLs unstable, and those collapse to one
+    sighting per source: newest URL, because that is the one that still
+    resolves, and earliest firstSeenAt, because that is when the job was
+    actually first seen.
     """
     merged = {}
     for entry in list(existing or []) + list(incoming or []):
         if not isinstance(entry, dict):
             continue
-        key = (entry.get("source"), entry.get("url"))
+        key = ((entry.get("source"),) if entry.get("urlStable") is False
+               else (entry.get("source"), entry.get("url")))
         if key in merged:
-            merged[key] = dict(merged[key],
+            merged[key] = dict(entry,
                                firstSeenAt=_earliest(merged[key].get("firstSeenAt"),
                                                      entry.get("firstSeenAt")))
         else:

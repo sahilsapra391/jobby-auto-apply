@@ -43,7 +43,10 @@ def parse_job(entry, country):
         workplace=base.detect_workplace(entry.get("locations"), entry.get("title"),
                                         entry.get("description")),
         posted_at=entry.get("date"), description=entry.get("description") or "",
-        salary=entry.get("salary") or None)
+        salary=entry.get("salary") or None,
+        # Careerjet answers with a per-request tracking redirect, so the same
+        # posting has a different URL every time it is asked for.
+        url_stable=False)
 
 
 def fetch(fetcher, config=None, settings=None, limit=None, countries=None,

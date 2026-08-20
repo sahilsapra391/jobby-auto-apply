@@ -406,7 +406,7 @@ def iso_stamp(value):
 
 def posting(source, source_class, tier, company, title, url, *, location=None,
             workplace=None, posted_at=None, description="", tags=None, salary=None,
-            lang=None, seen_at=None):
+            lang=None, seen_at=None, url_stable=True):
     """One board's version of a posting, in the one shape everything downstream
     expects. Connectors differ; this does not."""
     seen = seen_at or jobs_store.now_stamp()
@@ -418,7 +418,11 @@ def posting(source, source_class, tier, company, title, url, *, location=None,
         "canonicalUrl": clean_url,
         "canonicalSource": source,
         "sources": [{"source": source, "sourceClass": source_class, "tier": tier,
-                     "url": clean_url, "firstSeenAt": seen}],
+                     "url": clean_url, "firstSeenAt": seen,
+                     # Declared false by a channel that hands out a fresh
+                     # tracking URL per request, so its sightings collapse to
+                     # one rather than one per hour.
+                     **({} if url_stable else {"urlStable": False})}],
         "location": location or {"raw": "", "city": None, "region": None, "country": None},
         "workplace": workplace,
         "postedAt": iso_stamp(posted_at),

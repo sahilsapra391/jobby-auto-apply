@@ -97,6 +97,34 @@ class UpsertAndMergeTests(unittest.TestCase):
         self.assertEqual(len(jobs["j1"]["sources"]), 1)
         self.assertEqual(jobs["j1"]["seenCount"], 6)
 
+    def test_a_channel_with_per_request_urls_does_not_grow_a_sighting_an_hour(self):
+        # Careerjet answers with a fresh tracking redirect every time it is
+        # asked — verified by running one query twice a second apart and
+        # getting three different URLs for three unchanged jobs. Keyed on the
+        # URL, that appends a sighting every hour, and by tomorrow the job
+        # claims to have been seen on twenty-four boards.
+        unstable = [dict(sighting("careerjet", f"https://jobviewtrack.com/v2/tok{i}",
+                                  "aggregator", seen=f"2026-08-{19 + i:02d}T00:00:00Z"),
+                         urlStable=False) for i in range(4)]
+        jobs = {}
+        for entry in unstable:
+            jobs, _ = jobs_store.upsert(jobs, job("j1", sources=[entry]))
+        held = jobs["j1"]["sources"]
+        self.assertEqual(len(held), 1, "one channel, one sighting")
+        self.assertEqual(held[0]["url"], "https://jobviewtrack.com/v2/tok3",
+                         "the newest URL is the one that still resolves")
+        self.assertEqual(held[0]["firstSeenAt"], "2026-08-19T00:00:00Z",
+                         "but it was first seen when it was first seen")
+
+    def test_an_unstable_channel_does_not_swallow_a_stable_one(self):
+        jobs, _ = jobs_store.upsert({}, job("j1", sources=[
+            dict(sighting("careerjet", "https://jobviewtrack.com/v2/a", "aggregator"),
+                 urlStable=False)]))
+        jobs, _ = jobs_store.upsert(jobs, job("j1", sources=[
+            sighting("greenhouse", "https://gh/x", "ats")]))
+        self.assertEqual(sorted(s["source"] for s in jobs["j1"]["sources"]),
+                         ["careerjet", "greenhouse"])
+
     def test_three_boards_one_job_keeps_three_sightings(self):
         jobs, _ = jobs_store.upsert({}, job("j1", sources=[
             sighting("adzuna", "https://adzuna/x", "aggregator")]))
