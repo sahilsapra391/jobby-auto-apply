@@ -224,6 +224,57 @@ explicitly not built here.
       DOM stub instead.
 - [ ] Re-check the ≥ 8 countries box if the API keys land.
 
+## Changes made after the review, at the sign-off's request
+
+**These need a re-review before merge.** The reviewed diff is no longer the
+merged diff, and that is stated here rather than left to be discovered.
+
+All of them came out of the supervised run, with Sahil watching the board.
+
+| Change | Why | Scope |
+|---|---|---|
+| Required-experience extraction | Cards read "experience unknown" on every job | Phase 2, pulled forward |
+| Six more board platforms — SmartRecruiters, Workable, Recruitee, Personio, Breezy, Rippling | "I want all these sources" | Phase 2, pulled forward |
+| Registry 96 → 304 verified boards | The largest multiplier on direct listings | Phase 1 |
+| Greenhouse bodies with the list | Per-job fetching capped a sweep at 300 bodies | Phase 1 |
+| Retention prefers direct listings | The cap was deleting 85% of ATS jobs | Phase 1, defect |
+| Found leads with direct listings | "First class priority to direct listings" | Phase 1 |
+| Bounded, rotating query fan-out | 400 requests/hour would burn the free quotas | Phase 1, defect |
+| Careerjet over HTTP with a Referer | It refuses TLS and refuses undeclared callers | Phase 1, verify-at-build |
+| Careerjet sightings collapse per source | Its URLs are per-request tracking tokens | Phase 1, defect |
+| "Seen on N boards" counts boards | Adzuna lists one job twice | Phase 1, defect |
+| 60d/90d windows, configurable storedCap | "No cap on how many job descriptions" | Phase 1 |
+| Tab order, full-width lane, folded filters, drawn eye, one button shape | First look at the lane | Phase 1 |
+
+### Defects the supervised run found that the tests did not
+
+Worth reading as a group, because they share a shape: every one produced a
+board that looked healthy.
+
+1. **The cap was evicting direct listings.** 1,482 ATS postings came in, 214
+   survived. Aggregator snippets are keyword-dense and out-scored real job
+   descriptions. Fixed in `keep_priority`.
+2. **An unmatched job inherited an occupied id** — the Major, found by review,
+   confirmed on real data eating a Peroptyx requisition.
+3. **Careerjet's URLs change every request**, so sightings would have grown to
+   "seen on 24 boards" within a day.
+4. **The query fan-out was unbounded**, and blew a ten-minute timeout on its
+   first real run.
+5. **`--limit 50` made the ATS channels look broken.** Not a code defect — the
+   plan's own supervised step specifies that flag, and Greenhouse has 170
+   boards. Worth recording because it nearly sent the diagnosis the wrong way.
+
+### The final measured run
+
+27,420 postings seen, 12,003 kept, 3,207 merged, 583 requests, 11.3 minutes,
+one error. 4,576 direct ATS or careers listings across 3,885 companies, 3,684
+with required experience extracted. Pool uncapped at 12,003 jobs in a 37 MB
+file; the board embeds 800 and says so.
+
+Three connectors reported `skipped — no boards in the company registry`, which
+is the registry-driven point demonstrated rather than argued: Breezy, Personio
+and Rippling work, and no company Jobby knows uses them yet.
+
 ## Sign-off
 
 The implementing session does not sign this off, and does not merge.
