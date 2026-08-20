@@ -199,7 +199,7 @@ const nodes = {};
 // asks "is this value still on offer" — which is exactly what the restore does
 // before it forces a stored value back into a control.
 const SELECTS = {
-  'jb-sort': ['new', 'direct', 'score'],
+  'jb-sort': ['new', 'score'],
   'jb-scope': ['title+description', 'title'],
   'jb-cmode': ['all', 'only', 'hide'],
 };
@@ -578,7 +578,7 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         # because the shipped default has moved once already.
         jobs = [self.job("old", pa="2026-07-01", sc=95),
                 self.job("new", pa="2026-08-18", sc=10)]
-        self.assertEqual(self.run_script(jobs, {"jb-sort": "direct"})["ids"],
+        self.assertEqual(self.run_script(jobs, {"jb-sort": "score"})["ids"],
                          ["old", "new"])
         self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"],
                          ["new", "old"])
@@ -595,24 +595,31 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
 
 class DirectListingTests(ScriptHarness, unittest.TestCase):
     """Applying through the employer's own ATS beats applying through a
-    redirect, so the lane leads with direct listings."""
+    redirect, so the lane ships showing direct listings only.
 
-    def test_direct_listings_lead_even_when_an_aggregator_scores_higher(self):
+    This used to be a third sort as well as a checkbox. Two controls for one
+    idea, and the sort was the weaker of them: it pushed aggregator copies down
+    rather than out, so they still filled the board. The checkbox does the whole
+    job and ships checked, so the sort is gone.
+    """
+
+    def test_the_checkbox_keeps_direct_listings_and_drops_the_rest(self):
         out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
                                self.job("ats", rank=0, src="greenhouse", sc=70)],
-                              {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["ats", "agg"])
-
-    def test_within_a_group_the_better_match_still_leads(self):
-        out = self.run_script([self.job("lo", rank=0, sc=60),
-                               self.job("hi", rank=0, sc=90)], {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["hi", "lo"])
+                              {"jb-direct": True})
+        self.assertEqual(out["ids"], ["ats"])
 
     def test_a_careers_page_counts_as_direct(self):
         out = self.run_script([self.job("agg", rank=2, sc=99),
                                self.job("careers", rank=1, sc=50)],
-                              {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["careers", "agg"])
+                              {"jb-direct": True})
+        self.assertEqual(out["ids"], ["careers"])
+
+    def test_with_the_checkbox_off_both_survive_and_score_orders_them(self):
+        out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
+                               self.job("ats", rank=0, src="greenhouse", sc=70)],
+                              {"jb-direct": False, "jb-sort": "score"})
+        self.assertEqual(out["ids"], ["agg", "ats"])
 
     def test_sorting_by_match_ignores_how_direct_it_is(self):
         out = self.run_script([self.job("agg", rank=2, sc=95),
@@ -1156,9 +1163,25 @@ class EveryControlTests(ScriptHarness, unittest.TestCase):
     def test_sort_by_newest_orders_by_date(self):
         self.assertEqual(self.ids({"jb-sort": "new"}), ["a", "c", "b"])
 
-    def test_sort_by_direct_first_groups_then_scores(self):
-        # a and c are direct (rank 0 and 1), b is an aggregator copy.
-        self.assertEqual(self.ids({"jb-sort": "direct"}), ["c", "a", "b"])
+    def test_direct_first_is_gone_and_the_checkbox_covers_it(self):
+        # It did what "direct listings only" already does. A saved search still
+        # naming it reads as the default rather than falling through to no sort.
+        self.assertNotIn("direct", [v for v, _ in found_lane.SORT_OPTIONS])
+        self.assertEqual(sorted(self.ids({"jb-sort": "direct"})),
+                         sorted(self.ids({"jb-sort": "new"})))
+
+    def test_an_unknown_sort_lands_on_the_default_not_on_no_sort(self):
+        # The Match % bug in general form: a value with no branch used to leave
+        # the rows in payload order.
+        self.assertEqual(self.ids({"jb-sort": "sideways"}), self.ids({"jb-sort": "new"}))
+
+    def test_every_offered_sort_has_a_branch_in_the_script(self):
+        script = found_lane.SCRIPT
+        table = script[script.index("var SORTS = ["):]
+        table = table[:table.index("];") + 2]
+        for value, _ in found_lane.SORT_OPTIONS:
+            with self.subTest(sort=value):
+                self.assertIn("'" + value + "'", table)
 
     def test_every_offered_sort_actually_reorders_something(self):
         # The guard for the bug itself: a sort that changes nothing is a sort

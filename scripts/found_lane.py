@@ -81,7 +81,7 @@ MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 SCOPE_OPTIONS = [("title", "Title only"),
                  ("title+description", "Title and description")]
 
-SORT_OPTIONS = [("new", "Newest"), ("direct", "Direct first"), ("score", "Match %")]
+SORT_OPTIONS = [("new", "Newest"), ("score", "Match %")]
 
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
                 ("14d", "14 days"), ("30d", "30 days"), ("60d", "2 months")]
@@ -1077,6 +1077,9 @@ SCRIPT = r"""
   // chip that says two months while applying no limit lies.
   var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30,
                '60d': 60, all: 60 };
+  // The sorts that have a branch below. Kept beside them on purpose: an
+  // option with no arm is the bug this list exists to make impossible.
+  var SORTS = ['new', 'score'];
   var WATCH_KEY = 'jobby.watching', PASS_KEY = 'jobby.passed';
   // The filters the user last set, in this browser. The board is a published
   // snapshot rendered with whatever the saved search was at publish time, so
@@ -1740,18 +1743,15 @@ SCRIPT = r"""
     // Falls back to what the page ships with, not to a third answer. These
     // disagreed once already, and a default that only appears when a
     // control is missing is the hardest kind to notice.
-    var how = value('jb-sort') || 'new';
+    // Normalised to something with a branch. "Match %" once had no arm here
+    // and fell straight through, which left the rows in payload order and made
+    // the control look broken because it did nothing. An unknown value now
+    // lands on the default instead of on no sort at all.
+    var how = value('jb-sort');
+    if (SORTS.indexOf(how) === -1) how = SORTS[0];
     if (how === 'new') {
       rows = rows.slice().sort(function (a, b) {
         return String(b.pa || b.fs || '').localeCompare(String(a.pa || a.fs || ''));
-      });
-    } else if (how === 'direct') {
-      // Direct listings first, best match within each group. Applying through
-      // the employer's own ATS beats applying through somebody's redirect, so
-      // a 70% Greenhouse posting outranks a 70% aggregator copy of it.
-      rows = rows.slice().sort(function (a, b) {
-        var grouped = (a.rank > 1 ? 1 : 0) - (b.rank > 1 ? 1 : 0);
-        return grouped || (b.sc || 0) - (a.sc || 0);
       });
     } else if (how === 'score') {
       // This branch did not exist. Choosing "Match %" fell through every arm

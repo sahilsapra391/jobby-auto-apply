@@ -53,7 +53,11 @@ SEARCH_SCOPES = ("title", "title+description")
 # view state rather than anything ingest reads, but they are still "the search
 # Sahil set up", and a saved search that forgets them is a saved search that
 # reverts two controls every time the board republishes.
-SORTS = ("new", "direct", "score")
+SORTS = ("new", "score")
+# "Direct first" was a third sort that did what the direct-listings-only
+# checkbox already does, so a saved search still naming it reads as the default
+# rather than failing validation.
+LEGACY_SORTS = {"direct": "new"}
 WORKPLACES = ("remote", "hybrid", "onsite")
 COMPANIES_MODES = ("all", "only", "hide")
 # Ordered, because "up to a master's" has to include everything below it.
@@ -149,6 +153,7 @@ def validate(config):
         raise ConfigError(f"postedWithin must be one of {sorted(POSTED_WITHIN)}")
     if out["companiesMode"] not in COMPANIES_MODES:
         raise ConfigError(f"companiesMode must be one of {list(COMPANIES_MODES)}")
+    out["sort"] = LEGACY_SORTS.get(out.get("sort"), out.get("sort"))
     if out["sort"] not in SORTS:
         raise ConfigError(f"sort must be one of {list(SORTS)}")
     out["directOnly"] = bool(out.get("directOnly"))
