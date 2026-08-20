@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import match_score  # noqa: E402
+import clock
 import search_config  # noqa: E402
 
 # How many jobs travel to the browser.
@@ -163,6 +164,23 @@ def compact(job, why_table):
     }
 
 
+DAY_WORDS = ((" 0 days ago", " today"), (" 1 days ago", " yesterday"))
+
+
+def tidy_days(text):
+    """`posted 1 days ago` is not English, and it is already in the store.
+
+    The rubric writes these when a job is scored, so they are persisted strings
+    rather than something recomputed at render. Fixing the writer only helps
+    jobs scored after the fix; fixing it here reaches the fourteen thousand
+    already on disk without a migration and without touching a single score.
+    """
+    for wrong, right in DAY_WORDS:
+        if wrong in text:
+            text = text.replace(wrong, right)
+    return text
+
+
 class WhyTable:
     """Interns the rubric's explanations, which repeat across thousands of jobs."""
 
@@ -171,7 +189,7 @@ class WhyTable:
         self._index = {}
 
     def intern(self, text):
-        text = str(text or "")
+        text = tidy_days(str(text or ""))
         if text not in self._index:
             self._index[text] = len(self.strings)
             self.strings.append(text)
@@ -542,8 +560,8 @@ def last_ingest_line(meta):
     if not report:
         return ('<p class="jb-ingest none">No scan has run yet. '
                 'Save a search below, or press Scan now.</p>')
-    when = esc((report.get("at") or "")[11:16])
-    bits = [f"Last scan {when} UTC",
+    when = esc(clock.time_label(report.get("at")))
+    bits = [f"Last scan {when}" if when else "Last scan",
             f"{report.get('found', 0)} seen",
             f"{report.get('kept', 0)} new",
             f"{report.get('deduped', 0)} merged",
@@ -632,7 +650,8 @@ def banner(config, meta):
                 '<span class="jb-savestate" id="jb-savestate"></span></div>'
                 '<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
     nxt = (meta or {}).get("nextTier1ScanAt")
-    when = f"next run {esc(nxt[11:16])} UTC" if nxt else "next run shortly"
+    nxt_label = clock.time_label(nxt)
+    when = f"next run {esc(nxt_label)}" if nxt_label else "next run shortly"
     every = config.get("tier1IntervalMinutes") or search_config.DEFAULTS[
         "tier1IntervalMinutes"]
     return (f'<div class="jb-banner" data-version="{esc(version)}">'
@@ -1170,10 +1189,28 @@ SCRIPT = r"""
   }
   function chip(text, cls) { return el('span', 'jb-chip' + (cls ? ' ' + cls : ''), text); }
 
+    // Today's date in Eastern, as YYYY-MM-DD. en-CA is the locale that formats
+  // that way without any string surgery.
+  function easternToday() {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
+
   function ago(job) {
     var when = job.pa || job.fs;
     if (!when) return null;
-    var days = Math.round((Date.now() - Date.parse(when + 'T00:00:00Z')) / 86400000);
+    // Calendar days between two dates, both read as UTC midnight, so the
+    // subtraction cannot be bent by a daylight-saving change. Comparing against
+    // Date.now() meant that after 20:00 Eastern — when the UTC date has already
+    // rolled over — a job posted this morning said "yesterday".
+    var days = Math.round((Date.parse(easternToday() + 'T00:00:00Z')
+                           - Date.parse(when + 'T00:00:00Z')) / 86400000);
     if (isNaN(days)) return null;
     var label = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
     return (job.pa ? 'posted ' : 'seen ') + label;

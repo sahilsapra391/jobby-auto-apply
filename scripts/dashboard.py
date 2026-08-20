@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 # path (which the tests do), where scripts/ would not be on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand  # noqa: E402
+import clock  # noqa: E402
 import found_lane  # noqa: E402
 
 
@@ -237,7 +238,7 @@ def build(state, generated):
                     title="Start this one again">Retry</button>
             <button class="btn drop" data-id="{esc(entry.get('applicationId',''))}"
                     title="Stop the agent and drop this application">Stop</button>
-            <span class="ats">{esc(at + ' UTC' if at else '')}</span>
+            <span class="ats">{esc(clock.clock_label(at))}</span>
           </div>
         </article>"""
 
@@ -287,7 +288,7 @@ def build(state, generated):
         return (f"<tr data-hay=\"{esc(hay)}\" data-state=\"{esc(e.get('event') or '')}\">"
                 f"<td>{esc(e.get('company'))}</td><td>{esc(e.get('role'))}</td>"
                 f"<td><span class='chip {cls}'>{esc(label)}</span></td>"
-                f"<td class='when'>{esc((e.get('at') or '')[:10])}</td>"
+                f"<td class='when'>{esc(clock.date_label(e.get('at')))}</td>"
                 f"<td>{link(posting_url(e), 'Posting')}</td>"
                 f"<td>{proof_cell(e)}</td>"
                 f"<td>{doc_cell(e.get('resumeVariant'))}</td>"
@@ -375,7 +376,10 @@ def build(state, generated):
 
         if days is None and date:
             try:
-                days = (datetime.now(timezone.utc).date()
+                # Today in Eastern, not in UTC. After 20:00 Eastern the UTC
+                # date has already rolled over, so a posting from this morning
+                # reads as a day old.
+                days = (datetime.now(clock.ZONE).date()
                         - datetime.strptime(date[:10], "%Y-%m-%d").date()).days
             except ValueError:
                 days = None
@@ -402,7 +406,7 @@ def build(state, generated):
         posted_on(s)[2] if posted_on(s)[2] is not None else 10**6,
         -(s.get("fitScore") or 0)))
     def dropped_row(entry):
-        when = (entry.get("droppedAt") or "")[:10]
+        when = clock.date_label(entry.get("droppedAt"))
         stage = entry.get("droppedStage") or ""
         lane = entry.get("droppedFrom") or "unknown"
         reason = entry.get("droppedReason") or ""
@@ -1548,7 +1552,7 @@ def main():
         return 2
 
     state = load_state(root)
-    generated = datetime.now(timezone.utc).astimezone().strftime("%d %b %Y, %H:%M")
+    generated = clock.now_label()
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(build(state, generated), encoding="utf-8")

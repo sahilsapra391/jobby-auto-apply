@@ -1123,6 +1123,32 @@ class ViewPersistenceTests(ScriptHarness, unittest.TestCase):
         self.assertIn("directOnly:", save)
 
 
+class StoredWordingTests(unittest.TestCase):
+    """The rubric's explanations are persisted, so fixing the writer is not enough.
+
+    "posted 1 days ago" was written into fourteen thousand records before anyone
+    read one closely. Tidying it where it is displayed reaches all of them
+    without a migration and without touching a score.
+    """
+
+    def test_the_two_awkward_counts_are_reworded(self):
+        self.assertEqual(found_lane.tidy_days("posted 0 days ago"), "posted today")
+        self.assertEqual(found_lane.tidy_days("posted 1 days ago"), "posted yesterday")
+        self.assertEqual(found_lane.tidy_days("first seen 1 days ago; no posted date"),
+                         "first seen yesterday; no posted date")
+
+    def test_every_other_count_is_left_exactly_alone(self):
+        for n in [2, 10, 11, 21, 101]:
+            with self.subTest(days=n):
+                text = "posted %d days ago" % n
+                self.assertEqual(found_lane.tidy_days(text), text)
+
+    def test_it_runs_on_the_way_into_the_payload(self):
+        table = found_lane.WhyTable()
+        table.intern("posted 1 days ago")
+        self.assertEqual(table.strings, ["posted yesterday"])
+
+
 class RealPayloadTests(ScriptHarness, unittest.TestCase):
     """The rows the script actually receives, not rows a test made up.
 
