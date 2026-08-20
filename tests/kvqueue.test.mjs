@@ -7,7 +7,8 @@
 // has never been written" and "the read failed".
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readQueue, writeQueue, enqueue, claimOne, claimAll, configured } from '../deploy/kvqueue.mjs';
+import { readQueue, writeQueue, enqueue, claimOne, claimAll, putConfig, takeConfig,
+         configured, CONFIG_FIELD, QUEUES } from '../deploy/kvqueue.mjs';
 
 const ENV = { CF_ACCOUNT_ID: 'acct', CF_KV_NAMESPACE_ID: 'ns', CF_API_TOKEN: 'tok' };
 
@@ -37,7 +38,10 @@ test('missing configuration is detected rather than guessed at', () => {
 
 test('a key that was never written is an empty queue, not an error', async () => {
   fakeKV({ body: null });
-  assert.deepEqual(await readQueue(ENV), { apply: [], scan: [], marked: [], drop: [], restore: [], focus: [] });
+  assert.deepEqual(await readQueue(ENV), {
+    apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
+    watch: [], pass: [], searchConfig: null,
+  });
 });
 
 test('a failed read raises instead of looking empty', async () => {
@@ -115,4 +119,121 @@ test('dropping does not disturb the other queues', async () => {
   const after = await readQueue(ENV);
   assert.deepEqual(after.drop, []);
   assert.equal(after.apply.length, 1, 'a drop must not touch the apply queue');
+});
+
+
+// --- the Found lane's additions -------------------------------------------
+//
+// watch, pass and searchConfig were added to the one key that already held six
+// queues. Everything below is the same worry in different clothes: the `claim`
+// bug destroyed fourteen untouched Apply clicks because one operation wrote
+// over state it had not read carefully. A new field must not be able to do
+// that to an old one, and an old one must not be able to do it to a new one.
+
+const FULL = () => ({
+  apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
+  watch: [], pass: [], searchConfig: null,
+});
+
+test('the eye and pass ride the existing key with no new one', async () => {
+  assert.ok(QUEUES.includes('watch'));
+  assert.ok(QUEUES.includes('pass'));
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'watch', 'a1b2c3d4e5f6a7b8');
+  const q = await readQueue(ENV);
+  assert.equal(q.watch.length, 1);
+  assert.equal(q.watch[0].applicationId, 'a1b2c3d4e5f6a7b8');
+});
+
+test('the eye is idempotent per job id', async () => {
+  // The board re-sends remembered clicks on every load. A second eye on one
+  // job must not create a second Watching session.
+  fakeKV({ body: FULL() });
+  assert.equal((await enqueue(ENV, 'watch', 'job-1')).deduped, undefined);
+  assert.equal((await enqueue(ENV, 'watch', 'job-1')).deduped, true);
+  assert.equal((await readQueue(ENV)).watch.length, 1);
+});
+
+test('watching a job does not disturb any other queue', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'still-running');
+  await enqueue(ENV, 'drop', 'give-up');
+  await enqueue(ENV, 'watch', 'job-1');
+  await enqueue(ENV, 'pass', 'job-2');
+  const after = await readQueue(ENV);
+  assert.equal(after.apply.length, 1, 'the eye must not touch the apply queue');
+  assert.equal(after.drop.length, 1);
+  assert.equal(after.watch.length, 1);
+  assert.equal(after.pass.length, 1);
+});
+
+test('claiming the watch queue leaves the apply queue alone', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'untouched');
+  await enqueue(ENV, 'watch', 'job-1');
+  await enqueue(ENV, 'watch', 'job-2');
+  assert.equal((await claimAll(ENV, 'watch')).length, 2);
+  const after = await readQueue(ENV);
+  assert.deepEqual(after.watch, []);
+  assert.equal(after.apply.length, 1);
+});
+
+test('saving a search config does not clobber the queues', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'in-flight');
+  await enqueue(ENV, 'watch', 'job-1');
+  await putConfig(ENV, { keywords: ['product manager'], version: 3 });
+  const after = await readQueue(ENV);
+  assert.equal(after.apply.length, 1, 'a config save must not eat a queued Apply');
+  assert.equal(after.watch.length, 1);
+  assert.deepEqual(after[CONFIG_FIELD].config.keywords, ['product manager']);
+});
+
+test('queueing a click does not clobber a saved search config', async () => {
+  // The other direction, which is the one that is easy to forget.
+  fakeKV({ body: FULL() });
+  await putConfig(ENV, { keywords: ['business analyst'] });
+  await enqueue(ENV, 'apply', 'acme-pm');
+  await enqueue(ENV, 'pass', 'job-9');
+  const after = await readQueue(ENV);
+  assert.ok(after[CONFIG_FIELD], 'the config must survive a click landing after it');
+  assert.deepEqual(after[CONFIG_FIELD].config.keywords, ['business analyst']);
+});
+
+test('claiming a queue does not clobber a saved search config', async () => {
+  fakeKV({ body: FULL() });
+  await putConfig(ENV, { keywords: ['pm'] });
+  await enqueue(ENV, 'apply', 'a');
+  await claimOne(ENV, 'apply');
+  assert.ok((await readQueue(ENV))[CONFIG_FIELD]);
+});
+
+test('taking the config clears it and leaves everything else', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'a');
+  await putConfig(ENV, { keywords: ['pm'] });
+  const taken = await takeConfig(ENV);
+  assert.deepEqual(taken.config.keywords, ['pm']);
+  const after = await readQueue(ENV);
+  assert.equal(after[CONFIG_FIELD], null, 'a taken config must not be taken twice');
+  assert.equal(after.apply.length, 1);
+});
+
+test('taking nothing is not a write', async () => {
+  // The watcher polls every three seconds. If an empty take cost a write, that
+  // would be 28,800 writes a day against a 1,000 ceiling.
+  const kv = fakeKV({ body: FULL() });
+  assert.equal(await takeConfig(ENV), null);
+  assert.equal(kv.writes, 0);
+});
+
+test('a value written before these fields existed still reads correctly', async () => {
+  // The live key predates watch, pass and searchConfig. readQueue merges over a
+  // fresh shape, so the watcher does not crash on undefined the first time.
+  fakeKV({ body: { apply: [{ applicationId: 'a' }], scan: [], marked: [] } });
+  const q = await readQueue(ENV);
+  assert.deepEqual(q.watch, []);
+  assert.deepEqual(q.pass, []);
+  assert.equal(q[CONFIG_FIELD], null);
+  assert.equal(q.apply.length, 1);
 });

@@ -8,6 +8,11 @@ Everything here reflects the system as it actually runs, verified against the
 live store and a passing test suite rather than from memory. Numbers are as of
 2026-08-20.
 
+**One caveat on this revision.** The Discovery Engine (§9a) is described here as
+it behaves on the `feature/discovery-engine-phase-1` branch, which is under
+review and not merged. Everything else describes production. Where the two
+differ, the difference is called out.
+
 ---
 
 ## 1. What it is
@@ -41,7 +46,7 @@ several of its mechanisms exist purely to make "stop" the cheap option.
 | Live sessions | 49: 25 watching, 13 in flight, 9 needing the user, 2 dropped |
 | Stored answers | 118, of which 16 are standing policies |
 | Company document folders | 61 |
-| Tests | 171 passing, across 12 files |
+| Tests | 480 passing, across 17 files (171 before Phase 1 of the Discovery Engine) |
 | ATS platforms encountered | Greenhouse (28), Ashby (20), Lever (9), LinkedIn (7), Workday (10), SmartRecruiters, Workable, Recruitee, Zoho, Keka, Oracle Recruiting Cloud, Google Careers, Amazon Jobs, Microsoft Careers, Instahyre |
 
 ---
@@ -137,7 +142,17 @@ this, covered in §12.
 | `publish.py` | 364 | Renders the board, pushes it and the documents to KV, guards against a degraded render. |
 | `resume_pdf.py` | 341 | Renders a tailored PDF via headless Chrome and verifies it geometrically against the base. |
 | `ats_match.py` | 338 | Keyword coverage, and the `--suggest` pass that separates earned vocabulary from unclaimable. |
-| `dashboard.py` | 1455 | Generates the entire board as a single self-contained HTML page. |
+| `dashboard.py` | 1470 | Generates the entire board as a single self-contained HTML page. |
+| `found_lane.py` | 640 | The Found lane: job payload, filter bar, and the client script that renders the cards. |
+| `ingest.py` | 400 | One sourcing pass: fetch, gate, enrich, score, upsert, prune, account. |
+| `jobs_store.py` | 420 | The discovered-jobs pool, the passed tombstones and the company registry. |
+| `identity.py` | 380 | One job description, one record: URL, redirect, alias and simhash matching. |
+| `match_score.py` | 300 | The explainable match %: rubric v1, hard gates, breakdown. |
+| `seed_companies.py` | 300 | Fills the company registry from `roles.json` and a verified region pack. |
+| `search_config.py` | 250 | The saved search: schema, region packs, validation, versioning. |
+| `sources_registry.py` | 150 | The source catalog and the accounting that keeps "every source" honest. |
+| `promote.py` | 130 | 👁 and Pass: a Found job becoming a Watching session, or a tombstone. |
+| `sources/` | 1,200 | Fourteen Tier-1 connectors and the polite-fetching base they share. |
 | `run_apply.py` | 300 | Runs one application end to end by spawning an agent. Never claims for itself. |
 | `drop.py` | 187 | The user deciding against a role. Kills the runner if it is mid-flight. |
 | `run_scan.py` | 149 | Runs one sourcing sweep by spawning an agent. |
@@ -164,7 +179,7 @@ this, covered in §12.
 |---|---|
 | `api/board.js` | The whole serverless function: Basic auth, CSP, the board, documents, six queue endpoints. |
 | `kv.mjs` | Cloudflare KV REST primitives, shared. |
-| `kvqueue.mjs` | The click queue: one key, `enqueue` / `claimOne` / `claimAll`, deduped by application id. |
+| `kvqueue.mjs` | The click queue: one key, `enqueue` / `claimOne` / `claimAll`, deduped by application id. Also holds the `watch` and `pass` arrays and the `searchConfig` object. |
 | `kvcontent.mjs` | Board HTML and documents in KV, with a short in-memory cache. |
 | `queue.mjs` | Local CLI over the queue: `poll`, `list`, `enqueue`, `claim-one`, `claim`. |
 | `publish-content.mjs` | Pushes board and documents to KV, skipping documents whose bytes are unchanged. |
@@ -191,9 +206,14 @@ Everything lives in `~/.job-application/`, mode 700.
 | `profile.json` | object | Identity, work history, education, and `resumes[]` — one base per region, each with its own `identity` (phone, location, full address) and exactly one marked `default`. |
 | `answers.json` | key → entry | 118 reusable answers. Keys are normalised question slugs. Entries carry `question`, `value`, `state`, `tags`. |
 | `applications.jsonl` | append-only | 107 events. `started`, `reviewed`, `submitting`, `completed`, `abandoned`, plus outcomes `response` / `interview` / `offer` / `rejected`. |
-| `sessions/<id>.json` | one file per role | The working state of a role. Deleted once submitted. |
+| `sessions/<id>.json` | one file per role | The working state of a role. Deleted once submitted. A session promoted from Found takes the job's id as its `applicationId`, which is what makes 👁 idempotent. |
 | `roles.json` | id → role | Durable index of all 96 roles ever seen. Exists because sessions are deleted on completion, which would otherwise lose the posting URL. |
-| `meta.json` | object | `dashboardUrl`, `blocked` (the banner), scan timestamps. |
+| `jobs.json` | id → job | The discovery pool. One record per job description however many boards carry it, each with its sightings, its score and its state (`new` / `watched` / `passed` / `applied` / `expired`). Capped at 3,000; only `new` records are prunable. |
+| `passed.json` | id → tombstone | Jobs the user passed on. Outlives the job record, so pruning cannot resurrect one. |
+| `companies.json` | key → company | 177 companies with their ATS and board token. The flywheel: every company here is covered by Tier 1 for free, forever. |
+| `search-config.json` | object | The saved search, versioned. Its absence is meaningful — the hourly scan stays disarmed until it exists. |
+| `source-cache.json` | url → validator | `ETag` / `Last-Modified` per endpoint, so an unchanged board costs a request and no payload. |
+| `meta.json` | object | `dashboardUrl`, `blocked` (the banner), scan timestamps, `nextTier1ScanAt`, and `lastIngest` — the full account of the last sourcing pass. |
 | `config.env` | env | Machine-local settings, notably `HEALTHCHECKS_URL`. Separate from `deploy/.env.local` because `vercel env pull` regenerates that one and discards hand edits. |
 | `locks/` | one file per lock | `apply-1/2/3`, `scan`, `watcher`. Each holds a pid. |
 | `browser-profile*/` | Chrome profiles | One per slot. Persist logins. |
@@ -225,6 +245,7 @@ HTTP Basic auth with a strict CSP (`default-src 'none'`).
 
 | Lane | Contents | Controls |
 |---|---|---|
+| **Found** | Everything the last scans turned up, newest-and-best first, each with an explainable % match | 👁 Watch, Apply, Pass, Details, Posting |
 | **Needs you** | Blocked applications, each card naming the blocker and what clearing it buys | Retry, Open & finish, Mark submitted, Drop |
 | **Submitted** | Everything sent, with the exact resume and cover letter each employer received | Posting, Proof, Resume, Cover letter |
 | **Watching** | Roles found, newest first: posted date, experience bar, location, core skills, honest fit read | View posting, Apply, × |
@@ -244,6 +265,9 @@ Set apart in the tab bar: Dropped is a record, not a queue.
 | Drop / Stop / × | `/api/drop` | `drop` | Records the decision, kills the runner if mid-flight |
 | Restore | `/api/restore` | `restore` | Puts a dropped role back in Watching |
 | Open & finish | `/api/focus` | `focus` | Raises the tab the agent left, with the form still filled |
+| 👁 Watch | `/api/watch` | `watch` | Moves a found job into Watching, creating its session |
+| Pass | `/api/pass` | `pass` | Tombstones a found job; never offered again |
+| Save search | `/api/search-config` | `searchConfig` field | Parks the saved search for the watcher to persist |
 
 Every endpoint is idempotent per application id, because the board re-sends
 remembered clicks on load.
@@ -255,7 +279,11 @@ remembered clicks on load.
   restored *and re-sent*. Restoring only the appearance was not enough: a queue
   wipe once destroyed fourteen requests while the board still drew them as in
   flight, so nothing looked wrong.
-- **Search and filter per lane**, hidden when a lane is empty.
+- **Search and filter per lane**, hidden when a lane is empty. Found is the
+  exception: its jobs travel as JSON and its cards are built in the browser, so
+  its much larger filter bar can respond per keystroke without a round trip to
+  a machine that is not running. Every value from a posting goes in through
+  `textContent`; none of it is ever concatenated into markup.
 - **Contextual empty states** naming which button fills the lane.
 - **Theme-aware**, with every colour defined in all three theme blocks. A colour
   defined only inside a media query disappears under the other theme.
@@ -367,6 +395,74 @@ live is a phantom and is dropped.
 
 Filters: Product Manager and Business Analyst titles, roles asking up to 5 years
 (7+ and 10+ rejected), primarily US and India with secondary UK, Canada, Australia.
+
+---
+
+## 9a. The Discovery Engine
+
+*On the `feature/discovery-engine-phase-1` branch, under review. Not merged.*
+
+Sourcing used to be one thing: an agent sweep, driven by the Scan button, which
+costs tokens and meets hourly bots with the CAPTCHA walls Jobby refuses to
+solve. That is fine for a daily cycle and useless for catching a posting in its
+first hour. So sourcing is now two tiers, and only the cheap one runs hourly.
+
+**Tier 1** is HTTP and JSON: no LLM, no browser, no key for nine of its
+fourteen channels. Greenhouse, Lever and Ashby boards driven off the company
+registry, plus RemoteOK, We Work Remotely, Remotive, Himalayas, Working Nomads
+and The Muse. Adzuna, Jooble, Careerjet, Reed and USAJobs join them once their
+free keys are installed; until then each reports *skipped (no key)* on every
+run, visibly, rather than being quietly absent. A measured full pass across all
+fourteen: 212 postings seen, 53 kept, 15 requests, 13 seconds.
+
+**Tier 2** is the existing agent sweep, on a rotating channel pack. Phase 3.
+
+The company registry is the flywheel. Every company in `companies.json` costs
+one JSON request an hour, forever, so coverage is a function of how many
+companies are known rather than how much an hour of scanning costs. It seeds
+from `roles.json` — every company Jobby has ever applied to, with its ATS read
+straight off the URL it applied through — plus a curated per-region pack whose
+96 board tokens were each fetched once against the platform's public API before
+being committed. Eight of 104 candidates did not resolve and were dropped
+rather than shipped hopefully: a wrong token is a 404 on every ingest forever.
+
+### One job description, one record
+
+A single posting is routinely syndicated to Greenhouse, Adzuna and LinkedIn
+within an hour, with three URLs, three company spellings and three truncations
+of the same body. Matching runs in order and the first hit merges: canonical
+URL (with the employer link pulled out of the aggregator's query string), then
+capped redirect resolution, then company plus normalised title plus country,
+then a 64-bit simhash of the body within six bits. The merged record keeps
+every sighting, the earliest posted date, and the ATS copy as the one the board
+links to.
+
+Two guards go beyond the plan, both because the evidence to separate two
+postings sometimes already exists: the title-and-country rule does not merge
+when both bodies are known and their fingerprints are far apart, and the
+fingerprint rule does not merge across two known-but-different countries. Those
+are two applications with two different work-authorisation answers.
+
+### The match %
+
+Deterministic, no LLM per job: title 35, experience 20, location and workplace
+15, keyword coverage 20, freshness 10. Unknown attributes take half their
+weight rather than zero — Phase 1 extracts none of the deep attributes, and
+scoring unknowns as zero would rank every posting that states its requirements
+below every posting that does not, which is a fact about the prose rather than
+about the job. Hard gates (citizenship or clearance language, failed liveness,
+already applied) cap at 25 and say which fired; they never drop a role, because
+"not shown" is indistinguishable from "the scan missed it".
+
+Every card can show the arithmetic, and the parts always sum to the total.
+
+### Accounting
+
+`meta.lastIngest` records every run — including the runs that fail — and the
+Found header renders it: how many were seen, kept, merged and filtered out,
+which channels were skipped and why, and which failed. **A scan that found
+nothing has to look different from a scan that did not run.** That is §13 item 1
+in a new place, and it is the property most of this design exists to preserve.
 
 ---
 
@@ -515,7 +611,8 @@ of item 1.
 
 ## 14. Testing
 
-171 tests, 12 files, run with `python3 -m pytest tests/ -q`.
+480 tests, 17 files, run with `python3 -m pytest tests/ -q`. 171 of those
+predate the Discovery Engine.
 
 | File | Covers |
 |---|---|
@@ -530,6 +627,12 @@ of item 1.
 | `test_drop.py` | Drop provenance, runner termination |
 | `test_kvqueue.py` → `kvqueue.test.mjs` | Queue logic under `node --test`, run from pytest so the JS cannot drift |
 | `test_resume_pdf.py` | PDF verification |
+| `test_jobs_store.py` | The pool, tombstones, prune caps, the saved-search schema, the company and source registries |
+| `test_identity.py` | The syndication trio in all six arrival orders, simhash thresholds, alias matching, redirect capping, and what must **not** merge |
+| `test_match_score.py` | Weights, unknown neutrality, and nine clearance phrases that must fire against nine that must not |
+| `test_sources.py` | Per-connector fixtures, visible skips, throttling, backoff, validator caching, fixture provenance and a PII sweep |
+| `test_ingest.py` | The config gate, `lastIngest` on success *and* failure, tombstones, already-decided states |
+| `test_found_script.py` | The Found lane's client script, parsed and executed by node against a DOM stub |
 
 The JS tests run inside the Python suite deliberately: a separate command nobody
 remembers to run is how it drifts.
@@ -537,6 +640,42 @@ remembers to run is how it drifts.
 ---
 
 ## 15. Known gaps
+
+- **India is a registry-coverage gap, not a scoring gap.** Filtering the board
+  to India returns the embedding floor and nothing more, while the United States
+  returns six times as much. The instinct is to reach for the scoring dial.
+  Don't: India's median score is **69 against the United States' 63**, and its
+  mean title match is the **best of any market at 30.3 of 35**. Indian postings
+  match the searched titles better than American ones do.
+
+  What India lacks is jobs in the 80+ band — 17 against 165 — and that tracks
+  direct-listing share almost exactly:
+
+  | market | direct listings | share of pool | jobs at 80+ |
+  |---|---:|---:|---:|
+  | US | 1,854 | 59.1% | 165 |
+  | Canada | 544 | 35.1% | 49 |
+  | India | 251 | 20.4% | 17 |
+  | UK | 255 | 15.6% | 17 |
+  | Germany | 113 | 12.1% | 11 |
+  | UAE | 20 | 4.5% | 7 |
+
+  Canada has a smaller pool than the UK, is twice as direct, and took 140 of the
+  remainder while the UK took none. Pool size does not predict the award;
+  direct-listing share does. A direct listing carries a full body, so it earns a
+  real keywords and experience read instead of the half-weight an unknown gets,
+  and that is what reaches 80. Sixty of the United States' 165 top scorers come
+  from USAJOBS, which by definition returns nothing for anywhere else.
+
+  So the selection remainder is score-ordered globally and ends up sorting on
+  coverage while calling it merit. **The fix is Indian employers in
+  `companies.json`**, which is what the per-tenant registry is for. Weighting the
+  floor toward the two home markets is a legitimate stopgap for the board today,
+  but it treats the symptom, and it should never be described as a scoring fix.
+
+  Blocked on one thing: `companies.json` records no country, so all 516 entries
+  read as unknown and the registry cannot answer "how many Indian employers do
+  we poll" — which is the number this gap is judged on. Add the field first.
 
 - **Slots 2 and 3 have empty browser profiles.** LinkedIn Easy Apply parks there
   until `browser.py --stop && browser.py --clone-logins` is run with nothing in
@@ -550,6 +689,63 @@ remembers to run is how it drifts.
   currently records.
 - **Outcome tracking is manual.** `response` / `interview` / `offer` / `rejected`
   events exist in the schema but nothing ingests them from email.
+- **No Tier-1b API keys are installed.** Adzuna, Jooble, Careerjet, Reed and
+  USAJobs all report *skipped (no key)*, so Phase 1's international reach comes
+  entirely from the 140 fetchable company boards. Roughly twenty minutes of
+  registration closes this, and it is the single highest-value thing outstanding.
+- **Five connectors have never had a live response.** The same five. They are
+  written to each published contract and their fixtures are labelled as
+  contract-derived rather than recorded; the first run with a key is what
+  confirms the shapes.
+- **Four Found filters have nothing to filter on.** Required experience, degree,
+  role category and employment type are not extracted until Phase 2, so those
+  controls filter the `unknown` bucket and the filter bar says so.
+- **Twenty registry companies have no derivable ATS.** They carry a careers URL
+  and `ats: unknown`; Phase 3's resolver is what clears them.
+- **A promoted job has no fit read.** 👁 creates the Watching session
+  immediately and the card shows the rubric breakdown, labelled as the rubric.
+  The lazy enrichment that writes real prose is not built.
+- **The company alias list is load-bearing for cross-source dedupe.** Rule 4
+  only compares fingerprints within a company bucket, so an ATS calling a
+  company "Northwind" and an aggregator calling it "Northwind Analytics Inc."
+  stay two records unless `companies.json` carries an alias joining them. A
+  missing alias shows up as a duplicate rather than as an error, and nothing
+  warns. Widening the company match is not the fix: merging two real companies
+  is worse and harder to spot. Seeding aliases from observed variants is a
+  Phase 2 candidate.
+- **A sweep takes about 15 minutes and holds the scan lock.** 497 boards, 742
+  requests, 14.8 minutes measured. Fine at an hourly cadence, and it cannot
+  collide with an application because Tier-1 ingest takes the scan lock rather
+  than an apply slot. It is the next ceiling though: the reviewer's read is that
+  it is throttle-bound rather than bandwidth-bound, so running hosts in parallel
+  while keeping the one-second spacing *within* each host is a cheaper lever
+  than splitting the sweep across the hour. Phase 3 needs it; Phase 1 does not.
+- **The board holds 3,400 of the pool, not all of it.** Selection gives every
+  location in the saved search a floor and spends the rest globally, so a
+  regional filter reaches 10–40% of that region rather than the 0–3% a global
+  top-N gave. The page says so rather than implying filtering searches
+  everything.
+- **Adzuna sightings cannot be URL-matched to the employer's posting.** Its
+  redirect carries no origin link, so those copies merge on company, title and
+  country, or on the description fingerprint, or not at all. Measured on a
+  12,802-job pool: 2,539 of 2,592 Adzuna-only records are from employers who
+  appear nowhere as an ATS listing, so the channel is overwhelmingly additive
+  rather than duplicative. 38 records (1.5%) look like the same requisition as
+  an ATS listing already held.
+- **The fingerprint veto misfires when one description is a truncation of the
+  other.** Of those 38, the 15 whose company, title and country all match
+  exactly were each stopped from merging by the veto — and their bodies are the
+  same text at different lengths, 500 characters against 1,500, giving a Hamming
+  distance of 26 to 32 purely from truncation. The veto's premise is that
+  far-apart fingerprints mean different jobs; a prefix breaks it. 15 of 5,567
+  ATS records, so 0.27%, and the effect is a duplicate card rather than a lost
+  one. The fix is to store the description length and skip the veto when the
+  two bodies differ in length by more than a set ratio, falling back to the
+  conservative merge — deliberately not done here, because changing merge
+  behaviour after a re-review means the merge behaviour is unreviewed.
+- **Country is unknown for most remote-feed postings.** "Remote — US only" is a
+  restriction rather than a location, so those jobs bucket as `remote` and their
+  country stays null rather than being guessed.
 
 ---
 
@@ -560,12 +756,14 @@ jobby-auto-apply/
 ├── SKILL.md                  the agent's operating manual
 ├── README.md                 product-facing, with screenshots
 ├── LICENSE                   MIT
-├── references/               sourcing, platforms, tailoring, storage, hosting
-├── scripts/                  22 Python modules (§4)
+├── references/               sourcing, platforms, tailoring, storage, hosting,
+│                             and the source registry (117 channels, status-accounted)
+├── sources.json              the machine copy of that registry
+├── scripts/                  32 Python modules (§4), incl. sources/ (14 connectors)
 ├── deploy/                   Vercel function + KV modules
 ├── assets/brand/             logo pack, favicon, mascot
-├── docs/                     screenshots and this document
-├── tests/                    171 tests
+├── docs/                     screenshots, this document, plans/ and reviews/
+├── tests/                    480 tests, incl. fixtures/ recorded from live boards
 └── applications/             gitignored; 60 company folders of real documents
 ```
 

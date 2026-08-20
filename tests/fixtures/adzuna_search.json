@@ -1,0 +1,74 @@
+{
+  "__CLASS__": "Adzuna::API::Response::JobSearchResults",
+  "count": 237385,
+  "results": [
+    {
+      "adref": "eyJhbGciOiJIUzI1NiJ9.eyJpIjoiNTg0Njc4MzY3MiIsInMiOiJFaWRWWnEyYzhSR2NQc2ZIQUhuY2l3In0.g0nBzwxDI4Fvgv3URGxTCvWApVPoYq_vrcLZgXG-ftI",
+      "title": "Director Foodservice Product Management",
+      "description": "Description: ABOUT FREEDOM ELECTRONICS Freedom Electronics is a market-leading provider of electronic parts and solutions for the retail petroleum industry and adjacent equipment markets. We source and resell OEM parts, repair and remanufacture high-value electronic components, and engineer proprietary replacement products that help customers reduce equipment downtime and operating costs. Freedom is expanding these capabilities into the commercial foodservice market, initially serving convenien\u2026",
+      "salary_is_predicted": "1",
+      "created": "2026-08-18T09:41:15Z",
+      "id": "5846783672",
+      "salary_min": 186107.36,
+      "location": {
+        "__CLASS__": "Adzuna::API::Response::Location",
+        "display_name": "Barrett Parkway, Cobb County",
+        "area": [
+          "US",
+          "Georgia",
+          "Cobb County",
+          "Barrett Parkway"
+        ]
+      },
+      "category": {
+        "tag": "sales-jobs",
+        "label": "Sales Jobs",
+        "__CLASS__": "Adzuna::API::Response::Category"
+      },
+      "redirect_url": "https://www.adzuna.com/details/5846783672?utm_medium=api&utm_source=REDACTED",
+      "company": {
+        "__CLASS__": "Adzuna::API::Response::Company",
+        "display_name": "Freedom Electronic LLC"
+      },
+      "longitude": -84.595982,
+      "__CLASS__": "Adzuna::API::Response::Job",
+      "latitude": 34.041872,
+      "salary_max": 186107.36
+    },
+    {
+      "location": {
+        "display_name": "Crystal, Arlington County",
+        "area": [
+          "US",
+          "Virginia",
+          "Arlington County",
+          "Crystal"
+        ],
+        "__CLASS__": "Adzuna::API::Response::Location"
+      },
+      "__CLASS__": "Adzuna::API::Response::Job",
+      "created": "2026-08-07T02:12:07Z",
+      "title": "Product Manager",
+      "adref": "eyJhbGciOiJIUzI1NiJ9.eyJzIjoiRWlkVlpxMmM4UkdjUHNmSEFIbmNpdyIsImkiOiI1ODMxNjM0MzEwIn0.cdyXL54rpPDDvHCjYMonIYBIKnumD2eTroz105QaOEo",
+      "contract_time": "full_time",
+      "redirect_url": "https://www.adzuna.com/land/ad/5831634310?se=EidVZq2c8RGcPsfHAHnciw&utm_medium=api&utm_source=REDACTED&v=6A84DE974E047B6A17A94E13C7D3D54909938CF6",
+      "company": {
+        "display_name": "The Independent Community Bankers of America",
+        "__CLASS__": "Adzuna::API::Response::Company"
+      },
+      "longitude": -77.0248,
+      "category": {
+        "__CLASS__": "Adzuna::API::Response::Category",
+        "tag": "accounting-finance-jobs",
+        "label": "Accounting & Finance Jobs"
+      },
+      "latitude": 38.88464,
+      "salary_max": 95759.58,
+      "salary_is_predicted": "1",
+      "description": "The Manager, Product plays a key role in identifying strategic opportunities, evaluating solution providers, developing business cases, and coordinating successful launches. The Manager, Product combines payments expertise, financial analysis, market intelligence, and stakeholder management to help ICBA Payments maintain competitiveness and deliver meaningful value to community banks. The role brings the strategic insight, research, diligence, and cross-functional coordination needed to evaluat\u2026",
+      "salary_min": 95759.58,
+      "id": "5831634310"
+    }
+  ],
+  "mean": 115086.73
+}

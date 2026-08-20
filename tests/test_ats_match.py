@@ -139,8 +139,6 @@ class RenderSourceTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
-
-
 class StoryBankDefaultTests(unittest.TestCase):
     """The honesty gate has to see every sanctioned source, or it cries wolf.
 

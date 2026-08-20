@@ -1,0 +1,77 @@
+{
+  "note": "One requisition, three boards. Fictional company; no real posting.",
+  "sightings": [
+    {
+      "source": "greenhouse",
+      "sourceClass": "ats",
+      "tier": "1a",
+      "company": "Northwind Analytics",
+      "title": "Product Manager, Internal Reporting",
+      "url": "https://job-boards.greenhouse.io/northwind/jobs/4471002?gh_src=abc123&utm_source=twitter",
+      "workplace": "hybrid",
+      "postedAt": "2026-08-13T00:00:00Z",
+      "location": {
+        "raw": "New York, NY",
+        "city": "New York",
+        "region": "NY",
+        "country": "US"
+      },
+      "body": "Northwind Analytics is looking for a Product Manager to own our internal reporting platform. You will work with data engineering, analytics and the finance team to define what the platform measures, how those numbers reach the people who need them, and which of them are worth trusting. You will run discovery with internal users, write the specifications, and make the prioritisation calls that decide what ships each quarter. We expect three to five years of product management experience, comfort reading and writing SQL, and a track record of shipping data products that people actually adopted. Experience with warehousing, dbt or a similar transformation layer is useful but not required. This role is hybrid out of our New York office, two days a week on site. Northwind Analytics builds forecasting tools for mid-market retailers. We are a hundred and forty people, profitable, and we do not do performance reviews by committee.",
+      "descFingerprint": "simhash64:370533f91c6d989b"
+    },
+    {
+      "source": "adzuna",
+      "sourceClass": "aggregator",
+      "tier": "1b",
+      "company": "Northwind Analytics, Inc.",
+      "title": "Product Manager, Internal Reporting - New York",
+      "url": "https://www.adzuna.com/land/ad/4471002?se=xyz&v=1&url=https%3A%2F%2Fjob-boards.greenhouse.io%2Fnorthwind%2Fjobs%2F4471002",
+      "workplace": "hybrid",
+      "postedAt": "2026-08-15T00:00:00Z",
+      "location": {
+        "raw": "New York, United States",
+        "city": "New York",
+        "region": null,
+        "country": "US"
+      },
+      "body": "Northwind Analytics is looking for a Product Manager to own our internal reporting platform. You will work with data engineering, analytics and the finance team to define what the platform measures, how those numbers reach the people who need them, and which of them are worth trusting. You will run discovery with internal users, write the specifications, and make the prioritisation calls that decide what ships each quarter. We expect three to five years of product management experience, comfort reading and writing SQL, and a track record of shipping data products that people actually adopted. Experience with warehousing, dbt or a similar transformation layer is useful but not required. This role is hybrid out of our New York office, two days a week on site. Northwind Analytics builds forecasting tools for mid-market retailers.",
+      "descFingerprint": "simhash64:37053bf9dc2d9a9b"
+    },
+    {
+      "source": "linkedin",
+      "sourceClass": "aggregator",
+      "tier": "2",
+      "company": "Northwind Analytics",
+      "title": "Product Manager (Internal Reporting)",
+      "url": "https://www.linkedin.com/jobs/view/product-manager-internal-reporting-at-northwind-analytics-4471002?trk=public_jobs&position=3",
+      "workplace": null,
+      "postedAt": null,
+      "location": {
+        "raw": "New York, NY (Hybrid)",
+        "city": "New York",
+        "region": "NY",
+        "country": "US"
+      },
+      "body": "Northwind Analytics is looking for a Product Manager to own our internal reporting platform. You will work with data engineering, analytics and the finance team to define what the platform measures, how those numbers reach the people who need them, and which of them are worth trusting. You will run discovery with internal users, write the specifications, and make the prioritisation calls that decide what ships each quarter. We expect three to five years of product management experience, comfort reading and writing SQL, and a track record of shipping data products that people actually adopted. Experience with warehousing, dbt or a similar transformation layer is useful but not required. This role is hybrid out of our New York office, two days a week on site. Northwind Analytics builds forecasting tools for mid-market retailers. We are a hundred and forty people, profitable, and we do not ",
+      "descFingerprint": "simhash64:370533f91c2d989b"
+    }
+  ],
+  "sibling": {
+    "source": "greenhouse",
+    "sourceClass": "ats",
+    "tier": "1a",
+    "company": "Northwind Analytics",
+    "title": "Product Manager, Internal Reporting",
+    "url": "https://job-boards.greenhouse.io/northwind/jobs/4471999",
+    "workplace": "onsite",
+    "postedAt": "2026-08-18T00:00:00Z",
+    "location": {
+      "raw": "New York, NY",
+      "city": "New York",
+      "region": "NY",
+      "country": "US"
+    },
+    "body": "Northwind Analytics is hiring a Product Manager for our merchant onboarding experience. You will own the first ninety seconds a new retailer spends in the product: the signup, the data connection, and the first forecast they ever see. This is a growth role rather than a platform one, and it sits with marketing and support rather than with data engineering. We are looking for someone who has run activation experiments, can read a funnel, and is comfortable shipping weekly. Onsite in New York five days a week, because the team pairs closely with support.",
+    "descFingerprint": "simhash64:174cdfa707bc076c"
+  }
+}

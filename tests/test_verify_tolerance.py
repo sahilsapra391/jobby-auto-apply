@@ -94,9 +94,6 @@ class ToleranceTests(unittest.TestCase):
         out = self.verify(doc([page(), page()]), doc([page(), page()]))
         self.assertTrue(out["match"], out["differences"])
 
-
-
-
 class ClippingIsReachableTests(unittest.TestCase):
     """The absolute check is not dead code, and here is the case that fires it.
 
@@ -120,7 +117,6 @@ class ClippingIsReachableTests(unittest.TestCase):
         self.assertFalse(out["match"])
         self.assertTrue(any("past the bottom edge" in d for d in out["differences"]),
                         out["differences"])
-
 
 if __name__ == "__main__":
     unittest.main()

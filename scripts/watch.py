@@ -40,7 +40,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -69,6 +69,9 @@ PUBLISH_FLOOR_SECONDS = 900
 HEARTBEAT_SECONDS = 30
 # An apply that has not reported a phase in this long is not coming back.
 STUCK_AFTER_SECONDS = 75 * 60
+# Jitter on the hourly sourcing scan, so a machine that has been up for a week
+# is not hitting eighty company boards at exactly hh:00:00 every hour.
+TIER1_JITTER_SECONDS = 5 * 60
 
 
 def single_watcher():
@@ -297,7 +300,30 @@ def fingerprint():
     sessions = json.loads(s.stdout or "[]")
     history = json.loads(h.stdout or "[]")
     parts = sorted(f"{x.get('applicationId')}:{x.get('status')}" for x in sessions)
-    return f"{len(history)}|{blocked_message()}|" + "|".join(parts)
+    # The Found lane is part of the board now, so a scan that brought in new
+    # jobs has to count as a change. Without this the pool would fill up and
+    # the published board would keep showing the last set of sessions.
+    return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
+            + "|".join(parts))
+
+
+def found_signature():
+    """What the Found lane currently holds, cheaply.
+
+    The count of unacted-on jobs plus the last ingest timestamp: both move
+    whenever a scan finds anything, loses anything, or fails.
+    """
+    path = STATE_DIR / "jobs.json"
+    if not path.exists():
+        return "0:none"
+    try:
+        jobs = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        # A pool that cannot be read is a real fault, and the same rule applies
+        # as everywhere else: it must not read as an empty one.
+        raise TickError("jobs.json is unreadable")
+    new_jobs = sum(1 for job in jobs.values() if job.get("state") == "new")
+    return f"{new_jobs}:{(meta_value('lastIngest') or {}).get('at') or 'none'}"
 
 
 COOLDOWN = STATE_DIR / "publish-cooldown"
@@ -353,6 +379,154 @@ def publish():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LAST_DEPLOY.write_text(now_stamp())
     return out
+
+
+# --- sourcing ---------------------------------------------------------------
+
+def meta_value(key):
+    """One meta key, or None. Never turns a store failure into a missing value."""
+    result = store(["meta-get", "--key", key])
+    if result.returncode != 0:
+        raise TickError(f"store meta-get {key} failed")
+    try:
+        return json.loads(result.stdout or "{}").get(key)
+    except json.JSONDecodeError:
+        raise TickError(f"store meta-get {key} returned junk")
+
+
+def search_config_saved():
+    """Has the user saved a search yet?
+
+    The hourly scan arms only after they have. A scan running against nobody's
+    search would fill the board with roles nobody asked for, and would make the
+    match percentage meaningless because there would be nothing to match
+    against.
+    """
+    return (STATE_DIR / "search-config.json").exists()
+
+
+def take_saved_config():
+    """Pick up a search the board parked, persist it, clear the queue field.
+
+    One extra read and one write, and only when something is actually waiting:
+    an empty take is not a write, which matters at 28,800 polls a day.
+    """
+    result = subprocess.run([toolpath.node(), "queue.mjs", "config-take"], cwd=DEPLOY,
+                            capture_output=True, text=True, env=toolpath.queue_env(),
+                            timeout=60)
+    if result.returncode != 0:
+        raise TickError(f"config take failed: {(result.stderr or '').strip()[:200]}")
+    try:
+        held = json.loads(result.stdout or "null")
+    except json.JSONDecodeError:
+        raise TickError("config take returned junk")
+    if not held or not isinstance(held.get("config"), dict):
+        return None
+    saved = run([sys.executable, str(REPO / "scripts" / "search_config.py"),
+                 "save", "--input", "-"], input=json.dumps(held["config"]))
+    if saved.returncode != 0:
+        # A config the schema refuses is the user's problem to see, not
+        # something to swallow: it is why their next scan would look wrong.
+        reason = (saved.stderr or "").strip()[:200] or "rejected by the schema"
+        store(["meta-set", "--key", "blocked",
+               "--value", f"The saved search was not accepted: {reason}"])
+        return {"error": reason}
+    try:
+        return {"version": json.loads(saved.stdout or "{}").get("version")}
+    except json.JSONDecodeError:
+        return {"version": None}
+
+
+def tier1_due(now=None):
+    """(due, nextAt). Never due until a search exists."""
+    if not search_config_saved():
+        return False, None
+    now = now or datetime.now(timezone.utc)
+    nxt = meta_value("nextTier1ScanAt")
+    if not nxt:
+        return True, None
+    try:
+        when = datetime.strptime(nxt, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        # An unreadable schedule is a schedule that has to be rebuilt, not one
+        # that silently stops the scan forever.
+        return True, None
+    return now >= when, nxt
+
+
+def schedule_next_tier1(now=None):
+    """Set nextTier1ScanAt to +interval with jitter, and return it.
+
+    Written whether or not the spawn worked. A failed spawn that left the
+    schedule alone would retry every three seconds for an hour.
+    """
+    import random
+    now = now or datetime.now(timezone.utc)
+    minutes = 60
+    config_path = STATE_DIR / "search-config.json"
+    if config_path.exists():
+        try:
+            minutes = int(json.loads(config_path.read_text()).get("tier1IntervalMinutes") or 60)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            minutes = 60
+    jitter = random.randint(-TIER1_JITTER_SECONDS, TIER1_JITTER_SECONDS)
+    when = now + timedelta(seconds=minutes * 60 + jitter)
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    store(["meta-set", "--key", "nextTier1ScanAt", "--value", stamp])
+    return stamp
+
+
+def apply_found_decisions(q):
+    """The eye and pass, claimed off the queue and applied to the store.
+
+    Both are idempotent per job id, because the board re-sends the clicks it
+    remembers on every load.
+    """
+    changed = {}
+    for queue, flag in (("watch", []), ("pass", ["--pass"])):
+        if not q.get(queue):
+            continue
+        # Claim-all, then promote each. A promote that fails has already had its
+        # queue entry taken, so the click is not re-queued here — and that is
+        # deliberate rather than an oversight.
+        #
+        # **The recovery path is the board's localStorage replay.** It remembers
+        # every eye and pass, re-sends them on load, and prunes the ones the
+        # published board no longer carries. So a transient failure is retried
+        # within seconds, and a permanent one (a job id the pool has never heard
+        # of) is retried at most once more and then forgotten, because the id is
+        # not in the next payload. Re-queueing here instead would race that
+        # replay and promote the same job twice.
+        #
+        # If you are about to "fix" this into a re-queue: that is the `claim`
+        # bug's shape in reverse, and the board already handles it.
+        claimed = json.loads(subprocess.run(
+            [toolpath.node(), "queue.mjs", "claim", f"{queue}/"], cwd=DEPLOY,
+            capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
+        ).stdout or "[]")
+        done, failed = [], []
+        for item in claimed:
+            job_id = item.get("applicationId")
+            if not job_id:
+                continue
+            result = run([sys.executable, str(REPO / "scripts" / "promote.py"),
+                          "--id", job_id] + flag)
+            if result.returncode == 0:
+                done.append(job_id)
+            else:
+                # Carry the reason, not just the id: "no job with that id" and
+                # "the store would not write" want very different responses,
+                # and a bare id in a log line tells you neither.
+                failed.append({"jobId": job_id,
+                               "why": (result.stderr or "").strip()[:160] or "unknown"})
+        if done:
+            changed[f"{queue}ed"] = done
+        if failed:
+            # Board and pool have drifted apart. Visible in the tick line and in
+            # the healthchecks payload, which is where a standing condition is
+            # meant to show up.
+            changed[f"{queue}Failed"] = failed
+    return changed
 
 
 # --- watchdog ---------------------------------------------------------------
@@ -503,6 +677,15 @@ def tick(force_publish=False):
         if back:
             changed["restored"] = back
 
+    # The saved search, if the board parked one. Persisted before anything is
+    # scheduled, so a config saved seconds ago governs the very next scan.
+    if q.get("searchConfig"):
+        taken = take_saved_config()
+        if taken:
+            changed["searchConfig"] = taken
+
+    changed.update(apply_found_decisions(q))
+
     if q.get("marked"):
         r = run([sys.executable, str(REPO / "scripts" / "apply_marks.py"), "--no-publish"])
         if r.returncode != 0:
@@ -558,6 +741,21 @@ def tick(force_publish=False):
         pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "run_scan.py")],
                     "scan-runs.log", note="scan")
         changed["scanStarted"] = pid
+
+    # The hourly Tier-1 sourcing pass. It shares the scan lock rather than
+    # taking one of its own: an agent sweep and an API ingest both rewrite the
+    # same pool, and one at a time is the rule.
+    #
+    # It needs no LLM and no browser, so it costs minutes of HTTP rather than
+    # tokens — but it is still spawned detached, because eighty company boards
+    # at a second apiece is not something a three-second tick can hold.
+    if not lock_holder("scan"):
+        due, _ = tier1_due()
+        if due:
+            nxt = schedule_next_tier1()
+            pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "ingest.py"),
+                                 "--tier", "1"], "ingest-runs.log", note="tier1-ingest")
+            changed["tier1ScanStarted"] = {"pid": pid, "nextAt": nxt}
 
     # Up to APPLY_SLOTS applications at once, one agent per application, start to
     # finish. The claim happens HERE rather than inside the runner, and that is
@@ -685,6 +883,13 @@ def status():
     out["slots"] = {"total": APPLY_SLOTS, "free": len(free_apply_slots()),
                     "running": running_applications()}
     out["blocked"] = blocked_message() or None
+    try:
+        due, nxt = tier1_due()
+        out["sourcing"] = {"searchSaved": search_config_saved(), "due": due,
+                           "nextTier1ScanAt": nxt,
+                           "lastIngest": meta_value("lastIngest")}
+    except TickError as exc:
+        out["sourcing"] = {"error": str(exc)}
     return out
 
 

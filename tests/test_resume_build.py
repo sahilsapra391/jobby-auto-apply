@@ -158,9 +158,6 @@ class ShippedTemplateTests(unittest.TestCase):
         self.assertIn("{{technical}}", t)
         self.assertGreater(len(base["technical"]), 0)
 
-
-
-
 class VariableTechnicalTests(unittest.TestCase):
     """Regrouping Technical Proficiencies is part of the tailoring.
 

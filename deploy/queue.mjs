@@ -6,10 +6,11 @@
 //   enqueue <prefix> <id>  add a request, deduped by application id
 //   claim-one <prefix>   take exactly the oldest request
 //   claim <prefix>       take every request
+//   config-take          take the saved search config and clear it
 //
 // The prefix argument (apply/, scan/, marked/) is kept from the Vercel Blob
 // era so the Python callers did not have to change when the backend did.
-import { readQueue, enqueue, claimOne, claimAll, QUEUES } from './kvqueue.mjs';
+import { readQueue, enqueue, claimOne, claimAll, takeConfig, QUEUES } from './kvqueue.mjs';
 
 const [cmd, prefix = 'marked/', id] = process.argv.slice(2);
 const queue = prefix.replace(/\/$/, '');
@@ -17,7 +18,7 @@ const env = process.env;
 
 const die = (msg) => { console.error(msg); process.exit(2); };
 
-if (cmd !== 'poll' && !QUEUES.includes(queue)) {
+if (cmd !== 'poll' && cmd !== 'config-take' && !QUEUES.includes(queue)) {
   die(`unknown queue "${queue}"; expected one of ${QUEUES.join(', ')}`);
 }
 
@@ -33,8 +34,10 @@ try {
     console.log(JSON.stringify(await claimOne(env, queue)));
   } else if (cmd === 'claim') {
     console.log(JSON.stringify(await claimAll(env, queue)));
+  } else if (cmd === 'config-take') {
+    console.log(JSON.stringify(await takeConfig(env)));
   } else {
-    die('usage: queue.mjs poll|list|enqueue|claim-one|claim [prefix] [id]');
+    die('usage: queue.mjs poll|list|enqueue|claim-one|claim|config-take [prefix] [id]');
   }
 } catch (err) {
   // Never exit 0 on failure: the watcher cannot tell a crashed read from an

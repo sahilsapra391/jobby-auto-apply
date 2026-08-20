@@ -19,6 +19,7 @@ import sys
 import pathlib
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -185,8 +186,6 @@ class TickErrorTests(unittest.TestCase):
             self.assertEqual(watch.blocked_message(), "")
         finally:
             watch.store = original
-
-
 
 
 class BrowserConfigTests(unittest.TestCase):
@@ -442,6 +441,319 @@ class SlotRaceTests(unittest.TestCase):
         # A different live pid is what must be refused; our own is a re-entry.
         ok, _ = watch.single_watcher()
         self.assertTrue(ok)
+
+
+class SourcingSchedulerTests(unittest.TestCase):
+    """The hourly Tier-1 scan: when it is due, and when it must stay disarmed.
+
+    The disarmed case is the one that matters. A scan running against nobody's
+    saved search would fill the board with roles nobody asked for and make the
+    match percentage meaningless, because there would be nothing to match on.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.original_state = watch.STATE_DIR
+        self.original_lock = watch.LOCK_DIR
+        watch.STATE_DIR = self.root
+        watch.LOCK_DIR = self.root / "locks"
+        self.original_store = watch.store
+        self.meta = {}
+
+        class Result:
+            returncode = 0
+
+            def __init__(self, stdout=""):
+                self.stdout = stdout
+                self.stderr = ""
+
+        def fake_store(args):
+            if args[:1] == ["meta-get"]:
+                key = args[args.index("--key") + 1]
+                return Result(json.dumps({key: self.meta.get(key)}))
+            if args[:1] == ["meta-set"]:
+                key = args[args.index("--key") + 1]
+                self.meta[key] = args[args.index("--value") + 1]
+                return Result("{}")
+            return Result("[]")
+
+        watch.store = fake_store
+
+    def tearDown(self):
+        watch.STATE_DIR = self.original_state
+        watch.LOCK_DIR = self.original_lock
+        watch.store = self.original_store
+        self.tmp.cleanup()
+
+    def save_config(self, **fields):
+        payload = {"tier1IntervalMinutes": 60, "version": 1}
+        payload.update(fields)
+        (self.root / "search-config.json").write_text(json.dumps(payload))
+
+    def test_the_scan_stays_disarmed_until_a_search_is_saved(self):
+        self.assertFalse(watch.search_config_saved())
+        due, _ = watch.tier1_due()
+        self.assertFalse(due, "an hourly scan against nobody's search is worse than none")
+
+    def test_the_first_run_after_a_search_is_saved_is_due_immediately(self):
+        self.save_config()
+        due, nxt = watch.tier1_due()
+        self.assertTrue(due)
+        self.assertIsNone(nxt)
+
+    def test_a_future_schedule_is_not_due(self):
+        self.save_config()
+        later = datetime.now(timezone.utc) + timedelta(minutes=30)
+        self.meta["nextTier1ScanAt"] = later.strftime("%Y-%m-%dT%H:%M:%SZ")
+        due, _ = watch.tier1_due()
+        self.assertFalse(due)
+
+    def test_a_past_schedule_is_due(self):
+        self.save_config()
+        earlier = datetime.now(timezone.utc) - timedelta(minutes=1)
+        self.meta["nextTier1ScanAt"] = earlier.strftime("%Y-%m-%dT%H:%M:%SZ")
+        due, _ = watch.tier1_due()
+        self.assertTrue(due)
+
+    def test_an_unreadable_schedule_rebuilds_rather_than_stopping_forever(self):
+        self.save_config()
+        self.meta["nextTier1ScanAt"] = "sometime next week"
+        due, _ = watch.tier1_due()
+        self.assertTrue(due)
+
+    def test_scheduling_lands_inside_the_interval_plus_jitter(self):
+        self.save_config(tier1IntervalMinutes=60)
+        now = datetime.now(timezone.utc)
+        stamp = watch.schedule_next_tier1(now)
+        when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        delta = (when - now).total_seconds()
+        self.assertGreaterEqual(delta, 3600 - watch.TIER1_JITTER_SECONDS)
+        self.assertLessEqual(delta, 3600 + watch.TIER1_JITTER_SECONDS)
+
+    def test_the_jitter_actually_varies(self):
+        # Every machine scanning eighty company boards at exactly hh:00:00 is
+        # the kind of politeness failure that gets a User-Agent blocked.
+        self.save_config()
+        now = datetime.now(timezone.utc)
+        stamps = {watch.schedule_next_tier1(now) for _ in range(25)}
+        self.assertGreater(len(stamps), 1)
+
+    def test_the_configured_interval_is_respected(self):
+        self.save_config(tier1IntervalMinutes=180)
+        now = datetime.now(timezone.utc)
+        when = datetime.strptime(watch.schedule_next_tier1(now),
+                                 "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        self.assertGreater((when - now).total_seconds(), 3 * 3600 - watch.TIER1_JITTER_SECONDS - 1)
+
+    def test_a_corrupt_config_file_falls_back_to_hourly(self):
+        (self.root / "search-config.json").write_text("{not json")
+        now = datetime.now(timezone.utc)
+        when = datetime.strptime(watch.schedule_next_tier1(now),
+                                 "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        self.assertLessEqual((when - now).total_seconds(), 3600 + watch.TIER1_JITTER_SECONDS)
+
+    def test_the_schedule_moves_before_the_spawn_is_attempted(self):
+        # A failed spawn that left the schedule alone would retry every three
+        # seconds for an hour.
+        self.save_config()
+        self.assertNotIn("nextTier1ScanAt", self.meta)
+        watch.schedule_next_tier1()
+        self.assertIn("nextTier1ScanAt", self.meta)
+
+
+class FoundSignatureTests(unittest.TestCase):
+    """A scan that brought in new jobs has to count as a board change.
+
+    Without this the pool fills up and the published board keeps showing the
+    last set of sessions, which is the same shape as the outage where the
+    watcher reported healthy cycles while doing nothing.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.original = watch.STATE_DIR
+        watch.STATE_DIR = self.root
+        self.original_store = watch.store
+
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = json.dumps({"lastIngest": {"at": "2026-08-19T20:00:00Z"}})
+
+        watch.store = lambda args: Result()
+
+    def tearDown(self):
+        watch.STATE_DIR = self.original
+        watch.store = self.original_store
+        self.tmp.cleanup()
+
+    def write_jobs(self, jobs):
+        (self.root / "jobs.json").write_text(json.dumps(jobs))
+
+    def test_no_pool_is_a_stable_signature(self):
+        self.assertTrue(watch.found_signature().startswith("0:"))
+
+    def test_a_new_job_changes_the_signature(self):
+        self.write_jobs({"a": {"state": "new"}})
+        before = watch.found_signature()
+        self.write_jobs({"a": {"state": "new"}, "b": {"state": "new"}})
+        self.assertNotEqual(before, watch.found_signature())
+
+    def test_promoting_a_job_out_of_found_changes_the_signature(self):
+        self.write_jobs({"a": {"state": "new"}, "b": {"state": "new"}})
+        before = watch.found_signature()
+        self.write_jobs({"a": {"state": "watched"}, "b": {"state": "new"}})
+        self.assertNotEqual(before, watch.found_signature())
+
+    def test_an_unreadable_pool_raises_rather_than_reading_as_empty(self):
+        (self.root / "jobs.json").write_text("{not json")
+        with self.assertRaises(watch.TickError):
+            watch.found_signature()
+
+
+class EyeAndPassTests(unittest.TestCase):
+    """👁 creates exactly one session, and Pass is final.
+
+    The board re-sends every click it remembers on each load, so both of these
+    are pressed more than once as a matter of course.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "store.py"),
+                        "--root", str(self.root), "init"], capture_output=True)
+        # Imported normally rather than through load(), which builds a second
+        # module object: promote raises jobs_store.JobsStoreError from the
+        # canonical module, and a duplicate class would never match it.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import jobs_store as canonical_jobs_store
+        import promote as canonical_promote
+        self.promote = canonical_promote
+        self.jobs_store = canonical_jobs_store
+        self.jobs_store.save_jobs(self.root, {"j1": {
+            "id": "j1", "company": "Northwind Analytics",
+            "title": "Product Manager, Internal Reporting",
+            "normTitle": "product manager internal reporting",
+            "canonicalUrl": "https://job-boards.greenhouse.io/northwind/jobs/4471002",
+            "canonicalSource": "greenhouse", "state": "new",
+            "location": {"raw": "New York, NY", "country": "US"},
+            "tags": ["sql", "analytics"], "postedAt": "2026-08-13T00:00:00Z",
+            "firstSeenAt": "2026-08-19T20:00:00Z",
+            "sources": [{"source": "greenhouse", "sourceClass": "ats", "url": "x"},
+                        {"source": "adzuna", "sourceClass": "aggregator", "url": "y"}],
+            "score": {"total": 82, "parts": {"title": 35, "experience": 10, "location": 15,
+                                             "keywords": 14, "freshness": 8},
+                      "weights": {"title": 35, "experience": 20, "location": 15,
+                                  "keywords": 20, "freshness": 10},
+                      "unknowns": ["experience"], "gates": []},
+        }})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def sessions(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "store.py"), "--root", str(self.root),
+             "session-list"], capture_output=True, text=True)
+        return json.loads(result.stdout or "[]")
+
+    def test_the_eye_moves_the_job_and_creates_a_session(self):
+        out = self.promote.watch(self.root, "j1")
+        self.assertTrue(out["sessionCreated"])
+        self.assertEqual(self.jobs_store.load_jobs(self.root)["j1"]["state"], "watched")
+        rows = self.sessions()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "watch")
+        self.assertEqual(rows[0]["applicationId"], "j1")
+
+    def test_the_eye_pressed_twice_creates_one_session(self):
+        self.promote.watch(self.root, "j1")
+        again = self.promote.watch(self.root, "j1")
+        self.assertFalse(again["sessionCreated"])
+        self.assertTrue(again["alreadyWatching"])
+        self.assertEqual(len(self.sessions()), 1)
+
+    def test_the_watching_card_carries_the_rubric_and_says_it_is_the_rubric(self):
+        # Phase 1 promotes before anything has read the posting. The card has
+        # to say something, and it must not imply a fit read that does not exist.
+        self.promote.watch(self.root, "j1")
+        session = json.loads((self.root / "sessions" / "j1.json").read_text())
+        self.assertEqual(session["fitScore"], 82)
+        self.assertIn("Match 82%", session["alignment"])
+        self.assertIn("title 35/35", session["alignment"])
+        self.assertIn("no fit read", session["alignment"].lower())
+        self.assertIn("experience", session["alignment"])
+
+    def test_the_session_carries_the_posting_link_and_where_it_was_seen(self):
+        self.promote.watch(self.root, "j1")
+        session = json.loads((self.root / "sessions" / "j1.json").read_text())
+        self.assertEqual(session["url"],
+                         "https://job-boards.greenhouse.io/northwind/jobs/4471002")
+        self.assertEqual(session["seenOnBoards"], 2)
+        self.assertEqual(session["coreSkills"], ["sql", "analytics"])
+
+    def test_the_eye_on_an_already_known_role_does_not_throw(self):
+        # store.py refuses a new watch entry for a posting already on record,
+        # and a sweep surfaces exactly those. Before this, the refusal came back
+        # as a JobsStoreError and the eye was a broken button on the lane.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting",
+                "url": "https://northwind.com/careers/4471002"}}))
+        out = self.promote.watch(self.root, "j1")
+        self.assertFalse(out["sessionCreated"])
+        self.assertTrue(out["alreadyKnown"])
+        self.assertIn("company and role", out["reason"])
+
+    def test_an_already_known_role_still_leaves_the_found_lane(self):
+        # Pressing the eye asked for the job to stop being offered. It does,
+        # whether or not a second session was the right way to honour that.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting", "url": ""}}))
+        self.promote.watch(self.root, "j1")
+        self.assertEqual(self.jobs_store.load_jobs(self.root)["j1"]["state"], "watched")
+
+    def test_an_already_known_role_creates_no_second_session(self):
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {
+                "company": "Northwind Analytics",
+                "role": "Product Manager, Internal Reporting", "url": ""}}))
+        self.promote.watch(self.root, "j1")
+        self.assertEqual(self.sessions(), [])
+
+    def test_an_unknown_role_is_unaffected_by_the_guard(self):
+        # The guard must not swallow the ordinary case: a role nobody has seen
+        # still gets its Watching session.
+        (self.root / "roles.json").write_text(json.dumps({
+            "older-application": {"company": "Someone Else",
+                                  "role": "Warehouse Operative", "url": ""}}))
+        out = self.promote.watch(self.root, "j1")
+        self.assertTrue(out["sessionCreated"])
+        self.assertEqual(len(self.sessions()), 1)
+
+    def test_passing_tombstones_and_is_idempotent(self):
+        self.promote.passed(self.root, "j1", "wrong seniority")
+        self.assertEqual(self.jobs_store.load_jobs(self.root)["j1"]["state"], "passed")
+        first = self.jobs_store.load_passed(self.root)["j1"]["passedAt"]
+        self.promote.passed(self.root, "j1")
+        self.assertEqual(self.jobs_store.load_passed(self.root)["j1"]["passedAt"], first)
+        self.assertEqual(self.sessions(), [], "passing never creates a Watching session")
+
+    def test_the_eye_on_a_job_the_pool_has_never_heard_of_fails_loudly(self):
+        # The board and the pool drifting apart is worth seeing, not swallowing.
+        with self.assertRaises(self.jobs_store.JobsStoreError):
+            self.promote.watch(self.root, "not-a-job")
+
+    def test_a_passed_job_cannot_be_watched_afterwards(self):
+        self.promote.passed(self.root, "j1")
+        with self.assertRaises(self.jobs_store.JobsStoreError):
+            self.promote.watch(self.root, "j1")
 
 
 class SlotReleaseTests(unittest.TestCase):

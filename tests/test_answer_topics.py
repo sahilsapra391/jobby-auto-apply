@@ -98,7 +98,6 @@ class OverMatchTests(unittest.TestCase):
 
 
 
-
 class ConsentTopicTests(unittest.TestCase):
     """Interview recording, and the line under background checks.
 

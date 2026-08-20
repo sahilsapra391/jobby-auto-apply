@@ -93,7 +93,6 @@ class GuardTests(unittest.TestCase):
 
 
 
-
 class InFlightGuardTests(unittest.TestCase):
     """Submitted history is not enough when three runs overlap.
 

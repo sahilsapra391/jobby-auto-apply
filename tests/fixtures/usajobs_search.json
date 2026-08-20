@@ -1,0 +1,565 @@
+{
+  "LanguageCode": "EN",
+  "SearchParameters": {},
+  "SearchResult": {
+    "SearchResultCount": 2,
+    "SearchResultCountAll": 56,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "880569700",
+        "MatchedObjectDescriptor": {
+          "PositionID": "FD-2026-0018",
+          "PositionTitle": "IT Product Manager",
+          "PositionURI": "https://www.usajobs.gov:443/job/880569700",
+          "ApplyURI": [
+            "https://www.usajobs.gov:443/job/880569700"
+          ],
+          "PositionLocationDisplay": "Multiple Locations",
+          "PositionLocation": [
+            {
+              "LocationName": "Anchorage, Alaska",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Alaska",
+              "CityName": "Anchorage, Alaska",
+              "Longitude": -149.85774,
+              "Latitude": 61.21756
+            },
+            {
+              "LocationName": "Fairbanks, Alaska",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Alaska",
+              "CityName": "Fairbanks, Alaska",
+              "Longitude": -147.72218,
+              "Latitude": 64.845505
+            },
+            {
+              "LocationName": "Phoenix, Arizona",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Arizona",
+              "CityName": "Phoenix, Arizona",
+              "Longitude": -112.075775,
+              "Latitude": 33.44826
+            },
+            {
+              "LocationName": "Los Angeles, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Los Angeles, California",
+              "Longitude": -118.245,
+              "Latitude": 34.0535
+            },
+            {
+              "LocationName": "Monterey Park, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Monterey Park, California",
+              "Longitude": -118.12652,
+              "Latitude": 34.05979
+            },
+            {
+              "LocationName": "San Diego, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "San Diego, California",
+              "Longitude": -117.162,
+              "Latitude": 32.7157
+            },
+            {
+              "LocationName": "San Francisco, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "San Francisco, California",
+              "Longitude": -122.4196,
+              "Latitude": 37.7771
+            },
+            {
+              "LocationName": "Vandenberg AFB, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Vandenberg AFB, California",
+              "Longitude": -120.54249,
+              "Latitude": 34.75468
+            },
+            {
+              "LocationName": "Lakewood, Colorado",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Colorado",
+              "CityName": "Lakewood, Colorado",
+              "Longitude": -105.08274,
+              "Latitude": 39.71095
+            },
+            {
+              "LocationName": "Hartford, Connecticut",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Connecticut",
+              "CityName": "Hartford, Connecticut",
+              "Longitude": -72.67407,
+              "Latitude": 41.763325
+            },
+            {
+              "LocationName": "Washington, District of Columbia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "District of Columbia",
+              "CityName": "Washington, District of Columbia",
+              "Longitude": -77.032,
+              "Latitude": 38.8904
+            },
+            {
+              "LocationName": "Cocoa, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Cocoa, Florida",
+              "Longitude": -80.7262,
+              "Latitude": 28.3517
+            },
+            {
+              "LocationName": "Fort Walton Beach, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Fort Walton Beach, Florida",
+              "Longitude": -86.61467,
+              "Latitude": 30.4042
+            },
+            {
+              "LocationName": "Orlando, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Orlando, Florida",
+              "Longitude": -81.37739,
+              "Latitude": 28.538235
+            },
+            {
+              "LocationName": "Tampa, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Tampa, Florida",
+              "Longitude": -82.45927,
+              "Latitude": 27.94653
+            },
+            {
+              "LocationName": "Atlanta, Georgia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Georgia",
+              "CityName": "Atlanta, Georgia",
+              "Longitude": -84.39111,
+              "Latitude": 33.748314
+            },
+            {
+              "LocationName": "Fort Benning, Georgia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Georgia",
+              "CityName": "Fort Benning, Georgia",
+              "Longitude": -84.95623,
+              "Latitude": 32.3575
+            },
+            {
+              "LocationName": "Hagatna, Guam",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Guam",
+              "CityName": "Hagatna, Guam",
+              "Longitude": 144.74649,
+              "Latitude": 13.466715
+            },
+            {
+              "LocationName": "Honolulu, Hawaii",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Hawaii",
+              "CityName": "Honolulu, Hawaii",
+              "Longitude": -157.858,
+              "Latitude": 21.3047
+            },
+            {
+              "LocationName": "Chicago, Illinois",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Illinois",
+              "CityName": "Chicago, Illinois",
+              "Longitude": -87.63241,
+              "Latitude": 41.88415
+            },
+            {
+              "LocationName": "Indianapolis, Indiana",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Indiana",
+              "CityName": "Indianapolis, Indiana",
+              "Longitude": -86.14996,
+              "Latitude": 39.76691
+            },
+            {
+              "LocationName": "Louisville, Kentucky",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Kentucky",
+              "CityName": "Louisville, Kentucky",
+              "Longitude": -85.7664,
+              "Latitude": 38.25486
+            },
+            {
+              "LocationName": "Boston, Massachusetts",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Massachusetts",
+              "CityName": "Boston, Massachusetts",
+              "Longitude": -71.0567,
+              "Latitude": 42.358635
+            },
+            {
+              "LocationName": "Baltimore, Maryland",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Maryland",
+              "CityName": "Baltimore, Maryland",
+              "Longitude": -76.609604,
+              "Latitude": 39.290554
+            },
+            {
+              "LocationName": "Detroit, Michigan",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Michigan",
+              "CityName": "Detroit, Michigan",
+              "Longitude": -83.0479,
+              "Latitude": 42.3317
+            },
+            {
+              "LocationName": "Kansas City, Missouri",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Missouri",
+              "CityName": "Kansas City, Missouri",
+              "Longitude": -94.58306,
+              "Latitude": 39.10296
+            },
+            {
+              "LocationName": "Overland, Missouri",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Missouri",
+              "CityName": "Overland, Missouri",
+              "Longitude": -90.35828,
+              "Latitude": 38.69988
+            },
+            {
+              "LocationName": "Camp Lejeune, North Carolina",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "North Carolina",
+              "CityName": "Camp Lejeune, North Carolina",
+              "Longitude": -77.3442,
+              "Latitude": 34.7253
+            },
+            {
+              "LocationName": "Fort Bragg, North Carolina",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "North Carolina",
+              "CityName": "Fort Bragg, North Carolina",
+              "Longitude": -78.9974,
+              "Latitude": 35.1356
+            },
+            {
+              "LocationName": "Bismarck, North Dakota",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "North Dakota",
+              "CityName": "Bismarck, North Dakota",
+              "Longitude": -100.77932,
+              "Latitude": 46.80537
+            },
+            {
+              "LocationName": "Manchester, New Hampshire",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "New Hampshire",
+              "CityName": "Manchester, New Hampshire",
+              "Longitude": -71.46309,
+              "Latitude": 42.991177
+            },
+            {
+              "LocationName": "Edison, New Jersey",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "New Jersey",
+              "CityName": "Edison, New Jersey",
+              "Longitude": -74.3846,
+              "Latitude": 40.528
+            },
+            {
+              "LocationName": "New York, New York",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "New York",
+              "CityName": "New York, New York",
+              "Longitude": -74.0071,
+              "Latitude": 40.7146
+            },
+            {
+              "LocationName": "Dayton, Ohio",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Ohio",
+              "CityName": "Dayton, Ohio",
+              "Longitude": -84.1944,
+              "Latitude": 39.7591
+            },
+            {
+              "LocationName": "Oklahoma City, Oklahoma",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Oklahoma",
+              "CityName": "Oklahoma City, Oklahoma",
+              "Longitude": -97.52033,
+              "Latitude": 35.472004
+            },
+            {
+              "LocationName": "Chadds Ford, Pennsylvania",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Pennsylvania",
+              "CityName": "Chadds Ford, Pennsylvania",
+              "Longitude": -75.59255,
+              "Latitude": 39.871883
+            },
+            {
+              "LocationName": "New Cumberland, Pennsylvania",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Pennsylvania",
+              "CityName": "New Cumberland, Pennsylvania",
+              "Longitude": -76.86868,
+              "Latitude": 40.229214
+            },
+            {
+              "LocationName": "Philadelphia, Pennsylvania",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Pennsylvania",
+              "CityName": "Philadelphia, Pennsylvania",
+              "Longitude": -75.16237,
+              "Latitude": 39.95227
+            },
+            {
+              "LocationName": "Guaynabo, Puerto Rico",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Puerto Rico",
+              "CityName": "Guaynabo, Puerto Rico",
+              "Longitude": -66.1105,
+              "Latitude": 18.3597
+            },
+            {
+              "LocationName": "Charleston, South Carolina",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "South Carolina",
+              "CityName": "Charleston, South Carolina",
+              "Longitude": -79.9316,
+              "Latitude": 32.781155
+            },
+            {
+              "LocationName": "Columbia, South Carolina",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "South Carolina",
+              "CityName": "Columbia, South Carolina",
+              "Longitude": -81.04525,
+              "Latitude": 33.99855
+            },
+            {
+              "LocationName": "El Paso, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "El Paso, Texas",
+              "Longitude": -106.4874,
+              "Latitude": 31.7591
+            },
+            {
+              "LocationName": "Fort Worth, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "Fort Worth, Texas",
+              "Longitude": -97.32925,
+              "Latitude": 32.74863
+            },
+            {
+              "LocationName": "Houston, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "Houston, Texas",
+              "Longitude": -95.36978,
+              "Latitude": 29.76045
+            },
+            {
+              "LocationName": "San Antonio, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "San Antonio, Texas",
+              "Longitude": -98.49462,
+              "Latitude": 29.42449
+            },
+            {
+              "LocationName": "Ogden, Utah",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Utah",
+              "CityName": "Ogden, Utah",
+              "Longitude": -111.97046,
+              "Latitude": 41.222366
+            },
+            {
+              "LocationName": "Chesapeake, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Chesapeake, Virginia",
+              "Longitude": -76.24785,
+              "Latitude": 36.714294
+            },
+            {
+              "LocationName": "Norfolk, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Norfolk, Virginia",
+              "Longitude": -76.28507,
+              "Latitude": 36.846825
+            },
+            {
+              "LocationName": "Richmond, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Richmond, Virginia",
+              "Longitude": -77.433655,
+              "Latitude": 37.5407
+            },
+            {
+              "LocationName": "Springfield, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Springfield, Virginia",
+              "Longitude": -77.1917,
+              "Latitude": 38.779
+            },
+            {
+              "LocationName": "Spokane, Washington",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Washington",
+              "CityName": "Spokane, Washington",
+              "Longitude": -117.41228,
+              "Latitude": 47.65726
+            },
+            {
+              "LocationName": "Tacoma, Washington",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Washington",
+              "CityName": "Tacoma, Washington",
+              "Longitude": -122.44166,
+              "Latitude": 47.255165
+            },
+            {
+              "LocationName": "Vancouver, Washington",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Washington",
+              "CityName": "Vancouver, Washington",
+              "Longitude": -122.67155,
+              "Latitude": 45.632214
+            }
+          ],
+          "OrganizationName": "Federal Acquisition Service",
+          "DepartmentName": "General Services Administration",
+          "JobCategory": [
+            {
+              "Name": "Information Technology Management",
+              "Code": "2210"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "To evaluate your qualifications, your resume must clearly demonstrate how you meet the specialized experience described below. Your resume must not exceed two pages. To ensure your qualifications can be fully evaluated, we recommend including the following information: Name, address, telephone number, email address; Job Title (if Federal Service, provide series and grade; if not in GS plan, provide GS equivalent grade); Relevant work experience\u2014should include employer name, job title, start and end dates (month/year), the number of hours worked per week and descriptions that explain how you meet the required qualifications in the job announcement. Education, certifications or licensures\u2014If the job announcement requires any education, certifications or licensures, make sure to include the required information and any required documents like transcripts. Your resume should contain enough information to make a valid determination that you fully meet experience requirements for each grade level you are applying to. If you do not provide enough information for us to determine your qualifications, you may be rated ineligible If you have volunteered your service through a National Service program (e.g., Peace Corps, Americorps), we encourage you to apply and include this experience on your resume. The GS-14 salary range starts at $125,776 per year. To qualify, you must have at least one year of specialized experience equivalent to the GS-13 level or higher in the Federal service. Applicants applying for the GS-14 grade level must meet the following requirements: Have IT-related experience demonstrating EACH of the 9 competencies AND one year of specialized experience equivalent to the GS-13 level in the Federal service as described below: IT SPECIALIST COMPETENCY REQUIREMENTS: \u25cf Attention to Detail - Is thorough when performing work and conscientious about attending to detail. \u25cf Customer Service - Works with clients and customers (that is, any individuals who use or receive the services or products that your work unit produces, including the general public, individuals who work in the agency, other agencies, or organizations outside the Government) to assess their needs, provide information or assistance, resolve their problems, or satisfy their expectations; knows about available products and services; is committed to providing quality products and services. \u25cf Decision Making - Makes sound, well-informed, and objective decisions; perceives the impact and implications of decisions; commits to action, even in uncertain situations, to accomplish organizational goals; causes change. \u25cf Information Management - Identifies a need for and knows where or how to gather information; organizes and maintains information or information management systems. \u25cf Interpersonal Skills - Shows understanding, friendliness, courtesy, tact, empathy, concern, and politeness to others; develops and maintains effective relationships with others; may include effectively dealing with individuals who are difficult, hostile, or distressed; relates well to people from varied backgrounds and different situations. \u25cf Oral Communication - Expresses information (for example, ideas or facts) to individuals or groups effectively, taking into account the audience and nature of the information (for example, technical, sensitive, controversial); makes clear and convincing oral presentations; listens to others, attends to nonverbal cues, and responds appropriately. \u25cf Problem Solving - Identifies problems; determines accuracy and relevance of information; uses sound judgment to generate and evaluate alternatives, and to make recommendations. \u25cf Teamwork - Encourages and facilitates cooperation, pride, trust, and group identity; fosters commitment and team spirit; works with others to achieve goals. \u25cf Technical Competence \u2013 Uses knowledge that is acquired through formal training or on-the-job experience to perform one's job; works with, understands, and evaluates technical information related to the job; advises others on technical issues. SPECIALIZED EXPERIENCE REQUIREMENTS: Specialized experience is experience utilizing project management skills to develop, maintain, implement and assist in managing Information Technology systems supporting Fleet offerings. This experience must also include: \u25cf Translating technical concepts and/or scenarios into understandable terms to provide stakeholders with project status; \u25cf Collaborating with stakeholders across multiple functional areas to improve business processes for an Information Technology system; \u25cf Leading/managing teams applying productivity practices within agile program management in an information technology (IT) environment using tools such as Jira, Smartsheets, and Confluence to solve complex product issues and to make informed decisions; and \u25cf Coordinating with a development team to communicate the implementation of product development with business stakeholders.",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "125776",
+              "MaximumRange": "197200",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-08-14T00:00:00.0000",
+          "PositionEndDate": "2026-08-31T23:59:59.9970",
+          "PublicationStartDate": "2026-08-14T00:00:00.0000",
+          "ApplicationCloseDate": "2026-08-31T23:59:59.9970",
+          "PositionFormattedDescription": [
+            {
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Hit highlighting for keyword searches."
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "As an IT Product Manager, you will lead collaborative teams on high-visibility, complex, and time-sensitive IT software solution projects. Location of position: GSA, Federal Acquisition Service (FAS), Office of Fleet Management, Fleet Supplier Service Center. The Office of Fleet Management oversees government vehicles and transportation services, including leasing, purchasing, short-term rentals, and telematics.",
+              "WhoMayApply": {
+                "Name": "",
+                "Code": ""
+              },
+              "LowGrade": "14",
+              "HighGrade": "14",
+              "PromotionPotential": "14",
+              "PromotionPotentialAdditionalText": "Grade 14 - GS-14 full performance",
+              "OrganizationCodes": "GS/GS30",
+              "Relocation": "False",
+              "HiringPath": [
+                "fed-internal-search",
+                "fed-transition"
+              ],
+              "HiringPathDisplay": [
+                "Internal to an agency",
+                "Career transition (CTAP, ICTAP, RPL)"
+              ],
+              "MCOTags": [],
+              "TotalOpenings": "1",
+              "AgencyMarketingStatement": "",
+              "TravelCode": "1",
+              "ApplyOnlineUrl": "https://jobs.monstergovt.com/gsa/ros/rosDashboard.hms?O=1&J=112720",
+              "DetailStatusUrl": "https://jobs.monstergovt.com/gsa/ros/rosDashboard.hms?O=1&J=112720&S=1",
+              "MajorDuties": [
+                "Duty Locations: Washington, DC; Boston, MA; New York, NY; Philadelphia, PA; Atlanta, GA; Chicago, IL; Kansas City, MO, Fort Worth, TX; Lakewood, CO; San Francisco, CA; Tacoma, WA; Norfolk, VA; Orlando, FL; Tampa, FL; Houston, TX; San Antonio, TX; Phoenix, AZ; Anchorage, AK; Fairbanks, AK; Fort Walton Beach, FL; Honolulu, HI; Louisville, KY; Baltimore, MD; Overland, MO; Bismarck, ND; Oklahoma City, OK; Dayton, OH; Guaynabo, PR; El Paso, TX; Ogden, UT; Camp Lejeune, NC; Fort Bragg, NC; Hagatna, GU; New Cumberland, PA; Charleston, SC; Richmond, VA; Vandenberg SFB, CA; Fort Benning, GA; Monterey Park, CA; Hartford, CT; Cocoa, FL; Manchester, NH; Chadds Ford, PA; Chesapeake, VA; Springfield, VA; Edison, NJ; Vancouver, WA; San Diego, CA; Los Angeles, CA; Columbia, SC; Spokane, WA; Detroit, MI; Indianapolis, IN. We are currently filling one vacancy, but additional vacancies may be filled as needed. As an IT Product Manager, you will be responsible for performing the following duties: Serves as a product manager for Fleet's software products, developing and executing product vision and strategies that align with organizational goals and customer needs; develops and manages products with users and center user needs in each phase of the product design and development processes. Provides expert technical advice, guidance, and recommendations to management and other technical specialists on critical IT issues; leads cross-functional teams including developers, designers, and business analysts; determines if the product meets need and accepts the developed product on behalf of Fleet. Facilitates requirements gathering sessions and product demonstrations with stakeholders; develops and delivers presentations to senior leadership on product status, risks, and strategic recommendations. Evaluates, analyzes, and assesses emerging industry tools, technologies, and best practices for IT products, solutions, and services to identify and champion opportunities for optimizing, innovating, and strategically advancing agency processes and capabilities. Collaborates with development teams using agile methodology to implement modern development practices; coordinates with other product managers to ensure alignment across Fleet's technology portfolio."
+              ],
+              "Education": "There is no substitution of education for experience for this position.",
+              "Requirements": "If selected, you must meet the following conditions: Current or Former Political Appointees: The Office of Personnel Management (OPM) must authorize employment offers made to current or former political appointees. If you are currently, or have been within the last 5 years, a political Schedule A, Schedule C or Non\u00adCareer SES employee in the Executive Branch, you must disclose this information to the HR Office. Failure to disclose this information could result in disciplinary action including removal from Federal Service. Serve a one year probationary period, if required. Undergo and pass a background investigation (Tier 2 investigation level). Complete a financial disclosure report to verify that no conflict, or an appearance of conflict, exists between your financial interest and this position",
+              "Evaluations": "A panel of Subject Matter Experts (SMEs) will review the application of qualified candidates and assign a score for each of the five required Knowledge, Skills, and Abilities (KSAs) based on the experience documented in the resume and narrative responses. Knowledge of Information Technology (IT) project management principles, methods, and practices, including developing plans and schedules, estimating resource requirements, defining milestones and deliverables, monitoring activities, and evaluating and reporting on accomplishments sufficient to develop and interpret Standard Operating Procedure (SOP), procedures, and strategies governing the planning and delivery of IT product management and related services throughout partner/customer agencies. Skill in applying IT principles, concepts, methods, standards, and practices sufficient to accomplish assignments such as developing and interpreting SOPs, procedures, and strategies governing the planning and delivery of services throughout the agency. Knowledge of and related skill in written and verbal communications sufficient to formulate and present findings, briefings, project papers, status reports, and correspondence to facilitate understanding and acceptance of product management and comparable findings and recommendations. Skill in evaluating program effectiveness, identifying improvement opportunities, and driving the adoption of new tools and methodologies across the federal enterprise. Ability to maintain business relationships with partner agencies and other stakeholders throughout the product development lifecycle; collaborate across boundaries to build strategic relationships, achieve common goals, and resolve sensitive IT issues. Demonstration of these KSAs must be supported by your application. Applicants should also make note of each KSA, as you will be asked to address them later in the application process. Consideration will be given to performance appraisals and incentive awards in merit promotion selection decisions in accordance with 5 CFR 335.103(b)(3). You should list any relevant performance appraisals and incentive awards in your resume so that information will be taken into consideration during the selection process. If selected, you may be required to provide supporting documentation. If you are eligible under the Interagency Career Transition Assistance Plan (ICTAP) or GSA's Career Transition Assistance Plan (CTAP), your resume must clearly demonstrate experience in at least 3 of the 5 required Knowledge, Skills, and Abilities (KSAs) to receive priority consideration. You may preview questions for this vacancy.",
+              "HowToApply": "Submit a complete online application including any required documents prior to 11:59 pm Eastern Time on the closing date of the announcement. You can modify or complete your application any time before the deadline. Simply return to USAJOBS, select the vacancy, and update your application. For more detailed instructions on how to apply, click here: Apply for a GSA Job. If you are having issues applying to this announcement, you should switch to a different browser, network or device. Note: Your firewall may block your transfer from USAJOBS to your GSA application. To begin, click the Apply Online button on the vacancy announcement. Sign in or register on USAJobs and select a resume and documents to include in your application. Resumes exceeding two pages will not be accepted by USAJOBS and will prevent your application from moving forward in the hiring process. Please see Required Documents for additional details. Once you have clicked Apply for this position now, you will be taken to the GSA site to complete the application process. Click the Apply To This Vacancy and complete all steps in the application process until the Confirmation indicates your application is complete. If you click Return to USAJobs or get timed out prior to receiving confirmation, your application will not be submitted and cannot be considered for this job. Note: Review the REQUIRED DOCUMENTS section of this announcement to determine which apply to you and must be submitted online. You may choose one or more of the following options to submit your document(s): Upload (from your computer) or USAJOBS (click the \"USAJOBS\" link to complete the transfer process). Need Assistance? Questions or issues completing an application and/or submitting documentation - contact fedhirehelp@applygovernment.com or 1-866-656-6831 Monday-Friday 7AM - 7PM EST, except for Federal holidays Specific questions on the position - contact the HR representative (Monday-Friday during normal business hours) listed on the announcement, prior to the application deadline You must receive HR approval before deviating from these instructions. Be sure to APPLY EARLY as most assessments must be completed fully and submitted before the announcement closing.",
+              "WhatToExpectNext": "After the closing date/deadline: ELIGIBILITY/QUALIFICATIONS: Your application will be reviewed for all requirements. REFERRAL TO MANAGEMENT: If you meet all the requirements, you may be referred to management for review and a possible interview. SELECTION/TENTATIVE JOB OFFER: If you are selected, you will receive a tentative offer and start the suitability and/or security background investigation process. FINAL JOB OFFER: Once our security office determines you can come on board, you will be given a final offer, which is typically 40 days after the announcement closes. FINAL COMMUNICATION: Once the position is filled, we will notify you of your status. You may also check your application status by logging into USAJOBS and clicking \u201cTrack this Application\u201d on the Applicant Dashboard. Thank you for your interest in working for the U.S. General Services Administration!",
+              "RequiredDocuments": "ALL required documents must be submitted before the closing date. Review the following list to determine what you need to submit. Resume: Must not exceed two pages. Refer to the Qualifications section for resume requirements. Current GSA employees: You must submit a legible copy of your most recent SF-50, Notification of Personnel Action, AND a SF-50 reflecting the highest grade held if different from your recent SF-50. Promotion Consideration: If your most recent SF-50 became effective within the past year, it may not demonstrate that you meet the one-year time-in-grade requirement. In that case, submit additional SF-50(s) (such as promotion, within-grade increase, grade/range increase, or an SF-50 with an effective date more than one year old) that clearly document you meet the time-in-grade requirement. GSA OIG Employees: Submit latest SF 50 (other than award SF 50) If you are CTAP eligible - submit a, b, and c: (a) proof of eligibility including agency notice; (b) SF-50, and (c) most recent performance appraisal. Current or Former Political Appointees: Submit SF-50.",
+              "Benefits": "You will have access to many benefits including: Health insurance (choose from a wide range of plans) Life insurance coverage with several options Sick leave and vacation time, including 11 paid holidays per year Thrift Savings Plan (similar to a 401(k) plan) Transit and child care subsidies Flexible spending accounts Long-term care insurance Training and development",
+              "BenefitsDisplayDefaultText": true,
+              "OtherInformation": "Candidates will not be hired based on their race, sex, color, religion, or national origin. Applicants are encouraged to make their resume searchable in their USAJOBS.gov profile. This will allow Federal hiring specialists and hiring managers across agencies to find their resume as part of agency recruitment campaigns or staffing searches. If you apply to this position and are selected, we will not ask about your criminal history before you receive a conditional job offer. If you believe you were asked about your criminal history improperly, contact the agency or visit GSA's webpage. Relocation-related expenses are not approved and will be your responsibility. On a case-by-case basis, the following incentives may be approved: \u2022 Recruitment incentive if you are new to the federal government \u2022 Relocation incentive if you are a current federal employee \u2022 Credit toward vacation leave if you are new to the federal government Additional vacancies may be filled through this announcement in this or other GSA organizations within the same commuting area as needed; through other means; or not at all.",
+              "KeyRequirements": [
+                "US Citizenship or National (Residents of American Samoa and Swains Island)",
+                "Meet all eligibility criteria within 30 days of the closing date",
+                "Meet time-in-grade within 30 days of the closing date, if applicable",
+                "Register with the Selective Service if you are a male born after 12/31/1959",
+                "Direct Deposit of salary check to financial organization required."
+              ],
+              "WithinArea": "False",
+              "CommuteDistance": "0",
+              "ServiceType": "01",
+              "AnnouncementClosingType": "01",
+              "AgencyContactEmail": "crccvacancyinquiries@gsa.gov",
+              "AgencyContactPhone": "(571) 575-9160",
+              "SecurityClearance": "Not Required",
+              "DrugTestRequired": "False",
+              "PositionSensitivitiy": "Moderate Risk (MR)",
+              "AdjudicationType": [
+                "Credentialing",
+                "Suitability/Fitness"
+              ],
+              "TeleworkEligible": true,
+              "RemoteIndicator": false,
+              "FinancialDisclosure": true,
+              "FinancialDisclosureAdditionalText": "This position requires the submission of an OGE-450 form.",
+              "BargainingUnitStatus": false
+            },
+            "IsRadialSearch": false
+          },
+          "AnnouncementClosingType": "01"
+        },
+        "RelevanceRank": 0
+      }
+    ],
+    "UserArea": {
+      "NumberOfPages": "28",
+      "IsRadialSearch": false
+    }
+  }
+}

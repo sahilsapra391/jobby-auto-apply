@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "jobId": 57194848,
+      "employerId": 387512,
+      "employerName": "Compass Group UK & Ireland Ltd",
+      "employerProfileId": null,
+      "employerProfileName": null,
+      "jobTitle": "Product Owner",
+      "locationName": "Birmingham",
+      "minimumSalary": null,
+      "maximumSalary": null,
+      "currency": null,
+      "expirationDate": "15/09/2026",
+      "date": "04/08/2026",
+      "jobDescription": "Product Owner - Back of house technology Compass Group UK &amp; Ireland Office Base - Birmingham/Hybrid Compass Group UK &amp; Ireland is the leading food and support services provider, delivering high-quality services across sectors including workplace, education, healthcare, and leisure. As part of our digital transformation, we are evolving our product-led operating model and investing in innovative technology to enhance operational efficienc... ",
+      "applications": 20,
+      "jobUrl": "https://www.reed.co.uk/jobs/product-owner/57194848"
+    },
+    {
+      "jobId": 57233786,
+      "employerId": 526270,
+      "employerName": "Ordnance Survey",
+      "employerProfileId": null,
+      "employerProfileName": null,
+      "jobTitle": "Product Manager",
+      "locationName": "Southampton",
+      "minimumSalary": 56755.0,
+      "maximumSalary": 66215.0,
+      "currency": "GBP",
+      "expirationDate": "10/09/2026",
+      "date": "13/08/2026",
+      "jobDescription": "Product Manager\u00a0- Data Products \u00a0Fulltime | 56,755.00\u00a0-\u00a0 66,215.00\u00a0(dependent on experience) \u00a0Hybrid working\u00a0 (50% in OSHQ) Join our dynamic Products team\u00a0 The OS Product team uses market insight to turn OS's world-leading mapping and location capabilities into products and services that delight our customers and deliver our business strategy\u00a0 The Product team defines the vision and strategy for our product portfolios &amp; services, identifying... ",
+      "applications": 6,
+      "jobUrl": "https://www.reed.co.uk/jobs/product-manager/57233786"
+    }
+  ],
+  "ambiguousLocations": [],
+  "totalResults": 6963
+}

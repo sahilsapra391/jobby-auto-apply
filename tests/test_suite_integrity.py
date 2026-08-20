@@ -10,7 +10,8 @@ This happened here: appending a class to the end of a file with `cat >>` put it
 below the main block in three files, hiding 8 tests from direct invocation. The
 totals reported from `discover` were right, which is exactly why nobody noticed.
 
-(The discovery branch carries a similar guard. If both land, keep one.)
+Both branches wrote one of these. This is the one that survived: it also
+catches anything below the main block, not only a class.
 
 Run from the repo root: python3 -m unittest discover -s tests
 """
@@ -39,6 +40,11 @@ class SuiteShapeTests(unittest.TestCase):
             offenders, [],
             "these classes never run when the file is executed directly:\n"
             + "\n".join(offenders))
+
+    def test_the_suite_is_not_empty(self):
+        # Every check in this file is a loop over a glob, and a loop over an
+        # empty glob passes. From the discovery branch's version of this guard.
+        self.assertGreater(len(list(TESTS.glob("test_*.py"))), 15)
 
     def test_the_main_block_is_the_last_thing_in_the_file(self):
         for path in sorted(TESTS.glob("test_*.py")):
