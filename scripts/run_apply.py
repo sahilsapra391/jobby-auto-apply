@@ -214,6 +214,22 @@ Do this and nothing else:
      - NATIVE <select>: `browser_select_option`.
      - MULTI-STEP FORMS: one batch per step, not one batch for the whole wizard.
 
+   EVERY JOB GOES IN, NOT JUST THE LAST ONE. If the form takes employment history
+   and offers "Add another" (or a plus, or "Add work experience"), the whole history
+   goes in, one entry per position. Filling the most recent job and moving on leaves a
+   candidate who looks like he has held one job, and it contradicts the resume attached
+   to the same application. This is not optional and it is not a judgement call.
+
+   ONE call gives you every position, newest first, ready to fill:
+     {py} "{repo}/scripts/experience.py" --app "<Company>" --plan
+   Each entry carries title, company, location, startDate and endDate as {{year, month}},
+   isCurrent, and the description tailored to THIS posting. Add blocks until you have
+   used all of them. The dates come from the profile, so they are the real months, not
+   the years the resume prints.
+
+   If the form caps the number of entries, fill them newest first until it stops you and
+   say in your report which were left out. If it takes only one, that one is the newest.
+
    WORK HISTORY DESCRIPTION BOXES. A form that asks for employment history usually puts a
    free-text box under each entry: Description, Responsibilities, Summary, "what did you do
    in this role". If that box exists, it gets filled. An empty one is the worst outcome

@@ -17,6 +17,7 @@ Design notes:
 import argparse
 import json
 import os
+import re
 import tempfile
 import sys
 import uuid
@@ -291,6 +292,15 @@ TOPIC_MARKERS = [
         "where did you find this role", "referral source",
         "how were you referred", "source of application",
     )),
+    ("compensation-breakup-india", (
+        "compensation breakup", "compensation break-up", "ctc breakup",
+        "ctc break-up", "salary breakup", "salary break-up",
+        "fixed, variable", "fixed variable and esop", "esops", "esop",
+    )),
+    ("lgbtq-self-identification", (
+        "lgbtq", "lgbtqia", "lgbt community", "lesbian, gay",
+        "gay, bisexual", "transgender community", "transgender (lgbt",
+    )),
     ("relationships-conflicts", (
         "close associate", "conflict of interest", "conflicts of interest",
         "related to, by birth", "related by birth", "birth, adoption or marriage",
@@ -299,8 +309,42 @@ TOPIC_MARKERS = [
 ]
 
 
+# A "rate yourself 1 to 10" question is answered per skill, not per topic. The
+# same sentence with a different noun is a different question, and one answer
+# for all of them is how Python gets rated with Excel's number: measured, a
+# Python rating fuzzy-matched the Excel entry at 0.67. An unknown skill returns
+# nothing on purpose, so the run asks rather than guesses.
+SKILL_RATINGS = {
+    "sql": "9",
+    "excel": "10",
+}
+RATING_SHAPE = re.compile(
+    r"(rate|rating|scale|proficiency|how would you rate|skill level)", re.I)
+RATING_RANGE = re.compile(r"\b1\s*(?:to|-|–|through)\s*10\b|\b10\b.*\bhighest\b", re.I)
+
+
+def skill_rating(question):
+    """The user's standing self-rating for the skill named, or None."""
+    text = (question or "").lower()
+    if not (RATING_SHAPE.search(text) and RATING_RANGE.search(text)):
+        return None
+    named = [skill for skill in SKILL_RATINGS if re.search(r"\b" + skill + r"\b", text)]
+    if len(named) != 1:
+        # Nothing recognised, or two skills in one question. Either way this is
+        # not something to answer from a table.
+        return None
+    skill = named[0]
+    return {"match": "topic", "topic": f"skill-rating-{skill}",
+            "answer": SKILL_RATINGS[skill], "question": question,
+            "state": "confirmed",
+            "note": f"standing self-rating for {skill}, any wording of a 1-10 scale"}
+
+
 def topic_answer(answers, question):
     """A standing answer recognised by a distinctive phrase, or None."""
+    rated = skill_rating(question)
+    if rated:
+        return rated
     text = (question or "").lower()
     for topic, markers in TOPIC_MARKERS:
         if not any(m in text for m in markers):

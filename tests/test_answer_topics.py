@@ -230,5 +230,42 @@ class SignatureAndCertificationTests(unittest.TestCase):
         self.assertNotEqual(out.get("value"), "No")
 
 
+
+
+class SkillRatingTests(unittest.TestCase):
+    """A 1-to-10 self-rating is answered per skill, never per topic.
+
+    The same sentence with a different noun is a different question. Measured
+    before this existed: a Python rating fuzzy-matched the stored Excel entry at
+    0.67, which is the shape of an answer that would have been wrong rather than
+    missing. An unrecognised skill returns nothing so the run asks.
+    """
+
+    def rating(self, question):
+        found = store.skill_rating(question)
+        return found["answer"] if found else None
+
+    def test_the_users_wording_resolves(self):
+        self.assertEqual(self.rating("Rate yourself on SQL? 1 to 10-Highest"), "9")
+        self.assertEqual(self.rating("Rate yourself on Excel? 1 to 10-Highest"), "10")
+
+    def test_other_wordings_of_the_same_question_resolve(self):
+        self.assertEqual(self.rating("Rate your SQL skills from 1 to 10"), "9")
+        self.assertEqual(
+            self.rating("On a scale of 1-10, how would you rate your Excel proficiency?"),
+            "10")
+
+    def test_an_unknown_skill_gets_no_answer(self):
+        self.assertIsNone(self.rating("Rate yourself on Python? 1 to 10"))
+        self.assertIsNone(self.rating("Rate yourself on Kubernetes, 1 to 10"))
+
+    def test_two_skills_in_one_question_get_no_answer(self):
+        self.assertIsNone(self.rating("Rate your SQL and Excel skills 1 to 10"))
+
+    def test_a_question_that_is_not_a_rating_gets_no_answer(self):
+        self.assertIsNone(self.rating("How many years of SQL have you used?"))
+        self.assertIsNone(self.rating("Do you know Excel?"))
+
+
 if __name__ == "__main__":
     unittest.main()

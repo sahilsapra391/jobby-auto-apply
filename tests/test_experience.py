@@ -159,5 +159,77 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(experience.render(bare), "")
 
 
+class PlanTests(unittest.TestCase):
+    """Every position, not just the newest.
+
+    Forms that take employment history almost always let you add another entry,
+    and runs were filling the first and moving on. That leaves a candidate who
+    looks like he has held one job, next to an attached resume listing six.
+    """
+
+    HISTORY = [
+        {"title": "Technical Product Manager & Business Analyst II",
+         "company": "CAMP Systems International Inc.", "city": "Charlotte, NC",
+         "start": "2025-08", "end": "2026-06-06"},
+        {"title": "Product Manager & Business Analyst",
+         "company": "CAMP Systems International Inc.", "city": "Charlotte, NC",
+         "start": "2024-05", "end": "2025-08"},
+    ]
+
+    def plan_with(self, history):
+        original = experience.work_history
+        experience.work_history = lambda root=None: history
+        try:
+            return experience.plan(RESUME)
+        finally:
+            experience.work_history = original
+
+    def plan(self):
+        return self.plan_with(self.HISTORY)
+
+    def test_every_role_in_the_resume_becomes_a_position(self):
+        # Three in the fixture, including the one with no profile entry.
+        self.assertEqual(len(self.plan()), 3)
+
+    def test_positions_come_back_newest_first(self):
+        starts = [(p["startDate"] or {}).get("text") or "" for p in self.plan()]
+        self.assertEqual(starts, sorted(starts, reverse=True))
+        self.assertEqual([p["order"] for p in self.plan()], [1, 2, 3])
+
+    def test_dates_are_month_level_from_the_profile_not_years_from_the_resume(self):
+        senior = [p for p in self.plan()
+                  if p["title"].startswith("Technical Product Manager")][0]
+        self.assertEqual(senior["startDate"],
+                         {"year": 2025, "month": 8, "text": "2025-08"})
+        self.assertEqual(senior["endDate"],
+                         {"year": 2026, "month": 6, "text": "2026-06"})
+        self.assertTrue(senior["datesFromProfile"])
+
+    def test_a_job_with_no_end_date_is_marked_current(self):
+        history = [dict(self.HISTORY[0], end=None), self.HISTORY[1]]
+        current = [p for p in self.plan_with(history)
+                   if p["title"].startswith("Technical Product Manager")][0]
+        self.assertTrue(current["isCurrent"])
+        self.assertIsNone(current["endDate"])
+
+    def test_a_role_with_no_profile_entry_is_still_offered(self):
+        # The compressed "Additional Experience" entry. Dropping it would be the
+        # bug this whole command exists to fix, one entry smaller.
+        intern = [p for p in self.plan() if p["title"] == "Summer Intern"]
+        self.assertEqual(len(intern), 1)
+        self.assertFalse(intern[0]["datesFromProfile"])
+
+    def test_each_position_carries_its_own_description(self):
+        descriptions = [p["description"] for p in self.plan() if p["description"]]
+        self.assertGreater(len(descriptions), 1)
+        self.assertEqual(len(set(descriptions)), len(descriptions),
+                         "two positions must not share a description")
+
+    def test_the_location_comes_from_the_profile(self):
+        for position in self.plan():
+            if position["datesFromProfile"]:
+                self.assertEqual(position["location"], "Charlotte, NC")
+
+
 if __name__ == "__main__":
     unittest.main()
