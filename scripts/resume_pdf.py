@@ -308,11 +308,15 @@ def cmd_verify(args):
             # is, and a page break can only land between lines. Demanding it
             # match within 2pt asks a quantity that advances in ~12pt steps to
             # hit a 4pt window, which a rebuild cannot do on purpose: across 84
-            # real runs it produced 112 bottom failures, not one of which was
-            # text leaving the page, and agents re-rendered up to 13 times
-            # trimming blindly at it. One line of slack is the honest tolerance.
-            # A page genuinely half empty still fails, because that is several
-            # lines, not one.
+            # real runs it produced 165 bottom failures and agents re-rendered
+            # up to 13 times trimming blindly at it. One line of slack is the
+            # honest tolerance.
+            #
+            # It still catches what matters. 48 of those 165 had the built page
+            # reaching past the bottom edge, and every one exceeds a line's
+            # slack as well as tripping the absolute check above. Of the 85 that
+            # now pass, the largest gap is 12.8pt, under one line. A page
+            # genuinely half empty is several lines and still fails.
             tolerance = LINE if edge == "bottom" else 2
             if abs(a[edge] - b[edge]) > tolerance:
                 diffs.append(f"page {i+1} {edge}: source {a[edge]}pt, built {b[edge]}pt")
