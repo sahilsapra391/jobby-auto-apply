@@ -691,7 +691,22 @@ remembers to run is how it drifts.
   everything.
 - **Adzuna sightings cannot be URL-matched to the employer's posting.** Its
   redirect carries no origin link, so those copies merge on company, title and
-  country, or on the description fingerprint, or not at all.
+  country, or on the description fingerprint, or not at all. Measured on a
+  12,802-job pool: 2,539 of 2,592 Adzuna-only records are from employers who
+  appear nowhere as an ATS listing, so the channel is overwhelmingly additive
+  rather than duplicative. 38 records (1.5%) look like the same requisition as
+  an ATS listing already held.
+- **The fingerprint veto misfires when one description is a truncation of the
+  other.** Of those 38, the 15 whose company, title and country all match
+  exactly were each stopped from merging by the veto — and their bodies are the
+  same text at different lengths, 500 characters against 1,500, giving a Hamming
+  distance of 26 to 32 purely from truncation. The veto's premise is that
+  far-apart fingerprints mean different jobs; a prefix breaks it. 15 of 5,567
+  ATS records, so 0.27%, and the effect is a duplicate card rather than a lost
+  one. The fix is to store the description length and skip the veto when the
+  two bodies differ in length by more than a set ratio, falling back to the
+  conservative merge — deliberately not done here, because changing merge
+  behaviour after a re-review means the merge behaviour is unreviewed.
 - **Country is unknown for most remote-feed postings.** "Remote — US only" is a
   restriction rather than a location, so those jobs bucket as `remote` and their
   country stays null rather than being guessed.

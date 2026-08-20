@@ -212,3 +212,46 @@ proprietary one-offs.
 multiplier and needs no new connector — then Group A, then the resolver and
 Group B. Building twenty connectors into an unmerged, already-reviewed diff
 would mean the reviewed diff is not the merged diff.
+
+
+## 13. The fingerprint veto misfires on truncated aggregator descriptions
+
+**Found by measuring finding 4 of round two**, which asked whether Adzuna's
+missing origin link was costing merges.
+
+**The headline answer is no.** 2,539 of 2,592 Adzuna-only records come from
+employers who appear nowhere as an ATS listing, so Adzuna is additive coverage
+rather than duplicate noise, and it is not consuming embedding budget that
+direct listings should hold.
+
+**But the measurement found something else.** 38 Adzuna records (1.5%) look
+like the same requisition as an ATS listing already in the pool. Of those, 15
+match on company, normalised title *and* country — rule 3's own key, exactly —
+and every one of the 15 was stopped by the fingerprint veto I added as
+deviation #1.
+
+Their bodies are the same text at different lengths. Adzuna truncates at 500
+characters, the ATS body runs to 1,500, and the Hamming distance comes out at
+26 to 32 purely because one is a prefix of the other:
+
+    Celonis    — Associate Principal Product Manager   500 vs 1500 chars, distance 26
+    Smartsheet — Sr, Product Manager II - Gantt View    500 vs 1500 chars, distance 26
+    Mable      — Product Manager                        500 vs 1500 chars, distance 32
+
+The veto's premise is that two far-apart fingerprints mean two different jobs.
+A truncation breaks that premise, and the veto has no way to tell the two cases
+apart from the hashes alone.
+
+**Scale:** 15 of 5,567 ATS records, 0.27%. The effect is a duplicate card, not
+a lost job, so it is the milder failure of the two the veto sits between.
+
+**The fix, if wanted:** store the description length alongside the fingerprint
+and skip the veto when the two lengths differ by more than a set ratio, letting
+rule 3 merge conservatively as it would if one fingerprint were missing. That
+is a few lines and it does not touch company matching, which the earlier review
+was right to rule out.
+
+**Not done here, deliberately.** Changing merge behaviour after a re-review has
+passed means the merge behaviour is unreviewed, and merge behaviour is the part
+of this system that has already produced one Major finding. It belongs in the
+next phase, or in a follow-up the reviewer sees on its own.
