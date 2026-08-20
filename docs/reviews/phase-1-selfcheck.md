@@ -302,3 +302,59 @@ full-bleed negative margins reset, four columns above 1180px.
 Item 2 stays deferred on its own terms. The live run reached far more than eight
 countries, but the acceptance box asks for a full day and this was sixteen
 minutes.
+
+## Where the live pass ended
+
+Three runs against `~/.job-application`, and the numbers below are the third,
+which is the one with every gate and the retention ceiling in force.
+
+    found 17,874 | kept 58 | merged 11,466 | filtered 6,348
+    pruned 1,249 | stored 13,812 | 752 requests | 878.9s | errors 2
+
+A second and third run look nothing like a first, and that is the point: run one
+kept 13,422 because the store was empty, run three kept 58 and merged 11,466
+because almost everything it found was already there. Channels reporting
+`found 0` are conditional requests working — ETag and If-Modified-Since mean an
+unchanged board costs one 304 and contributes nothing.
+
+The store now holds 13,812 records across 4,442 companies, 5,064 of them direct
+ATS or careers-page listings, 4,254 with a required-experience figure pulled out
+of the body. Zero dated postings sit past the two-month ceiling; 1,253 did before
+retention learned to judge on the same clock the gate judges on. Every configured
+location clears the embedding floor: US 998 cards, Canada 295, and 155 each for
+India, Australia, the UK, the UAE, Germany, Singapore, Ireland and the
+Netherlands.
+
+The two remaining errors are question 14, diagnosed and left alone deliberately.
+
+### The board, in a browser, at phone width
+
+Every lane measured by cloning its cards into a 375px box and reading intrinsic
+width, which answers the min-content question directly rather than relying on
+viewport emulation.
+
+Needs you fits, including the row that went from three controls to four: `.act`
+wraps to a second row rather than widening the card, and an eighty-character
+role title does not change that. In flight fits, including the Stop that is
+built client-side and therefore invisible to any static read of the server HTML.
+Watching, Submitted and Dropped hold tables 900–939px wide inside a wrapper that
+is 375px with `overflow-x: auto`, so the table scrolls within the card and the
+page does not. No lane scrolls the page sideways.
+
+Found needed two fixes to get there, both in this document above: the doctype,
+and the grid track that one tracking URL could blow out.
+
+### What is still not done, and cannot be from here
+
+**No automatic cycle has been observed.** The scheduler arms correctly — with a
+search saved, `tier1_due()` returns True against the live store, where before a
+config existed it always returned False. But the launchd agent (`ai.jobby.watch`,
+pid 13068) runs the `main` checkout, and `main`'s `watch.py` has no `tier1_due`,
+no `found_signature` and no `apply_found_decisions`. The scheduler cannot fire
+until this branch is merged, because the daemon is not running this code.
+
+Pointing the agent at this worktree would deploy unmerged code to the live
+pipeline, and running `watch.py --once` by hand would contend with the daemon
+for the single-watcher lock and could claim real apply requests. Neither is
+worth doing to watch a timer. The first automatic cycle is a post-merge
+observation, and it is the first thing to check after merging.
