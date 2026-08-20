@@ -255,3 +255,58 @@ was right to rule out.
 passed means the merge behaviour is unreviewed, and merge behaviour is the part
 of this system that has already produced one Major finding. It belongs in the
 next phase, or in a follow-up the reviewer sees on its own.
+
+## 14. The id is fixed at first sight; the fingerprint that derived it is not
+
+Found on live data, measured, and deliberately not fixed. Handing it over rather
+than changing identity resolution after the review passed it.
+
+Two jobs per run now come back as errors:
+
+    refusing to merge d5b21b33a586845b: the matcher declined to match this job,
+    so folding it onto an existing record would lose one of them
+
+That is `upsert` refusing, correctly. The question is why it is asked to.
+
+`resolve()` guarantees that an unmatched job never comes back with an id that is
+already taken, and where the plain identity collides it discriminates with the
+description fingerprint. Its docstring argues that a collision always has a
+fingerprint available, because rule 3 only declines through the fingerprint veto
+and the veto needs both fingerprints known. That argument is sound for the
+moment the id is assigned. It does not hold afterwards.
+
+A record's fields are refreshed on every re-sighting. `descFingerprint` is one
+of them. The body a board serves is not byte-identical between fetches, so the
+fingerprint moves, and the id — assigned once, at first sight — stops deriving
+from the record that wears it. 96 of 13,812 live records (0.70%) now carry an id
+that derives from neither their plain identity nor their current fingerprint. 44
+of those have a single sighting, so no merge rewrote them: they were simply
+re-seen (`firstSeenAt` 16:26, `lastSeenAt` 17:34) and updated in place.
+
+The consequence is the error above. On a later run the incoming posting derives
+the *new* discriminated id, that id belongs to a different record, the matcher
+declines, and `upsert` refuses rather than folding two jobs into one. The refusal
+is the right call: it loses one posting instead of silently merging two. But the
+posting is lost, and the run reports an error for something no operator can act
+on.
+
+Measured cost: 2 of 17,874 postings found, 0.011% per run. Both were Careerjet.
+
+Three ways out, none of them taken here:
+
+1. **Freeze the fingerprint at first sight.** Keep `descFingerprint` as the
+   value the id was derived from and store later ones separately. Smallest
+   change, and it makes the docstring's argument true again. It also means the
+   veto compares against a possibly staler body.
+2. **Have `resolve` check the discriminated id too**, and fall back to the
+   canonical URL, which is unique per posting and always present. Removes the
+   last collision, at the cost of an id that moves when a URL does.
+3. **Accept it and stop reporting it as an error.** Two lost postings a run out
+   of eighteen thousand is inside the noise of what the aggregators duplicate
+   anyway, but a channel-level `error` that nobody can act on trains people to
+   ignore the error list, which is worse than the loss.
+
+I would take (1), then (3) for whatever remains. Not doing it here: this is the
+identity core, the review has passed it once, and changing merge behaviour after
+a re-review means the merge behaviour is unreviewed. Same reasoning as the
+fingerprint-veto misfire in item 9.
