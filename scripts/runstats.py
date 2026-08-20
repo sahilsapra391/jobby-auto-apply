@@ -63,10 +63,18 @@ def parse_runs(since=None):
         text = f.read_text(errors="replace")
         if RUN_MARKER not in text:
             continue
-        # The marker has to be the transcript's OPENING message. A development
-        # session that merely reads run_apply.py contains the prompt too, and
-        # counting one of those as a run puts a multi-hour "application" into
-        # the medians.
+        # The marker has to be the transcript's OPENING message, and this is
+        # stricter than it looks on purpose. Do not relax it to "contains the
+        # marker anywhere".
+        #
+        # The prompt run_apply.py sends is a string inside run_apply.py. Any
+        # session that reads that file, greps it, or reviews a diff touching it
+        # has the marker in its transcript. Those sessions run for hours and
+        # make hundreds of tool calls, so counting one as an application does
+        # not add noise, it moves the median: including a single one of them
+        # took this sample from 94 runs to 95 and the browser share from 45.5%
+        # to 39%, which would have made a before-and-after comparison mean
+        # nothing.
         if not opens_with_the_runner_prompt(text):
             continue
         found = AID.search(text)
