@@ -506,6 +506,24 @@ def cmd_meta_set(args):
     return {args.key: args.value}
 
 
+def cmd_meta_set_json(args):
+    """A structured meta value, for things that are not one string.
+
+    `meta-set` takes --value, so anything with shape had to be squeezed through
+    a JSON string and squeezed back out by every reader. lastIngest is an object
+    with per-channel counts inside it, and meta.json has one owner for the same
+    reason it always did: two writers on one file is how a read-modify-write
+    loses somebody's key.
+    """
+    value = load_input(args.input)
+    path = paths(root_dir(args.root))["meta"]
+    meta = read_json(path, {})
+    meta[args.key] = value
+    meta["updatedAt"] = now()
+    write_private(path, meta)
+    return {args.key: value}
+
+
 def cmd_meta_get(args):
     meta = read_json(paths(root_dir(args.root))["meta"], {})
     if args.key:
@@ -537,6 +555,7 @@ COMMANDS = {
     "roles-list": cmd_roles_list,
     "role-put": cmd_role_put,
     "meta-set": cmd_meta_set,
+    "meta-set-json": cmd_meta_set_json,
     "meta-get": cmd_meta_get,
 }
 
@@ -561,6 +580,7 @@ def build_parser():
         sp = sub.add_parser(name); sp.add_argument("--id", required=True)
     sub.add_parser("session-list")
     sp = sub.add_parser("meta-set"); sp.add_argument("--key", required=True); sp.add_argument("--value", required=True)
+    sp = sub.add_parser("meta-set-json"); sp.add_argument("--key", required=True); sp.add_argument("--input", required=True)
     sp = sub.add_parser("meta-get"); sp.add_argument("--key")
     return p
 
