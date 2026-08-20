@@ -88,6 +88,14 @@ def keywords(text, limit=60):
     return out
 
 
+def default_facts():
+    """The story bank in the store, if there is one."""
+    import os
+    root = os.environ.get("JOB_APPLICATION_DIR", "~/.job-application")
+    path = Path(root).expanduser() / "story-facts.txt"
+    return path if path.exists() else None
+
+
 def document_text(path):
     """Text of a tailored resume, from the PDF or from the HTML it renders from.
 
@@ -296,7 +304,13 @@ def main():
                                      "while iterating on wording; check the PDF once at "
                                      "the end.")
     ap.add_argument("--base", required=True, help="base resume PDF, the source of truth")
-    ap.add_argument("--facts", help="optional text file of confirmed story facts")
+    ap.add_argument("--facts", help="text file of confirmed story facts. Defaults to "
+                                    "the store's story-facts.txt, which is a sanctioned "
+                                    "source for a claim; without it the gate reports "
+                                    "terms as unsourced that are not.")
+    ap.add_argument("--no-facts", action="store_true",
+                    help="ignore the story bank. For checking what the base resume "
+                         "alone supports, not for clearing a document to upload.")
     ap.add_argument("--limit", type=int, default=60, help="how many JD keywords to score")
     ap.add_argument("--suggest", action="store_true",
                     help="before writing: which posting terms the base resume already "
@@ -310,7 +324,17 @@ def main():
     # --suggest runs BEFORE the tailored resume exists; that is the point of it.
     tailored_text = document_text(args.resume) if args.resume else ""
     base_text = pdf_text(args.base)
-    facts_text = Path(args.facts).expanduser().read_text(encoding="utf-8", errors="replace") if args.facts else ""
+    # The story bank is a sanctioned source for a claim, alongside the base
+    # resume and the answer store, so a run that omits it gets told terms are
+    # unsourced when they are not. Measured across nine applications where the
+    # posting was still on disk: without it, 8 of 9 reported a non-empty
+    # unsourcedTerms list; with it, none did. A gate that cries wolf is a gate
+    # people learn to ship past, which is worse than not having one. So it
+    # loads by default and only an explicit --no-facts turns it off.
+    facts_path = Path(args.facts).expanduser() if args.facts else default_facts()
+    facts_text = ""
+    if facts_path and not args.no_facts and facts_path.exists():
+        facts_text = facts_path.read_text(encoding="utf-8", errors="replace")
 
     kws = keywords(jd, args.limit)
     tail_tok = tokens(tailored_text)
