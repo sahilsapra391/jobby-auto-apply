@@ -25,14 +25,37 @@ role category, employment type — so those filters exist and honestly filter th
 
 import html
 import json
+import sys
+from pathlib import Path
 
-# Eight hundred is the agreed embedded cap. The stored pool is 3,000; the rest
-# stays on disk and the footer says so.
-EMBED_CAP = 800
-# Full excerpts would be 1.2 MB at the cap for text nobody reads until they
-# open Details. This is enough to see what the role is.
-EMBED_EXCERPT_CHARS = 400
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import match_score  # noqa: E402
+import search_config  # noqa: E402
+
+# How many jobs travel to the browser.
+#
+# Chosen from a measurement, not a preference. At the real record shape the
+# payload costs 857 bytes a job once the weights are hoisted out, the rubric
+# explanations are interned and the duplicated excerpt is dropped — down from
+# 1,576. Measured on a real 12,855-job pool, the whole rendered board comes to
+# 3.12 MB at 3,400 and 3.47 MB at 3,800; 3,400 is the largest that leaves real
+# margin under the 4 MB target rather than grazing it. Do not raise this past
+# what has been measured.
+EMBED_CAP = 3400
+# One slice of the description, used by the card and by Details. It used to be
+# two overlapping slices of the same text.
+EMBED_EXCERPT_CHARS = 320
 MAX_TAGS = 6
+
+# The share of the budget reserved for per-region floors. The rest is spent
+# globally, so dense regions still dominate — they just cannot take everything.
+RESERVED_SHARE = 0.55
+
+# Fixed order, so a score breakdown can travel as an array instead of five
+# repeated key names on every job.
+COMPONENTS = ("title", "experience", "location", "keywords", "freshness")
+# Identical on every job, so it travels once.
+MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
                 ("14d", "14 days"), ("30d", "30 days"), ("all", "Any time")]
@@ -65,60 +88,69 @@ def safe_url(url):
     return text if text.startswith(("https://", "http://")) else ""
 
 
-def compact(job):
-    """One job, trimmed to what a card and its Details panel actually show."""
+def compact(job, why_table):
+    """One job, trimmed to what a card and its Details panel actually show.
+
+    Deliberately terse. The weights are identical on every job and are hoisted
+    out; the rubric's explanations repeat a handful of sentences across
+    thousands of records and are interned into a shared table; the score
+    breakdown rides as an array in a fixed component order rather than five
+    repeated key names. Together that is roughly a third of the payload.
+    """
     score = job.get("score") or {}
     location = job.get("location") or {}
     sightings = []
     for source in (job.get("sources") or []):
         link = safe_url(source.get("url"))
         if link:
-            sightings.append({"s": source.get("source") or "", "u": link})
+            sightings.append({"s": SOURCE_LABELS.get(source.get("source") or "",
+                                                     (source.get("source") or "").title()),
+                              "u": link})
     extracted = job.get("extracted") or {}
+    parts = score.get("parts") or {}
+    why = score.get("why") or {}
     return {
-        "place": place(job),
-        # 0 = the company's own ATS, 1 = its careers page, 2+ = somebody
-        # else's copy. Applying through the employer's own system beats
-        # applying through a redirect, so the lane leads with these.
-        "rank": direct_rank(job),
         "id": job.get("id"),
+        "place": place(job),
+        "rank": direct_rank(job),
         "co": job.get("company") or "",
         "ti": tidy_title(job.get("title")),
         "url": safe_url(job.get("canonicalUrl")),
         "src": SOURCE_LABELS.get(job.get("canonicalSource") or "",
                                  (job.get("canonicalSource") or "").title()),
-        "loc": location.get("raw") or "",
         "cty": location.get("country") or "",
         "wp": WORKPLACE_LABELS.get(job.get("workplace") or "", ""),
         "pa": (job.get("postedAt") or "")[:10],
         "fs": (job.get("firstSeenAt") or "")[:10],
         "sc": score.get("total"),
-        "pt": score.get("parts") or {},
-        "wt": score.get("weights") or {},
-        "wy": score.get("why") or {},
+        "pt": [parts.get(name, 0) for name in COMPONENTS],
+        "wy": [why_table.intern(why.get(name, "")) for name in COMPONENTS],
         "un": score.get("unknowns") or [],
         "ga": [g.get("label") for g in (score.get("gates") or []) if g.get("label")],
-        # Boards, not sightings. One aggregator listing the same job twice is
-        # one board, and Adzuna does exactly that — two adzuna.it URLs for one
-        # posting came out of the supervised run. "Seen on 2 boards" has to
-        # mean two boards or it means nothing.
         "bd": len({s.get("source") for s in (job.get("sources") or []) if s.get("source")}),
-        "sg": [dict(s, s=SOURCE_LABELS.get(s["s"], s["s"].title())) for s in sightings],
+        "sg": sightings,
         "tg": [tidy_tag(t) for t in (job.get("tags") or [])[:MAX_TAGS] if tidy_tag(t)],
-        "ex": (job.get("descriptionExcerpt") or "")[:EMBED_EXCERPT_CHARS],
-        # The floor the posting demands: that is what a screen rejects on, and
-        # what "up to N years" in the filter bar has to compare against.
+        "sum": " ".join((job.get("descriptionExcerpt") or "").split())[:EMBED_EXCERPT_CHARS],
         "yr": extracted.get("yearsMin") if extracted.get("yearsMin") is not None
               else extracted.get("yearsMax"),
         "yrt": extracted.get("yearsText"),
-        "dg": extracted.get("degree"),
-        "rc": extracted.get("roleCategory"),
-        "et": extracted.get("employmentType"),
         "sal": job.get("salary"),
-        # One line of the posting itself, so a card says something about the
-        # job rather than only about its metadata.
-        "sum": " ".join((job.get("descriptionExcerpt") or "").split())[:150],
     }
+
+
+class WhyTable:
+    """Interns the rubric's explanations, which repeat across thousands of jobs."""
+
+    def __init__(self):
+        self.strings = []
+        self._index = {}
+
+    def intern(self, text):
+        text = str(text or "")
+        if text not in self._index:
+            self._index[text] = len(self.strings)
+            self.strings.append(text)
+        return self._index[text]
 
 
 # Codes are for filtering; a card says the name. Only the countries the region
@@ -288,26 +320,158 @@ def tidy_tag(tag):
 
 
 def sort_key(job):
+    """What survives the cut, in the order canonicity is already ranked.
+
+    Direct listings first, then match, then recency — the same key
+    `keep_priority` uses for retention, for the same reason: a posting you can
+    apply to through the employer's own form beats a redirect to it.
+    """
     score = (job.get("score") or {}).get("total")
-    return (score if isinstance(score, (int, float)) else -1,
-            job.get("postedAt") or job.get("firstSeenAt") or "")
+    return (0 if direct_rank(job) <= 1 else 1,
+            -(score if isinstance(score, (int, float)) else -1),
+            "" if not (job.get("postedAt") or job.get("firstSeenAt")) else
+            _invert(job.get("postedAt") or job.get("firstSeenAt")))
 
 
-def select(jobs):
-    """(embedded, total) — the highest-scoring `EMBED_CAP`, newest breaking ties."""
+def _invert(stamp):
+    """Descending date inside an ascending sort, without a second pass."""
+    return "".join(chr(0x10FFFD - ord(c)) if ord(c) < 0x10FFFD else c for c in str(stamp)[:10])
+
+
+def bucket_of(job, buckets):
+    """Which selected location this job answers, or `other`.
+
+    Exclusive by design: a job counts once, so the floors partition the budget
+    rather than overlapping. Explicit countries win over a region pack that
+    happens to contain them, because someone who typed "IN" meant India rather
+    than whichever pack India also falls inside.
+    """
+    country = str((job.get("location") or {}).get("country") or "").upper()
+    if country:
+        for key, countries in buckets:
+            if key.startswith("country:") and country in countries:
+                return key
+        for key, countries in buckets:
+            if key.startswith("pack:") and country in countries:
+                return key
+    if str(job.get("workplace") or "").lower() == "remote":
+        for key, _ in buckets:
+            if key == "remote":
+                return key
+    return "other"
+
+
+def selection_buckets(config):
+    """(key, countries) for every location the saved search names.
+
+    The unit is a config *entry*, not an expanded country: `{"regionPack":"EU"}`
+    is one bucket covering thirty-two countries rather than thirty-two buckets
+    competing with the United States for the same budget.
+    """
+    config = config or {}
+    out = []
+    for entry in config.get("locations") or []:
+        if entry.get("regionPack"):
+            pack = entry["regionPack"]
+            out.append((f"pack:{pack}", set(search_config.REGION_PACKS.get(pack, []))))
+        elif entry.get("country"):
+            out.append((f"country:{entry['country']}", {entry["country"]}))
+    if config.get("includeRemoteForSelection", True):
+        out.append(("remote", set()))
+    out.append(("other", set()))
+    return out
+
+
+def select(jobs, config=None, cap=None):
+    """(embedded, total) — the pool, cut so every selected region is present.
+
+    A straight top-N by score gives each region a slice proportional to how
+    dense it is, and one dense region takes almost everything: measured on a
+    12,003-job pool, a filter for Japan reached 46 of 760 and India 154 of
+    2,449. Someone filtering for Japan saw 46 results with no way to know 714
+    more were on disk.
+
+    So the budget is spent in two passes. Each location the saved search names
+    gets a guaranteed floor, filled from its own best; whatever is left — plus
+    any floor a thin region could not use — is then spent globally on the same
+    ordering. Dense regions still dominate. They just cannot take everything.
+    """
+    # Resolved here rather than as a default argument, which would bind the
+    # constant once at import and quietly ignore any later change to it.
+    cap = EMBED_CAP if cap is None else cap
     found = [job for job in (jobs or {}).values() if job.get("state") == "new"]
-    found.sort(key=sort_key, reverse=True)
-    return found[:EMBED_CAP], len(found)
+    found.sort(key=sort_key)
+    total = len(found)
+    if total <= cap:
+        return found, total
+
+    buckets = selection_buckets(config)
+    if not buckets:
+        return found[:cap], total
+
+    by_bucket = {key: [] for key, _ in buckets}
+    for job in found:                                   # already in priority order
+        by_bucket[bucket_of(job, buckets)].append(job)
+
+    floor = int(cap * RESERVED_SHARE) // max(1, len(buckets))
+    picked, seen = [], set()
+    for key, _ in buckets:
+        for job in by_bucket[key][:floor]:
+            picked.append(job)
+            seen.add(job["id"])
+
+    for job in found:                                   # the remainder, globally
+        if len(picked) >= cap:
+            break
+        if job["id"] not in seen:
+            picked.append(job)
+            seen.add(job["id"])
+
+    picked.sort(key=sort_key)
+    return picked[:cap], total
 
 
-def payload(jobs):
-    """The JSON blob, escaped so no posting can close the script element.
+def pool_census(jobs):
+    """How many unacted-on jobs the pool holds per country, and remote.
+
+    A few hundred bytes that let the page say something true: the client can
+    total the pool for whichever countries the user has selected, instead of
+    only ever quoting one global number that is not about their filter.
+    """
+    counts = {}
+    remote = 0
+    for job in (jobs or {}).values():
+        if job.get("state") != "new":
+            continue
+        code = str((job.get("location") or {}).get("country") or "").upper() or "??"
+        counts[code] = counts.get(code, 0) + 1
+        if str(job.get("workplace") or "").lower() == "remote":
+            remote += 1
+    counts["__remote"] = remote
+    return counts
+
+
+def payload(jobs, census=None, total=None):
+    """The JSON document, escaped so no posting can close the script element.
 
     `</` is the only sequence that can terminate a script element from inside a
     string, and a job title is untrusted text off the open internet.
+
+    Three things ride outside the job list because they are identical or nearly
+    identical across every record: the rubric weights, the component order, and
+    the interned explanations. Together they were about a third of the payload.
     """
-    blob = json.dumps([compact(job) for job in jobs], separators=(",", ":"),
-                      ensure_ascii=False)
+    table = WhyTable()
+    rows = [compact(job, table) for job in jobs]
+    document = {
+        "w": [MATCH_WEIGHTS.get(name, 0) for name in COMPONENTS],
+        "c": list(COMPONENTS),
+        "y": table.strings,
+        "n": census or {},
+        "t": total if total is not None else len(rows),
+        "j": rows,
+    }
+    blob = json.dumps(document, separators=(",", ":"), ensure_ascii=False)
     return (blob.replace("</", "<\\/")
                 .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
@@ -492,8 +656,15 @@ def panel(jobs, total, config, meta):
     shown = len(jobs)
     footer = ""
     if total > shown:
-        footer = (f'<p class="jb-footer">Showing {shown} of {total} &mdash; refine the '
-                  f'filters or save a narrower search. The rest stay on disk.</p>')
+        # Deliberately not "refine the filters and we will search the rest".
+        # Filtering happens in the browser, over these records only, and saying
+        # otherwise would be the page claiming a reach it does not have. The
+        # count line beside the filters names the pool total for whichever
+        # locations are selected, which is the number that is actually useful.
+        footer = (f'<p class="jb-footer">{shown} of {total} jobs are on this page. '
+                  f'Filtering searches these {shown}; the rest are on disk and reach '
+                  f'the page as scores and dates change. Save a narrower search to '
+                  f'change which ones are here.</p>')
     return f"""<div class="jb-wide">
     {banner(config, meta)}
     {last_ingest_line(meta)}
@@ -651,7 +822,10 @@ CSS = """
     font-variant-numeric:tabular-nums; }
   .jb-sight { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
   .jb-excerpt { margin:0; line-height:1.45; }
-  .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0; }
+  .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0;
+    line-height:1.55; }
+  .jb-more { grid-column:1/-1; text-align:center; color:var(--ink-3); font-size:.85rem;
+    padding:1.2rem 0; }
   .jb-addlink { background:var(--card); border-radius:14px; padding:.85rem 1.1rem;
     box-shadow:var(--sh); margin-top:1.2rem; }
   .jb-addlink h4 { margin:0 0 .15rem; font-size:.92rem; font-weight:620; }
@@ -678,8 +852,14 @@ SCRIPT = r"""
 (function () {
   var holder = document.getElementById('jb-found-data');
   if (!holder) return;
-  var JOBS = [];
-  try { JOBS = JSON.parse(holder.textContent || '[]'); } catch (e) { JOBS = []; }
+  var DATA = { j: [], w: [], c: [], y: [], n: {}, t: 0 };
+  try { DATA = JSON.parse(holder.textContent || '{}') || DATA; } catch (e) {}
+  var JOBS = DATA.j || [];
+  var WEIGHTS = DATA.w || [];
+  var COMPONENTS = DATA.c || [];
+  var WHY = DATA.y || [];
+  var CENSUS = DATA.n || {};
+  var POOL_TOTAL = DATA.t || JOBS.length;
   var grid = document.getElementById('jb-grid');
   if (!grid) return;
 
@@ -731,21 +911,22 @@ SCRIPT = r"""
 
   function detailPanel(job) {
     var panel = el('div', 'jb-panel');
-    if (job.ex) panel.appendChild(el('p', 'jb-excerpt', job.ex));
+    if (job.sum) panel.appendChild(el('p', 'jb-excerpt', job.sum));
 
     var bars = el('div', 'jb-bars');
-    ['title', 'experience', 'location', 'keywords', 'freshness'].forEach(function (name) {
-      if (!(name in job.pt)) return;
+    COMPONENTS.forEach(function (name, i) {
+      var scored = (job.pt || [])[i];
+      if (scored === undefined) return;
+      var weight = WEIGHTS[i] || 1;
       var row = el('div', 'jb-bar');
       row.appendChild(el('u', null, name));
       var track = el('span');
       var fill = el('i');
-      var weight = job.wt[name] || 1;
-      fill.style.width = Math.round((job.pt[name] / weight) * 100) + '%';
+      fill.style.width = Math.round((scored / weight) * 100) + '%';
       track.appendChild(fill);
       row.appendChild(track);
-      row.appendChild(el('em', null, job.pt[name] + '/' + weight));
-      row.title = job.wy[name] || '';
+      row.appendChild(el('em', null, scored + '/' + weight));
+      row.title = WHY[(job.wy || [])[i]] || '';
       bars.appendChild(row);
     });
     panel.appendChild(bars);
@@ -987,7 +1168,7 @@ SCRIPT = r"""
   }
   function haystack(job) {
     return (value('jb-scope') === 'title'
-      ? job.ti : job.ti + ' ' + job.co + ' ' + job.ex + ' ' + (job.tg || []).join(' ')
+      ? job.ti : job.ti + ' ' + job.co + ' ' + job.sum + ' ' + (job.tg || []).join(' ')
     ).toLowerCase();
   }
 
@@ -1044,6 +1225,78 @@ SCRIPT = r"""
     return true;
   }
 
+  // Cards are drawn a window at a time. At the embedded cap a card for every
+  // match is around fifty thousand DOM nodes, which is a second of jank on a
+  // phone for rows nobody has scrolled to yet.
+  var RENDER_WINDOW = 250;
+  var visible = RENDER_WINDOW;
+  var lastRows = [];
+
+  function draw(rows, from, to) {
+    for (var i = from; i < to && i < rows.length; i++) {
+      grid.appendChild(card(rows[i]));
+    }
+  }
+
+  function more() {
+    var sentinel = document.getElementById('jb-more');
+    if (sentinel) sentinel.remove();
+    var from = visible;
+    visible += RENDER_WINDOW;
+    draw(lastRows, from, visible);
+    addSentinel();
+  }
+
+  function addSentinel() {
+    if (visible >= lastRows.length) return;
+    var sentinel = el('div', 'jb-more');
+    sentinel.id = 'jb-more';
+    sentinel.textContent = 'Loading the next ' +
+      Math.min(RENDER_WINDOW, lastRows.length - visible) + '\u2026';
+    grid.appendChild(sentinel);
+    if (typeof IntersectionObserver === 'undefined') { more(); return; }
+    var observer = new IntersectionObserver(function (entries) {
+      if (entries[0] && entries[0].isIntersecting) { observer.disconnect(); more(); }
+    }, { rootMargin: '600px' });
+    observer.observe(sentinel);
+  }
+
+  // What the page can honestly say about how much of the pool it holds.
+  //
+  // Filtering happens here, over the embedded records only. Saying "800 of
+  // 12,003 — refine the filters" implied that refining searches the rest, when
+  // it re-sorts the same set. The client cannot total the pool for an arbitrary
+  // combination of filters, but it can for the location dimension, which is
+  // where the gap actually bit: someone filtering for Japan saw 46 results with
+  // no way to know 714 more were on disk.
+  function poolForSelection() {
+    var picked = selectedCountries();
+    if (!picked.length) return POOL_TOTAL;
+    var total = 0, counted = {};
+    picked.forEach(function (code) {
+      if (counted[code]) return;
+      counted[code] = true;
+      total += CENSUS[code] || 0;
+    });
+    if (checked('jb-remote')) total += CENSUS.__remote || 0;
+    return total;
+  }
+
+  function countLine(shown) {
+    var pool = poolForSelection();
+    var scoped = selectedCountries().length > 0;
+    if (!scoped && shown === JOBS.length && JOBS.length >= POOL_TOTAL) {
+      return shown + ' shown';
+    }
+    var line = shown + ' shown';
+    if (shown !== JOBS.length) line = shown + ' of ' + JOBS.length + ' on this page';
+    if (pool > JOBS.length) {
+      line += ' \u00b7 ' + pool.toLocaleString() +
+        (scoped ? ' in the pool for these locations' : ' in the pool');
+    }
+    return line;
+  }
+
   function render() {
     var rows = JOBS.filter(matches);
     var how = value('jb-sort') || 'direct';
@@ -1061,12 +1314,12 @@ SCRIPT = r"""
       });
     }
     grid.textContent = '';
-    rows.forEach(function (job) { grid.appendChild(card(job)); });
+    lastRows = rows;
+    visible = Math.min(RENDER_WINDOW, rows.length);
+    draw(rows, 0, visible);
+    addSentinel();
     var count = document.getElementById('jb-count');
-    if (count) {
-      count.textContent = rows.length === JOBS.length
-        ? rows.length + ' shown' : rows.length + ' of ' + JOBS.length;
-    }
+    if (count) count.textContent = countLine(rows.length);
     var none = document.getElementById('jb-none');
     if (none) none.hidden = rows.length !== 0;
   }

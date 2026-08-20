@@ -3,6 +3,7 @@
 Run from the repo root: python3 -m unittest discover -s tests
 """
 
+import collections
 import importlib.util
 import pathlib
 import json
@@ -356,6 +357,10 @@ class FoundLaneTests(unittest.TestCase):
         start = html.index('id="jb-found-data">') + len('id="jb-found-data">')
         return html[start:html.index("</script>", start)]
 
+    def rows(self, html):
+        """The job list out of the payload document."""
+        return json.loads(self.payload(html).replace("<\\/", "</"))["j"]
+
     def test_the_tabs_run_in_the_order_the_work_flows(self):
         html = self.render([self.job()])
         order = re.findall(r'data-tab="(\w+)"', html)
@@ -382,9 +387,9 @@ class FoundLaneTests(unittest.TestCase):
         self.assertNotIn('id="jb-deg"', basic)
 
     def test_the_card_carries_a_place_and_the_stated_experience(self):
-        rows = json.loads(self.payload(self.render([self.job(
+        rows = self.rows(self.render([self.job(
             extracted={"yearsMin": 3, "yearsMax": 5, "yearsText": "3–5 years",
-                       "degree": None, "employmentType": None, "roleCategory": None})])))
+                       "degree": None, "employmentType": None, "roleCategory": None})]))
         self.assertEqual(rows[0]["place"], "New York, United States")
         self.assertEqual(rows[0]["yrt"], "3–5 years")
         self.assertEqual(rows[0]["yr"], 3, "the filter compares against the floor")
@@ -410,16 +415,19 @@ class FoundLaneTests(unittest.TestCase):
         self.assertEqual(found_lane.tidy_tag("Data & AI"), "Data & AI")
 
     def test_a_board_is_named_the_way_the_world_names_it(self):
-        rows = json.loads(self.payload(self.render([self.job(
-            canonicalSource="smartrecruiters", workplace="onsite")])))
+        rows = self.rows(self.render([self.job(
+            canonicalSource="smartrecruiters", workplace="onsite")]))
         self.assertEqual(rows[0]["src"], "SmartRecruiters")
         self.assertEqual(rows[0]["wp"], "On-site")
 
     def test_the_card_carries_a_line_of_the_posting_itself(self):
-        rows = json.loads(self.payload(self.render([self.job(
-            descriptionExcerpt="Own the internal reporting platform. " * 20)])))
+        rows = self.rows(self.render([self.job(
+            descriptionExcerpt="Own the internal reporting platform. " * 20)]))
         self.assertTrue(rows[0]["sum"])
-        self.assertLessEqual(len(rows[0]["sum"]), 150)
+        # One slice now, used by the card (clamped to two lines by CSS) and by
+        # the Details panel. It used to be two overlapping slices of the same
+        # text, which was a third of the payload for nothing.
+        self.assertLessEqual(len(rows[0]["sum"]), found_lane.EMBED_EXCERPT_CHARS)
 
     def test_a_country_code_becomes_a_country_name(self):
         self.assertEqual(found_lane.place({"location": {"country": "GB", "city": "London"}}),
@@ -471,7 +479,7 @@ class FoundLaneTests(unittest.TestCase):
         jobs = [self.job("a"), self.job("b", state="watched"),
                 self.job("c", state="passed"), self.job("d", state="applied")]
         html = self.render(jobs)
-        self.assertEqual(len(json.loads(self.payload(html))), 1)
+        self.assertEqual(len(self.rows(html)), 1)
         tab = re.search(r'data-tab="found"[^>]*>Found<span class="n">(\d+)</span>', html)
         self.assertEqual(tab.group(1), "1", "the tab count must match what the lane holds")
 
@@ -501,29 +509,29 @@ class FoundLaneTests(unittest.TestCase):
         self.assertNotIn("javascript:", html)
 
     def test_the_payload_carries_what_the_card_needs(self):
-        rows = json.loads(self.payload(self.render([self.job()])))
+        rows = self.rows(self.render([self.job()]))
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        for key in ("id", "co", "ti", "url", "sc", "pt", "wt", "un", "bd", "sg", "ex"):
+        for key in ("id", "co", "ti", "url", "sc", "pt", "wy", "un", "bd", "sg", "sum"):
             self.assertIn(key, row)
         self.assertEqual(row["sc"], 82)
         self.assertEqual(row["un"], ["experience"])
 
     def test_the_embed_cap_holds_and_the_footer_says_what_is_missing(self):
-        # The stored pool is 3,000. Showing a slice as though it were
-        # everything is the failure; saying which slice is the fix.
+        # Showing a slice as though it were everything is the failure; saying
+        # which slice, and how much is not here, is the fix.
         jobs = [self.job(f"j{i}", score={"total": i % 100, "parts": {}, "weights": {},
                                          "why": {}, "unknowns": [], "gates": []})
                 for i in range(found_lane.EMBED_CAP + 120)]
         html = self.render(jobs)
-        self.assertEqual(len(json.loads(self.payload(html))), found_lane.EMBED_CAP)
-        self.assertIn(f"Showing {found_lane.EMBED_CAP} of {found_lane.EMBED_CAP + 120}", html)
+        self.assertEqual(len(self.rows(html)), found_lane.EMBED_CAP)
+        self.assertIn(f"{found_lane.EMBED_CAP} of {found_lane.EMBED_CAP + 120} jobs are on this page", html)
 
     def test_the_highest_scoring_jobs_are_the_ones_embedded(self):
         jobs = [self.job(f"j{i}", score={"total": i, "parts": {}, "weights": {},
                                          "why": {}, "unknowns": [], "gates": []})
                 for i in range(found_lane.EMBED_CAP + 50)]
-        rows = json.loads(self.payload(self.render(jobs)))
+        rows = self.rows(self.render(jobs))
         self.assertEqual(min(r["sc"] for r in rows), 50)
 
     def test_the_page_stays_under_four_megabytes_at_the_cap(self):
@@ -535,24 +543,24 @@ class FoundLaneTests(unittest.TestCase):
         self.assertLess(size, 4 * 1024 * 1024, f"page is {size / 1024 / 1024:.2f} MB")
 
     def test_the_embedded_excerpt_is_trimmed(self):
-        rows = json.loads(self.payload(self.render([self.job(descriptionExcerpt="x" * 5000)])))
-        self.assertLessEqual(len(rows[0]["ex"]), found_lane.EMBED_EXCERPT_CHARS)
+        rows = self.rows(self.render([self.job(descriptionExcerpt="x" * 5000)]))
+        self.assertLessEqual(len(rows[0]["sum"]), found_lane.EMBED_EXCERPT_CHARS)
 
     def test_two_listings_on_one_board_is_still_one_board(self):
         # Adzuna lists the same job twice; two adzuna.it URLs for one posting
         # came out of the supervised run. "Seen on 2 boards" has to mean two
         # boards or it means nothing.
-        rows = json.loads(self.payload(self.render([self.job(sources=[
+        rows = self.rows(self.render([self.job(sources=[
             {"source": "adzuna", "sourceClass": "aggregator", "url": "https://a.test/1"},
-            {"source": "adzuna", "sourceClass": "aggregator", "url": "https://a.test/2"}])])))
+            {"source": "adzuna", "sourceClass": "aggregator", "url": "https://a.test/2"}])]))
         self.assertEqual(rows[0]["bd"], 1)
         self.assertEqual(len(rows[0]["sg"]), 2, "both listings stay linkable")
 
     def test_a_merged_job_says_how_many_boards_carried_it(self):
-        rows = json.loads(self.payload(self.render([self.job(sources=[
+        rows = self.rows(self.render([self.job(sources=[
             {"source": "greenhouse", "sourceClass": "ats", "url": "https://a.test/1"},
             {"source": "adzuna", "sourceClass": "aggregator", "url": "https://b.test/1"},
-            {"source": "linkedin", "sourceClass": "aggregator", "url": "https://c.test/1"}])])))
+            {"source": "linkedin", "sourceClass": "aggregator", "url": "https://c.test/1"}])]))
         self.assertEqual(rows[0]["bd"], 3)
         self.assertEqual(len(rows[0]["sg"]), 3)
 
@@ -696,3 +704,253 @@ class CspTests(unittest.TestCase):
             self.assertNotIn(banned, html)
         for link in re.findall(r'<link[^>]+href="([^"]+)"', html):
             self.assertFalse(link.startswith("http"), link)
+
+
+class EmbeddingReachTests(unittest.TestCase):
+    """Which jobs reach the page, and whether the page says so honestly.
+
+    A straight top-N by score gives each region a slice proportional to how
+    dense it is, so one dense region takes almost everything. Measured on a
+    12,003-job pool before this changed: a filter for Japan reached 46 of 760,
+    India 154 of 2,449. Someone filtering for Japan saw 46 results with no way
+    to know 714 more were on disk.
+    """
+
+    def job(self, job_id, country, score=50, source_class="aggregator", workplace="hybrid"):
+        return {
+            "id": job_id, "company": f"Co {job_id}", "title": "Product Manager",
+            "canonicalUrl": f"https://a.test/{job_id}", "canonicalSource": "adzuna",
+            "state": "new", "workplace": workplace,
+            "location": {"raw": country, "city": None, "region": None, "country": country},
+            "postedAt": "2026-08-13T00:00:00Z", "firstSeenAt": "2026-08-19T20:00:00Z",
+            "descriptionExcerpt": "A role.", "tags": [],
+            "sources": [{"source": "adzuna", "sourceClass": source_class,
+                         "url": f"https://a.test/{job_id}"}],
+            "extracted": {"yearsMax": None, "degree": None,
+                          "employmentType": None, "roleCategory": None},
+            "score": {"total": score, "raw": score, "parts": {}, "weights": {},
+                      "why": {}, "unknowns": [], "gates": []},
+        }
+
+    def pool(self, spec, score_by_country=None):
+        """spec: {country: count}. The dense region also scores highest, which
+        is exactly the situation that starved everyone else."""
+        jobs, n = {}, 0
+        for country, count in spec.items():
+            base = (score_by_country or {}).get(country, 50)
+            for i in range(count):
+                n += 1
+                jobs[f"j{n}"] = self.job(f"j{n}", country, score=base)
+        return jobs
+
+    CONFIG = {"locations": [{"country": "US"}, {"country": "IN"}, {"country": "JP"},
+                            {"country": "AE"}],
+              "includeRemoteForSelection": True}
+
+    def test_a_dense_region_cannot_take_the_whole_budget(self):
+        jobs = self.pool({"US": 2000, "IN": 400, "JP": 120, "AE": 90},
+                         score_by_country={"US": 90, "IN": 50, "JP": 50, "AE": 50})
+        picked, total = found_lane.select(jobs, self.CONFIG, cap=400)
+        seen = collections.Counter(j["location"]["country"] for j in picked)
+        self.assertEqual(total, 2610)
+        for country in ("IN", "JP", "AE"):
+            self.assertGreater(seen[country], 20,
+                               f"{country} got {seen[country]}, which is a rounding error")
+        self.assertGreater(seen["US"], seen["IN"], "the densest region should still lead")
+
+    def test_every_selected_region_is_present(self):
+        jobs = self.pool({"US": 3000, "IN": 500, "JP": 200, "AE": 150},
+                         score_by_country={"US": 99, "IN": 40, "JP": 40, "AE": 40})
+        picked, _ = found_lane.select(jobs, self.CONFIG, cap=300)
+        seen = {j["location"]["country"] for j in picked}
+        self.assertEqual(seen, {"US", "IN", "JP", "AE"})
+
+    def test_a_thin_region_does_not_waste_its_quota(self):
+        # Japan has four jobs and a floor far larger. The unspent remainder has
+        # to fall through to everyone else rather than shrinking the page.
+        jobs = self.pool({"US": 900, "IN": 900, "JP": 4, "AE": 900})
+        picked, _ = found_lane.select(jobs, self.CONFIG, cap=300)
+        self.assertEqual(len(picked), 300, "the page must still be full")
+        seen = collections.Counter(j["location"]["country"] for j in picked)
+        self.assertEqual(seen["JP"], 4, "all four, and no phantom slots")
+
+    def test_direct_listings_keep_their_priority_inside_the_selection(self):
+        jobs = {}
+        for i in range(200):
+            jobs[f"agg{i}"] = self.job(f"agg{i}", "US", score=95)
+        for i in range(30):
+            jobs[f"ats{i}"] = self.job(f"ats{i}", "US", score=40, source_class="ats")
+        picked, _ = found_lane.select(jobs, {"locations": [{"country": "US"}]}, cap=40)
+        direct = sum(1 for j in picked if found_lane.direct_rank(j) <= 1)
+        self.assertEqual(direct, 30,
+                         "every direct listing before any aggregator copy, as in retention")
+
+    def test_a_region_pack_is_one_bucket_not_thirty_two(self):
+        # Otherwise the EU pack would win thirty-two floors against the US's one.
+        buckets = found_lane.selection_buckets(
+            {"locations": [{"country": "US"}, {"regionPack": "EU"}],
+             "includeRemoteForSelection": True})
+        keys = [key for key, _ in buckets]
+        self.assertEqual(keys, ["country:US", "pack:EU", "remote", "other"])
+
+    def test_an_explicit_country_wins_over_a_pack_containing_it(self):
+        # Someone who typed "DE" meant Germany, not whichever pack Germany is in.
+        buckets = found_lane.selection_buckets(
+            {"locations": [{"regionPack": "EU"}, {"country": "DE"}]})
+        job = self.job("x", "DE")
+        self.assertEqual(found_lane.bucket_of(job, buckets), "country:DE")
+
+    def test_a_small_pool_is_embedded_whole(self):
+        jobs = self.pool({"US": 20, "IN": 5})
+        picked, total = found_lane.select(jobs, self.CONFIG, cap=400)
+        self.assertEqual(len(picked), 25)
+        self.assertEqual(total, 25)
+
+    def test_the_cap_comes_from_the_constant_at_call_time(self):
+        # It used to be a default argument, bound once at import, so changing
+        # the constant did nothing and every measurement of it was wrong.
+        jobs = self.pool({"US": 50})
+        original = found_lane.EMBED_CAP
+        found_lane.EMBED_CAP = 10
+        try:
+            picked, _ = found_lane.select(jobs, self.CONFIG)
+            self.assertEqual(len(picked), 10)
+        finally:
+            found_lane.EMBED_CAP = original
+
+
+class PoolCensusTests(unittest.TestCase):
+    def pool(self):
+        return {
+            "a": {"id": "a", "state": "new", "workplace": "remote",
+                  "location": {"country": "US"}, "sources": []},
+            "b": {"id": "b", "state": "new", "workplace": "hybrid",
+                  "location": {"country": "US"}, "sources": []},
+            "c": {"id": "c", "state": "new", "workplace": "remote",
+                  "location": {"country": None}, "sources": []},
+            "d": {"id": "d", "state": "watched", "workplace": "remote",
+                  "location": {"country": "IN"}, "sources": []},
+        }
+
+    def test_the_census_counts_the_pool_by_country(self):
+        census = found_lane.pool_census(self.pool())
+        self.assertEqual(census["US"], 2)
+        self.assertEqual(census["??"], 1, "unknown country is counted, not dropped")
+        self.assertEqual(census["__remote"], 2)
+
+    def test_a_job_the_user_has_acted_on_is_not_in_the_census(self):
+        # It is not on the Found lane, so counting it would overstate reach.
+        self.assertNotIn("IN", found_lane.pool_census(self.pool()))
+
+    def test_the_census_travels_with_the_page(self):
+        html = dashboard.build({
+            "profile": {}, "sessions": [], "history": [], "roles": {}, "meta": {},
+            "jobs": self.pool(), "searchConfig": None}, "test")
+        start = html.index('id="jb-found-data">') + len('id="jb-found-data">')
+        doc = json.loads(html[start:html.index("</script>", start)].replace("<\\/", "</"))
+        self.assertEqual(doc["n"]["US"], 2)
+        self.assertEqual(doc["t"], 3)
+
+
+class FooterHonestyTests(unittest.TestCase):
+    """The footer must not imply filtering searches the whole pool."""
+
+    def render(self, count):
+        jobs = {}
+        for i in range(count):
+            jobs[f"j{i}"] = {
+                "id": f"j{i}", "company": "Co", "title": "PM", "state": "new",
+                "canonicalUrl": "https://a.test/1", "canonicalSource": "adzuna",
+                "location": {"country": "US"}, "workplace": "remote",
+                "postedAt": "2026-08-13T00:00:00Z", "firstSeenAt": "2026-08-19T00:00:00Z",
+                "descriptionExcerpt": "x", "tags": [], "sources": [],
+                "extracted": {}, "score": {"total": 50, "parts": {}, "weights": {},
+                                           "why": {}, "unknowns": [], "gates": []}}
+        return dashboard.build({"profile": {}, "sessions": [], "history": [], "roles": {},
+                                "meta": {}, "jobs": jobs, "searchConfig": None}, "test")
+
+    def test_it_no_longer_claims_refining_searches_the_rest(self):
+        html = self.render(found_lane.EMBED_CAP + 50)
+        self.assertNotIn("refine the filters or save a narrower search", html)
+
+    def test_it_says_filtering_covers_only_what_is_on_the_page(self):
+        html = self.render(found_lane.EMBED_CAP + 50)
+        self.assertIn("Filtering searches these", html)
+        self.assertIn("on disk", html)
+
+    def test_a_pool_that_fits_says_nothing_about_missing_jobs(self):
+        self.assertNotIn("are on this page", self.render(5))
+
+
+class PageWeightAtCapTests(unittest.TestCase):
+    """Measured at the record shape the connectors actually produce.
+
+    A thin fixture would say the page is fine at any cap. These records carry a
+    full-length summary, several sightings, tags, a score breakdown and an
+    extracted requirement, which is what a real Greenhouse or Ashby posting
+    looks like after normalisation.
+    """
+
+    def fat_job(self, i):
+        return {
+            "id": f"j{i}",
+            "company": f"Company With A Reasonably Long Name {i}",
+            "title": f"Senior Technical Product Manager, Platform and Infrastructure {i}",
+            "canonicalUrl": f"https://job-boards.greenhouse.io/companyname{i}/jobs/{i}0000000",
+            "canonicalSource": "greenhouse", "state": "new", "workplace": "hybrid",
+            "location": {"raw": "New York, NY", "city": "New York",
+                         "region": "NY", "country": "US"},
+            "postedAt": "2026-08-13T00:00:00Z", "firstSeenAt": "2026-08-19T20:00:00Z",
+            "descriptionExcerpt": ("Own the internal reporting platform and decide what it "
+                                   "measures, working with data engineering. " * 20),
+            "tags": ["product management", "sql", "analytics", "platform",
+                     "data warehousing", "experimentation"],
+            "sources": [
+                {"source": "greenhouse", "sourceClass": "ats",
+                 "url": f"https://job-boards.greenhouse.io/companyname{i}/jobs/{i}0000000"},
+                {"source": "adzuna", "sourceClass": "aggregator",
+                 "url": f"https://www.adzuna.com/land/ad/{i}0000000"},
+            ],
+            "extracted": {"yearsMin": 5, "yearsMax": 8, "yearsText": "5–8 years",
+                          "degree": None, "employmentType": None, "roleCategory": None},
+            "salary": "150000-190000",
+            "score": {"total": 82, "raw": 82,
+                      "parts": {"title": 35, "experience": 20, "location": 15,
+                                "keywords": 14, "freshness": 8},
+                      "weights": dict(found_lane.MATCH_WEIGHTS),
+                      "why": {"title": "title matches a searched title",
+                              "experience": "asks for 5–8 years",
+                              "location": "US is in scope; hybrid is acceptable",
+                              "keywords": "3 of 4 search terms appear in full",
+                              "freshness": "posted 6 days ago"},
+                      "unknowns": [], "gates": []},
+        }
+
+    def test_the_page_stays_under_the_target_at_the_cap(self):
+        jobs = {f"j{i}": self.fat_job(i) for i in range(found_lane.EMBED_CAP)}
+        html = dashboard.build({"profile": {}, "sessions": [], "history": [], "roles": {},
+                                "meta": {}, "jobs": jobs,
+                                "searchConfig": {"locations": [{"country": "US"}]}}, "test")
+        size = len(html.encode("utf-8"))
+        self.assertLess(size, 4 * 1024 * 1024,
+                        f"page is {size / 1024 / 1024:.2f} MB at {found_lane.EMBED_CAP}")
+        # The cap was chosen from a measurement with margin, not by grazing the
+        # ceiling. If this starts failing, re-measure before raising anything.
+        self.assertLess(size, 3.6 * 1024 * 1024,
+                        f"page is {size / 1024 / 1024:.2f} MB; the measured budget was 3.5")
+
+    def test_hoisting_the_repeated_fields_actually_paid_for_itself(self):
+        jobs = {f"j{i}": self.fat_job(i) for i in range(200)}
+        picked, total = found_lane.select(jobs, {"locations": [{"country": "US"}]})
+        blob = found_lane.payload(picked, found_lane.pool_census(jobs), total)
+        per_job = len(blob.encode()) / len(picked)
+        self.assertLess(per_job, 1200,
+                        f"{per_job:.0f} bytes a job; it was 1,576 before hoisting")
+
+    def test_the_weights_and_explanations_travel_once(self):
+        jobs = {f"j{i}": self.fat_job(i) for i in range(50)}
+        picked, total = found_lane.select(jobs, {"locations": [{"country": "US"}]})
+        doc = json.loads(found_lane.payload(picked, {}, total).replace("<\\/", "</"))
+        self.assertEqual(doc["w"], [35, 20, 15, 20, 10])
+        self.assertLess(len(doc["y"]), 12, "the explanations repeat; they are interned")
+        self.assertNotIn("wt", doc["j"][0], "weights are identical on every job")

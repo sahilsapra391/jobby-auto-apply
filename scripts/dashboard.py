@@ -130,8 +130,9 @@ def build(state, generated):
                 return r.get("url", "")
         return ""
 
-    found, found_total = found_lane.select(state.get("jobs") or {})
     search_config_saved = state.get("searchConfig")
+    found, found_total = found_lane.select(state.get("jobs") or {}, search_config_saved)
+    found_census = found_lane.pool_census(state.get("jobs") or {})
 
     blocked = [s for s in sessions if s.get("status") in ("active", "review")]
     blocked.sort(key=lambda s: len(s.get("pendingFields", [])))
@@ -940,7 +941,7 @@ def build(state, generated):
   </div>
 </div>
 
-<script type="application/json" id="jb-found-data">{found_lane.payload(found)}</script>
+<script type="application/json" id="jb-found-data">{found_lane.payload(found, found_census, found_total)}</script>
 <script>
   // Theme: auto, light or dark. Only an explicit choice is stored, so auto
   // keeps following the OS if it flips later in the day.

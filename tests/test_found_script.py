@@ -96,8 +96,18 @@ class ScriptHarness:
 
     HARNESS = r"""
 const assert = require('node:assert/strict');
+// The payload is a document now: weights, component order and the interned
+// rubric explanations ride once rather than on every job.
 const JOBS = %s;
 const CONTROLS = %s;
+const DOC = {
+  w: [35, 20, 15, 20, 10],
+  c: ["title", "experience", "location", "keywords", "freshness"],
+  y: ["", "title matches a searched title"],
+  n: CONTROLS.census || {},
+  t: CONTROLS.poolTotal || JOBS.length,
+  j: JOBS,
+};
 
 // A DOM small enough to be obviously correct and big enough for the script.
 function makeNode(tag, id) {
@@ -141,7 +151,7 @@ function node(id) {
   return nodes[id];
 }
 const dataNode = makeNode('script', 'jb-found-data');
-dataNode.textContent = JSON.stringify(JOBS);
+dataNode.textContent = JSON.stringify(DOC);
 nodes['jb-found-data'] = dataNode;
 const grid = makeNode('div', 'jb-grid');
 grid.textContent = '';
@@ -238,8 +248,8 @@ setTimeout(function () {
     def job(self, job_id, **fields):
         base = {"id": job_id, "co": "Northwind", "ti": "Product Manager", "url": "",
                 "src": "greenhouse", "loc": "New York, NY", "cty": "US", "wp": "hybrid",
-                "pa": "2026-08-13", "fs": "2026-08-19", "sc": 80, "pt": {}, "wt": {},
-                "wy": {}, "un": [], "ga": [], "bd": 1, "sg": [], "tg": [], "ex": "",
+                "pa": "2026-08-13", "fs": "2026-08-19", "sc": 80, "pt": [35, 10, 15, 14, 8],
+                "wy": [0, 0, 0, 0, 0], "un": [], "ga": [], "bd": 1, "sg": [], "tg": [],
                 "yr": None, "yrt": None, "place": "New York, United States", "rank": 0,
                 "sum": "Own the internal reporting platform.",
                 "dg": None, "rc": None, "et": None, "sal": None}
@@ -273,6 +283,15 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
     def test_the_count_says_how_many_of_how_many(self):
         out = self.run_script([self.job("a"), self.job("b")])
         self.assertIn("2", out["count"])
+
+    def test_description_scope_searches_the_description(self):
+        # The haystack referenced a field that the payload slimming removed, so
+        # searching in title-and-description scope silently matched nothing in
+        # the body. Undefined concatenates as "undefined" rather than throwing.
+        out = self.run_script([self.job("a", sum="owns the billing platform"),
+                               self.job("b", sum="runs the warehouse floor")],
+                              {"jb-ex": "warehouse", "jb-scope": "title+description"})
+        self.assertEqual(out["ids"], ["a"])
 
     def test_an_excluded_word_hides_a_card(self):
         out = self.run_script([self.job("a", ti="Product Manager"),
