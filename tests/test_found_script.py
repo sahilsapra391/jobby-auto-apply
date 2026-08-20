@@ -193,9 +193,24 @@ function makeNode(tag, id) {
   return node;
 }
 const nodes = {};
+// The controls that are really <select> on the page, with the options they
+// really carry. A stub that makes everything a div hides any bug in code that
+// asks "is this value still on offer" — which is exactly what the restore does
+// before it forces a stored value back into a control.
+const SELECTS = {
+  'jb-sort': ['new', 'direct', 'score'],
+  'jb-scope': ['title+description', 'title'],
+  'jb-cmode': ['all', 'only', 'hide'],
+};
 function node(id) {
   if (!nodes[id]) {
-    nodes[id] = makeNode('div', id);
+    const isSelect = Object.prototype.hasOwnProperty.call(SELECTS, id);
+    nodes[id] = makeNode(isSelect ? 'SELECT' : 'div', id);
+    if (isSelect) {
+      nodes[id].options = SELECTS[id].map(function (v) { return { value: v }; });
+      // A real select reports its first option, never an empty string.
+      nodes[id].value = SELECTS[id][0];
+    }
     if (CONTROLS[id] !== undefined) nodes[id].value = CONTROLS[id];
   }
   return nodes[id];
@@ -269,13 +284,20 @@ global.localStorage = {
   store: {},
   getItem(k) { return this.store[k] || null; },
   setItem(k, v) { this.store[k] = v; },
+  removeItem(k) { delete this.store[k]; },
 };
+// A view the user set on a previous visit, so a test can check the board opens
+// on it rather than on what the page was published with.
+if (CONTROLS.storedView) {
+  global.localStorage.setItem('jobby.foundView', JSON.stringify(CONTROLS.storedView));
+}
 if (CONTROLS.savedMarker) {
   global.localStorage.setItem('jobby.searchSaved', JSON.stringify([CONTROLS.savedMarker]));
 }
 const posted = [];
 global.fetch = function (url, opts) {
-  posted.push({ url: url, method: (opts && opts.method) || 'GET' });
+  posted.push({ url: url, method: (opts && opts.method) || 'GET',
+                body: opts && opts.body ? JSON.parse(opts.body) : null });
   const body = (url === '/api/search-config' && (!opts || !opts.method || opts.method === 'GET'))
     ? { ok: true, pending: CONTROLS.pending || null }
     : { ok: true };
@@ -370,6 +392,10 @@ setTimeout(function () {
     saveState: nodes['jb-savestate'].textContent,
     saveClass: nodes['jb-savestate'].className,
     savedMarker: global.localStorage.getItem('jobby.searchSaved'),
+    storedView: global.localStorage.getItem('jobby.foundView'),
+    sortValue: (nodes['jb-sort'] || {}).value,
+    directChecked: !!(nodes['jb-direct'] || {}).checked,
+    posted: posted.map(function (p) { return p.body; }),
     fetched: posted.map(function (p) { return p.method + ' ' + p.url; }),
   }));
 }, 10);
@@ -547,10 +573,14 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
     def test_sorting_by_newest_reorders(self):
         # Both inside the two-month ceiling: this is about the sort, and a
         # fixture that the date filter drops would pass for the wrong reason.
+        # The sort is named on both runs rather than leaned on as a default,
+        # because the shipped default has moved once already.
         jobs = [self.job("old", pa="2026-07-01", sc=95),
                 self.job("new", pa="2026-08-18", sc=10)]
-        self.assertEqual(self.run_script(jobs)["ids"], ["old", "new"])
-        self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"], ["new", "old"])
+        self.assertEqual(self.run_script(jobs, {"jb-sort": "direct"})["ids"],
+                         ["old", "new"])
+        self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"],
+                         ["new", "old"])
 
     def test_the_date_window_bites(self):
         jobs = [self.job("fresh", pa="2026-08-19"), self.job("ancient", pa="2020-01-01")]
@@ -568,17 +598,19 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
 
     def test_direct_listings_lead_even_when_an_aggregator_scores_higher(self):
         out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
-                               self.job("ats", rank=0, src="greenhouse", sc=70)])
+                               self.job("ats", rank=0, src="greenhouse", sc=70)],
+                              {"jb-sort": "direct"})
         self.assertEqual(out["ids"], ["ats", "agg"])
 
     def test_within_a_group_the_better_match_still_leads(self):
         out = self.run_script([self.job("lo", rank=0, sc=60),
-                               self.job("hi", rank=0, sc=90)])
+                               self.job("hi", rank=0, sc=90)], {"jb-sort": "direct"})
         self.assertEqual(out["ids"], ["hi", "lo"])
 
     def test_a_careers_page_counts_as_direct(self):
         out = self.run_script([self.job("agg", rank=2, sc=99),
-                               self.job("careers", rank=1, sc=50)])
+                               self.job("careers", rank=1, sc=50)],
+                              {"jb-sort": "direct"})
         self.assertEqual(out["ids"], ["careers", "agg"])
 
     def test_sorting_by_match_ignores_how_direct_it_is(self):
@@ -986,6 +1018,109 @@ class EndToEndFacetTests(ScriptHarness, unittest.TestCase):
             self.assertEqual(sorted(out["ids"]), sorted(jobs))
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+
+class ViewPersistenceTests(ScriptHarness, unittest.TestCase):
+    """Whatever the user last set is what the board opens on.
+
+    The board is a published snapshot rendered with whatever the saved search
+    was at publish time. So a filter change survived exactly until the next
+    reload, and Save search could not help: the page in front of you was
+    rendered minutes ago. Pressing Save and reloading put everything back, with
+    nothing on screen saying why, which is indistinguishable from the save
+    having failed.
+
+    View state is deliberately separate from the saved search. The saved search
+    decides what gets fetched; this decides what you are looking at.
+    """
+
+    def stored(self, out):
+        return json.loads(out["storedView"]) if out["storedView"] else None
+
+    def test_the_view_is_written_on_the_first_render(self):
+        out = self.run_script([self.job("a")], {"jb-direct": False})
+        self.assertIsNotNone(self.stored(out))
+
+    def test_a_stored_view_beats_what_the_page_shipped_with(self):
+        # The page ships sort=new; the stored view says score.
+        out = self.run_script([self.job("a")], {
+            "jb-direct": False,
+            "storedView": {"keywords": [], "values": {"jb-sort": "score"},
+                           "checks": {"jb-direct": False}, "date": "60d",
+                           "workplaces": ["remote", "hybrid", "onsite"],
+                           "unknowns": ["experience", "degree", "workplace", "postedAt"],
+                           "locations": []}})
+        self.assertEqual(out["sortValue"], "score")
+
+    def test_a_stored_keyword_comes_back(self):
+        jobs = [self.job("pm", ti="Product Manager"), self.job("ba", ti="Business Analyst")]
+        out = self.run_script(jobs, {
+            "jb-direct": False, "jb-scope": "title",
+            "storedView": {"keywords": ["business analyst"], "values": {"jb-scope": "title"},
+                           "checks": {"jb-direct": False}, "date": "60d",
+                           "workplaces": ["remote", "hybrid", "onsite"],
+                           "unknowns": ["experience", "degree", "workplace", "postedAt"],
+                           "locations": []}})
+        self.assertEqual(out["ids"], ["ba"])
+
+    def test_a_stored_location_comes_back(self):
+        jobs = [self.job("us", cty="US"), self.job("in", cty="IN")]
+        out = self.run_script(jobs, {
+            "jb-direct": False, "allLocations": ["US", "IN"],
+            "storedView": {"keywords": [], "values": {}, "checks": {"jb-direct": False},
+                           "date": "60d", "workplaces": ["remote", "hybrid", "onsite"],
+                           "unknowns": ["experience", "degree", "workplace", "postedAt"],
+                           "locations": ["IN"]}})
+        self.assertEqual(out["ids"], ["in"])
+
+    def test_a_retired_option_is_skipped_rather_than_forced(self):
+        # A window or a sort that no longer exists must not blank the control.
+        out = self.run_script([self.job("a")], {
+            "jb-direct": False,
+            "storedView": {"keywords": [], "values": {"jb-sort": "sideways"},
+                           "checks": {}, "date": "99d", "workplaces": [],
+                           "unknowns": [], "locations": []}})
+        self.assertIn(out["sortValue"], [v for v, _ in found_lane.SORT_OPTIONS])
+
+    def test_junk_in_storage_is_discarded_not_obeyed(self):
+        out = self.run_script([self.job("a")], {
+            "jb-direct": False, "storedView": "not an object"})
+        self.assertEqual(out["ids"], ["a"])
+
+    def test_clear_returns_the_date_to_the_saved_window(self):
+        # Not to a hardcoded week. The marker Clear looks for was silently never
+        # emitted, so nothing was checked afterwards and the client fell back to
+        # seven days — a two-month search quietly narrowed by pressing Clear.
+        for window in ("60d", "30d", "24h"):
+            with self.subTest(window=window):
+                bar = found_lane.filter_bar([], {"postedWithin": window})
+                self.assertIn(f'value="{window}" checked data-shipped', bar)
+
+    def test_exactly_one_chip_carries_the_marker(self):
+        bar = found_lane.filter_bar([], {"postedWithin": "30d"})
+        self.assertEqual(bar.count("data-shipped"), 1)
+
+    def test_clear_reads_that_marker_rather_than_a_literal(self):
+        script = found_lane.SCRIPT
+        clear = script[script.index("jb-clear"):]
+        clear = clear[:clear.index("var save =")]
+        self.assertIn("data-shipped", clear)
+        self.assertNotIn('[value="7d"]', clear)
+
+    def test_clear_forgets_the_view(self):
+        script = found_lane.SCRIPT
+        clear = script[script.index("jb-clear"):]
+        clear = clear[:clear.index("var save =")]
+        self.assertIn("forgetView()", clear)
+
+    def test_save_sends_the_sort_and_the_direct_toggle(self):
+        # They are part of the search. A saved search that forgets them puts two
+        # controls back to the factory setting on every republish.
+        script = found_lane.SCRIPT
+        save = script[script.index("var config = {"):]
+        save = save[:save.index("};")]
+        self.assertIn("sort:", save)
+        self.assertIn("directOnly:", save)
 
 
 class RealPayloadTests(ScriptHarness, unittest.TestCase):

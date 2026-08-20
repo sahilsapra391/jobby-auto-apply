@@ -305,7 +305,27 @@ def fingerprint():
     # jobs has to count as a change. Without this the pool would fill up and
     # the published board would keep showing the last set of sessions.
     return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
-            f"{render_version()}|" + "|".join(parts))
+            f"{render_version()}|{search_config_version()}|" + "|".join(parts))
+
+
+def search_config_version():
+    """The version of the saved search the board would be rendered with.
+
+    Saving a search changes what the *next* board looks like — its filters, its
+    sort, its date window — but it moves none of the data this fingerprint was
+    watching, so the republish waited for the fifteen-minute floor. Press Save,
+    reload, and the filters were back to the old ones with nothing on screen
+    explaining why. It looked exactly like the save had failed.
+    """
+    path = STATE_DIR / "search-config.json"
+    if not path.exists():
+        return "none"
+    try:
+        return str(json.loads(path.read_text()).get("version") or "0")
+    except (json.JSONDecodeError, OSError):
+        # Unreadable is a real fault, but publishing is not where it gets
+        # reported. A stable distinct value is all this owes.
+        return "unreadable"
 
 
 def render_version():

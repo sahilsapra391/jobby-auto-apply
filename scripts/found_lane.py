@@ -77,6 +77,8 @@ MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 # "Any time" is gone rather than relabelled. Nothing older than two months is
 # ingested or kept, so "all" and "60d" name the same window, and two chips for
 # one window is a choice the user cannot get right.
+SORT_OPTIONS = [("new", "Newest"), ("direct", "Direct first"), ("score", "Match %")]
+
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
                 ("14d", "14 days"), ("30d", "30 days"), ("60d", "2 months")]
 WORKPLACES = [("remote", "Remote"), ("hybrid", "Hybrid"), ("onsite", "Onsite")]
@@ -660,6 +662,18 @@ def filter_bar(jobs, config):
                     for p, label in (("EU", "Europe (EU/EEA/UK)"),
                                      ("MIDDLE_EAST", "Middle East"),
                                      ("SEA", "South-East Asia")))
+    # The sort and the direct-only toggle come off the saved search too. They
+    # used to be hardcoded in the markup, so every republish put them back to
+    # the factory setting whatever the user had chosen.
+    saved_sort = config.get("sort")
+    if saved_sort not in dict(SORT_OPTIONS):
+        saved_sort = search_config.DEFAULTS["sort"]
+    sort_options = "".join(
+        f'<option value="{esc(v)}"{" selected" if v == saved_sort else ""}>'
+        f'{esc(label)}</option>' for v, label in SORT_OPTIONS)
+    direct_on = " checked" if config.get(
+        "directOnly", search_config.DEFAULTS["directOnly"]) else ""
+
     # Whatever the saved search says, exactly one chip is checked. An unchecked
     # set reads to the client as "no answer" and it falls back to seven days.
     saved_window = config.get("postedWithin") or "7d"
@@ -667,7 +681,7 @@ def filter_bar(jobs, config):
         saved_window = DATE_WINDOWS[-1][0]
     dates = "".join(
         f'<label class="jb-radio"><input type="radio" name="jb-date" value="{esc(v)}"'
-        f'{" checked" if v == saved_window else ""}>'
+        f'{" checked data-shipped" if v == saved_window else ""}>'
         f'<span>{esc(label)}</span></label>' for v, label in DATE_WINDOWS)
     workplaces = "".join(
         f'<label class="jb-check"><input type="checkbox" data-wp="{esc(v)}" checked>'
@@ -682,13 +696,9 @@ def filter_bar(jobs, config):
         <input type="search" id="jb-kw" placeholder="Add a keyword and press Enter&hellip;"
                aria-label="Add a keyword">
         <div class="jb-radios">{dates}</div>
-        <label class="jb-check"><input type="checkbox" id="jb-direct" checked>
+        <label class="jb-check"><input type="checkbox" id="jb-direct"{direct_on}>
           <span>direct listings only</span></label>
-        <select id="jb-sort" aria-label="Sort">
-          <option value="new" selected>Newest</option>
-          <option value="direct">Direct first</option>
-          <option value="score">Match %</option>
-        </select>
+        <select id="jb-sort" aria-label="Sort">{sort_options}</select>
         <span class="jb-count" id="jb-count"></span>
       </div>
       <div class="jb-pills" id="jb-pills"></div>
@@ -1041,6 +1051,16 @@ SCRIPT = r"""
   var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30,
                '60d': 60, all: 60 };
   var WATCH_KEY = 'jobby.watching', PASS_KEY = 'jobby.passed';
+  // The filters the user last set, in this browser. The board is a published
+  // snapshot rendered with whatever the saved search was at publish time, so
+  // without this a change survives only until the next reload — and Save search
+  // cannot help, because the page you are looking at was rendered minutes ago.
+  // This is view state, deliberately separate from the saved search: the saved
+  // search decides what gets *fetched*, this decides what you are looking at.
+  var VIEW_KEY = 'jobby.foundView';
+  var TEXT_CONTROLS = ['jb-ex', 'jb-scope', 'jb-sort', 'jb-cmode', 'jb-companies',
+                       'jb-exp', 'jb-deg', 'jb-role', 'jb-emp', 'jb-jt'];
+  var CHECK_CONTROLS = ['jb-direct', 'jb-remote'];
   var keywords = [];
 
   function readIds(k) {
@@ -1051,6 +1071,91 @@ SCRIPT = r"""
     var ids = readIds(k);
     if (ids.indexOf(id) === -1) { ids.push(id); writeIds(k, ids); }
   }
+  function viewState() {
+    var state = { keywords: keywords.slice(), values: {}, checks: {},
+                  workplaces: [], unknowns: [], locations: [], date: null };
+    TEXT_CONTROLS.forEach(function (id) {
+      var n = document.getElementById(id);
+      if (n) state.values[id] = n.value;
+    });
+    CHECK_CONTROLS.forEach(function (id) {
+      var n = document.getElementById(id);
+      if (n) state.checks[id] = !!n.checked;
+    });
+    var d = document.querySelector('input[name="jb-date"]:checked');
+    state.date = d ? d.value : null;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-wp]'), function (n) {
+      if (n.checked) state.workplaces.push(n.getAttribute('data-wp'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-unknown]'), function (n) {
+      if (n.checked) state.unknowns.push(n.getAttribute('data-unknown'));
+    });
+    state.locations = pickedLocations();
+    return state;
+  }
+
+  function rememberView() {
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(viewState())); } catch (e) {}
+  }
+  function forgetView() {
+    try { localStorage.removeItem(VIEW_KEY); } catch (e) {}
+  }
+
+  function restoreView() {
+    var raw;
+    try { raw = localStorage.getItem(VIEW_KEY); } catch (e) { return false; }
+    if (!raw) return false;
+    var state;
+    try { state = JSON.parse(raw); } catch (e) { forgetView(); return false; }
+    if (!state || typeof state !== 'object') { forgetView(); return false; }
+
+    keywords = Array.isArray(state.keywords) ? state.keywords.slice() : [];
+    TEXT_CONTROLS.forEach(function (id) {
+      var n = document.getElementById(id);
+      // A value the page no longer offers is skipped rather than forced: a
+      // window or a sort that has been retired must not blank the control.
+      if (n && state.values && typeof state.values[id] === 'string') {
+        if (n.tagName !== 'SELECT' || hasOption(n, state.values[id])) {
+          n.value = state.values[id];
+        }
+      }
+    });
+    CHECK_CONTROLS.forEach(function (id) {
+      var n = document.getElementById(id);
+      if (n && state.checks && typeof state.checks[id] === 'boolean') {
+        n.checked = state.checks[id];
+      }
+    });
+    if (state.date) {
+      var d = document.querySelector('input[name="jb-date"][value="' + state.date + '"]');
+      if (d) d.checked = true;
+    }
+    if (Array.isArray(state.workplaces)) {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-wp]'), function (n) {
+        n.checked = state.workplaces.indexOf(n.getAttribute('data-wp')) !== -1;
+      });
+    }
+    if (Array.isArray(state.unknowns)) {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-unknown]'), function (n) {
+        n.checked = state.unknowns.indexOf(n.getAttribute('data-unknown')) !== -1;
+      });
+    }
+    if (Array.isArray(state.locations)) {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'), function (n) {
+        n.setAttribute('aria-pressed',
+          state.locations.indexOf(n.getAttribute('data-loc')) !== -1 ? 'true' : 'false');
+      });
+    }
+    return true;
+  }
+
+  function hasOption(select, want) {
+    for (var i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === want) return true;
+    }
+    return false;
+  }
+
   function post(path, body) {
     return fetch(path, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1544,7 +1649,10 @@ SCRIPT = r"""
 
   function render() {
     var rows = JOBS.filter(matches);
-    var how = value('jb-sort') || 'direct';
+    // Falls back to what the page ships with, not to a third answer. These
+    // disagreed once already, and a default that only appears when a
+    // control is missing is the hardest kind to notice.
+    var how = value('jb-sort') || 'new';
     if (how === 'new') {
       rows = rows.slice().sort(function (a, b) {
         return String(b.pa || b.fs || '').localeCompare(String(a.pa || a.fs || ''));
@@ -1558,6 +1666,7 @@ SCRIPT = r"""
         return grouped || (b.sc || 0) - (a.sc || 0);
       });
     }
+    rememberView();
     makeColumns(columnCount());
     lastRows = rows;
     visible = Math.min(RENDER_WINDOW, rows.length);
@@ -1628,6 +1737,7 @@ SCRIPT = r"""
   var clear = document.getElementById('jb-clear');
   if (clear) {
     clear.addEventListener('click', function () {
+      forgetView();
       keywords = [];
       ['jb-kw','jb-ex','jb-companies'].forEach(function (id) {
         var n = document.getElementById(id); if (n) n.value = '';
@@ -1678,6 +1788,8 @@ SCRIPT = r"""
         employmentTypes: value('jb-emp') ? [value('jb-emp')] : [],
         jobTypes: value('jb-jt') ? [value('jb-jt')] : [],
         postedWithin: node ? node.value : '7d',
+        sort: value('jb-sort') || 'new',
+        directOnly: checked('jb-direct'),
         includeUnknowns: {
           experience: unknownAllowed('experience'), degree: unknownAllowed('degree'),
           workplace: unknownAllowed('workplace'), postedAt: unknownAllowed('postedAt')
@@ -1776,6 +1888,9 @@ SCRIPT = r"""
   }
   reconcileSave();
 
+  // Before the first draw, so the board opens on what the user last had rather
+  // than flashing the published defaults and then correcting itself.
+  restoreView();
   drawPills();
   render();
 })();

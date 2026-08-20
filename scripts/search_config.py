@@ -49,6 +49,11 @@ POSTED_WITHIN = {"6h": 0.25, "24h": 1, "7d": 7, "14d": 14, "30d": 30,
 # Configs saved before the ceiling existed. Read, never offered.
 LEGACY_POSTED_WITHIN = {"90d": "60d"}
 SEARCH_SCOPES = ("title", "title+description")
+# How the board is ordered and whether it hides aggregator copies. These are
+# view state rather than anything ingest reads, but they are still "the search
+# Sahil set up", and a saved search that forgets them is a saved search that
+# reverts two controls every time the board republishes.
+SORTS = ("new", "direct", "score")
 WORKPLACES = ("remote", "hybrid", "onsite")
 COMPANIES_MODES = ("all", "only", "hide")
 # Ordered, because "up to a master's" has to include everything below it.
@@ -76,6 +81,8 @@ DEFAULTS = {
     "employmentTypes": [],
     "jobTypes": [],
     "postedWithin": "7d",
+    "sort": "new",
+    "directOnly": True,
     "includeUnknowns": {key: True for key in UNKNOWN_KEYS},
     "sponsorsVisaOnly": False,
     "minScoreToKeep": 40,
@@ -138,6 +145,9 @@ def validate(config):
         raise ConfigError(f"postedWithin must be one of {sorted(POSTED_WITHIN)}")
     if out["companiesMode"] not in COMPANIES_MODES:
         raise ConfigError(f"companiesMode must be one of {list(COMPANIES_MODES)}")
+    if out["sort"] not in SORTS:
+        raise ConfigError(f"sort must be one of {list(SORTS)}")
+    out["directOnly"] = bool(out.get("directOnly"))
 
     workplace = _string_list(out.get("workplace"), "workplace")
     bad = [w for w in workplace if w not in WORKPLACES]

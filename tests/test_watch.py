@@ -853,5 +853,49 @@ class RenderVersionTests(unittest.TestCase):
         self.assertIn("render_version()", fp)
 
 
+class SearchConfigRepublishTests(unittest.TestCase):
+    """Saving a search has to reach the board without waiting fifteen minutes.
+
+    The fingerprint watched sessions, history, the blocked banner and the Found
+    lane's counts. A saved search moves none of them, so the republish waited
+    for the floor. Press Save, reload, and the filters were back with nothing on
+    screen explaining why — indistinguishable from the save having failed.
+    """
+
+    def config(self, root, version):
+        (root / "search-config.json").write_text(json.dumps({"version": version}))
+
+    def test_the_version_moves_with_the_saved_search(self):
+        original = watch.STATE_DIR
+        with tempfile.TemporaryDirectory() as d:
+            watch.STATE_DIR = pathlib.Path(d)
+            try:
+                self.assertEqual(watch.search_config_version(), "none")
+                self.config(watch.STATE_DIR, 3)
+                self.assertEqual(watch.search_config_version(), "3")
+                self.config(watch.STATE_DIR, 4)
+                self.assertEqual(watch.search_config_version(), "4")
+            finally:
+                watch.STATE_DIR = original
+
+    def test_an_unreadable_config_is_a_stable_distinct_value(self):
+        original = watch.STATE_DIR
+        with tempfile.TemporaryDirectory() as d:
+            watch.STATE_DIR = pathlib.Path(d)
+            try:
+                (watch.STATE_DIR / "search-config.json").write_text("{not json")
+                self.assertEqual(watch.search_config_version(), "unreadable")
+                self.assertEqual(watch.search_config_version(),
+                                 watch.search_config_version())
+            finally:
+                watch.STATE_DIR = original
+
+    def test_the_fingerprint_carries_it(self):
+        source = inspect.getsource(watch)
+        fp = source[source.index("def fingerprint"):]
+        fp = fp[:fp.index("def render_version")]
+        self.assertIn("search_config_version()", fp)
+
+
 if __name__ == "__main__":
     unittest.main()
