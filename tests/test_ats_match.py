@@ -9,6 +9,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 """
 
 import importlib.util
+import os
 import pathlib
 import tempfile
 import unittest
@@ -140,3 +141,35 @@ class RenderSourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoryBankDefaultTests(unittest.TestCase):
+    """The honesty gate has to see every sanctioned source, or it cries wolf.
+
+    A claim may trace to the base resume, the answer store, or the story bank.
+    The gate only read the story bank when handed --facts, and the runs were not
+    handing it over: across nine applications where the posting was still on
+    disk, 8 of 9 reported a non-empty unsourcedTerms list without it and none
+    did with it. Those resumes were fine. The gate was wrong, and a gate that is
+    usually wrong is one people learn to ship past.
+    """
+
+    def test_the_story_bank_is_found_without_being_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "story-facts.txt").write_text("He led the rollout to the CEO.")
+            os.environ["JOB_APPLICATION_DIR"] = str(root)
+            try:
+                found = ats.default_facts()
+            finally:
+                os.environ.pop("JOB_APPLICATION_DIR", None)
+            self.assertIsNotNone(found)
+            self.assertIn("rollout", found.read_text())
+
+    def test_a_store_with_no_story_bank_returns_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["JOB_APPLICATION_DIR"] = d
+            try:
+                self.assertIsNone(ats.default_facts())
+            finally:
+                os.environ.pop("JOB_APPLICATION_DIR", None)
