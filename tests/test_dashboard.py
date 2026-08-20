@@ -57,7 +57,12 @@ class DashboardTest(unittest.TestCase):
     def test_page_declares_utf8(self):
         # Without this, a server that omits charset renders every non-ASCII
         # character in the store as mojibake.
-        self.assertTrue(build().lstrip().startswith('<meta charset="utf-8">'))
+        # The spec gives the parser the first 1024 bytes to find it, and the
+        # doctype now sits ahead of it. Asserting on the very first bytes
+        # pinned the ordering rather than the requirement.
+        head = build().lstrip()
+        self.assertTrue(head.startswith("<!doctype html>"), head[:60])
+        self.assertIn('<meta charset="utf-8">', head[:1024])
 
     def test_non_ascii_store_data_survives_a_round_trip(self):
         html = build(sessions=[{"company": "Renée & Cie", "role": "PM — Agents",
@@ -414,7 +419,10 @@ class FoundLaneTests(unittest.TestCase):
         rows = self.rows(self.render([self.job(
             canonicalSource="smartrecruiters", workplace="onsite")]))
         self.assertEqual(rows[0]["src"], "SmartRecruiters")
-        self.assertEqual(rows[0]["wp"], "On-site")
+        # The workplace ships as the slug the filters compare against; the card
+        # turns it into "On-site". This line used to assert the label, which is
+        # how a payload the checkboxes could not match went unnoticed.
+        self.assertEqual(rows[0]["wp"], "onsite")
 
     def test_the_card_carries_a_line_of_the_posting_itself(self):
         rows = self.rows(self.render([self.job(

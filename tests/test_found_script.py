@@ -258,9 +258,17 @@ if (CONTROLS.locations) {
   input.dispatch('keydown', { key: 'Enter', preventDefault: function () {} });
 });
 
+// textContent on the stub returns a node's own text, so a test that wants to
+// read what a card says has to walk it.
+function dumpText(node) {
+  return [node.textContent || ''].concat(
+    (node.children || []).map(dumpText)).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 setTimeout(function () {
   console.log(JSON.stringify({
     shown: grid.children.length,
+    text: dumpText(grid),
     ids: grid.children.map(function (c) { return c.getAttribute('data-id'); }),
     count: (nodes['jb-count'] || {}).textContent || '',
     saveState: nodes['jb-savestate'].textContent,
@@ -483,6 +491,60 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
         out = self.run_script([self.job("a")], {"bannerVersion": 7})
         self.assertEqual(out["saveState"], "")
         self.assertNotIn("GET /api/search-config", out["fetched"])
+
+
+class RealPayloadTests(ScriptHarness, unittest.TestCase):
+    """The rows the script actually receives, not rows a test made up.
+
+    Every filter here compares a payload field against a vocabulary the
+    controls know. When `compact` starts emitting a different spelling of a
+    value the controls never learned, the comparison stops matching and the
+    cards vanish in silence: no error, no empty state, just a smaller board.
+    That happened twice — once when payload slimming dropped the field the
+    description search read, and once when the workplace shipped as "On-site"
+    while the checkbox offered "onsite". Both were invisible because the tests
+    above hand-build their rows.
+
+    So these run the real `compact` output through the real script.
+    """
+
+    def real_row(self, **job):
+        base = {"id": "a", "company": "Northwind", "title": "Product Manager",
+                "canonicalUrl": "https://boards.greenhouse.io/northwind/jobs/1",
+                "canonicalSource": "greenhouse", "postedAt": "2026-08-13",
+                "firstSeenAt": "2026-08-19", "score": {"total": 80},
+                "location": {"country": "US", "city": "New York"}}
+        base.update(job)
+        return found_lane.compact(base, found_lane.WhyTable())
+
+    def test_a_real_row_is_visible_with_the_controls_untouched(self):
+        # The whole point: a job that came out of the ingest, drawn on a board
+        # nobody has filtered yet, is on the page.
+        out = self.run_script([self.real_row(workplace="onsite")])
+        self.assertEqual(out["ids"], ["a"])
+
+    def test_every_workplace_the_payload_emits_is_one_a_checkbox_selects(self):
+        # The vocabulary pin. `wp` is compared with indexOf against the checkbox
+        # values, so a label where a slug belongs hides the card for good.
+        offered = set(found_lane.WORKPLACE_LABELS)
+        for value in list(found_lane.WORKPLACE_LABELS) + ["", None, "Remote", "wat"]:
+            with self.subTest(workplace=value):
+                shipped = self.real_row(workplace=value)["wp"]
+                self.assertIn(shipped, offered | {""},
+                              f"workplace {value!r} ships as {shipped!r}, "
+                              "which no workplace checkbox can select")
+
+    def test_a_real_row_still_answers_its_workplace_filter(self):
+        rows = [self.real_row(id="r", workplace="remote"),
+                self.real_row(id="o", workplace="onsite")]
+        rows[0]["id"], rows[1]["id"] = "r", "o"
+        out = self.run_script(rows, {"workplaces": ["remote"]})
+        self.assertEqual(out["ids"], ["r"])
+
+    def test_the_card_still_shows_the_readable_label(self):
+        # Shipping the slug must not turn the chip into "onsite".
+        out = self.run_script([self.real_row(workplace="onsite")])
+        self.assertIn("On-site", out["text"])
 
 
 if __name__ == "__main__":

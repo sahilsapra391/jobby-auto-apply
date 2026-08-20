@@ -528,7 +528,12 @@ def build(state, generated):
         for k, label, n in tabs
     )
 
-    return f"""<meta charset="utf-8">
+    # Without a doctype the page renders in quirks mode, where phones ignore
+    # width=device-width and lay out at 980px, then zoom the whole board down
+    # to fit. Everything is legible on a laptop and about a third size on a
+    # phone, which is where this actually gets read.
+    return f"""<!doctype html>
+<meta charset="utf-8">
 <title>Jobby is a free agent!</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme:light)">

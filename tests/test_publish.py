@@ -76,7 +76,12 @@ class InliningTest(unittest.TestCase):
         html = self.html()
         self.assertIn("<title>Jobby is a free agent!</title>", html)
         self.assertIn('<link rel="icon" href="data:image/svg+xml;base64,', html)
-        self.assertTrue(html.lstrip().startswith('<meta charset="utf-8">'))
+        # The doctype has to lead. Without it the browser drops into quirks
+        # mode, where width=device-width is ignored and a phone lays the board
+        # out at 980px.
+        lead = html.lstrip()
+        self.assertTrue(lead.startswith("<!doctype html>"), lead[:60])
+        self.assertIn('<meta charset="utf-8">', lead[:80])
 
     def test_non_ascii_survives(self):
         html = self.html()

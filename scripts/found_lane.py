@@ -131,7 +131,10 @@ def compact(job, why_table):
         "src": SOURCE_LABELS.get(job.get("canonicalSource") or "",
                                  (job.get("canonicalSource") or "").title()),
         "cty": location.get("country") or "",
-        "wp": WORKPLACE_LABELS.get(job.get("workplace") or "", ""),
+        # The slug, not the label: the workplace checkboxes compare against
+        # this value, so what ships has to be what they can select. The card
+        # turns it back into "On-site" at draw time.
+        "wp": job.get("workplace") if job.get("workplace") in WORKPLACE_LABELS else "",
         "pa": (job.get("postedAt") or "")[:10],
         "fs": (job.get("firstSeenAt") or "")[:10],
         "sc": score.get("total"),
@@ -990,6 +993,8 @@ SCRIPT = r"""
     });
     return node;
   }
+  var WP_LABELS = {remote: 'Remote', hybrid: 'Hybrid', onsite: 'On-site'};
+
   var ICONS = {
     // An eye, drawn. The emoji renders as a photoreal eyeball on macOS.
     watch: function () {
@@ -1036,7 +1041,7 @@ SCRIPT = r"""
     // nothing. A row of "unknown" is honest; a row of invented detail is not.
     var chips = el('div', 'jb-chips');
     if (job.place) chips.appendChild(chip(job.place, 'place'));
-    if (job.wp) chips.appendChild(chip(job.wp));
+    if (job.wp) chips.appendChild(chip(WP_LABELS[job.wp] || job.wp));
     if (job.yrt) chips.appendChild(chip(job.yrt, 'years'));
     else chips.appendChild(chip('Experience not stated', 'unknown'));
     var when = ago(job);

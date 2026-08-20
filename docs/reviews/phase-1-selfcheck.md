@@ -247,3 +247,58 @@ it belonged in the gaps list and was not there. Now recorded in both
    `search-config.json`, and the daemon has been running the untouched `main`
    checkout throughout. The supervised end-to-end run (plan step 9) has **not**
    been done and needs Sahil present.
+
+## The live run, and the two things it found
+
+Both "could not check" items 3 and 4 are now closed. The board has been rendered
+in a real browser against the real store, and `~/.job-application/` has gained
+`jobs.json`, `search-config.json` and `companies.json`.
+
+The run: **32,142 found, 13,422 kept, 3,500 merged, 15,220 filtered, 752
+requests, 965s, zero errors.** Merge reasons were 529 canonical-url, 1,889
+company-title-location, 1,082 fingerprint, and no bare-id merges, which is the
+shape the identity rules predict. The store holds 13,721 records across 4,151
+companies, 6,096 of them direct ATS or careers-page listings. Every configured
+location clears the embedding floor: US 1,007 cards, Canada 296, and 155 each
+for India, Australia, the UK, the UAE, Germany, Singapore, Ireland and the
+Netherlands, against pool reach between 9.3% and 53.8%.
+
+Rendering it turned up two defects that no test on either side would have
+caught, because both live in the seam between the payload and the page.
+
+**The workplace vocabulary did not match its own filter.** `compact` shipped
+`wp` as a display label (`"Remote"`, `"On-site"`) while the workplace checkboxes
+compare against slugs (`remote`, `onsite`). `indexOf` never matched, so every
+job whose workplace was known was permanently invisible: 1,394 of 3,400 embedded
+cards, 41%. Nothing failed. The board just showed a smaller number and looked
+entirely healthy, which is the same failure mode as the payload slimming that
+broke the description search.
+
+The reason it survived is worth naming. `tests/test_found_script.py` builds its
+payload rows by hand, so it asserted the client's behaviour against a payload
+`compact` does not produce; and `test_dashboard.py` asserted `compact` produces
+the label, pinning the wrong side of the contract. Two green tests, one on each
+side of a seam neither crossed.
+
+The fix ships the slug and lets the card render the label. The guard is a new
+`RealPayloadTests`, which runs real `compact` output through the real script,
+plus a vocabulary pin: every value `compact` can put in `wp` must be a value a
+checkbox can select. All four fail on the old code.
+
+**The page had no doctype, so phones rendered it in quirks mode.** `document.
+compatMode` was `BackCompat`, which makes the browser ignore
+`width=device-width` and lay the board out at 980px before zooming it down to
+fit. The `<meta name="viewport">` tag was present and correct the whole time and
+was simply not being honoured. Legible on a laptop, about a third size on a
+phone. This one predates the branch (`main` has no doctype either), but the
+board is the first page on this dashboard that anyone would read on a phone.
+Fixed by emitting `<!doctype html>`. It switches the whole dashboard from quirks
+to standards mode, so it is worth a reviewer's eye on the other five lanes
+rather than the Found lane alone.
+
+The narrow-screen CSS itself was already right: one column under 900px, the
+full-bleed negative margins reset, four columns above 1180px.
+
+Item 2 stays deferred on its own terms. The live run reached far more than eight
+countries, but the acceptance box asks for a full day and this was sixteen
+minutes.
