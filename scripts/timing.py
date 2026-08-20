@@ -43,7 +43,17 @@ def parse(ts):
 
 
 def spawn_times():
-    """applicationId -> when its runner started, from the slot logs."""
+    """applicationId -> every spawn of it, oldest first.
+
+    A list, not a single stamp. An application that is retried runs twice, in
+    two different slots, and the logs are walked in filename order rather than
+    chronological order. Keeping one stamp per id meant a later log could
+    overwrite the newer spawn with an older one, and the run was then measured
+    from an attempt that had already finished to a completion from the next
+    attempt. That invented two runs of 258 and 265 minutes out of attempts that
+    actually took 15 and 39, and those fictions were what made the stall sweep
+    look broken.
+    """
     out = {}
     for f in sorted(LOG_DIR.glob("apply*.log")):
         text = f.read_text(errors="replace")
@@ -52,7 +62,9 @@ def spawn_times():
             end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
             ran = re.search(r'"ran": "([^"]+)"', text[pos:end])
             if ran:
-                out[ran.group(1)] = parse(ts)
+                out.setdefault(ran.group(1), []).append(parse(ts))
+    for stamps in out.values():
+        stamps.sort()
     return out
 
 
@@ -97,22 +109,31 @@ def collect(since=None):
         if not aid:
             continue
         if e.get("event") == "submitting":
-            submitting.setdefault(aid, parse(e["at"]))
+            submitting.setdefault(aid, []).append(parse(e["at"]))
         elif e.get("event") == "completed":
             completed[aid] = parse(e["at"])
 
     runs, stuck = [], []
-    for aid, start in spawns.items():
+    for aid, starts in spawns.items():
         end = completed.get(aid)
-        if not end or end < start:
+        if not end:
             continue
+        # The attempt that produced this completion is the last one that began
+        # before it. Anything earlier is a previous attempt with its own ending.
+        earlier = [s for s in starts if s <= end]
+        if not earlier:
+            continue
+        start = max(earlier)
         if since and start < since:
             continue
         total = (end - start).total_seconds() / 60
         row = {"applicationId": aid, "startedAt": start.strftime(STAMP),
                "total": round(total, 1), "build": None, "fill": None, "verify": None}
-        sub, built = submitting.get(aid), docs.get(aid)
-        if sub and sub >= start:
+        # Same rule for the submit stamp: the one belonging to this attempt.
+        in_window = [x for x in submitting.get(aid, []) if start <= x <= end]
+        sub = max(in_window) if in_window else None
+        built = docs.get(aid)
+        if sub:
             row["verify"] = round((end - sub).total_seconds() / 60, 1)
             if built and start <= built <= sub:
                 row["build"] = round((built - start).total_seconds() / 60, 1)

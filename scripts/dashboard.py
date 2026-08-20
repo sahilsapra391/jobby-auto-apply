@@ -203,7 +203,11 @@ def build(state, generated):
         phase = entry.get("phase") or "Queued"
         detail = entry.get("phaseDetail") or ""
         at = (entry.get("phaseAt") or "")[11:19]
-        steps = ["Queued", "Building documents", "Documents ready",
+        # Five, not six. "Documents ready" was a dot that no run reports any
+        # more: the phases a run writes are set by brief.py, the two calls in
+        # the prompt, and finish.py, and that is not one of them. A dot that
+        # only ever lights up on its way past is a step the reader cannot use.
+        steps = ["Queued", "Building documents",
                  "Filling the form", "Submitting", "Verifying"]
         # Match on prefix so an agent's wording does not have to be exact.
         idx = next((i for i, st in enumerate(steps)

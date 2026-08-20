@@ -130,6 +130,26 @@ Draft the referral message and put it in the dashboard for the user to send. Sen
 
 If a form asks "were you referred by an employee," and a referral is realistically obtainable, raise it before answering — answering "no" forecloses something worth having.
 
+## The working rhythm
+
+Act, act, act, then review. Not act, wait, review, act, wait. Every tool call is a round trip where nothing happens until the model decides again, and a measured run made 102 of them. Independent shell commands belong in one call separated by `;`; independent tool calls belong in one message. Never re-read what has not changed, and never probe the environment: `python3` is the interpreter and pymupdf is installed.
+
+Two commands exist purely to collapse round trips, and neither drops a check:
+
+```bash
+python3 scripts/brief.py --id <application-id>
+```
+
+One call returns the watch entry, the posting extraction, whether this is a retry and what is pending, the duplicate verdict, the base resume and identity block for the posting's country, and which documents already exist. It creates the company folder and writes the posting to `jd-<application-id>.txt`, returned as `jdPath` (per application, because several roles at one company share a folder). Do not follow it with `session-load`, `profile-get` or `ls`; that is what it just did.
+
+```bash
+python3 scripts/finish.py --id <id> --pre-submit
+python3 scripts/finish.py --id <id> --completed --confirmation '<exact wording>' --resume <path> --cover <path>
+python3 scripts/finish.py --id <id> --park --pending '<blocker>' --detail '<what to do>'
+```
+
+`--pre-submit` re-reads the session, stops if the user cancelled mid-run, runs the duplicate guard, and only then writes the `submitting` write-ahead. If it refuses, it writes nothing. The guard fails closed: no answer from it means no submission. `--completed` refuses to log without the confirmation actually observed, because an unverified completion is what makes the board disagree with reality.
+
 ## Phase 4: Filling
 
 Identify the ATS and read `references/platforms.md` for its known blockers, so you can tell the user upfront what will need them.
@@ -179,6 +199,8 @@ Select the base resume by the posting's real country, then use that entry's `ide
 Write both documents to `<skill-dir>/applications/<Company>/`, one folder per company, gitignored. Name them `Sahil_Sapra_<Company>_Resume.pdf` and `..._CoverLetter.pdf`, inserting the role when that company has more than one open role, since company-only names collide. Ignore the `/mnt/user-data/` paths in that skill's own docs; they are a Linux sandbox convention and do not exist here.
 
 Speak the posting's vocabulary wherever the underlying fact is already true, since ATS ranking is partly keyword overlap. Rewording true work in the employer's language is free; asserting work that did not happen is not. Target 95% coverage **of the keywords the candidate can truthfully claim**, and report the rest rather than closing the gap. Measure with `scripts/ats_match.py`, and treat its `unsourcedTerms` list as the gate: it must be empty. Consider adding **Skeptic** to Entrepreneurial Ventures when the posting is finance, fintech, trading or frugality-flavoured; leave it out otherwise.
+
+**Content gate first, layout gate second.** Wording edits change how many lines a page holds, so clearing layout before content means the content fix invalidates the layout you just cleared and you render again. `ats_match.py --resume` accepts the `.resume.html` the PDF renders from, so the wording loop has no render in it; render once it is clean, run the layout check on the resume only (never the cover letter, which has no base to match), then run the content gate once more against the PDF that actually gets uploaded.
 
 Then verify both, because rewording next to a job description is exactly the operation that invents things. Every skill, number, employment title, employer and date must trace to the base resume, the answer store, or something the user said, and a term that arrived only from the posting gets cut. One deliberate exception: the **profile title** at the top is meant to adapt toward the role, while **employment titles inside the experience section are frozen**. Check them separately. Then verify the format holds:
 

@@ -10,6 +10,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -97,6 +98,44 @@ class SuggestTests(unittest.TestCase):
         out = self.suggest()
         self.assertLess(out["coverageIfRewritten"], 100)
         self.assertTrue(out["notClaimable"])
+
+class RenderSourceTests(unittest.TestCase):
+    """The content gate reads the HTML the PDF renders from.
+
+    It used to read PDFs only, so every wording fix had to go through Chrome
+    before it could be checked: 42 of 141 re-renders across 84 runs existed for
+    that reason alone.
+    """
+
+    def test_html_is_read_as_text_with_no_markup_or_entities(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / ".resume.html"
+            path.write_text(
+                "<style>.x{color:red}</style>"
+                "<div class='org'>CAMP Systems &amp; Co</div>"
+                "<script>var a=1</script>"
+                "<ul><li>Raised coverage from 62% to 81%&rsquo;s peak</li></ul>")
+            text = ats.document_text(path)
+            self.assertIn("CAMP Systems & Co", text)
+            self.assertIn("62%", text)
+            self.assertNotIn("<div", text)
+            self.assertNotIn("&amp;", text)
+            # style and script bodies are not resume content
+            self.assertNotIn("color:red", text)
+            self.assertNotIn("var a=1", text)
+
+    def test_a_pdf_still_goes_through_the_pdf_reader(self):
+        # The final check runs against the file that is actually uploaded, so
+        # the PDF path must keep working.
+        calls = []
+        original = ats.pdf_text
+        ats.pdf_text = lambda p: calls.append(p) or "pdf text"
+        try:
+            out = ats.document_text(pathlib.Path("/nowhere/resume.pdf"))
+        finally:
+            ats.pdf_text = original
+        self.assertEqual(out, "pdf text")
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

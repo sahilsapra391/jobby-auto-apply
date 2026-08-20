@@ -346,6 +346,32 @@ def main():
     ap.add_argument("--root", help="store directory (default ~/.job-application)")
     args = ap.parse_args()
 
+    # Refuse to publish a store that is not the one this board belongs to.
+    #
+    # The KV namespace comes from deploy/.env.local, never from the store, so a
+    # board rendered from a redirected store still lands on the real one. Callers
+    # are supposed to pass --root, and one of them forgot: phase.py publishes
+    # whenever --root is absent, and a test store reached it through there and
+    # rendered a two-row fixture over the live board. Guarding at the caller
+    # fixes that caller. Guarding here fixes every caller, including the next one
+    # written.
+    # There is deliberately no --root escape hatch here. I gave it one, tested
+    # the refusal, then ran the "allowed" branch and it wrote a 0-submitted
+    # board over the live one, which is the incident this guard exists to stop.
+    # guard_render cannot catch it either: it compares the render against the
+    # same redirected store, so nothing-versus-nothing agrees.
+    default_store = Path("~/.job-application").expanduser().resolve()
+    resolved = Path(args.root).expanduser().resolve() if args.root \
+        else Path(os.environ.get("JOB_APPLICATION_DIR", default_store)).expanduser().resolve()
+    if resolved != default_store and not args.local:
+        print(json.dumps({
+            "published": False,
+            "error": f"refusing to publish from {resolved}. The board is served from one "
+                     f"KV namespace fixed in deploy/.env.local, so publishing any other "
+                     f"store overwrites the real board with that store's contents. Use "
+                     f"--local to look at it instead."}))
+        return 0
+
     try:
         base = [] if args.local else vercel_cmd()
         if args.setup:

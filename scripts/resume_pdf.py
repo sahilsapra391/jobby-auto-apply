@@ -266,6 +266,12 @@ def geometry(pdf_path):
             "fonts": sorted(fonts), "colors": colors}
 
 
+# Body line height in the generated resume, in points. The bottom of a page can
+# only fall on a line boundary, so this is the smallest difference a rebuild can
+# actually express there.
+LINE = 13.0
+
+
 def cmd_verify(args):
     built = geometry(Path(args.pdf).expanduser())
     if not args.against:
@@ -286,9 +292,33 @@ def cmd_verify(args):
                 f"contact block: source occupies {a['contactLines']} line(s), built "
                 f"occupies {b['contactLines']} (a wrapped contact line reflows "
                 f"everything below it)")
+        # Text printing past the bottom edge is the failure that actually
+        # matters here, and it is absolute: it does not depend on the source.
+        if b["bottom"] < 0:
+            diffs.append(
+                f"page {i+1}: text prints {-b['bottom']:.1f}pt past the bottom edge "
+                f"and will be clipped")
+
         for edge in ("width", "height", "left", "right", "top", "bottom"):
             # 2pt is under a third of a millimetre, below what a reader sees.
-            if abs(a[edge] - b[edge]) > 2:
+            #
+            # Except "bottom", which is not a margin. width/height/left/right/top
+            # are set by the template and hold still, but bottom is measured to
+            # the LAST glyph on the page, so it moves with how much text there
+            # is, and a page break can only land between lines. Demanding it
+            # match within 2pt asks a quantity that advances in ~12pt steps to
+            # hit a 4pt window, which a rebuild cannot do on purpose: across 84
+            # real runs it produced 165 bottom failures and agents re-rendered
+            # up to 13 times trimming blindly at it. One line of slack is the
+            # honest tolerance.
+            #
+            # It still catches what matters. 48 of those 165 had the built page
+            # reaching past the bottom edge, and every one exceeds a line's
+            # slack as well as tripping the absolute check above. Of the 85 that
+            # now pass, the largest gap is 12.8pt, under one line. A page
+            # genuinely half empty is several lines and still fails.
+            tolerance = LINE if edge == "bottom" else 2
+            if abs(a[edge] - b[edge]) > tolerance:
                 diffs.append(f"page {i+1} {edge}: source {a[edge]}pt, built {b[edge]}pt")
 
     # The accent colour is the single most visible attribute of a resume

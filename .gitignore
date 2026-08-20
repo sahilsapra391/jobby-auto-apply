@@ -27,3 +27,15 @@ deploy/node_modules/
 
 # Local board render used for browser-testing the dashboard JS.
 .board-preview.html
+
+# Agent screenshots land at the repo root. They are confirmation pages
+# carrying a real name and address, and they are not part of the project.
+/*.png
+
+# Sourcing sweep scratch: scraped board responses and candidate dumps that a
+# scan run leaves behind. Data, not source, and .bodies.json alone is 1.4MB.
+.sweep*.json
+.sweep*.err
+.bodies.json
+.candidates.json
+.picks.txt

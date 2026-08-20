@@ -10,6 +10,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 
 import importlib.util
 import json
+import sys
 import os
 import pathlib
 import shutil
@@ -220,3 +221,50 @@ class DegradedRenderGuardTests(unittest.TestCase):
             publish.guard_render({"submitted": 35, "greeting": "Sahil"}, None)
         finally:
             publish.expected_counts = original
+
+
+class RedirectedStoreTests(unittest.TestCase):
+    """A store that is not the real one must never reach the real board.
+
+    The KV namespace comes from deploy/.env.local, not from the store, so a
+    board rendered from anywhere still lands on the live one. guard_render does
+    not help: it compares the render against the same redirected store, so an
+    empty render of an empty store agrees with itself.
+
+    These drive publish.py as a subprocess on purpose. The first version of this
+    guard was covered by a test that monkeypatched the call and passed green
+    while the real path published twice.
+    """
+
+    def run_publish(self, extra, env_root):
+        env = dict(os.environ, JOB_APPLICATION_DIR=str(env_root))
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "publish.py")] + extra,
+            capture_output=True, text=True, env=env)
+
+    def test_a_redirected_store_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "sessions").mkdir()
+            out = json.loads(self.run_publish([], d).stdout)
+            self.assertFalse(out["published"])
+            self.assertIn("refusing to publish", out["error"])
+
+    def test_passing_root_does_not_unlock_it(self):
+        # The escape hatch is the bug: it was tested by checking the refusal,
+        # then the allowed branch wrote a 0-submitted board over the live one.
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "sessions").mkdir()
+            out = json.loads(self.run_publish(["--root", d], d).stdout)
+            self.assertFalse(out["published"])
+
+    def test_it_never_reaches_the_deploy_step(self):
+        # Nothing should be rendered or pushed, so no board size is reported.
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "sessions").mkdir()
+            r = self.run_publish([], d)
+            self.assertNotIn("written to KV", r.stdout)
+            self.assertNotIn("Board updated", r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

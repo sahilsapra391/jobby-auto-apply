@@ -22,9 +22,26 @@ REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
 
+class StoreUnreadable(RuntimeError):
+    """The history could not be read, so nothing can be ruled out."""
+
+
 def store(args):
+    """Read from the store, or raise.
+
+    This used to return None on any failure, and submitted_index turned that
+    into `or []`: an unreadable history became an empty history, and the guard
+    then reported that nothing had been applied to. A duplicate guard that
+    answers "not a duplicate" when it cannot see is worse than no guard, because
+    the caller trusts it. One truncated line in applications.jsonl was enough.
+    """
     r = subprocess.run([sys.executable, str(STORE)] + args, capture_output=True, text=True)
-    return json.loads(r.stdout or "null") if r.returncode == 0 else None
+    if r.returncode != 0:
+        raise StoreUnreadable(f"{' '.join(args)}: {(r.stderr or '').strip()[:200]}")
+    try:
+        return json.loads(r.stdout or "null")
+    except json.JSONDecodeError as exc:
+        raise StoreUnreadable(f"{' '.join(args)}: unparseable output ({exc})")
 
 
 def norm(value):
@@ -133,11 +150,22 @@ def main():
     args = ap.parse_args()
 
     if args.guard:
-        result = guard(args.guard)
+        try:
+            result = guard(args.guard)
+        except StoreUnreadable as exc:
+            # Answer in the same shape, so a caller can tell "no" from "cannot
+            # tell". duplicate is null rather than false: the caller must treat
+            # this as blocking, not as clearance.
+            print(json.dumps({"duplicate": None, "unavailable": str(exc)}, indent=2))
+            return 2
         print(json.dumps(result, indent=2))
         return 1 if result["duplicate"] else 0
 
-    result = audit()
+    try:
+        result = audit()
+    except StoreUnreadable as exc:
+        print(json.dumps({"clean": False, "unavailable": str(exc)}, indent=2))
+        return 2
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["clean"] else 1
 

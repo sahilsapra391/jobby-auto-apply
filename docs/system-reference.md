@@ -81,23 +81,30 @@ What happens between a click and a submitted application.
     └─ claude -p <prompt> ───────────┐
                                      ▼
   AGENT  (headless Claude session, one application, start to finish)
-    1. read the watch entry from the store
+    1. brief.py --id <app>           ONE call: watch entry, posting, duplicate
+                                     verdict, base resume, identity, what
+                                     documents already exist. Writes jd-<app>.txt.
     2. reuse or build resume + cover letter
          ats_match --suggest      which of the posting's words are earned
          resume_pdf verify        layout matches the base exactly
          ats_match                unsourcedTerms must be empty
     3. open the form in its slot's browser, fill, read every value back
-    4. re-read session (dropped?), dupe_check again
-    5. write-ahead `submitting` → submit once → verify → `completed`
-       with the confirmation quoted
-    6. sync_board.py
+    4. finish.py --pre-submit        ONE call: cancelled? duplicate? then the
+                                     write-ahead `submitting`. Refuses closed:
+                                     no verdict from the guard means no submit,
+                                     and a refusal writes nothing at all.
+    5. submit once → verify
+    6. finish.py --completed         ONE call: the `completed` event with the
+       --confirmation '<quoted>'     confirmation actually observed, plus
+                                     sync_board. Or --park to send it to
+                                     Needs you with the blocker named.
         │
         ▼
   STORE (~/.job-application) → dashboard.py renders → KV → board
 ```
 
 Each numbered stage reports a phase (`phase.py`), so the board shows live
-progress: Queued → Building documents → Documents ready → Filling the form →
+progress: Queued → Building documents → Filling the form →
 Submitting → Verifying.
 
 ---
@@ -152,6 +159,9 @@ this, covered in §12.
 | `file_docs.py` | 148 | Files documents into `applications/<Company>/`, role-qualified when a company has several. |
 | `toolpath.py` | 158 | Absolute paths to `node`, `vercel`, `claude`, `npx`. Merged config from two files. |
 | `dupe_check.py` | 146 | One application per job description, enforced before the browser opens. |
+| `brief.py` | 194 | Everything a run needs to start, in one call. Replaces ~12 round trips. |
+| `finish.py` | 226 | The two ends of a submission, one call each, every check kept. |
+| `experience.py` | 200 | Lifts one role's content out of that posting's tailored resume. |
 | `apply_marks.py` | 128 | Applies "Mark submitted" clicks. |
 | `agent.py` | 101 | Preflights whether a spawned Claude session can authenticate. |
 | `sync_board.py` | 94 | Retires submitted roles out of Watching, republishes. |
