@@ -8,9 +8,15 @@ so anything I could not verify is stated by me rather than found by them.
 Every line names the file and the test. Where I could not check something, the
 line says so and says why.
 
-Suite: **480 passing**, 17 files, `python3 -m pytest tests/ -q` on a clean
+Suite: **505 passing**, 17 files, `python3 -m pytest tests/ -q` on a clean
 checkout of `feature/discovery-engine-phase-1` (which runs the Node tests too:
-21 of the 480). 171 before this phase.
+21 of the 505). 171 before this phase.
+
+**Revised after independent review.** The review found one Major and three
+Minor; all four are closed, and `docs/reviews/phase-1.md` is the record. Where
+a fix changed a claim below, the claim is rewritten rather than annotated —
+except where the original claim was wrong in a way worth remembering, which is
+noted as such.
 
 ---
 
@@ -92,6 +98,14 @@ Writers added: `jobs.json`, `passed.json`, `companies.json`,
 **Claim:** every failure is visible somewhere a human looks, and an empty result
 is never confusable with a failed one.
 
+**This claim was incomplete when first written, and the review found the hole.**
+`meta.lastIngest` reported `dedupedBy: {"id": 1}` on the measured run, which
+looked like one ordinary merge and was in fact one requisition being eaten by an
+id collision the matcher had explicitly declined (review finding 1). Every
+failure was visible; one *success* was a lie. A merge is now only ever recorded
+against a reason the matcher actually gave, asserted by
+`test_no_merge_is_ever_recorded_without_a_stated_reason`.
+
 - A corrupt pool raises instead of reading as empty:
   `test_a_corrupt_pool_raises_rather_than_reading_as_empty`,
   `test_a_pool_of_the_wrong_shape_raises`,
@@ -114,6 +128,10 @@ is never confusable with a failed one.
   `tests/test_dashboard.py::FoundHeaderTests` — skipped channels, connector
   outages, an outright failed scan, and running on defaults each render
   distinctly.
+- A saved search that the single-key write lost is reported rather than assumed:
+  `tests/test_found_script.py::SaveReconciliationTests` (review finding 3).
+- A promote that fails carries its reason, and the recovery path is named in the
+  code rather than left to be inferred (review finding 2).
 
 ## 6. CSP, and every colour in all three theme blocks
 
@@ -196,6 +214,17 @@ watcher, per the standing instruction not to.
 
 ---
 
+## A limitation the review named that I had not
+
+**The company alias list is load-bearing.** Rule 4 only compares fingerprints
+within a company bucket, so an ATS calling a company "Northwind" and an
+aggregator calling it "Northwind Analytics Inc." stay two records unless
+`companies.json` carries an alias joining them. A missing alias shows up as a
+duplicate rather than as an error, and nothing warns. Correct by design —
+widening the company match would merge two real companies, which is worse — but
+it belonged in the gaps list and was not there. Now recorded in both
+`references/sources-registry.md` and the system reference.
+
 ## What I could not check
 
 1. **The five keyed connectors have never had a live response.** No key is
@@ -209,9 +238,10 @@ watcher, per the standing instruction not to.
    not claim that box as passed.
 3. **No browser render.** The sandbox blocked a local HTTP server, so I could
    not photograph the Found lane. Instead the client script is parsed and
-   executed by node against a DOM stub (`tests/test_found_script.py`, 15 tests)
-   which covers the filtering, the sorting and a hostile title. Visual
-   confirmation is the first thing to do in the supervised run.
+   executed by node against a DOM stub (`tests/test_found_script.py`, 20 tests)
+   which covers the filtering, the sorting, the save reconciliation and a
+   hostile title. Visual confirmation is the first thing to do in the supervised
+   run, and the review agrees: a lane nobody has seen is not a lane that ships.
 4. **Nothing has touched the live store or the production queue.** The live
    `~/.job-application/` has no `jobs.json`, `passed.json`, `companies.json` or
    `search-config.json`, and the daemon has been running the untouched `main`
