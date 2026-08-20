@@ -95,8 +95,6 @@ class ToleranceTests(unittest.TestCase):
         self.assertTrue(out["match"], out["differences"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ClippingIsReachableTests(unittest.TestCase):
@@ -122,3 +120,7 @@ class ClippingIsReachableTests(unittest.TestCase):
         self.assertFalse(out["match"])
         self.assertTrue(any("past the bottom edge" in d for d in out["differences"]),
                         out["differences"])
+
+
+if __name__ == "__main__":
+    unittest.main()

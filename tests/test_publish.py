@@ -172,8 +172,6 @@ class CliTest(unittest.TestCase):
             publish.toolpath.find = original
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class DegradedRenderGuardTests(unittest.TestCase):
@@ -266,8 +264,6 @@ class RedirectedStoreTests(unittest.TestCase):
             self.assertNotIn("Board updated", r.stdout)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class DryRunTests(unittest.TestCase):
@@ -302,3 +298,7 @@ class DryRunTests(unittest.TestCase):
             body = json.loads(self.run_publish([], d).stdout)
             self.assertFalse(body["published"])
             self.assertIn("refusing to publish", body["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

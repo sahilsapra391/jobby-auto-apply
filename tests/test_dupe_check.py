@@ -92,8 +92,6 @@ class GuardTests(unittest.TestCase):
         self.assertTrue(any(d["kind"] == "same posting url" for d in report["duplicates"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class InFlightGuardTests(unittest.TestCase):
@@ -159,3 +157,7 @@ class InFlightGuardTests(unittest.TestCase):
                           "company": "Acme", "role": "Product Manager",
                           "url": "https://boards.example.com/acme/pm"}]
         self.assertFalse(dupe_check.guard("acme-pm-b")["duplicate"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -139,8 +139,6 @@ class RenderSourceTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class StoryBankDefaultTests(unittest.TestCase):
@@ -173,3 +171,7 @@ class StoryBankDefaultTests(unittest.TestCase):
                 self.assertIsNone(ats.default_facts())
             finally:
                 os.environ.pop("JOB_APPLICATION_DIR", None)
+
+
+if __name__ == "__main__":
+    unittest.main()

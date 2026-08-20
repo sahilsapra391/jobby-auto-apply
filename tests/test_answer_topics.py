@@ -97,8 +97,6 @@ class OverMatchTests(unittest.TestCase):
         self.assertIsNone(store.topic_answer({}, "Do you have a non-compete?"))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ConsentTopicTests(unittest.TestCase):
@@ -231,3 +229,7 @@ class SignatureAndCertificationTests(unittest.TestCase):
     def test_criminal_history_is_not_swept_into_the_exclusion_answer(self):
         out = self.find("Have you ever been convicted of a crime?")
         self.assertNotEqual(out.get("value"), "No")
+
+
+if __name__ == "__main__":
+    unittest.main()

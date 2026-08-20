@@ -159,8 +159,6 @@ class ShippedTemplateTests(unittest.TestCase):
         self.assertGreater(len(base["technical"]), 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class VariableTechnicalTests(unittest.TestCase):
@@ -225,3 +223,7 @@ class RedactionTests(unittest.TestCase):
         self.assertNotEqual(a, b)
         self.assertEqual(a, rb.fingerprint("Springfield, IL 62704 | (555) 010-1234"))
         self.assertEqual(len(a), 12)
+
+
+if __name__ == "__main__":
+    unittest.main()

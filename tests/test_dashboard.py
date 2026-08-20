@@ -144,8 +144,6 @@ class BrandTest(unittest.TestCase):
         self.assertNotIn('href="/favicon', html)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PostedDateTests(unittest.TestCase):
@@ -305,3 +303,7 @@ class DocumentLinkTests(unittest.TestCase):
         for link in self.links():
             self.assertNotIn("/", link)
             self.assertNotIn("%2F", link)
+
+
+if __name__ == "__main__":
+    unittest.main()

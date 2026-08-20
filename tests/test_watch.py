@@ -187,8 +187,6 @@ class TickErrorTests(unittest.TestCase):
             watch.store = original
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class BrowserConfigTests(unittest.TestCase):
@@ -492,3 +490,7 @@ class SlotReleaseTests(unittest.TestCase):
         window = window[:window.index("applyStarted")]
         self.assertIn("except Exception:", window)
         self.assertGreaterEqual(window.count("lock_path(slot).unlink(missing_ok=True)"), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
