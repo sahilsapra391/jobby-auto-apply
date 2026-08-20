@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sahil Sapra - Resume</title>
+<style>
+  @page { size: 612pt 792pt; margin: 0; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Calibri Light", "Calibri", sans-serif;
+    font-weight: normal;
+    color: #282828;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    position: relative;
+    width: 612pt;
+    height: 792pt;
+    box-sizing: border-box;
+    padding: 0 19.2pt 0 20.2pt;
+    overflow: hidden;
+  }
+  .page.two { page-break-before: always; }
+  .pgno {
+    position: absolute;
+    left: 552pt;
+    top: 765.7pt;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 5pt;
+    line-height: 5pt;
+    color: #2163ca;
+  }
+
+  .ind { padding-left: 1.4pt; }
+
+  .name {
+    font-size: 23.8pt;
+    line-height: 26pt;
+    color: #2163ca;
+    letter-spacing: 0.2pt;
+    padding-left: 1.4pt;
+  }
+  .contact {
+    font-size: 11.9pt;
+    line-height: 13.5pt;
+    color: #1e2532;
+    padding-left: 1.4pt;
+  }
+  .contact a { color: #0563c1; text-decoration: underline; }
+
+  .banner {
+    border-top: 0.75pt solid #2163ca;
+    border-bottom: 0.75pt solid #2163ca;
+    color: #2163ca;
+    font-size: 13.8pt;
+    line-height: 16.4pt;
+    padding: 0.6pt 0 0.6pt 1.4pt;
+  }
+  .sec {
+    border-top: 0.75pt solid #2163ca;
+    border-bottom: 0.75pt solid #2163ca;
+    color: #2163ca;
+    font-size: 11.9pt;
+    line-height: 14.0pt;
+    padding: 0.5pt 0 0.5pt 1.4pt;
+    letter-spacing: 0.1pt;
+  }
+
+  p, div.body { font-size: 10.1pt; line-height: 12.05pt; margin: 0; }
+  .summary { padding-left: 1.4pt; margin-top: 12.0pt; }
+
+  .gap-s { height: 12.0pt; }
+  .gap-m { height: 14.0pt; }
+  .gap-l { height: 18.0pt; }
+
+  .tech { padding-left: 1.4pt; font-size: 10.1pt; line-height: 12.05pt; margin-bottom: 2.2pt; }
+  .tech b { font-size: 10.0pt; font-weight: normal; }
+
+  table.cols { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.cols td { vertical-align: top; padding: 0; }
+  .aoe { font-size: 10.1pt; line-height: 13.7pt; color: #000000; padding-left: 5.0pt; }
+  .aoe span.b { font-family: Arial, Helvetica, sans-serif; font-size: 10.1pt; }
+
+  .org { font-size: 10.0pt; line-height: 12.6pt; color: #2163ca; padding-left: 1.4pt; }
+  .org .when { float: right; }
+  .org a { color: #0563c1; text-decoration: underline; }
+  .jobtitle { font-size: 10.1pt; line-height: 12.6pt; color: #2163ca; padding-left: 1.4pt; }
+  .lede { padding-left: 1.4pt; margin-top: 0.6pt; }
+
+  ul { margin: 1.4pt 0 0 0; padding: 0; list-style: none; }
+  li {
+    font-size: 10.1pt;
+    line-height: 12.05pt;
+    padding-left: 18.0pt;
+    text-indent: -13.4pt;
+    margin: 0 0 1.5pt 1.4pt;
+  }
+  .page.one li { margin-bottom: 0.5pt; }
+  li:before {
+    content: "\2022";
+    font-family: Arial, Helvetica, sans-serif;
+    padding-right: 8.0pt;
+  }
+  .edu-title { font-size: 10.1pt; line-height: 12.05pt; color: #2163ca; padding-left: 1.4pt; }
+  .edu-course { font-size: 10.1pt; line-height: 12.05pt; font-style: italic; padding-left: 1.4pt; }
+  .edu-school { font-size: 10.1pt; line-height: 12.05pt; padding-left: 1.4pt; }
+</style>
+</head>
+<body>
+
+<div class="page one">
+  <div style="height:24.0pt"></div>
+  <div class="name">SAHIL SAPRA</div>
+  <div style="height:4.0pt"></div>
+  <div class="contact">Charlotte, NC 28273 | (216) 848-7236 | <a href="mailto:sahilsapra391@gmail.com">sahilsapra391@gmail.com</a> | <a href="https://sahilsapra.com/">sahilsapra.com</a> | <a href="https://www.linkedin.com/in/sahil-sapra/">LinkedIn</a> | <a href="https://github.com/sahilsapra391">GitHub</a></div>
+  <div style="height:11.0pt"></div>
+
+  <div class="banner">{{banner}}</div>
+
+  <div class="body summary">{{summary}}</div>
+
+  <div class="gap-m"></div>
+  <div class="sec">TECHNICAL PROFICIENCIES</div>
+  <div class="gap-s"></div>
+
+  <div class="tech"><b>{{tech0}}:</b> {{techitems0}}</div>
+  <div class="tech"><b>{{tech1}}:</b> {{techitems1}}</div>
+  <div class="tech"><b>{{tech2}}:</b> {{techitems2}}</div>
+  <div class="tech"><b>{{tech3}}:</b> {{techitems3}}</div>
+  <div class="tech"><b>{{tech4}}:</b> {{techitems4}}</div>
+  <div class="tech"><b>{{tech5}}:</b> {{techitems5}}</div>
+  <div class="tech"><b>{{tech6}}:</b> {{techitems6}}</div>
+
+  <div class="gap-m"></div>
+  <div class="sec">AREAS OF EXPERTISE</div>
+  <div class="gap-s"></div>
+
+  <table class="cols"><tr>
+    <td style="width:33%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe0}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe1}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe2}}</div>
+    </td>
+    <td style="width:33%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe3}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe4}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe5}}</div>
+    </td>
+    <td style="width:34%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe6}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe7}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe8}}</div>
+    </td>
+  </tr></table>
+
+  <div class="gap-m"></div>
+  <div class="sec">PROFESSIONAL EXPERIENCE</div>
+  <div class="gap-s"></div>
+
+  <div class="org">CAMP Systems International Inc., Charlotte, NC<span class="when">2024 &ndash; 2026</span></div>
+  <div class="jobtitle">Technical Product Manager &amp; Business Analyst II (2025 &ndash; 2026)</div>
+  <div class="body lede">{{lede0}}</div>
+  <ul>{{bullets0}}</ul>
+
+  <div class="pgno">1</div>
+</div>
+
+<div class="page two">
+  <div style="height:22.1pt"></div>
+
+  <div class="jobtitle">Product Manager &amp; Business Analyst (2024 &ndash; 2025)</div>
+  <div class="body lede">{{lede1}}</div>
+  <ul>{{bullets1}}</ul>
+
+  <div class="gap-s"></div>
+  <div class="org">World Kinect, Miami, FL<span class="when">2022 &ndash; 2024</span></div>
+  <div class="jobtitle">IT Business Analyst (2023 &ndash; 2024)</div>
+  <div class="body lede">{{lede2}}</div>
+  <ul>{{bullets2}}</ul>
+
+  <div class="gap-s"></div>
+  <div class="jobtitle">Business Intelligence Intern (2022)</div>
+  <div class="body lede">{{lede3}}</div>
+  <ul>{{bullets3}}</ul>
+
+  <div class="gap-m"></div>
+  <div class="sec">ENTREPRENEURIAL VENTURES</div>
+  <div class="gap-s"></div>
+
+  <div class="org">SpecHawk Inc. (<a href="https://spechawk.ai/">spechawk.ai</a>)<span class="when">2026</span></div>
+  <div class="jobtitle">Head of Product</div>
+  <div class="body lede">{{lede4}}</div>
+  <ul>{{bullets4}}</ul>
+
+  <div class="gap-m"></div>
+  <div class="sec">ADDITIONAL EXPERIENCE</div>
+  <div class="gap-s"></div>
+
+  <div class="jobtitle">Summer Intern, <span style="color:#282828">Keiretsu Forum, San Francisco, CA</span></div>
+  <ul>{{bullets5}}</ul>
+
+  <div class="gap-m"></div>
+  <div class="sec">EDUCATION</div>
+  <div class="gap-s"></div>
+
+  <div class="edu-title">Bachelor of Science in Quantitative Economics, Co-Major in Analytics, Minor in Computer Science | Honors: Dean&rsquo;s List (2020, 2022)</div>
+  <div class="edu-course">Relevant Coursework: Large Language Models, Sentiment Analysis, Big Data, Agile/Scrum, Strategic Communication</div>
+  <div class="edu-school">Miami University, Oxford, OH (2019 &ndash; 2023)</div>
+
+  <div class="gap-m"></div>
+  <div class="sec">CERTIFICATIONS</div>
+  <div class="gap-s"></div>
+
+  <table class="cols"><tr>
+    <td style="width:33%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe9}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe10}}</div>
+    </td>
+    <td style="width:33%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe11}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe12}}</div>
+    </td>
+    <td style="width:34%">
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe13}}</div>
+      <div class="aoe"><span class="b">&bull;</span>&nbsp;&nbsp;{{aoe14}}</div>
+    </td>
+  </tr></table>
+
+  <div class="pgno">2</div>
+</div>
+
+</body>
+</html>

@@ -212,6 +212,17 @@ Write both documents to `<skill-dir>/applications/<Company>/`, one folder per co
 
 Speak the posting's vocabulary wherever the underlying fact is already true, since ATS ranking is partly keyword overlap. Rewording true work in the employer's language is free; asserting work that did not happen is not. Target 95% coverage **of the keywords the candidate can truthfully claim**, and report the rest rather than closing the gap. Measure with `scripts/ats_match.py`, and treat its `unsourcedTerms` list as the gate: it must be empty. Consider adding **Skeptic** to Entrepreneurial Ventures when the posting is finance, fintech, trading or frugality-flavoured; leave it out otherwise.
 
+**The resume is a template plus what changes.** Do not write the HTML by hand:
+
+```bash
+python3 scripts/resume_build.py render --template templates/resume.html \
+  --base-content templates/resume-content.json --content overrides.json --out .resume.html
+```
+
+Overrides are JSON and anything omitted is inherited. `bullets` takes a full list or a map of index to replacement, because two thirds of the bullets across the resumes already written are word for word the same: they describe the same real work, and restating all of them to change a third is most of what writing the document used to cost.
+
+The employers, dates, job titles, contact block and stylesheet live in the template, so a run cannot set them. The rule that employment history is frozen while wording adapts is now structural rather than something the verification step hopes to catch afterwards.
+
 **Content gate first, layout gate second.** Wording edits change how many lines a page holds, so clearing layout before content means the content fix invalidates the layout you just cleared and you render again. `ats_match.py --resume` accepts the `.resume.html` the PDF renders from, so the wording loop has no render in it; render once it is clean, run the layout check on the resume only (never the cover letter, which has no base to match), then run the content gate once more against the PDF that actually gets uploaded.
 
 Then verify both, because rewording next to a job description is exactly the operation that invents things. Every skill, number, employment title, employer and date must trace to the base resume, the answer store, or something the user said, and a term that arrived only from the posting gets cut. One deliberate exception: the **profile title** at the top is meant to adapt toward the role, while **employment titles inside the experience section are frozen**. Check them separately. Then verify the format holds:
