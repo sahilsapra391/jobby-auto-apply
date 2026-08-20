@@ -187,6 +187,9 @@ Three more carry a standing answer:
 - **Background check, willingness.** "Are you willing to submit to / undergo a background check" is **Yes**. Signing the authorisation is not: an FCRA disclosure, "I authorise the company to obtain a consumer report", or any consent granting a third party the right to pull records still goes to the user. Agreeing to be checked and signing the thing that permits it are different acts.
 - **Interview recording.** Consent to recording, transcription or an AI notetaker is **Yes**, whatever the vendor.
 - **How did you hear about us.** "Company website", or the closest option the form offers. Never *Referral* or a named employee: that claims somebody vouched for him, and it is checkable.
+- **Salary range acknowledgement.** "Do you agree this range aligns with your expectations" is **Yes**, whatever the range. This is not the answer to "what are your compensation expectations", which takes the stored figure. Never put Yes in a field that wants a number.
+- **Exclusion and debarment.** Excluded from federal healthcare programs, OIG list, debarred from federal contracting, SAM.gov: **No**.
+- **Typing a name as a signature.** "Sahil Sapra", plus today's date if asked. But typing the name **is** signing, so read what the block above it covers: an accuracy certification is fine on the usual condition, while a background-check authorisation, non-compete, IP assignment or at-will agreement in the same block still parks.
 
 Everything else still belongs to the user: auditor independence, criminal history, anything not squarely in these. Check the answer store first, since it holds the exact wording and the boundary of each.
 
