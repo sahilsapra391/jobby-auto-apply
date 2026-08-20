@@ -452,6 +452,26 @@ def cmd_session_save(args):
     session["updatedAt"] = now()
     sessions = Path(paths(root_dir(args.root))["sessions"])
     sessions.mkdir(parents=True, exist_ok=True)
+
+    # A new watch entry has to be a posting we have not seen. This is where a
+    # sourcing sweep adds what it found, and the sweep is the same agent that
+    # decided the role was new, from three lists it read by hand. Checking here
+    # is the difference between an instruction and a guarantee: the same job
+    # arriving from a second board, or from next week's rescan, is refused
+    # whatever the caller believed.
+    #
+    # Only for NEW watch entries. Updating an existing session (a phase, a park,
+    # a drop) keeps working, and so does any other status.
+    new_watch = status == "watch" and not (sessions / f"{app_id}.json").exists()
+    if new_watch and not getattr(args, "allow_known", False):
+        import seen  # local: seen imports this module
+        verdict = seen.check(session, seen.known_records(args.root))
+        if verdict["known"]:
+            raise StoreError(
+                f"{app_id} is already in the system: {verdict['reason']} "
+                f"({verdict['where']}, matched on {verdict['match']}). "
+                f"Sourcing adds new postings only. Pass --allow-known to override, "
+                f"which is for deliberately restoring a role, not for sweeps.")
     write_private(sessions / f"{app_id}.json", session)
     remember_role(root_dir(args.root), session)
     return session
@@ -616,6 +636,9 @@ def build_parser():
     sp = sub.add_parser("role-put"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("history-list"); sp.add_argument("--company")
     sp = sub.add_parser("session-save"); sp.add_argument("--id", required=True); sp.add_argument("--input", required=True)
+    sp.add_argument("--allow-known", action="store_true",
+                    help="save a new watch entry even though the posting is already on "
+                         "record. For restoring a role deliberately, never for a sweep.")
     for name in ("session-load", "session-delete"):
         sp = sub.add_parser(name); sp.add_argument("--id", required=True)
     sub.add_parser("session-list")

@@ -81,6 +81,22 @@ def python(required=True):
     return sys.executable
 
 
+def agent_env(env=None):
+    """Environment for a spawned agent, with `python3` pinned to this interpreter.
+
+    Prompts tell agents to run `python3`, because --allowedTools grants
+    Bash(python3:*) and that is a prefix match on the literal command an
+    absolute path cannot satisfy. Which interpreter that name finds then decides
+    whether pymupdf imports, so this puts sys.executable's own directory first
+    and makes it independent of the plist and of whatever sits in /usr/bin.
+    """
+    out = enriched_env(env)
+    own = str(Path(sys.executable).parent)
+    parts = [p for p in out.get("PATH", "").split(os.pathsep) if p and p != own]
+    out["PATH"] = os.pathsep.join([own] + parts)
+    return out
+
+
 def enriched_env(env=None):
     """An environment whose PATH can see the tools, for children we do not exec directly."""
     out = dict(env if env is not None else os.environ)

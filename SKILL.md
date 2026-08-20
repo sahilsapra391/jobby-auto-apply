@@ -104,6 +104,18 @@ Check the resume against the user's LinkedIn headline and any existing ATS profi
 
 When asked to find jobs rather than apply to a specific one, treat it as **research across several channels, not one search on one site.**
 
+**Nothing already in the system gets sourced twice.** Put every candidate a sweep keeps through the filter in one call:
+
+```bash
+python3 scripts/seen.py --filter --input candidates.json
+```
+
+Save only what comes back under `new`. It matches on the application id, the posting URL with tracking and host noise stripped, the ATS job id inside the URL, and the company and role together. That last one is what catches the same job arriving from a second board, since the LinkedIn copy and the company's own listing share no URL at all. It also dedupes a sweep against itself, so one job found on three boards is kept once.
+
+Matching is exact after normalisation, never fuzzy. "Product Manager, Android Maps" and "Product Manager, Android Auto" are different jobs, and a prefix rule would merge them; "Product Manager" and "Senior Product Manager" stay separate for the same reason.
+
+This is enforced, not advised. `store.py session-save` refuses a new watch entry for a posting already on record, including one the user dropped, whatever the sweep believed. `--allow-known` overrides it, and exists for deliberately restoring a role rather than for sweeps.
+
 LinkedIn is one index with loose keyword matching, and searching only there reliably produces a false conclusion: that a role type "barely exists", when the openings are sitting on company boards and startup aggregators LinkedIn never indexed. Read `references/sourcing.md` for the channel map, then sweep general aggregators, startup-native boards, any regional boards that apply, and the ATS boards of target companies directly. Vary the query too — "AI PM", "GenAI PM", "Agentic AI PM", "LLM PM" return substantially different sets.
 
 Dedupe by company and normalised title, preferring the company's own ATS link over aggregator copies. **Report which channels you searched, including ones that returned nothing** — an empty channel is a finding, whereas silence about it reads as coverage.
