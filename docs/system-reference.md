@@ -144,6 +144,7 @@ this, covered in §12.
 | `file_docs.py` | 148 | Files documents into `applications/<Company>/`, role-qualified when a company has several. |
 | `toolpath.py` | 158 | Absolute paths to `node`, `vercel`, `claude`, `npx`. Merged config from two files. |
 | `dupe_check.py` | 146 | One application per job description, enforced before the browser opens. |
+| `seen.py` | 214 | Has this posting been through here before? Enforced on every new watch entry. |
 | `brief.py` | 194 | Everything a run needs to start, in one call. Replaces ~12 round trips. |
 | `finish.py` | 226 | The two ends of a submission, one call each, every check kept. |
 | `experience.py` | 200 | Lifts one role's content out of that posting's tailored resume. |

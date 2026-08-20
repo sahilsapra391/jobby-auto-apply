@@ -67,32 +67,17 @@ def store(args):
     return subprocess.run([sys.executable, str(STORE)] + args, capture_output=True, text=True)
 
 
-# The prompt says `python3`, and agent_env() below guarantees that name resolves
+# The prompt says `python3`, and toolpath.agent_env() guarantees that name resolves
 # to this same interpreter by putting its directory first on the child's PATH.
 #
 # It used to pass sys.executable instead, because under a bare launchd PATH
 # `python3` found /usr/bin/python3 (3.9) without pymupdf and resume verification
 # died on ModuleNotFoundError. That is now handled in two places rather than by
-# spelling the path out: the plist sets a full PATH, and agent_env pins the
+# spelling the path out: the plist sets a full PATH, and toolpath.agent_env pins the
 # interpreter's own directory ahead of it. Spelling it out cost more than it
 # saved, because --allowedTools grants Bash(python3:*), which is a prefix match
 # on the literal command that an absolute path cannot satisfy, so every call the
 # prompt asked for was refused.
-def agent_env():
-    """The spawned agent's environment, with `python3` pinned to this interpreter.
-
-    The agent is told to run `python3`, so which one that name finds decides
-    whether resume verification can import pymupdf. Putting sys.executable's own
-    directory first makes that independent of the plist, of launchd's default
-    PATH, and of whichever python happens to sit in /usr/bin.
-    """
-    env = toolpath.enriched_env()
-    own = str(Path(sys.executable).parent)
-    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p and p != own]
-    env["PATH"] = os.pathsep.join([own] + parts)
-    return env
-
-
 PROMPT = """Use the job-application skill and apply to exactly ONE job, end to end, then stop.
 
 APPLICATION ID: {aid}
@@ -415,7 +400,7 @@ def main():
              "--allowedTools", APPLY_TOOLS,
              "--mcp-config", str(browser.config_path(args.slot))],
             cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS,
-            env=agent_env())
+            env=toolpath.agent_env())
 
     # A run that dies on auth must not leave the card sitting at "Queued" forever
     # with the reason buried in a log file.
