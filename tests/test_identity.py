@@ -352,10 +352,6 @@ class NonMatchTests(unittest.TestCase):
         self.assertEqual(identity.match(index, incoming, fetch=fetch), ("known", "redirect"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def aggregator(url, body, title="Product Manager, Internal Reporting",
                company="Northwind Analytics", country="US", source="adzuna"):
     """A posting with no ATS or careers URL anywhere, so the id falls back to
@@ -530,3 +526,7 @@ class IdStabilityTests(unittest.TestCase):
         forward, _, _ = store([first, second])
         backward, _, _ = store([second, first])
         self.assertEqual(len(forward), len(backward), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

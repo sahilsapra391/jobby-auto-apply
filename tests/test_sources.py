@@ -708,10 +708,6 @@ class FixtureProvenanceTests(unittest.TestCase):
                 self.assertNotIn(needle, text, f"{path.name} contains {needle!r}")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BoardPlatformTests(unittest.TestCase):
     """The six company-board platforms added after Phase 1's first review.
 
@@ -837,3 +833,7 @@ class TrailingCountryCodeTests(unittest.TestCase):
 
     def test_a_us_state_still_wins_where_it_applies(self):
         self.assertEqual(base.parse_location("New York, NY")["country"], "US")
+
+
+if __name__ == "__main__":
+    unittest.main()

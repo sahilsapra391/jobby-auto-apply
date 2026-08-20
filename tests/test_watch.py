@@ -188,10 +188,6 @@ class TickErrorTests(unittest.TestCase):
             watch.store = original
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BrowserConfigTests(unittest.TestCase):
     """The browser given to spawned agents.
 
@@ -716,3 +712,7 @@ class EyeAndPassTests(unittest.TestCase):
         self.promote.passed(self.root, "j1")
         with self.assertRaises(self.jobs_store.JobsStoreError):
             self.promote.watch(self.root, "j1")
+
+
+if __name__ == "__main__":
+    unittest.main()

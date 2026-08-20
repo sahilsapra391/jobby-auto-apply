@@ -147,10 +147,6 @@ class BrandTest(unittest.TestCase):
         self.assertNotIn('href="/favicon', html)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PostedDateTests(unittest.TestCase):
     """The Posted column has to lead with a real date, because it is the sort key.
 
@@ -954,3 +950,7 @@ class PageWeightAtCapTests(unittest.TestCase):
         self.assertEqual(doc["w"], [35, 20, 15, 20, 10])
         self.assertLess(len(doc["y"]), 12, "the explanations repeat; they are interned")
         self.assertNotIn("wt", doc["j"][0], "weights are identical on every job")
+
+
+if __name__ == "__main__":
+    unittest.main()

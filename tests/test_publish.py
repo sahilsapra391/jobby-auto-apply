@@ -172,10 +172,6 @@ class CliTest(unittest.TestCase):
             publish.toolpath.find = original
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DegradedRenderGuardTests(unittest.TestCase):
     """The board must never lose data the store still has.
 
@@ -264,6 +260,10 @@ class RedirectedStoreTests(unittest.TestCase):
             r = self.run_publish([], d)
             self.assertNotIn("written to KV", r.stdout)
             self.assertNotIn("Board updated", r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

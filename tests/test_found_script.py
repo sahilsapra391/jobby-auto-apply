@@ -352,10 +352,6 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         self.assertEqual(out["shown"], 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DirectListingTests(ScriptHarness, unittest.TestCase):
     """Applying through the employer's own ATS beats applying through a
     redirect, so the lane leads with direct listings."""
@@ -438,3 +434,7 @@ class DirectListingTests(ScriptHarness, unittest.TestCase):
         out = self.run_script([self.job("a")], {"bannerVersion": 7})
         self.assertEqual(out["saveState"], "")
         self.assertNotIn("GET /api/search-config", out["fetched"])
+
+
+if __name__ == "__main__":
+    unittest.main()
