@@ -82,20 +82,33 @@ class ScriptSyntaxTests(unittest.TestCase):
         for name in ("watch", "apply", "pass", "posting", "details"):
             self.assertIn(name + ": function", found_lane.SCRIPT, name)
 
-    def test_the_grid_is_four_wide_on_a_wide_screen(self):
-        self.assertIn("repeat(4, minmax(0, 1fr))", found_lane.CSS)
+    def test_the_board_is_four_columns_wide_on_a_wide_screen(self):
+        self.assertIn("--cols:4", found_lane.CSS)
+        self.assertIn("--cols:1", found_lane.CSS)
 
-    def test_one_long_url_cannot_blow_the_columns_out(self):
-        # A grid track's automatic minimum is min-content, so a plain `1fr`
-        # lets one unbreakable string in one card widen its whole column and
-        # squeeze the other three. Descriptions arrive with tracking URLs in
-        # them, and a 156-character one took column one to two thirds of the
-        # grid and scrolled the page sideways.
-        self.assertNotIn("repeat(4, 1fr)", found_lane.CSS)
+    def test_the_columns_are_independent_containers(self):
+        # Not a grid: a grid puts every card in a row on one baseline, so
+        # opening one grew its neighbours. Not CSS `columns` either: that
+        # re-balances the whole container on any height change, so opening one
+        # card would shuffle others between columns.
+        grid = found_lane.CSS[found_lane.CSS.index(".jb-grid {"):]
+        grid = grid[:grid.index("}")]
+        self.assertNotIn("grid-template-columns", grid)
+        self.assertNotIn("columns:", grid)
+        self.assertIn("display:flex", grid)
+        self.assertIn(".jb-col {", found_lane.CSS)
+        self.assertIn("flex-direction:column", found_lane.CSS)
+
+    def test_one_long_url_cannot_blow_a_column_out(self):
+        # Descriptions arrive with tracking URLs pasted into them, and a
+        # 156-character one took one column to two thirds of the board and
+        # scrolled the page sideways.
         card = found_lane.CSS[found_lane.CSS.index(".jb-card {"):]
         card = card[:card.index("}")]
         self.assertIn("min-width:0", card)
         self.assertIn("overflow-wrap:anywhere", card)
+        col = found_lane.CSS[found_lane.CSS.index(".jb-col {"):]
+        self.assertIn("min-width:0", col[:col.index("}")])
 
     def test_no_job_text_is_ever_concatenated_into_markup(self):
         # Titles and descriptions are written by strangers. innerHTML with any
@@ -133,7 +146,8 @@ function makeNode(tag, id) {
     tagName: tag, id: id || '', className: '', title: '',
     style: {}, hidden: false, checked: true, value: '', options: [],
     selectedOptions: [], children: [], disabled: false, href: '', target: '', rel: '',
-    appendChild(c) { this.children.push(c); return c; },
+    // parentNode, so a test can ask which column a card landed in.
+    appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
     remove() {},
     setAttribute(k, v) { this['attr_' + k] = v; },
     getAttribute(k) { return this['attr_' + k] === undefined ? null : this['attr_' + k]; },
@@ -222,6 +236,15 @@ const locNodes = (CONTROLS.allLocations || CONTROLS.locations || []).map(functio
     (CONTROLS.locations || []).indexOf(v) !== -1 ? 'true' : 'false');
   return n;
 });
+// The board reads its column count off a CSS custom property, so the stub has
+// to answer for it. Without this every test ran at one column and could not
+// see a distribution bug at all.
+global.getComputedStyle = function () {
+  return { getPropertyValue: function (name) {
+    return name === '--cols' ? String(CONTROLS.cols || 1) : '';
+  } };
+};
+
 const dateNode = makeNode('input');
 dateNode.value = CONTROLS.date || 'all';
 dateNode.checked = true;
@@ -297,6 +320,25 @@ global.document = {
 
 // textContent on the stub returns a node's own text, so a test that wants to
 // read what a card says has to walk it.
+// Cards are distributed round robin into column containers, so the board's
+// reading order is column 0 row 0, column 1 row 0, column 2 row 0, and so on.
+// Rebuild that order rather than concatenating the columns, or every assertion
+// about sort order reads the board wrong.
+function cardsOf(grid) {
+  const cols = grid.children.filter(function (c) {
+    return (c.className || '').indexOf('jb-col') !== -1;
+  });
+  if (!cols.length) return grid.children.slice();
+  const out = [];
+  const deepest = Math.max.apply(null, cols.map(function (c) { return c.children.length; }));
+  for (let row = 0; row < deepest; row++) {
+    for (let i = 0; i < cols.length; i++) {
+      if (cols[i].children[row]) out.push(cols[i].children[row]);
+    }
+  }
+  return out;
+}
+
 function dumpText(node) {
   return [node.textContent || ''].concat(
     (node.children || []).map(dumpText)).join(' ').replace(/\s+/g, ' ').trim();
@@ -305,7 +347,7 @@ function dumpText(node) {
 // Hover and click, in order, so a test can assert the disclosure's actual
 // behaviour rather than the presence of a string in the source.
 (CONTROLS.interact || []).forEach(function (step) {
-  const card = grid.children[step.index];
+  const card = cardsOf(grid)[step.index];
   if (!card) return;
   if (step.event === 'click') card.querySelector('.jb-det').dispatch('click', {});
   else card.dispatch(step.event, {});
@@ -313,16 +355,17 @@ function dumpText(node) {
 
 setTimeout(function () {
   console.log(JSON.stringify({
-    shown: grid.children.length,
-    cards: grid.children.map(function (c) {
+    shown: cardsOf(grid).length,
+    cards: cardsOf(grid).map(function (c) {
       const slot = c.querySelector('.jb-slot');
       return { id: c.getAttribute('data-id'), cls: c.className,
+               col: grid.children.indexOf(c.parentNode),
                open: (c.className || '').indexOf('open') !== -1,
                panels: slot ? slot.children.length : 0,
                expanded: (c.querySelector('.jb-det') || {})['attr_aria-expanded'] };
     }),
     text: dumpText(grid),
-    ids: grid.children.map(function (c) { return c.getAttribute('data-id'); }),
+    ids: cardsOf(grid).map(function (c) { return c.getAttribute('data-id'); }),
     count: (nodes['jb-count'] || {}).textContent || '',
     saveState: nodes['jb-savestate'].textContent,
     saveClass: nodes['jb-savestate'].className,
@@ -420,11 +463,48 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         strict = self.run_script(jobs, {"unknowns": ["experience", "degree", "postedAt"]})
         self.assertEqual(strict["ids"], ["b"])
 
-    def test_a_country_selection_bites_but_lets_remote_through(self):
+    def test_a_country_selection_bites_and_a_bound_remote_job_is_not_exempt(self):
+        # "Remote - Canada: select locations" is remote *within Canada*, and it
+        # showed up under a search for India. A job that names a country has to
+        # be in a selected one whatever its arrangement.
         jobs = [self.job("us", cty="US"), self.job("de", cty="DE"),
-                self.job("anywhere", cty="DE", wp="remote")]
-        out = self.run_script(jobs, {"locations": ["US"]})
+                self.job("remote-de", cty="DE", wp="remote")]
+        out = self.run_script(jobs, {"allLocations": ["US"], "locations": ["US"]})
+        self.assertEqual(out["ids"], ["us"])
+
+    def test_a_countryless_remote_job_answers_any_selection(self):
+        # These are what the toggle is actually about: genuinely location-free.
+        jobs = [self.job("us", cty="US"), self.job("anywhere", cty="", wp="remote")]
+        out = self.run_script(jobs, {"allLocations": ["US"], "locations": ["US"],
+                                     "jb-remote": True})
         self.assertEqual(sorted(out["ids"]), ["anywhere", "us"])
+
+    def test_turning_the_toggle_off_drops_countryless_remote_jobs(self):
+        jobs = [self.job("us", cty="US"), self.job("anywhere", cty="", wp="remote")]
+        out = self.run_script(jobs, {"allLocations": ["US"], "locations": ["US"],
+                                     "jb-remote": False})
+        self.assertEqual(out["ids"], ["us"])
+
+    def test_two_keywords_are_or_not_and(self):
+        # Three job titles in the box means "show me all three kinds of job".
+        # Requiring every word emptied the board on the second title, because
+        # no posting is a product manager AND a business analyst.
+        jobs = [self.job("pm", ti="Product Manager"),
+                self.job("ba", ti="Business Analyst"),
+                self.job("eng", ti="Backend Engineer")]
+        out = self.run_script(jobs, {"keywords": ["product manager", "business analyst"],
+                                     "jb-scope": "title"})
+        self.assertEqual(sorted(out["ids"]), ["ba", "pm"])
+
+    def test_one_keyword_still_narrows(self):
+        jobs = [self.job("pm", ti="Product Manager"), self.job("ba", ti="Business Analyst")]
+        out = self.run_script(jobs, {"keywords": ["business analyst"], "jb-scope": "title"})
+        self.assertEqual(out["ids"], ["ba"])
+
+    def test_no_keyword_matches_nothing_rather_than_everything(self):
+        jobs = [self.job("pm", ti="Product Manager")]
+        out = self.run_script(jobs, {"keywords": ["welder"], "jb-scope": "title"})
+        self.assertEqual(out["ids"], [])
 
     def test_a_region_pack_expands(self):
         jobs = [self.job("de", cty="DE"), self.job("jp", cty="JP", wp="hybrid")]
@@ -564,7 +644,8 @@ class DisclosureTests(ScriptHarness, unittest.TestCase):
 
     def test_each_card_sizes_itself(self):
         # Without this a card that opens drags its three row-mates taller.
-        self.assertIn("align-items:start", found_lane.CSS)
+        grid = found_lane.CSS[found_lane.CSS.index(".jb-grid {"):]
+        self.assertIn("align-items:flex-start", grid[:grid.index("}")])
 
     def test_the_panel_animates_from_a_measured_height(self):
         # Never a guessed ceiling: the panel's own scrollHeight, released to
@@ -625,6 +706,26 @@ class DisclosureTests(ScriptHarness, unittest.TestCase):
                             {"index": 0, "event": "mouseenter"},
                             {"index": 0, "event": "click"}])
         self.assertEqual(cards["a"]["panels"], 1)
+
+    def test_cards_are_dealt_round_robin_across_the_columns(self):
+        # Reading across the top of the board is reading down the sorted list.
+        jobs = [self.job(x) for x in ("a", "b", "c", "d", "e", "f")]
+        out = self.run_script(jobs, {"jb-direct": False, "cols": 3})
+        where = {c["id"]: c["col"] for c in out["cards"]}
+        self.assertEqual([where[x] for x in ("a", "b", "c", "d", "e", "f")],
+                         [0, 1, 2, 0, 1, 2])
+
+    def test_opening_a_card_touches_no_other_column(self):
+        # The whole point of columns over a grid: a card that grows pushes only
+        # what is below it in its own column.
+        jobs = [self.job(x) for x in ("a", "b", "c", "d", "e", "f")]
+        out = self.run_script(jobs, {"jb-direct": False, "cols": 3,
+                                     "interact": [{"index": 0, "event": "click"}]})
+        cards = {c["id"]: c for c in out["cards"]}
+        self.assertTrue(cards["a"]["open"])
+        for other in ("b", "c", "d", "e", "f"):
+            with self.subTest(card=other):
+                self.assertFalse(cards[other]["open"])
 
     def test_two_cards_open_independently(self):
         cards = self.cards([{"index": 0, "event": "click"},
@@ -821,27 +922,27 @@ class EndToEndFacetTests(ScriptHarness, unittest.TestCase):
                                   if j["location"]["country"] == country)
                 out = self.run_script(rows, {"allLocations": list(self.COUNTRIES),
                                              "locations": [country],
-                                             "jb-remote": False,
                                              "jb-direct": False, "date": "60d"})
                 with self.subTest(country=country):
                     self.assertEqual(sorted(out["ids"]), expected)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-    def test_remote_jobs_cross_the_country_filter_when_asked_to(self):
-        # Not a bug: "include remote for this selection" means a remote posting
-        # anywhere answers a search for anywhere. Worth pinning, because the
-        # country counts look wrong until you know it.
+    def test_a_country_bound_remote_job_does_not_cross_the_country_filter(self):
+        # Every job in this fixture names a country, so with the toggle on or
+        # off the answer is the same: only the selected country's jobs. The
+        # toggle is about postings that name no country at all.
         root, jobs = self.store()
         try:
             rows = self.payload_rows(root)
-            out = self.run_script(rows, {"allLocations": list(self.COUNTRIES),
-                                         "locations": ["US"], "jb-remote": True,
-                                         "jb-direct": False, "date": "60d"})
             expected = sorted(jid for jid, j in jobs.items()
-                              if j["location"]["country"] == "US"
-                              or j["workplace"] == "remote")
-            self.assertEqual(sorted(out["ids"]), expected)
+                              if j["location"]["country"] == "US")
+            for toggle in (True, False):
+                out = self.run_script(rows, {"allLocations": list(self.COUNTRIES),
+                                             "locations": ["US"], "jb-remote": toggle,
+                                             "jb-direct": False, "date": "60d"})
+                with self.subTest(includeRemote=toggle):
+                    self.assertEqual(sorted(out["ids"]), expected)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

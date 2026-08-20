@@ -770,6 +770,7 @@ def panel(jobs, total, config, meta):
     {last_ingest_line(meta)}
     {filter_bar(jobs, config)}
     <div class="jb-grid" id="jb-grid"></div>
+    <div id="jb-tail"></div>
     <p class="jb-footer" id="jb-none" hidden>Nothing matches these filters.</p>
     {footer}
     {add_link_card()}
@@ -899,14 +900,19 @@ CSS = """
 
   /* Four to a row on a wide screen, and only four. Five made the cards narrow
      enough that every title wrapped to three lines. */
-  /* minmax(0, 1fr) rather than 1fr: a grid track's automatic minimum is
-     min-content, so one unbreakable string in one card widens its whole column
-     and squeezes the rest. Job descriptions arrive with tracking URLs in them
-     — a 156-character one took column one to 956px of a 1419px grid and
-     scrolled the page sideways. The wrap rule below is the other half. */
-  .jb-grid { display:grid; gap:1.15rem;
-    grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); }
-  @media (min-width:1180px) { .jb-grid { grid-template-columns:repeat(4, minmax(0, 1fr)); } }
+  /* Independent columns, not a grid and not CSS multi-column.
+     A grid puts every card in a row on one baseline, so opening one grew its
+     three neighbours. CSS `columns` re-balances the whole container when any
+     card changes height, so opening one would shuffle cards between columns.
+     Separate flex columns do neither: a card that grows pushes only the cards
+     below it in its own column, and nothing else on the board moves.
+     min-width:0 on the column is what stops one unbreakable string setting the
+     column's width — a 156-character tracking URL in a job description took a
+     grid track to 956px of a 1419px row and scrolled the page sideways. */
+  .jb-grid { display:flex; align-items:flex-start; gap:1.15rem; --cols:4; }
+  .jb-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column;
+    gap:1.15rem; }
+  @media (max-width:1180px) { .jb-grid { --cols:2; } }
   .jb-card { background:var(--card); border-radius:20px; padding:1.3rem 1.4rem 1.1rem;
     box-shadow:var(--sh); display:flex; flex-direction:column; gap:.8rem;
     min-width:0; overflow-wrap:anywhere;
@@ -939,10 +945,6 @@ CSS = """
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
   .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
     padding-top:.9rem; border-top:1px solid var(--hair); }
-  /* Each card sizes itself. Grid items stretch to the tallest in the row by
-     default, so opening one used to grow the three beside it — which is what
-     "all the boxes next to it also expand" was. */
-  .jb-grid { align-items:start; }
 
   /* The disclosure. Small, lowercase, no button chrome: it is a way in, not an
      action, and it sat under Posting looking like a fifth control. */
@@ -979,10 +981,13 @@ CSS = """
   .jb-bar em { font-style:normal; text-align:right; color:var(--ink-3);
     font-variant-numeric:tabular-nums; }
   .jb-sight { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .jb-out { display:inline-block; margin-left:.18rem; font-size:.86em;
+    line-height:1; opacity:.7; }
+  .jb-sight a:hover .jb-out { opacity:1; }
   .jb-excerpt { margin:0; line-height:1.45; }
   .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0;
     line-height:1.55; }
-  .jb-more { grid-column:1/-1; text-align:center; color:var(--ink-3); font-size:.85rem;
+  .jb-more { text-align:center; color:var(--ink-3); font-size:.85rem;
     padding:1.2rem 0; }
   .jb-addlink { background:var(--card); border-radius:14px; padding:.85rem 1.1rem;
     box-shadow:var(--sh); margin-top:1.2rem; }
@@ -993,7 +998,7 @@ CSS = """
   .jb-linkmsg.ok { color:var(--green); }
   @media (max-width:900px) {
     .jb-wide { width:auto; margin-left:0; margin-right:0; }
-    .jb-grid { grid-template-columns:1fr; }
+    .jb-grid { --cols:1; }
     .jb-count { margin-left:0; }
   }
 """
@@ -1111,6 +1116,9 @@ SCRIPT = r"""
         a.className = 'go';
         a.href = s.u; a.target = '_blank'; a.rel = 'noopener';
         a.textContent = s.s || 'link';
+        // These open somebody else's site in a new tab. Say so.
+        a.appendChild(el('span', 'jb-out', '\u2197'));
+        a.title = 'Open on ' + (s.s || 'its board');
         links.appendChild(a);
       });
       panel.appendChild(links);
@@ -1371,8 +1379,16 @@ SCRIPT = r"""
   function matches(job) {
     if (hidden[job.id]) return false;
     var hay = haystack(job);
-    for (var i = 0; i < keywords.length; i++) {
-      if (hay.indexOf(keywords[i].toLowerCase()) === -1) return false;
+    // Any of them, not all of them. Three job titles in the box means "show me
+    // all three kinds of job"; requiring every word meant a second title
+    // emptied the board, because no posting is a product manager AND a
+    // business analyst.
+    if (keywords.length) {
+      var hit = false;
+      for (var i = 0; i < keywords.length; i++) {
+        if (hay.indexOf(keywords[i].toLowerCase()) !== -1) { hit = true; break; }
+      }
+      if (!hit) return false;
     }
     var exclude = value('jb-ex').trim().toLowerCase();
     if (exclude && hay.indexOf(exclude) !== -1) return false;
@@ -1388,8 +1404,14 @@ SCRIPT = r"""
     }
     var countries = selectedCountries();
     if (countries.length) {
-      var remoteCounts = checked('jb-remote') && job.wp === 'remote';
-      if (job.cty && countries.indexOf(job.cty) === -1 && !remoteCounts) return false;
+      // A job that names a country has to be in a selected one, full stop. The
+      // old rule let any remote posting through any country filter, so
+      // selecting India showed "Remote - Canada: select locations" — a job that
+      // is remote *within Canada* and cannot be done from India.
+      if (job.cty && countries.indexOf(job.cty) === -1) return false;
+      // Remote jobs that name no country are the ones the toggle is about:
+      // genuinely location-free, so they answer any selection.
+      if (!job.cty && job.wp === 'remote' && !checked('jb-remote')) return false;
     }
     var places = activeWorkplaces();
     if (job.wp) { if (places.indexOf(job.wp) === -1) return false; }
@@ -1428,9 +1450,30 @@ SCRIPT = r"""
   var visible = RENDER_WINDOW;
   var lastRows = [];
 
+  // How many columns the stylesheet is asking for at this width. Keeping the
+  // breakpoints in CSS means one place decides, and the script just reads it.
+  function columnCount() {
+    if (typeof getComputedStyle !== 'function') return 1;
+    var raw = parseInt(getComputedStyle(grid).getPropertyValue('--cols'), 10);
+    return raw > 0 ? raw : 1;
+  }
+
+  var columns = [];
+  function makeColumns(n) {
+    grid.textContent = '';
+    columns = [];
+    for (var i = 0; i < n; i++) {
+      var col = el('div', 'jb-col');
+      grid.appendChild(col);
+      columns.push(col);
+    }
+  }
+
   function draw(rows, from, to) {
     for (var i = from; i < to && i < rows.length; i++) {
-      grid.appendChild(card(rows[i]));
+      // Round robin, so reading across the top of the board is still reading
+      // down the sorted list.
+      columns[i % columns.length].appendChild(card(rows[i]));
     }
   }
 
@@ -1449,7 +1492,8 @@ SCRIPT = r"""
     sentinel.id = 'jb-more';
     sentinel.textContent = 'Loading the next ' +
       Math.min(RENDER_WINDOW, lastRows.length - visible) + '\u2026';
-    grid.appendChild(sentinel);
+    // Below the columns, not inside one: it spans the board.
+    (document.getElementById('jb-tail') || grid).appendChild(sentinel);
     if (typeof IntersectionObserver === 'undefined') { more(); return; }
     var observer = new IntersectionObserver(function (entries) {
       if (entries[0] && entries[0].isIntersecting) { observer.disconnect(); more(); }
@@ -1509,7 +1553,7 @@ SCRIPT = r"""
         return grouped || (b.sc || 0) - (a.sc || 0);
       });
     }
-    grid.textContent = '';
+    makeColumns(columnCount());
     lastRows = rows;
     visible = Math.min(RENDER_WINDOW, rows.length);
     draw(rows, 0, visible);
@@ -1562,6 +1606,19 @@ SCRIPT = r"""
   });
   document.querySelectorAll('[data-wp],[data-unknown],input[name="jb-date"]').forEach(
     function (n) { n.addEventListener('change', render); });
+
+  // Rotating a phone crosses a breakpoint. Re-render only when the column count
+  // actually changed, because a re-render throws away every open panel.
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    var lastCols = 0, resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        var n = columnCount();
+        if (n !== lastCols) { lastCols = n; render(); }
+      }, 150);
+    });
+  }
 
   var clear = document.getElementById('jb-clear');
   if (clear) {

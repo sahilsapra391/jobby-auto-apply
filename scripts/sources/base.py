@@ -352,6 +352,55 @@ KNOWN_CODES = set(COUNTRY_NAMES.values()) | US_STATES.union() | set()
 KNOWN_CODES = {c.upper() for c in COUNTRY_NAMES.values()}
 
 REMOTE_WORDS = ("remote", "anywhere", "work from home", "distributed", "wfh")
+
+# Cities whose name belongs to exactly one country, so reading a country off
+# them is not a guess. The comment above `parse_location` is right that London,
+# Ontario is how city inference goes wrong, which is why every name with a
+# well-known twin is deliberately absent: London, Cambridge, Birmingham,
+# Manchester, Richmond, Windsor, Hamilton, Perth, Newcastle, Waterloo, Victoria,
+# Wellington, Springfield, Columbus.
+#
+# This exists because "Chicago", "San Francisco" and "New York" were reaching
+# the board with no country at all, so they answered a search for India.
+UNAMBIGUOUS_CITIES = {
+    # United States
+    "chicago": "US", "san francisco": "US", "new york": "US",
+    "new york city": "US", "nyc": "US", "los angeles": "US", "seattle": "US",
+    "boston": "US", "austin": "US", "denver": "US", "atlanta": "US",
+    "philadelphia": "US", "houston": "US", "dallas": "US", "phoenix": "US",
+    "san diego": "US", "san jose": "US", "minneapolis": "US", "detroit": "US",
+    "pittsburgh": "US", "baltimore": "US", "nashville": "US", "charlotte": "US",
+    "salt lake city": "US", "st. louis": "US", "brooklyn": "US",
+    "mountain view": "US", "palo alto": "US", "menlo park": "US",
+    "sunnyvale": "US", "cupertino": "US", "redmond": "US", "bellevue": "US",
+    "washington dc": "US", "washington, d.c.": "US",
+    # India
+    "bengaluru": "IN", "bangalore": "IN", "mumbai": "IN", "hyderabad": "IN",
+    "pune": "IN", "chennai": "IN", "kolkata": "IN", "gurgaon": "IN",
+    "gurugram": "IN", "noida": "IN", "new delhi": "IN", "ahmedabad": "IN",
+    "navi mumbai": "IN", "thane": "IN", "kochi": "IN", "jaipur": "IN",
+    "indore": "IN", "coimbatore": "IN",
+    # elsewhere, where the name is not shared
+    "singapore": "SG", "dubai": "AE", "abu dhabi": "AE", "amsterdam": "NL",
+    "rotterdam": "NL", "utrecht": "NL", "eindhoven": "NL", "berlin": "DE",
+    "munich": "DE", "muenchen": "DE", "hamburg": "DE", "frankfurt": "DE",
+    "cologne": "DE", "stuttgart": "DE", "dusseldorf": "DE",
+    "dublin": "IE", "cork": "IE", "galway": "IE",
+    "sydney": "AU", "melbourne": "AU", "brisbane": "AU", "canberra": "AU",
+    "adelaide": "AU", "toronto": "CA", "vancouver": "CA", "montreal": "CA",
+    "ottawa": "CA", "calgary": "CA", "edmonton": "CA", "winnipeg": "CA",
+    "edinburgh": "GB", "glasgow": "GB", "leeds": "GB", "bristol": "GB",
+    "liverpool": "GB", "sheffield": "GB", "belfast": "GB",
+    "paris": "FR", "lyon": "FR", "toulouse": "FR", "madrid": "ES",
+    "barcelona": "ES", "lisbon": "PT", "porto": "PT", "warsaw": "PL",
+    "krakow": "PL", "stockholm": "SE", "gothenburg": "SE", "copenhagen": "DK",
+    "oslo": "NO", "helsinki": "FI", "zurich": "CH", "geneva": "CH",
+    "vienna": "AT", "brussels": "BE", "milan": "IT", "rome": "IT",
+    "tel aviv": "IL", "tokyo": "JP", "seoul": "KR", "manila": "PH",
+    "jakarta": "ID", "bangkok": "TH", "kuala lumpur": "MY", "hong kong": "HK",
+    "sao paulo": "BR", "mexico city": "MX", "buenos aires": "AR",
+    "cape town": "ZA", "johannesburg": "ZA", "nairobi": "KE", "lagos": "NG",
+}
 HYBRID_WORDS = ("hybrid", "flexible")
 ONSITE_WORDS = ("on-site", "onsite", "in office", "in-office", "on site")
 
@@ -379,6 +428,14 @@ def parse_location(raw, fallback_country=None):
         tail = re.search(r"[,(]\s*([A-Za-z]{2})\s*\)?\s*$", text)
         if tail and tail.group(1).upper() in KNOWN_CODES:
             location["country"] = tail.group(1).upper()
+    if not location["country"]:
+        # "Remote - US", "US Remote", "Remote, US: Select locations". The code
+        # is stated outright; it just is not in a trailing comma position. Only
+        # uppercase counts, so the preposition "in" can never read as India.
+        for token in re.findall(r"\b([A-Z]{2})\b", text):
+            if token in KNOWN_CODES:
+                location["country"] = token
+                break
     parts = [p.strip() for p in re.split(r"[,/|()]", text) if p.strip()]
     if parts:
         head = parts[0]
@@ -392,6 +449,15 @@ def parse_location(raw, fallback_country=None):
         elif len(token) == 2 and token in CA_PROVINCES:
             location["region"] = part.strip().upper()
             location["country"] = location["country"] or "CA"
+    if not location["country"]:
+        # Last resort, and only for names that belong to one country. A board
+        # that writes "Chicago" and nothing else still means the United States,
+        # and leaving it countryless meant it answered a search for anywhere.
+        for part in parts:
+            name = part.strip().lower().rstrip(".")
+            if name in UNAMBIGUOUS_CITIES:
+                location["country"] = UNAMBIGUOUS_CITIES[name]
+                break
     return location
 
 

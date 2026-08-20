@@ -900,5 +900,65 @@ class TrailingCountryCodeTests(unittest.TestCase):
         self.assertEqual(base.parse_location("New York, NY")["country"], "US")
 
 
+class LocationCountryTests(unittest.TestCase):
+    """A posting with no country answers a search for every country.
+
+    Selecting India showed Chicago, San Francisco and "Remote - US", because
+    none of those produced a country and the client can only filter on what it
+    is given. The parser was right to refuse to guess from an ambiguous city —
+    London, Ontario is the example in its own docstring — but Chicago is not a
+    guess, and "Remote - US" is not even a city.
+    """
+
+    def country(self, raw):
+        return base.parse_location(raw)["country"]
+
+    def test_a_stated_code_is_read_wherever_it_sits(self):
+        for raw in ("Remote - US", "US Remote", "Remote - US: Select locations",
+                    "Remote (GB)", "Remote - IN"):
+            with self.subTest(raw=raw):
+                self.assertIn(self.country(raw), ("US", "GB", "IN"))
+
+    def test_lowercase_words_are_never_read_as_codes(self):
+        # "in" is a preposition long before it is India.
+        self.assertIsNone(self.country("Engineer in a growing team"))
+        self.assertIsNone(self.country("based in the office"))
+
+    def test_an_unambiguous_city_gives_its_country(self):
+        for city, code in (("Chicago", "US"), ("San Francisco", "US"),
+                           ("New York", "US"), ("Bengaluru", "IN"),
+                           ("Mumbai", "IN"), ("Berlin", "DE"), ("Dubai", "AE"),
+                           ("Singapore", "SG"), ("Toronto", "CA")):
+            with self.subTest(city=city):
+                self.assertEqual(self.country(city), code)
+
+    def test_a_city_with_a_famous_twin_is_still_refused(self):
+        # The whole reason the parser was conservative. Keep it conservative
+        # exactly here.
+        for city in ("London", "Cambridge", "Birmingham", "Manchester",
+                     "Richmond", "Windsor", "Hamilton", "Perth", "Newcastle",
+                     "Waterloo", "Victoria", "Wellington"):
+            with self.subTest(city=city):
+                self.assertIsNone(self.country(city), city)
+
+    def test_an_explicit_country_still_wins_over_the_city(self):
+        # "London, Ontario" must never become GB, and a stated country beats
+        # any inference.
+        self.assertEqual(self.country("Toronto, ON"), "CA")
+        self.assertEqual(self.country("Bengaluru, India"), "IN")
+        self.assertIsNone(self.country("London, Ontario"))
+
+    def test_a_string_with_nothing_in_it_stays_unknown(self):
+        self.assertIsNone(self.country("Remote"))
+        self.assertIsNone(self.country("Somewhere Odd"))
+        self.assertIsNone(self.country(""))
+
+    def test_no_city_in_the_table_collides_with_another_country(self):
+        # The table's whole claim is one name, one country. A duplicate key
+        # would silently take the last one written.
+        names = list(base.UNAMBIGUOUS_CITIES)
+        self.assertEqual(len(names), len(set(names)))
+
+
 if __name__ == "__main__":
     unittest.main()
