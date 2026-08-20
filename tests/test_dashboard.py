@@ -949,6 +949,15 @@ class PageWeightAtCapTests(unittest.TestCase):
         self.assertLess(per_job, 1200,
                         f"{per_job:.0f} bytes a job; it was 1,576 before hoisting")
 
+    def test_the_hoist_names_the_invariant_it_depends_on(self):
+        # Phase 4's calibration is about making weights vary. When it lands,
+        # one hoisted copy explains every card with the wrong denominators —
+        # silently. The comment is the only thing that will find it.
+        source = (ROOT / "scripts" / "found_lane.py").read_text()
+        hoist = source[source.index("MATCH_WEIGHTS") - 1200:source.index("MATCH_WEIGHTS")]
+        self.assertIn("Phase 4", hoist)
+        self.assertIn("calibration", hoist.lower())
+
     def test_the_weights_and_explanations_travel_once(self):
         jobs = {f"j{i}": self.fat_job(i) for i in range(50)}
         picked, total = found_lane.select(jobs, {"locations": [{"country": "US"}]})

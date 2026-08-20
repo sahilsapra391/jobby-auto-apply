@@ -54,7 +54,19 @@ RESERVED_SHARE = 0.55
 # Fixed order, so a score breakdown can travel as an array instead of five
 # repeated key names on every job.
 COMPONENTS = ("title", "experience", "location", "keywords", "freshness")
-# Identical on every job, so it travels once.
+
+# Identical on every job, so it travels once instead of 3,400 times.
+#
+# **This depends on an invariant that Phase 4 is explicitly about breaking.**
+# Calibration makes the weights vary — per job, or per cohort — and the moment
+# they do, hoisting one copy means every card's "why this %" panel explains
+# itself with somebody else's numbers. It will not error and it will not look
+# wrong; the bars will simply be against the wrong denominators.
+#
+# If you are implementing calibration: move the weights back onto the row, or
+# emit a small table of distinct weight sets and reference them the way `wy`
+# references the interned explanations. The second costs almost nothing,
+# because there will be far fewer weight sets than jobs.
 MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),

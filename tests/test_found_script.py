@@ -112,14 +112,23 @@ const DOC = {
 // A DOM small enough to be obviously correct and big enough for the script.
 function makeNode(tag, id) {
   const node = {
-    tagName: tag, id: id || '', className: '', textContent: '', title: '',
+    tagName: tag, id: id || '', className: '', title: '',
     style: {}, hidden: false, checked: true, value: '', options: [],
     selectedOptions: [], children: [], disabled: false, href: '', target: '', rel: '',
     appendChild(c) { this.children.push(c); return c; },
     remove() {},
     setAttribute(k, v) { this['attr_' + k] = v; },
     getAttribute(k) { return this['attr_' + k] === undefined ? null : this['attr_' + k]; },
-    addEventListener() {},
+    // Handlers are stored rather than dropped, so a test can drive the real
+    // control flow — adding a keyword pill goes through the Enter key, and
+    // nothing else reaches that code path.
+    addEventListener(type, fn) {
+      (this._on = this._on || {});
+      (this._on[type] = this._on[type] || []).push(fn);
+    },
+    dispatch(type, event) {
+      ((this._on || {})[type] || []).forEach(function (fn) { fn(event || {}); });
+    },
     // Depth-first over real children, enough for `button.querySelector('span')`.
     querySelector(sel) {
       const want = String(sel).replace(/^\./, '');
@@ -132,6 +141,15 @@ function makeNode(tag, id) {
     },
     querySelectorAll() { return []; },
   };
+  // Assigning textContent empties an element in a real DOM. The stub used to
+  // store the string and leave children alone, which was invisible while
+  // render() only ever ran once — and doubled every card the moment a filter
+  // change triggered a second render.
+  let text = '';
+  Object.defineProperty(node, 'textContent', {
+    get() { return text; },
+    set(v) { text = String(v); if (text === '') node.children.length = 0; },
+  });
   node.classList = {
     add(c) { if ((node.className || '').split(' ').indexOf(c) === -1)
                node.className = (node.className ? node.className + ' ' : '') + c; },
@@ -232,6 +250,14 @@ if (CONTROLS.locations) {
 
 %s
 
+// A test may ask for keyword pills; they are only reachable through the input's
+// Enter handler, which is the path a user takes.
+(CONTROLS.keywords || []).forEach(function (word) {
+  const input = nodes['jb-kw'];
+  input.value = word;
+  input.dispatch('keydown', { key: 'Enter', preventDefault: function () {} });
+});
+
 setTimeout(function () {
   console.log(JSON.stringify({
     shown: grid.children.length,
@@ -283,6 +309,29 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
     def test_the_count_says_how_many_of_how_many(self):
         out = self.run_script([self.job("a"), self.job("b")])
         self.assertIn("2", out["count"])
+
+    def test_a_keyword_found_only_in_the_body_still_matches(self):
+        # The regression this pins: a payload optimisation renamed the field the
+        # haystack read, so searching in title-and-description scope silently
+        # matched nothing in the body while everything still rendered. Every
+        # other keyword test used terms that also appear in a title, so they
+        # would all have stayed green through it.
+        #
+        # "kubernetes" appears in one body and in no title, company or tag.
+        out = self.run_script(
+            [self.job("has", ti="Product Manager", co="Northwind",
+                      sum="You will own our kubernetes migration.", tg=[]),
+             self.job("lacks", ti="Product Manager", co="Northwind",
+                      sum="You will own the billing roadmap.", tg=[])],
+            {"keywords": ["kubernetes"], "jb-scope": "title+description"})
+        self.assertEqual(out["ids"], ["has"])
+
+    def test_a_body_only_keyword_is_ignored_in_title_scope(self):
+        # The other half: title scope must not quietly search the body either.
+        out = self.run_script(
+            [self.job("a", ti="Product Manager", sum="kubernetes migration", tg=[])],
+            {"keywords": ["kubernetes"], "jb-scope": "title"})
+        self.assertEqual(out["ids"], [])
 
     def test_description_scope_searches_the_description(self):
         # The haystack referenced a field that the payload slimming removed, so
