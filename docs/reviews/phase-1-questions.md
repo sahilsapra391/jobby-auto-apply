@@ -438,3 +438,30 @@ Phase 3 needs this, because agent sweeps add wall clock on top. Phase 1 does
 not: at six sweeps a day the scan occupies 16 minutes of every 240, and it takes
 the scan lock rather than an apply slot, so it never contends with an
 application.
+
+## 14a. Is the drift flat or a ratchet? Measured over a fourth run
+
+Asked because the answer decides whether question 14 waits or becomes a fast
+follow. I snapshotted the drifted set, ran a fourth ingest, and diffed.
+
+| | after run 3 | after run 4 |
+|---|---:|---:|
+| store | 13,812 | 14,018 |
+| drifted | 96 | 97 |
+| share | 0.70% | 0.69% |
+
+Newly drifted that run: **1**. Recovered: **0**. Re-sightings that run: 12,286.
+
+So it is a ratchet in the strict sense — nothing ever re-aligns, because the id
+is never recomputed once assigned. But the rate is one record per twelve
+thousand re-sightings, roughly 0.008%, which is far slower than the store grows.
+The share fell from 0.70% to 0.69% across a run that added 206 records.
+
+The errors are not accumulating either: run 4 refused **the same two ids** as run
+3, `d5b21b33a586845b` and `54ee22a2779fd0ee`. These are two specific postings
+that get refused every run, not a growing set.
+
+**It waits.** A ratchet that adds one record per run against a store growing by
+two hundred is not a soon. Revisit it if the newly-drifted-per-run figure ever
+climbs into double digits, which would mean fingerprints are moving for a reason
+other than the ordinary variation between two fetches of the same page.
