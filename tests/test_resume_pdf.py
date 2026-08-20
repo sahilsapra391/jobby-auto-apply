@@ -27,10 +27,10 @@ h1 {{ font-size: 20pt; color: {accent}; margin: 0; }}
 <p class="contact">{contact}</p>
 <p>A line of body text with a 42% metric in it.</p>"""
 
-SHORT_CONTACT = "Springfield, IL 62704 | (216) 848-7236 | someone@example.com | LinkedIn"
+SHORT_CONTACT = "Springfield, IL 62704 | (555) 010-1234 | someone@example.com | LinkedIn"
 # Long enough to wrap at this width: the exact failure a street address caused.
 LONG_CONTACT = ("9308 Somewhere Extremely Long Street Name, Springfield, IL 62704 | "
-                "(216) 848-7236 | someone@example.com | example.com | LinkedIn | "
+                "(555) 010-1234 | someone@example.com | example.com | LinkedIn | "
                 "GitHub | Portfolio | Personal Blog | Twitter")
 
 

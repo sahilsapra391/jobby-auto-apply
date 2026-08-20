@@ -44,7 +44,7 @@ Pass JSON through a private temp file with `umask 077`, and delete it afterwards
 ```json
 {"key": "us", "default": true, "appliesTo": ["US"],
  "path": "~/…/Sahil Resume 2026 PM.pdf",
- "identity": {"phone": "(216) 848-7236", "location": "Charlotte, NC 28273"}}
+ "identity": {"phone": "(555) 010-1234", "location": "Springfield, IL 62704"}}
 ```
 
 `store.py profile-replace` rejects a resume without `identity.phone` and `identity.location`, and rejects a set without exactly one `default`. Both guards exist because the failure they prevent is silent: an application that went out with the wrong country's phone number looks completely normal.

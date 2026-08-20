@@ -116,6 +116,67 @@ def extract(html):
     return template, content
 
 
+def identity_block(region=None, root=None):
+    """The name and contact line, read from the profile at render time.
+
+    Not stored in the template. The template is tracked and the contact line is
+    a home address, a phone number and a personal email; keeping it there put
+    all three in the repository, which is how they end up in every clone. It is
+    also wrong per posting: the identity block is chosen by the posting's
+    country, and a template can only hold one of them.
+    """
+    import json as _json
+    import subprocess as _sub
+    import sys as _sys
+    args = [_sys.executable, str(REPO / "scripts" / "store.py"), "profile-get"]
+    if root:
+        args = args[:2] + ["--root", str(root)] + args[2:]
+    out = _sub.run(args, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit("resume_build: cannot read the profile for the contact block")
+    profile = _json.loads(out.stdout or "{}")
+
+    resumes = profile.get("resumes") or []
+    want = (region or "").upper()
+    chosen = None
+    for entry in resumes:
+        if want and want in [str(a).upper() for a in (entry.get("appliesTo") or [])]:
+            chosen = entry
+            break
+    if chosen is None:
+        chosen = next((e for e in resumes if e.get("default")), resumes[0] if resumes else {})
+    identity = chosen.get("identity") or {}
+
+    name = " ".join(x for x in (profile.get("firstName"), profile.get("lastName")) if x)
+    links = profile.get("links") or {}
+    parts = []
+    if identity.get("location"):
+        parts.append(safe(identity["location"]))
+    if identity.get("phone"):
+        # The profile stores digits only, because that is what form fields want
+        # (phoneNote says so). A resume shows it the way a reader expects.
+        digits = "".join(c for c in str(identity["phone"]) if c.isdigit())
+        if len(digits) == 10:
+            shown = "(%s) %s-%s" % (digits[:3], digits[3:6], digits[6:])
+        elif len(digits) == 11 and digits[0] == "1":
+            shown = "(%s) %s-%s" % (digits[1:4], digits[4:7], digits[7:])
+        else:
+            shown = str(identity["phone"])
+        parts.append(safe(shown))
+    email = profile.get("email")
+    if email:
+        parts.append('<a href="mailto:%s">%s</a>' % (safe(email), safe(email)))
+    site = links.get("website")
+    if site:
+        parts.append('<a href="%s">%s</a>'
+                     % (safe(site), safe(site.rstrip("/").split("//")[-1])))
+    if links.get("linkedin"):
+        parts.append('<a href="%s">LinkedIn</a>' % safe(links["linkedin"]))
+    if links.get("github"):
+        parts.append('<a href="%s">GitHub</a>' % safe(links["github"]))
+    return name.upper(), " | ".join(parts)
+
+
 def merge(base, overrides):
     """Base content with this posting's changes laid over it.
 
@@ -171,6 +232,9 @@ def render(template, content):
                 f"of a different length reflows the page. Supply exactly {wanted}.")
 
     out = template
+    if "{{name}}" in out or "{{contact}}" in out:
+        name, contact = identity_block(content.get("region"), content.get("storeRoot"))
+        out = out.replace("{{name}}", safe(name)).replace("{{contact}}", contact)
     out = out.replace("{{banner}}", safe(content.get("banner", "")))
     out = out.replace("{{summary}}", safe(content.get("summary", "")))
 

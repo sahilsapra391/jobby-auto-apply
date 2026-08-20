@@ -48,3 +48,7 @@ deploy/node_modules/
 **/*.png
 !assets/**/*.png
 !deploy/public/*.png
+
+# Scratch renders from a run. Same contents as an application: a real
+# address, phone and email on every page.
+.build/
