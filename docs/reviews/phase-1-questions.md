@@ -310,3 +310,72 @@ I would take (1), then (3) for whatever remains. Not doing it here: this is the
 identity core, the review has passed it once, and changing merge behaviour after
 a re-review means the merge behaviour is unreviewed. Same reasoning as the
 fingerprint-veto misfire in item 9.
+
+## 15. India gets the floor and nothing else, and the reason is coverage
+
+Asked for as a straight table. Per configured location, from the live store
+after run 3, against a 3,400 embed cap with a 0.55 reserved share over 12
+buckets, so the floor is 155 each and 1,540 remain to be awarded:
+
+| bucket | pool | floor | remainder | embedded | % of pool |
+|---|---:|---:|---:|---:|---:|
+| US | 3,136 | 155 | 843 | 998 | 31.8% |
+| Canada | 1,550 | 155 | 140 | 295 | 19.0% |
+| India | 1,231 | 155 | 0 | 155 | 12.6% |
+| UK | 1,637 | 155 | 0 | 155 | 9.5% |
+| Germany | 933 | 155 | 0 | 155 | 16.6% |
+| Singapore | 927 | 155 | 0 | 155 | 16.7% |
+| Australia | 739 | 155 | 0 | 155 | 21.0% |
+| Netherlands | 648 | 155 | 0 | 155 | 23.9% |
+| Ireland | 506 | 155 | 0 | 155 | 30.6% |
+| UAE | 440 | 155 | 0 | 155 | 35.2% |
+| remote | 757 | 155 | 143 | 298 | 39.4% |
+| other | 1,229 | 155 | 414 | 569 | 46.3% |
+
+Of the two offered diagnoses it is the second: the remainder pass is
+score-ordered globally, so it goes wherever the high-score tail is fattest. But
+the first is not merely unproven, it is false, and that changes what the lever
+should be.
+
+**India does not score lower.** Its median is 69 against the United States' 63,
+and its mean title match is the best of any market at 30.3 of 35, against the
+United States' 23.3. On the component the rubric weights most heavily, Indian
+postings match Sahil's searched titles better than American ones do.
+
+What India lacks is jobs in the 80+ band: 17 against 165. And that tracks one
+thing almost exactly:
+
+| bucket | direct listings | of pool | jobs at 80+ |
+|---|---:|---:|---:|
+| US | 1,854 | 59.1% | 165 |
+| Canada | 544 | 35.1% | 49 |
+| India | 251 | 20.4% | 17 |
+| UK | 255 | 15.6% | 17 |
+| Germany | 113 | 12.1% | 11 |
+| UAE | 20 | 4.5% | 7 |
+
+Canada has a smaller pool than the UK and took 140 of the remainder while the UK
+took none, because Canada is 35% direct and the UK is 16%. Pool size does not
+predict the award; direct-listing share does. Direct listings carry a full body,
+so they get a real keywords and experience read instead of the half-weight an
+unknown earns, and that is what reaches 80.
+
+Sixty of the United States' 165 top scorers come from USAJOBS, a channel that by
+definition returns nothing for any other country.
+
+So the remainder pass is sorting on coverage and calling it merit. Two levers,
+and they are not alternatives:
+
+1. **Weight the floor toward the two home markets.** Immediate, honest about
+   what it is, and it fixes the board today. It treats the symptom.
+2. **Put Indian employers in the company registry.** India is 20% direct because
+   the registry is mostly American tenants. This is the cause, and it is the
+   work the per-tenant registry push was for.
+
+I would do (1) now and (2) as the next real piece of sourcing work, and I would
+not describe (1) as a scoring fix, because scoring is not what is wrong.
+
+One thing that got in the way of measuring this: `companies.json` records no
+country, so all 516 entries read as `??`. The registry cannot currently answer
+"how many Indian employers do we poll", which is the number lever (2) is judged
+on. Worth a field.
