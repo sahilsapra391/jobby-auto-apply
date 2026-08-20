@@ -97,3 +97,28 @@ class ToleranceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClippingIsReachableTests(unittest.TestCase):
+    """The absolute check is not dead code, and here is the case that fires it.
+
+    A review called it "effectively unreachable under Chrome's print-to-pdf".
+    48 of the 165 bottom failures in the recorded runs were negative, and the
+    shipped template with eight technical rows reproduces it at -4.2pt. A branch
+    documented as unreachable stops being tested and starts being deleted.
+    """
+
+    def test_a_page_overflowing_by_a_few_points_is_caught(self):
+        original = resume_pdf.geometry
+        source = doc([page(bottom=21.5)])
+        built = doc([page(bottom=-4.2)])
+        order = [source, built]
+        resume_pdf.geometry = lambda _p: order.pop()
+        try:
+            out = resume_pdf.cmd_verify(
+                types.SimpleNamespace(pdf="built.pdf", against="source.pdf"))
+        finally:
+            resume_pdf.geometry = original
+        self.assertFalse(out["match"])
+        self.assertTrue(any("past the bottom edge" in d for d in out["differences"]),
+                        out["differences"])

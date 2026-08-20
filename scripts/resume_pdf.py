@@ -294,6 +294,13 @@ def cmd_verify(args):
                 f"everything below it)")
         # Text printing past the bottom edge is the failure that actually
         # matters here, and it is absolute: it does not depend on the source.
+        #
+        # A review called this branch "effectively unreachable under Chrome's
+        # print-to-pdf". It is not. Reproduce it: render templates/resume.html
+        # with eight technical rows from templates/resume-content.json and
+        # verify against the base resume. Page 1 comes back at -4.2pt and this
+        # fires. 48 of the 165 bottom failures in the recorded runs were
+        # negative, between -0.5 and -6.5pt. Do not delete it as dead code.
         if b["bottom"] < 0:
             diffs.append(
                 f"page {i+1}: text prints {-b['bottom']:.1f}pt past the bottom edge "
