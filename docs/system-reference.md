@@ -641,6 +641,42 @@ remembers to run is how it drifts.
 
 ## 15. Known gaps
 
+- **India is a registry-coverage gap, not a scoring gap.** Filtering the board
+  to India returns the embedding floor and nothing more, while the United States
+  returns six times as much. The instinct is to reach for the scoring dial.
+  Don't: India's median score is **69 against the United States' 63**, and its
+  mean title match is the **best of any market at 30.3 of 35**. Indian postings
+  match the searched titles better than American ones do.
+
+  What India lacks is jobs in the 80+ band — 17 against 165 — and that tracks
+  direct-listing share almost exactly:
+
+  | market | direct listings | share of pool | jobs at 80+ |
+  |---|---:|---:|---:|
+  | US | 1,854 | 59.1% | 165 |
+  | Canada | 544 | 35.1% | 49 |
+  | India | 251 | 20.4% | 17 |
+  | UK | 255 | 15.6% | 17 |
+  | Germany | 113 | 12.1% | 11 |
+  | UAE | 20 | 4.5% | 7 |
+
+  Canada has a smaller pool than the UK, is twice as direct, and took 140 of the
+  remainder while the UK took none. Pool size does not predict the award;
+  direct-listing share does. A direct listing carries a full body, so it earns a
+  real keywords and experience read instead of the half-weight an unknown gets,
+  and that is what reaches 80. Sixty of the United States' 165 top scorers come
+  from USAJOBS, which by definition returns nothing for anywhere else.
+
+  So the selection remainder is score-ordered globally and ends up sorting on
+  coverage while calling it merit. **The fix is Indian employers in
+  `companies.json`**, which is what the per-tenant registry is for. Weighting the
+  floor toward the two home markets is a legitimate stopgap for the board today,
+  but it treats the symptom, and it should never be described as a scoring fix.
+
+  Blocked on one thing: `companies.json` records no country, so all 516 entries
+  read as unknown and the registry cannot answer "how many Indian employers do
+  we poll" — which is the number this gap is judged on. Add the field first.
+
 - **Slots 2 and 3 have empty browser profiles.** LinkedIn Easy Apply parks there
   until `browser.py --stop && browser.py --clone-logins` is run with nothing in
   flight.

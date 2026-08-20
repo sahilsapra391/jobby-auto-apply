@@ -10,6 +10,9 @@ those raise anything. They just quietly make the system wrong.
 Run from the repo root: python3 -m pytest tests/ -q
 """
 
+import copy
+import inspect
+import re
 import importlib.util
 import json
 import pathlib
@@ -845,6 +848,64 @@ class LocationBackfillTests(unittest.TestCase):
         jobs, filled = jobs_store.refresh_locations(jobs)
         self.assertEqual(filled, 0)
         self.assertIsNone(jobs["a"]["location"]["country"])
+
+    def test_a_record_with_a_country_comes_out_byte_identical(self):
+        # This runs unattended over every record, six times a day. The guard
+        # has to be that nothing with an answer is touched, not that the new
+        # answer usually agrees.
+        jobs = {
+            "agrees": {"id": "agrees", "company": "A", "state": "new",
+                       "location": {"raw": "Chicago", "country": "US",
+                                    "city": "Chicago", "region": "IL"}},
+            "disagrees": {"id": "disagrees", "company": "B", "state": "new",
+                          "location": {"raw": "Chicago", "country": "CA",
+                                       "city": "Chicago", "region": None}},
+            "nonsense": {"id": "nonsense", "company": "C", "state": "applied",
+                         "location": {"raw": "Berlin", "country": "ZZ"}},
+        }
+        before = copy.deepcopy(jobs)
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 0)
+        self.assertEqual(jobs, before)
+
+    def test_filling_a_blank_touches_nothing_but_the_country(self):
+        jobs = {"a": {"id": "a", "company": "A", "state": "new", "score": {"total": 80},
+                      "sources": [{"source": "greenhouse"}],
+                      "location": {"raw": "Chicago", "country": None,
+                                   "city": "Chicago", "region": "IL"}}}
+        before = copy.deepcopy(jobs)
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 1)
+        self.assertEqual(jobs["a"]["location"]["country"], "US")
+        # everything else, including the rest of the location object
+        before["a"]["location"]["country"] = "US"
+        self.assertEqual(jobs, before)
+
+    def test_a_record_with_no_location_gains_no_keys(self):
+        jobs = {"a": {"id": "a", "state": "new"}}
+        before = copy.deepcopy(jobs)
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 0)
+        self.assertEqual(jobs, before)
+
+    def test_the_only_key_it_ever_assigns_is_country(self):
+        # Structural, because the loop is short and the claim is absolute.
+        source = inspect.getsource(jobs_store.refresh_locations)
+        assignments = re.findall(r'location\[([^\]]+)\]\s*=', source)
+        self.assertEqual(assignments, ['"country"'])
+
+    def test_every_state_is_left_alone_the_same_way(self):
+        # A watched or applied record is the user's decision. This function has
+        # no business knowing about state, so it must treat them identically.
+        jobs = {state: {"id": state, "state": state,
+                        "location": {"raw": "Chicago", "country": None}}
+                for state in ("new", "watched", "applied", "passed")}
+        jobs, filled = jobs_store.refresh_locations(jobs)
+        self.assertEqual(filled, 4)
+        for state in jobs:
+            with self.subTest(state=state):
+                self.assertEqual(jobs[state]["location"]["country"], "US")
+                self.assertEqual(jobs[state]["state"], state)
 
     def test_the_ingest_runs_it_before_retention(self):
         # A record that just gained a country should be counted under it.
