@@ -32,6 +32,7 @@ happened, and pushed to healthchecks.io so silence itself is an alert.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -304,7 +305,31 @@ def fingerprint():
     # jobs has to count as a change. Without this the pool would fill up and
     # the published board would keep showing the last set of sessions.
     return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
-            + "|".join(parts))
+            f"{render_version()}|" + "|".join(parts))
+
+
+def render_version():
+    """What the board would be rendered *by*, not what it would be rendered from.
+
+    The fingerprint above is entirely about data, so a code change that alters
+    every card on the board is invisible to it: after a merge the watcher goes
+    on serving the previous render until some session happens to move. That is
+    exactly what happened when the discovery engine landed — the deploy went
+    out, the board did not change, and it looked like the merge had not worked.
+
+    A hash of the two modules that decide what the page looks like. Cheap, and
+    it makes the publish self-triggering: one republish on the first tick after
+    any change to either, and none after that.
+    """
+    digest = hashlib.sha256()
+    for name in ("dashboard.py", "found_lane.py"):
+        try:
+            digest.update((REPO / "scripts" / name).read_bytes())
+        except OSError:
+            # A missing renderer is a real fault, but it is publish.py's to
+            # report. Here it just has to be a stable, distinct value.
+            digest.update(b"missing:" + name.encode())
+    return digest.hexdigest()[:12]
 
 
 def found_signature():

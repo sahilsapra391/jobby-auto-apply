@@ -12,6 +12,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 """
 
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -802,6 +803,54 @@ class SlotReleaseTests(unittest.TestCase):
         window = window[:window.index("applyStarted")]
         self.assertIn("except Exception:", window)
         self.assertGreaterEqual(window.count("lock_path(slot).unlink(missing_ok=True)"), 3)
+
+
+class RenderVersionTests(unittest.TestCase):
+    """A code change has to reach the board on its own.
+
+    The publish fingerprint was entirely about data, so a merge that changed
+    every card was invisible to it and the watcher went on serving the previous
+    render until some session happened to move. When the discovery engine
+    landed, the deploy went out, the board did not change, and it read as the
+    merge having failed.
+    """
+
+    def test_it_moves_when_a_renderer_changes(self):
+        original = watch.REPO
+        with tempfile.TemporaryDirectory() as d:
+            fake = pathlib.Path(d)
+            (fake / "scripts").mkdir()
+            (fake / "scripts" / "dashboard.py").write_text("one")
+            (fake / "scripts" / "found_lane.py").write_text("two")
+            watch.REPO = fake
+            try:
+                before = watch.render_version()
+                (fake / "scripts" / "found_lane.py").write_text("two, changed")
+                after = watch.render_version()
+            finally:
+                watch.REPO = original
+        self.assertNotEqual(before, after)
+
+    def test_it_is_stable_when_nothing_changes(self):
+        self.assertEqual(watch.render_version(), watch.render_version())
+
+    def test_a_missing_renderer_is_still_a_stable_value(self):
+        original = watch.REPO
+        with tempfile.TemporaryDirectory() as d:
+            watch.REPO = pathlib.Path(d)
+            try:
+                self.assertEqual(watch.render_version(), watch.render_version())
+                self.assertTrue(watch.render_version())
+            finally:
+                watch.REPO = original
+
+    def test_the_fingerprint_carries_it(self):
+        # Structural: the point is that publishing keys on it, not that the
+        # helper exists.
+        source = inspect.getsource(watch)
+        fp = source[source.index("def fingerprint"):]
+        fp = fp[:fp.index("def render_version")]
+        self.assertIn("render_version()", fp)
 
 
 if __name__ == "__main__":
