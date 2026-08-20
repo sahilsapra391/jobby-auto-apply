@@ -662,7 +662,7 @@ class CompanyRegistryTests(unittest.TestCase):
     def test_the_curated_pack_is_verified_and_unambiguous(self):
         seen = set()
         for name, ats, token, region in seed_companies.SEED_PACK:
-            self.assertIn(ats, ("greenhouse", "lever", "ashby"), name)
+            self.assertIn(ats, seed_companies.TIER1_PLATFORMS, name)
             self.assertTrue(token, name)
             self.assertNotIn((ats, token), seen, f"{name} duplicates a board")
             seen.add((ats, token))
