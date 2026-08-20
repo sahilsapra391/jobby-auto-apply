@@ -38,9 +38,9 @@ import search_config  # noqa: E402
 # payload costs 857 bytes a job once the weights are hoisted out, the rubric
 # explanations are interned and the duplicated excerpt is dropped — down from
 # 1,576. Measured on a real 12,855-job pool, the whole rendered board comes to
-# 3.12 MB at 3,400 and 3.47 MB at 3,800; 3,400 is the largest that leaves real
-# margin under the 4 MB target rather than grazing it. Do not raise this past
-# what has been measured.
+# 3.24 MB at 3,400 including the pool census, and 3.47 MB at 3,800 without it.
+# 3,400 is the largest that leaves real margin under the 4 MB target rather
+# than grazing it. Do not raise this past what has been measured.
 EMBED_CAP = 3400
 # One slice of the description, used by the card and by Details. It used to be
 # two overlapping slices of the same text.
@@ -661,8 +661,8 @@ def panel(jobs, total, config, meta):
         # otherwise would be the page claiming a reach it does not have. The
         # count line beside the filters names the pool total for whichever
         # locations are selected, which is the number that is actually useful.
-        footer = (f'<p class="jb-footer">{shown} of {total} jobs are on this page. '
-                  f'Filtering searches these {shown}; the rest are on disk and reach '
+        footer = (f'<p class="jb-footer">{shown:,} of {total:,} jobs are on this page. '
+                  f'Filtering searches these {shown:,}; the rest are on disk and reach '
                   f'the page as scores and dates change. Save a narrower search to '
                   f'change which ones are here.</p>')
     return f"""<div class="jb-wide">

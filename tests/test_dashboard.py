@@ -521,7 +521,7 @@ class FoundLaneTests(unittest.TestCase):
                 for i in range(found_lane.EMBED_CAP + 120)]
         html = self.render(jobs)
         self.assertEqual(len(self.rows(html)), found_lane.EMBED_CAP)
-        self.assertIn(f"{found_lane.EMBED_CAP} of {found_lane.EMBED_CAP + 120} jobs are on this page", html)
+        self.assertIn(f"{found_lane.EMBED_CAP:,} of {found_lane.EMBED_CAP + 120:,} jobs are on this page", html)
 
     def test_the_highest_scoring_jobs_are_the_ones_embedded(self):
         jobs = [self.job(f"j{i}", score={"total": i, "parts": {}, "weights": {},
@@ -868,6 +868,12 @@ class FooterHonestyTests(unittest.TestCase):
     def test_it_no_longer_claims_refining_searches_the_rest(self):
         html = self.render(found_lane.EMBED_CAP + 50)
         self.assertNotIn("refine the filters or save a narrower search", html)
+
+    def test_the_counts_are_readable(self):
+        # Four- and five-figure numbers with no separator are a wall.
+        html = self.render(found_lane.EMBED_CAP + 50)
+        self.assertIn(f"{found_lane.EMBED_CAP:,}", html)
+        self.assertNotIn(f"{found_lane.EMBED_CAP} of", html)
 
     def test_it_says_filtering_covers_only_what_is_on_the_page(self):
         html = self.render(found_lane.EMBED_CAP + 50)
