@@ -677,6 +677,21 @@ remembers to run is how it drifts.
   warns. Widening the company match is not the fix: merging two real companies
   is worse and harder to spot. Seeding aliases from observed variants is a
   Phase 2 candidate.
+- **A sweep takes about 15 minutes and holds the scan lock.** 497 boards, 742
+  requests, 14.8 minutes measured. Fine at an hourly cadence, and it cannot
+  collide with an application because Tier-1 ingest takes the scan lock rather
+  than an apply slot. It is the next ceiling though: the reviewer's read is that
+  it is throttle-bound rather than bandwidth-bound, so running hosts in parallel
+  while keeping the one-second spacing *within* each host is a cheaper lever
+  than splitting the sweep across the hour. Phase 3 needs it; Phase 1 does not.
+- **The board holds 3,400 of the pool, not all of it.** Selection gives every
+  location in the saved search a floor and spends the rest globally, so a
+  regional filter reaches 10–40% of that region rather than the 0–3% a global
+  top-N gave. The page says so rather than implying filtering searches
+  everything.
+- **Adzuna sightings cannot be URL-matched to the employer's posting.** Its
+  redirect carries no origin link, so those copies merge on company, title and
+  country, or on the description fingerprint, or not at all.
 - **Country is unknown for most remote-feed postings.** "Remote — US only" is a
   restriction rather than a location, so those jobs bucket as `remote` and their
   country stays null rather than being guessed.

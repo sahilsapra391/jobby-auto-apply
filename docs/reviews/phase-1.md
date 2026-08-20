@@ -275,6 +275,115 @@ Three connectors reported `skipped — no boards in the company registry`, which
 is the registry-driven point demonstrated rather than argued: Breezy, Personio
 and Rippling work, and no company Jobby knows uses them yet.
 
+## Round two — re-review after the supervised-run changes
+
+Same independent session, both branches pulled again, suite run on its own, and
+fresh adversarial tests rather than a read of mine.
+
+**Verdict: APPROVE WITH CONDITIONS.** One Major, three Minor, nothing Blocking.
+The Major is a design decision rather than a defect. All four closed below.
+
+| | Round one | Round two |
+|---|---|---|
+| Suite | 505 | **729** |
+| `main` baseline | 171 | 236 |
+
+### What round two verified independently
+
+- The round-one Major is genuinely closed. The reviewer re-ran its own
+  reproduction against the fixed code: two aggregator-only requisitions with
+  far-apart fingerprints produce two records; the syndicated counterpart still
+  collapses; thin records stay conservative. It rates the fix better than the
+  finding asked for.
+- `keep_priority` is right, and the discovery behind it — aggregator snippets
+  are keyword-dense and out-score real job descriptions — is the sharpest thing
+  in the session.
+- The merge with main is clean where it counts: `SLOT_COUNT = 5` identical on
+  both sides, and Tier-1 ingest takes the scan lock rather than an apply slot,
+  so a 14.8-minute sweep and five concurrent applications never contend. That
+  was the highest-risk hypothesis and it is disproved.
+- Storage is a non-issue: 12,000 jobs is 24 MB, 0.39 s to write, 0.29 s to read.
+- Careerjet over plaintext is accepted: an affiliate ID is not an account
+  credential, and the downgrade is documented rather than papered over.
+
+### Finding 1 — MAJOR — the filters reached 6.7% of the pool
+
+**Closed.** Commit `e1bc513`.
+
+`select()` took the top `EMBED_CAP` globally by score, so every regional filter
+got a slice biased by whichever region was densest — and the footer said
+"refine the filters", implying refining searched the pool when it re-sorts the
+same records.
+
+Three changes. The budget is now spent in two passes: each location the saved
+search names gets a guaranteed floor from its own best, and the remainder plus
+any unused floor is spent globally on the same ordering. Direct listings keep
+their priority inside the selection. The payload lost a third of its weight —
+weights hoisted, explanations interned, the duplicated excerpt dropped, 1,576 →
+857 bytes a job — which paid for the cap going from 800 to 3,400 at a measured
+3.12 MB. And the footer stopped claiming a reach the page does not have, with a
+per-country pool census travelling alongside so the count names the pool total
+for the locations actually selected.
+
+Measured on the real 12,802-job pool:
+
+| Region | In pool | Before | After |
+|---|---|---|---|
+| India | 1,278 | 32 (3%) | 155 (12%) |
+| Japan | 13 | 0 (0%) | 5 (38%) |
+| UAE | 442 | 3 (1%) | 155 (35%) |
+| Singapore | 411 | 7 (2%) | 155 (38%) |
+| United Kingdom | 1,628 | 32 (2%) | 155 (10%) |
+| Canada | 1,634 | 115 (7%) | 319 (20%) |
+| Australia | 764 | 1 (0%) | 155 (20%) |
+| Germany | 943 | 16 (2%) | 155 (16%) |
+| Netherlands | 673 | 4 (1%) | 155 (23%) |
+| United States | 2,595 | 342 (13%) | 1,034 (40%) |
+| Remote | 2,096 | 252 (12%) | 875 (42%) |
+
+Raising the cap exposed the next thing: `render()` drew a card per match, which
+at 3,400 is ~50,000 DOM nodes. Cards are drawn a window at a time now — the
+lazy render §5 asks for and I had not built.
+
+Two bugs fell out. `cap=EMBED_CAP` was a default argument bound at import, so
+changing the constant did nothing and three measurements in a row returned the
+same number, which is what gave it away. And the keyword haystack still
+referenced `job.ex` after the payload slimming removed it, so description-scope
+search silently matched nothing in the body.
+
+Pinned by `tests/test_dashboard.py::EmbeddingReachTests`, `::PoolCensusTests`,
+`::FooterHonestyTests`, `::PageWeightAtCapTests` and
+`test_found_script.py::test_description_scope_searches_the_description`.
+
+### Finding 2 — MINOR — the fixture-provenance claim had gone stale
+
+**Closed.** Commit `c991806`. All five keyed fixtures re-recorded from live
+authenticated responses; the note is gone and the test asserts the opposite.
+
+The re-recording found what the review hoped it might: **Adzuna exposes no
+employer origin link.** Plan §3.2 assumes aggregators usually do. Adzuna's
+`redirect_url` has nothing embedded, so identity rule 1 can never fire for an
+Adzuna sighting — its copies merge on company/title/country, on the
+fingerprint, or not at all. The contract-derived fixture had invented an
+embedded link and the test on it was passing against fiction.
+
+A second test checks no fixture carries a live key, which matters because
+Adzuna echoes the app id inside every `redirect_url` it returns.
+
+### Finding 3 — MINOR — eight modules tested less than they reported
+
+**Closed.** Commit `20519ab`. `unittest.main()` above the last classes meant a
+direct run silently omitted them. Eight modules had it, four predating this
+work; `test_watch` was skipping seven classes including every slot-race test.
+Standalone now matches pytest module for module, and `test_suite_shape.py`
+keeps it true.
+
+### Finding 4 — MINOR — two extractor recall gaps
+
+**Closed.** Commit `c991806`. Spelled-out numbers, and figures qualified by a
+role noun rather than the word "experience". Every one of the twelve refusals
+still refuses, including the spelled-out forms of the same traps.
+
 ## Sign-off
 
 The implementing session does not sign this off, and does not merge.
