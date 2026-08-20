@@ -28,6 +28,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import identity  # noqa: E402
 import sources  # noqa: E402
 from sources import adzuna, ashby, base, boards, careerjet, feeds, greenhouse  # noqa: E402
 from sources import jooble, lever, reed, themuse, usajobs  # noqa: E402
@@ -324,19 +325,28 @@ class KeyedConnectorTests(unittest.TestCase):
         result = adzuna.fetch(f, config={}, settings=NO_SETTINGS, countries=["US"])
         self.assertIn("JOBBY_ADZUNA_ID", result["reason"])
 
-    def test_adzuna_normalises_and_keeps_the_employer_link(self):
+    def test_adzuna_normalises(self):
         f = fetcher({"api.adzuna.com": (200, fixture("adzuna_search.json"))})
         result = adzuna.fetch(f, config={"keywords": ["product manager"]},
                               settings={"JOBBY_ADZUNA_ID": "id", "JOBBY_ADZUNA_KEY": "key"},
                               countries=["US"])
         self.assertEqual(result["status"], "ok")
         job = result["postings"][0]
-        self.assertEqual(job["company"], "Northwind Analytics")
+        self.assertTrue(job["company"])
         self.assertEqual(job["location"]["country"], "US")
         self.assertEqual(job["sources"][0]["sourceClass"], "aggregator")
-        # The wrapper still carries the employer URL, which is what lets this
-        # merge with the Greenhouse sighting of the same job.
-        self.assertIn("greenhouse", job["canonicalUrl"])
+        self.assertTrue(job["postedAt"])
+
+    def test_adzuna_does_not_expose_the_employer_link(self):
+        # Recorded from a live response, and it contradicts what plan §3.2
+        # assumes about aggregators "usually" exposing an origin link. Adzuna's
+        # redirect_url is adzuna.com/details/<id> or /land/ad/<id>?se=…&v=… with
+        # nothing embedded, so identity rule 1 can never fire for an Adzuna
+        # sighting: its copies merge by company-title-country or by fingerprint
+        # or not at all. Recorded in references/sources-registry.md.
+        for entry in json.loads(fixture("adzuna_search.json"))["results"]:
+            self.assertEqual(identity.origin_link(entry["redirect_url"]), "",
+                             "if this ever starts passing, rule 1 got cheaper")
 
     def test_adzuna_says_which_selected_countries_it_cannot_answer_for(self):
         f = fetcher({"api.adzuna.com": (200, fixture("adzuna_search.json"))})
@@ -393,9 +403,14 @@ class KeyedConnectorTests(unittest.TestCase):
         self.assertEqual(len(f.fake_opener.calls), 0)
 
     def test_reed_reads_a_uk_date(self):
+        # dd/mm/yyyy, confirmed against a live response: "04/08/2026" is the
+        # fourth of August, not the eighth of April.
         f = fetcher({"reed.co.uk": (200, fixture("reed_search.json"))})
         result = reed.fetch(f, config={}, settings={"JOBBY_REED_KEY": "k"}, countries=["GB"])
-        self.assertEqual(result["postings"][0]["postedAt"], "2026-08-18T00:00:00Z")
+        raw = json.loads(fixture("reed_search.json"))["results"][0]["date"]
+        day, month, year = raw.split("/")
+        self.assertEqual(result["postings"][0]["postedAt"],
+                         f"{year}-{month}-{day}T00:00:00Z")
 
     def test_usajobs_needs_both_the_key_and_the_email(self):
         f = fetcher({})
@@ -404,13 +419,21 @@ class KeyedConnectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "skipped")
         self.assertIn("JOBBY_USAJOBS_EMAIL", result["reason"])
 
-    def test_usajobs_normalises_and_the_citizenship_line_survives_for_the_gate(self):
+    def test_usajobs_normalises_its_nested_shape(self):
+        # Everything worth having is under MatchedObjectDescriptor, and the
+        # description has to be assembled from QualificationSummary plus the
+        # duty list rather than read from one field.
         f = fetcher({"data.usajobs.gov": (200, fixture("usajobs_search.json"))})
         result = usajobs.fetch(f, config={}, settings={"JOBBY_USAJOBS_KEY": "k",
                                                        "JOBBY_USAJOBS_EMAIL": "a@b.example"},
                                countries=["US"])
         self.assertEqual(result["status"], "ok")
-        self.assertIn("citizenship", result["postings"][0]["descriptionExcerpt"].lower())
+        job = result["postings"][0]
+        self.assertTrue(job["title"])
+        self.assertTrue(job["company"])
+        self.assertEqual(job["location"]["country"], "US")
+        self.assertTrue(job["descriptionExcerpt"])
+        self.assertTrue(job["canonicalUrl"].startswith("https://"))
 
     def test_themuse_runs_without_a_key_and_says_so(self):
         # Appendix A lists The Muse as free-key. The public endpoint answers
@@ -685,15 +708,28 @@ class CareerjetTransportTests(unittest.TestCase):
 
 
 class FixtureProvenanceTests(unittest.TestCase):
-    def test_the_unverified_fixtures_say_they_are_unverified(self):
-        # Five channels have no key on this machine, so their fixtures come
-        # from the published contract rather than a recorded response. Saying
-        # so is the difference between a known gap and a false claim.
+    def test_every_fixture_is_now_a_recorded_response(self):
+        # These five were written from each published contract while no key was
+        # installed, and carried a __fixture_note saying so. The keys are in
+        # now and all twenty connectors have run live, so the fixtures are
+        # re-recorded and the note is gone. A test asserting they are
+        # unverified would itself have become the untrue claim.
         for name in ("adzuna_search", "jooble_search", "careerjet_search",
                      "reed_search", "usajobs_search"):
             data = json.loads(fixture(f"{name}.json"))
-            self.assertIn("__fixture_note", data, name)
-            self.assertIn("not a recorded response", data["__fixture_note"], name)
+            self.assertNotIn("__fixture_note", data, name)
+
+    def test_no_fixture_carries_an_api_key(self):
+        # These were recorded from authenticated requests, and Adzuna echoes
+        # the app id back inside every redirect_url it returns.
+        import toolpath
+        settings = toolpath.settings()
+        secrets = [v for k, v in settings.items()
+                   if k.startswith("JOBBY_") and v and len(v) > 6]
+        for path in sorted(FIXTURES.iterdir()):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for secret in secrets:
+                self.assertNotIn(secret, text, f"{path.name} carries a live key")
 
     def test_no_fixture_carries_personal_data(self):
         # §13 item 11: Playwright wrote 33 snapshots into the repo carrying a

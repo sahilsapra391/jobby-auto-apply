@@ -60,6 +60,35 @@ class RequirementShapesTests(unittest.TestCase):
         self.assertEqual(found["yearsMax"], 8)
 
 
+class SpelledOutTests(unittest.TestCase):
+    """Round-two review, Minor: recall gaps, both landing honestly as unknown."""
+
+    def test_a_number_written_as_a_word(self):
+        self.assertEqual(years("Candidates should bring seven years of experience."),
+                         "7+ years")
+        self.assertEqual(years("Three years of relevant experience required."), "3+ years")
+
+    def test_a_figure_qualified_by_the_role_rather_than_by_experience(self):
+        # "4+ years in a product role at a SaaS company" never says the word.
+        self.assertEqual(years("Requires 4+ years in a product role at a SaaS company."),
+                         "4+ years")
+        self.assertEqual(years("You will have five years in a technical role."), "5+ years")
+
+    def test_a_bare_role_is_not_a_qualifier(self):
+        # "role" appears in half the sentences on a careers page; only "in a …
+        # role" counts, or the disqualifiers get outvoted.
+        self.assertIsNone(years("This role has been open 6 years."))
+
+    def test_the_word_forms_of_the_refusals_are_refused_too(self):
+        # Adding a route is only safe if it did not open a door beside it.
+        self.assertIsNone(years("We have spent ten years perfecting this experience."))
+        self.assertIsNone(years("The company has fifteen years of experience in the market."))
+        self.assertIsNone(years("Founded three years ago with deep experience."))
+
+    def test_a_spelled_number_past_the_plausible_range_is_ignored(self):
+        self.assertIsNone(years("A hundred years of combined experience."))
+
+
 class RefusalTests(unittest.TestCase):
     """What must NOT be read as a requirement."""
 

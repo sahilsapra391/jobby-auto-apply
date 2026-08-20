@@ -28,6 +28,11 @@ side of the same word: that one lifts *the applicant's* own work history out of
 their tailored resume to fill a form's description boxes. This one reads *the
 posting's* stated requirement.
 
+A second qualifying route exists because "4+ years in a product role at a SaaS
+company" states a requirement without ever using the word "experience". It is
+deliberately "in a … role" and never a bare "role", which appears in half the
+sentences on a careers page and would let the disqualifiers be outvoted.
+
   python3 scripts/extract.py --text "We want 3-5 years of product experience."
 """
 
@@ -51,6 +56,13 @@ REQUIREMENT_WORDS = (
     "experience", "experienced", "background", "track record", "worked",
     "working", "expertise", "practitioner", "hands-on", "hands on",
     "similar role", "comparable role", "equivalent role", "professional",
+    # "4+ years in a product role at a SaaS company" states a requirement
+    # without ever using the word "experience". The role noun is doing that
+    # work, so it qualifies — but only as "in a … role", never a bare "role",
+    # which appears in half the sentences on a careers page.
+    "in a product role", "in a similar", "in a product", "in an engineering",
+    "in a design", "in a data", "in a technical", "in a leadership",
+    "in a relevant", "in a related", "in a comparable", "in product",
     # "you've spent 5–7 years in product marketing" is a requirement written as
     # a description of the reader. The subject has to be the candidate, which
     # is why "we've spent" is disqualified below rather than qualifying here.
@@ -72,6 +84,16 @@ DISQUALIFIERS = (
     # marketing prose that surrounds a real requirement.
     "has been", "have been", "for more than", "for over", "celebrating",
 )
+
+# Spelled out, because plenty of postings write "seven years of experience".
+# Stops at twelve: past that a figure is prose rather than a requirement, and
+# "a hundred years of combined experience" is company history.
+NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+WORD_YEARS = re.compile(
+    r"\b(" + "|".join(NUMBER_WORDS) + r")\s*\+?\s*(?:or more\s+)?years?", re.I)
 
 RANGE = re.compile(
     r"(\d{1,2})\s*(?:\+)?\s*(?:-|–|—|\bto\b|\bor\b)\s*(\d{1,2})\s*\+?\s*year", re.I)
@@ -138,6 +160,14 @@ def years_required(text):
             if _plausible(value) and _qualifies(body, match.start(), match.end()):
                 return {"yearsMin": value, "yearsMax": value,
                         "yearsText": f"{value}+ {_plural(value)}"}
+
+    for match in WORD_YEARS.finditer(body):
+        value = NUMBER_WORDS[match.group(1).lower()]
+        if _within(match, spoiled):
+            continue
+        if _plausible(value) and _qualifies(body, match.start(), match.end()):
+            return {"yearsMin": value, "yearsMax": value,
+                    "yearsText": f"{value}+ {_plural(value)}"}
 
     for match in PLAIN.finditer(body):
         value = int(match.group(1))

@@ -151,7 +151,7 @@
       "endpoint": "https://api.adzuna.com/v1/api/jobs/{country}/search/1",
       "id": "adzuna",
       "name": "Adzuna",
-      "notes": "Verified live 2026-08-20. Covers 19 countries; a selected country outside that set is reported rather than dropped silently. Country x term queries are capped per run and rotate, so a day covers what an hour cannot.",
+      "notes": "Verified live 2026-08-20. Covers 19 countries; a selected country outside that set is reported rather than dropped silently. Country x term queries capped per run and rotating. CORRECTION to plan \u00a73.2, which assumes aggregators usually expose an 'apply on the company site' link: Adzuna's redirect_url is adzuna.com/details/<id> or /land/ad/<id>?se=...&v=... with nothing embedded, so identity rule 1 can never fire for an Adzuna sighting. Its copies merge on company+title+country or on the description fingerprint, or not at all.",
       "phase": 1,
       "regions": [
         "US",
