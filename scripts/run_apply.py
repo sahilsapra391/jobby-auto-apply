@@ -144,6 +144,26 @@ Do this and nothing else:
      - NATIVE <select>: `browser_select_option`.
      - MULTI-STEP FORMS: one batch per step, not one batch for the whole wizard.
 
+   WORK HISTORY DESCRIPTION BOXES. A form that asks for employment history usually puts a
+   free-text box under each entry: Description, Responsibilities, Summary, "what did you do
+   in this role". If that box exists, it gets filled. An empty one is the worst outcome
+   available, because the recruiter sees a blank job next to an attached resume that is full.
+   Do not write it from memory or summarise loosely. The text comes from the resume you built
+   for THIS posting, for THAT role:
+
+     "{py}" "{repo}/scripts/experience.py" --app "<Company>" --role "<the job title>"
+
+   It prints that role's summary line and its bullets, already carrying this posting's own
+   vocabulary and already free of the resume's typeset entities. Paste it as it comes. Add
+   --max-chars N when the box caps length: it drops whole bullets rather than cutting a
+   sentence in half. Add --list to see the exact titles. Pass the title you just typed into
+   the form; an ambiguous fragment is refused rather than guessed at, because guessing
+   between two roles at one company files the wrong years under the wrong job. If it reports
+   the resume has no description for that role, write one factual line from the title,
+   company and dates, and invent nothing.
+
+   If a form has no such box, add nothing. This is not a field to go looking for.
+
    THEN VERIFY, ONCE. After the batch, take ONE snapshot and check every value you set is
    actually on the page. Values are still read back from the page rather than trusted, that
    rule has not changed; what changed is doing it once for the whole form instead of once

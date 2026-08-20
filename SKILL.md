@@ -146,6 +146,14 @@ comboboxes, native selects and multi-step wizards are handled separately, as
 
 **Resolve the whole form before touching it.** Read the form once, list its questions, and resolve them in a single call — `store.py answers-resolve --input questions.json` — rather than one lookup per field. That produces the fill plan upfront: which fields have confirmed answers, which are inferred and need confirming, which are missing and block the application. Ask the user for everything missing in one message, not field by field. Treat a `fuzzy` match as a candidate you must confirm means the same thing, never as an authority — the score measures wording overlap, not meaning.
 
+**Work history boxes get filled from that posting's own resume.** Employment history entries usually carry a free-text box under each one: Description, Responsibilities, Summary. If it exists it gets filled, because a blank job sitting next to a full attached resume reads worse than no history at all. The text is not written from memory and not loosely summarised; it comes from the resume built for this posting, for that specific role:
+
+```bash
+python3 scripts/experience.py --app "<Company>" --role "<the job title>"
+```
+
+It reads `.resume.html`, the source the PDF renders from, so role boundaries are looked up in markup rather than guessed at from reflowed PDF text, and typeset entities never reach a form. Pass `--max-chars N` when the box caps length and it drops whole bullets instead of halving a sentence; `--list` shows the exact titles. Pass the title you just typed in, since an ambiguous fragment is refused rather than guessed at, and guessing between two roles at one company files the wrong years under the wrong job. If it reports no description for a role, write one factual line from the title, company and dates and invent nothing. If a form has no such box, add nothing.
+
 Work in order, and **verify every few fields rather than at the end.** Long forms re-render as you fill: dropdowns shift, clicks land on neighbouring options, scroll position moves a target between reading its coordinate and clicking. Silent mis-fills are the normal failure mode.
 
 **Verify by reading back, not by looking.** After each small group of fields, read the fields' actual values from the page and compare them string-to-string against the fill plan. Exact comparison catches the drift failures — the neighbouring dropdown option, the truncated paste — that eyeballing a screenshot misses, and a targeted read costs a fraction of one. Screenshots are for genuine ambiguity, widgets that won't report their state, and the final pre-submit check — not routine verification.
