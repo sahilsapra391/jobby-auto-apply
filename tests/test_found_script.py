@@ -77,7 +77,19 @@ class ScriptSyntaxTests(unittest.TestCase):
             self.assertIn(name + ": function", found_lane.SCRIPT, name)
 
     def test_the_grid_is_four_wide_on_a_wide_screen(self):
-        self.assertIn("repeat(4, 1fr)", found_lane.CSS)
+        self.assertIn("repeat(4, minmax(0, 1fr))", found_lane.CSS)
+
+    def test_one_long_url_cannot_blow_the_columns_out(self):
+        # A grid track's automatic minimum is min-content, so a plain `1fr`
+        # lets one unbreakable string in one card widen its whole column and
+        # squeeze the other three. Descriptions arrive with tracking URLs in
+        # them, and a 156-character one took column one to two thirds of the
+        # grid and scrolled the page sideways.
+        self.assertNotIn("repeat(4, 1fr)", found_lane.CSS)
+        card = found_lane.CSS[found_lane.CSS.index(".jb-card {"):]
+        card = card[:card.index("}")]
+        self.assertIn("min-width:0", card)
+        self.assertIn("overflow-wrap:anywhere", card)
 
     def test_no_job_text_is_ever_concatenated_into_markup(self):
         # Titles and descriptions are written by strangers. innerHTML with any

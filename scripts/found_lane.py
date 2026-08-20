@@ -790,11 +790,17 @@ CSS = """
 
   /* Four to a row on a wide screen, and only four. Five made the cards narrow
      enough that every title wrapped to three lines. */
+  /* minmax(0, 1fr) rather than 1fr: a grid track's automatic minimum is
+     min-content, so one unbreakable string in one card widens its whole column
+     and squeezes the rest. Job descriptions arrive with tracking URLs in them
+     — a 156-character one took column one to 956px of a 1419px grid and
+     scrolled the page sideways. The wrap rule below is the other half. */
   .jb-grid { display:grid; gap:1.15rem;
     grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); }
-  @media (min-width:1180px) { .jb-grid { grid-template-columns:repeat(4, 1fr); } }
+  @media (min-width:1180px) { .jb-grid { grid-template-columns:repeat(4, minmax(0, 1fr)); } }
   .jb-card { background:var(--card); border-radius:20px; padding:1.3rem 1.4rem 1.1rem;
     box-shadow:var(--sh); display:flex; flex-direction:column; gap:.8rem;
+    min-width:0; overflow-wrap:anywhere;
     border:1px solid transparent; transition:border-color .18s, transform .18s; }
   .jb-card:hover { border-color:var(--hair); transform:translateY(-1px); }
   .jb-head { display:flex; gap:1rem; align-items:flex-start; }
