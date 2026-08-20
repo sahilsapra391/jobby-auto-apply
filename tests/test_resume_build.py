@@ -152,9 +152,47 @@ class ShippedTemplateTests(unittest.TestCase):
         base = json.loads(BASE.read_text())
         self.assertEqual(len(re.findall(r"\{\{aoe\d+\}\}", t)),
                          len(base["areasOfExpertise"]))
-        self.assertEqual(len(re.findall(r"\{\{tech\d+\}\}", t)),
-                         len(base["technical"]))
+        # Technical rows are variable length: regrouping them under the
+        # posting's names is part of the tailoring, and the hand-written
+        # resumes used six, seven and eight.
+        self.assertIn("{{technical}}", t)
+        self.assertGreater(len(base["technical"]), 0)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VariableTechnicalTests(unittest.TestCase):
+    """Regrouping Technical Proficiencies is part of the tailoring.
+
+    The resumes written by hand used six, seven and eight rows depending on the
+    posting. A fixed count would have removed a row's worth of that range
+    quietly, with everything still rendering.
+    """
+
+    def setUp(self):
+        self.template = TEMPLATE.read_text() if TEMPLATE.exists() else None
+        self.base = json.loads(BASE.read_text()) if BASE.exists() else None
+
+    def rows(self, n):
+        content = json.loads(json.dumps(self.base))
+        content["technical"] = [{"label": f"Group {i}", "items": f"thing{i}"}
+                                for i in range(n)]
+        return rb.render(self.template, content)
+
+    def test_six_seven_and_eight_rows_all_render(self):
+        if not self.template:
+            self.skipTest("template not present")
+        for n in (6, 7, 8):
+            with self.subTest(rows=n):
+                out = self.rows(n)
+                self.assertEqual(out.count('<div class="tech">'), n)
+                self.assertIn(f"Group {n - 1}", out)
+
+    def test_no_row_is_silently_dropped(self):
+        if not self.template:
+            self.skipTest("template not present")
+        out = self.rows(8)
+        for i in range(8):
+            self.assertIn(f"thing{i}", out)

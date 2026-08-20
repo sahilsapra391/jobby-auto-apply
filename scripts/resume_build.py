@@ -180,10 +180,23 @@ def render(template, content):
         out = out.replace("{{aoe%d}}" % i, safe(value))
 
     tech = content.get("technical") or []
-    need("technical rows", len(re.findall(r"\{\{tech\d+\}\}", template)), len(tech))
-    for i, row in enumerate(tech):
-        out = out.replace("{{tech%d}}" % i, safe(row.get("label", "")))
-        out = out.replace("{{techitems%d}}" % i, safe(row.get("items", "")))
+    if "{{technical}}" in out:
+        # Variable length on purpose. Regrouping Technical Proficiencies under
+        # the posting's own names is part of the tailoring, and the resumes
+        # written by hand used six, seven and eight rows depending on the
+        # posting. Fixing the count would have quietly removed a row's worth of
+        # that range. The layout gate still measures the result against the base,
+        # so a section that grows too tall is caught there rather than here.
+        rendered = "\n  ".join(
+            '<div class="tech"><b>%s:</b> %s</div>'
+            % (safe(row.get("label", "")), safe(row.get("items", "")))
+            for row in tech)
+        out = out.replace("{{technical}}", rendered)
+    else:
+        need("technical rows", len(re.findall(r"\{\{tech\d+\}\}", template)), len(tech))
+        for i, row in enumerate(tech):
+            out = out.replace("{{tech%d}}" % i, safe(row.get("label", "")))
+            out = out.replace("{{techitems%d}}" % i, safe(row.get("items", "")))
 
     roles = content.get("roles") or []
     # Ledes and bullet lists are counted separately and the larger wins. An
@@ -241,7 +254,8 @@ def main():
         t = Path(args.template).expanduser().read_text()
         print(json.dumps({
             "areasOfExpertise": len(re.findall(r"\{\{aoe\d+\}\}", t)),
-            "technical": len(re.findall(r"\{\{tech\d+\}\}", t)),
+            "technical": "any number" if "{{technical}}" in t
+                         else len(re.findall(r"\{\{tech\d+\}\}", t)),
             "roles": len(re.findall(r"\{\{lede\d+\}\}", t)),
             "bulletLists": len(re.findall(r"\{\{bullets\d+\}\}", t)),
         }, indent=2))

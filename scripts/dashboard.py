@@ -1079,14 +1079,45 @@ def build(state, generated):
   // Apply clicks are remembered locally, because the watcher takes up to a
   // minute to mark the role in flight. Without this a reload in that window
   // puts the row back under Watching, which reads as the click failing.
+  //
+  // The memory is stamped and expires. It used to be a bare list of ids, and
+  // the replay re-sent /api/apply for any id that still had an Apply OR Retry
+  // button on the page. A card parked in Needs you has a Retry button, so a
+  // parked application was re-queued on every single page load: the watcher
+  // claimed it, spawned a runner, the runner opened a browser, found the same
+  // blocker, parked again. That is the browser reopening over and over, and it
+  // never stopped on its own because nothing ever cleared the id.
+  //
+  // The gap this bridges is one watcher tick, seconds. Ten minutes is already
+  // far past the point where the server not reflecting a click means something
+  // else is wrong, and re-sending forever cannot fix that.
   var APPLY_KEY = 'jobby.applying';
+  var APPLY_TTL_MS = 10 * 60 * 1000;
   function readApplying() {{
-    try {{ return JSON.parse(localStorage.getItem(APPLY_KEY) || '[]'); }} catch (e) {{ return []; }}
+    var raw;
+    try {{ raw = JSON.parse(localStorage.getItem(APPLY_KEY) || '[]'); }} catch (e) {{ return []; }}
+    if (!Array.isArray(raw)) return [];
+    var now = Date.now();
+    return raw
+      .map(function (x) {{ return typeof x === 'string' ? {{ id: x, at: now }} : x; }})
+      .filter(function (x) {{ return x && x.id && (now - (x.at || 0)) < APPLY_TTL_MS; }});
   }}
   function writeApplying(v) {{
-    try {{ localStorage.setItem(APPLY_KEY, JSON.stringify(v)); }} catch (e) {{}}
+    var now = Date.now();
+    var out = (v || []).map(function (x) {{
+      return typeof x === 'string' ? {{ id: x, at: now }} : x;
+    }});
+    try {{ localStorage.setItem(APPLY_KEY, JSON.stringify(out)); }} catch (e) {{}}
   }}
-  function placeholderCard(company, role) {{
+  function forgetApplying(id) {{
+    writeApplying(readApplying().filter(function (x) {{ return x.id !== id; }}));
+  }}
+  // A queued card is drawn here, client side, before the watcher has marked
+  // anything. It used to carry no controls at all: the phase said "Queued,
+  // waiting for the runner to pick it up" and there was no way to take it back.
+  // If the queue entry was one that could not succeed, that left the user
+  // watching a browser reopen with nothing to press.
+  function placeholderCard(company, role, id) {{
     var grid = document.querySelector('#p-flight .grid');
     if (!grid) {{
       var empty = document.querySelector('#p-flight .empty');
@@ -1101,18 +1132,40 @@ def build(state, generated):
     art.innerHTML = '<header><div><h3></h3><p class="role"></p></div>'
       + '<span class="chip warm">in flight</span></header>'
       + '<div class="steps"><span class="step on"></span><span class="step"></span>'
-      + '<span class="step"></span><span class="step"></span><span class="step"></span>'
-      + '<span class="step"></span></div>'
-      + '<p class="phase">Queued<span class="why">waiting for the runner to pick it up</span></p>';
+      + '<span class="step"></span><span class="step"></span><span class="step"></span></div>'
+      + '<p class="phase">Queued<span class="why">waiting for the runner to pick it up</span></p>'
+      + '<div class="act"></div>';
     art.querySelector('h3').textContent = company;
     art.querySelector('.role').textContent = role;
+    if (id) {{
+      art.setAttribute('data-id', id);
+      var stop = document.createElement('button');
+      stop.className = 'btn drop';
+      stop.textContent = 'Stop';
+      stop.title = 'Take this off the queue';
+      stop.addEventListener('click', function () {{
+        stop.disabled = true;
+        stop.textContent = 'Stopping...';
+        // Forget the queued apply first. Dropping without this leaves the
+        // board's own memory asking for it again on the next reload.
+        forgetApplying(id);
+        var ids = readIds(DROP_KEY);
+        if (ids.indexOf(id) === -1) ids.push(id);
+        writeIds(DROP_KEY, ids);
+        post('/api/drop', id).catch(function () {{}});
+        art.remove();
+        tabCount('flight', -1);
+        tabCount('dropped', 1);
+      }});
+      art.querySelector('.act').appendChild(stop);
+    }}
     grid.insertBefore(art, grid.firstChild);
   }}
-  function leaveWatching(row, company, role) {{
+  function leaveWatching(row, company, role, id) {{
     row.remove();
     tabCount('watch', -1);
     tabCount('flight', 1);
-    placeholderCard(company, role);
+    placeholderCard(company, role, id);
   }}
   // On load, restore clicks the store has not caught up with, and forget the
   // ones it has (the row is gone from Watching, so the server agrees).
@@ -1122,10 +1175,11 @@ def build(state, generated):
   // board still drew them as in flight, nothing looked wrong and they were
   // never run. Re-sending is safe because /api/apply dedupes by application id.
   (function replayApplying() {{
-    var ids = readApplying();
-    if (!ids.length) return;
+    var entries = readApplying();
+    if (!entries.length) return;
     var still = [];
-    ids.forEach(function (id) {{
+    entries.forEach(function (entry) {{
+      var id = entry.id;
       var safe = id.replace(/"/g, '');
       // Apply comes from a Watching row, Retry from a Needs you card. Matching
       // only the Apply button meant a retried card was never restored, so it
@@ -1135,7 +1189,13 @@ def build(state, generated):
       if (!btn) return;                      // server already moved it
       var node = btn.closest('tr') || btn.closest('.card');
       if (!node) return;
-      still.push(id);
+      // A Needs you card carries a Retry button, and the server putting it
+      // there is the server saying this one is blocked on the user. Re-sending
+      // apply for it is how a parked application got picked up again on every
+      // reload. Forget it instead.
+      if (node.classList && (node.classList.contains('ready')
+                             || node.classList.contains('hold'))) return;
+      still.push(entry);
       var company = btn.dataset.company || '';
       var role = btn.dataset.role || '';
       if (!company) {{
@@ -1148,7 +1208,7 @@ def build(state, generated):
       node.remove();
       if (from) tabCount(from, -1);
       tabCount('flight', 1);
-      placeholderCard(company, role);
+      placeholderCard(company, role, id);
       fetch('/api/apply', {{
         method: 'POST',
         headers: {{ 'content-type': 'application/json' }},
@@ -1175,11 +1235,14 @@ def build(state, generated):
         .then(function (res) {{
           if (res.b && res.b.ok) {{
             var ids = readApplying();
-            if (ids.indexOf(b.dataset.id) === -1) ids.push(b.dataset.id);
+            if (!ids.some(function (x) {{ return x.id === b.dataset.id; }})) {{
+              ids.push({{ id: b.dataset.id, at: Date.now() }});
+            }}
             writeApplying(ids);
             var row = b.closest('tr');
             var roleCell = row ? row.querySelector('.muted') : null;
-            if (row) leaveWatching(row, b.dataset.company || '', roleCell ? roleCell.textContent : '');
+            if (row) leaveWatching(row, b.dataset.company || '',
+                                   roleCell ? roleCell.textContent : '', b.dataset.id);
           }} else {{
             b.disabled = false; b.textContent = was;
             b.insertAdjacentHTML('afterend',
@@ -1292,6 +1355,10 @@ def build(state, generated):
       var ids = readIds(DROP_KEY);
       if (ids.indexOf(id) === -1) ids.push(id);
       writeIds(DROP_KEY, ids);
+      // Cancel any apply this board is still remembering for it. Without
+      // this, Stop moved the card to Dropped and the next reload put the same
+      // application straight back on the queue.
+      forgetApplying(id);
       var facts = dropFacts(b);
       var node = b.closest('tr') || b.closest('.card');
       var link = node ? node.querySelector('a.go, a[href^="http"]') : null;
@@ -1339,7 +1406,7 @@ def build(state, generated):
         if (res && res.ok) {{
           removeItem(b);
           tabCount('flight', 1);
-          placeholderCard(b.dataset.company || '', b.dataset.role || '');
+          placeholderCard(b.dataset.company || '', b.dataset.role || '', b.dataset.id);
         }} else {{
           b.disabled = false; b.textContent = 'Retry';
         }}

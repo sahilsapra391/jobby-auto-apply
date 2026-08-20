@@ -397,6 +397,48 @@ def sweep_stuck(queued=()):
 
 # --- the tick ---------------------------------------------------------------
 
+def do_not_start(aid):
+    """Why this application must not be spawned, or None.
+
+    Three states mean a run would be wrong rather than merely redundant:
+    the user dropped it, the user has to do something before an agent can get
+    any further, or a submit has already been attempted and is waiting on a
+    confirmation nobody has recorded yet. Starting again in that last case is
+    how a form gets filled a second time under the user's name.
+    """
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode == 0 and (loaded.stdout or "").strip():
+        try:
+            entry = json.loads(loaded.stdout)
+        except json.JSONDecodeError:
+            entry = {}
+        status = (entry.get("status") or "").lower()
+        if status == "dropped":
+            return "the user dropped it"
+        if status == "review" and entry.get("pendingFields"):
+            return "it is parked in Needs you, waiting on the user"
+
+    events = store(["history-list"])
+    if events.returncode != 0:
+        # Not knowing is not permission to start. A duplicate application is
+        # sent under the user's name and cannot be recalled.
+        return "the history could not be read, so it cannot be cleared to start"
+    try:
+        history = json.loads(events.stdout or "[]")
+    except json.JSONDecodeError:
+        return "the history is unreadable, so it cannot be cleared to start"
+    latest = None
+    for event in sorted(history, key=lambda e: e.get("at") or ""):
+        if event.get("applicationId") == aid:
+            latest = event
+    if latest and latest.get("event") == "completed":
+        return "it is already submitted"
+    if latest and latest.get("event") == "submitting":
+        return ("a submit was already attempted and no confirmation was recorded. "
+                "Press Confirm submitted if it went through, or Stop if it did not.")
+    return None
+
+
 def tick(force_publish=False):
     """One pass. Raises TickError if it could not do its job."""
     changed = {}
@@ -550,6 +592,24 @@ def tick(force_publish=False):
                 lock_path(slot).unlink(missing_ok=True)
                 changed.setdefault("alreadyRunning", []).append(
                     {"applicationId": aid, "slot": busy[aid]})
+                continue
+
+            # Do not restart something the user has to finish, or has stopped.
+            #
+            # A parked application keeps a Retry button, and the board's local
+            # memory of an Apply click re-sent /api/apply on every page load, so
+            # the queue refilled itself. Each refill spawned a runner, the
+            # runner opened a browser, found the same blocker, parked again. The
+            # board side of that is fixed, but the queue is not the board's
+            # alone, and a stale entry outlives any one page. Claiming it and
+            # declining to spawn is what takes it off the queue for good.
+            reason = do_not_start(aid)
+            if reason:
+                lock_path(slot).unlink(missing_ok=True)
+                q["apply"] = [x for x in q.get("apply", [])
+                              if x.get("applicationId") != aid]
+                changed.setdefault("notStarted", []).append(
+                    {"applicationId": aid, "why": reason})
                 continue
             q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
             browser.serve(slot)
