@@ -227,7 +227,7 @@ def build(state, generated):
             <span class="chip warm">in flight</span>
           </header>
           <div class="steps">{dots}</div>
-          <p class="phase">{esc(phase)}{f' <span class="why">{esc(detail)}</span>' if detail else ''}</p>
+          <p class="phase">{esc(phase)}{' <span class="why">' + esc(detail) + '</span>' if detail else ''}</p>
           <div class="act">
             <a class="btn ghost" href="{esc(safe_url(posting_url(entry)))}" target="_blank"
                rel="noopener">Posting &nearr;</a>
@@ -415,7 +415,7 @@ def build(state, generated):
             f'<span class="muted">{esc(entry.get("role", ""))}</span></td>'
             f'<td><span class="chip lane">{esc(lane)}</span></td>'
             f'<td class="note-cell">{esc(stage)}'
-            f'{f"<br><span class=\'muted\'>{esc(reason)}</span>" if reason else ""}</td>'
+            f'{("<br><span class=" + chr(34) + "muted" + chr(34) + ">" + esc(reason) + "</span>") if reason else ""}</td>'
             f'<td class="when">{esc(when)}</td>'
             f'<td><div class="rowacts-inline">{link(posting_url(entry), "Posting")}'
             f'<button class="btn ghost undrop" data-id="{esc(aid)}" '
@@ -427,7 +427,7 @@ def build(state, generated):
 
     watch_rows = "\n".join(
         f"<tr data-hay=\"{esc(' '.join(str(x) for x in [s.get('company'), s.get('role'), s.get('location') or s.get('realLocation'), ' '.join(s.get('coreSkills') or []), s.get('alignment') or ''] if x))}\" "
-        f"data-fresh=\"{'1' if isinstance(s.get('postedDays'), int) and s.get('postedDays') <= 7 else '0'}\" "
+        f"data-fresh=\"{1 if isinstance(s.get('postedDays'), int) and s.get('postedDays') <= 7 else 0}\" "
         f"data-region=\"{esc(s.get('region') or '')}\" data-disc=\"{esc(s.get('discipline') or '')}\">"
         f"<td><strong>{esc(s.get('company'))}</strong><br><span class='muted'>{esc(s.get('role'))}</span>"
         f"{discipline_tag(s)}</td>"
@@ -551,6 +551,11 @@ def build(state, generated):
     }} catch (e) {{}}
   }})();
 </script>
+<!-- Vercel Web Analytics -->
+<script>
+  window.va = window.va || function () {{ (window.vaq = window.vaq || []).push(arguments); }};
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 <style>
   :root {{
     color-scheme:light dark;

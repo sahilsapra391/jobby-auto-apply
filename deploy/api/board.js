@@ -43,7 +43,8 @@ function suppliedPassword(request) {
 const CSP = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
-  "script-src 'unsafe-inline'",
+  // 'unsafe-inline' for the board's own scripts, 'self' for Vercel Analytics
+  "script-src 'unsafe-inline' 'self'",
   "img-src data:",
   // The icons and manifest are static files under public/, which Vercel serves
   // before the catch-all rewrite. Without this, default-src 'none' blocks the
