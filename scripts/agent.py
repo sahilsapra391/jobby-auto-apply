@@ -1,99 +1,151 @@
 #!/usr/bin/env python3
-"""Spawn headless Claude sessions, and refuse to spend work on a broken one.
+"""Compatibility helpers for the configured local agent provider.
 
-The watcher cannot tailor a resume or drive a browser, so anything real is done
-by a spawned `claude -p` session. That makes the CLI's auth a load-bearing
-dependency, and it fails in a way worth handling explicitly: an expired or
-revoked OAuth token makes every spawn exit immediately with a 401. Because the
-worker claims a queued request before running it, an unnoticed 401 silently
-eats the user's clicks one per cycle.
+Provider connection order, health, login hints, and native CLI commands live in
+providers.py. Older watcher and runner callers still import this module for a
+small set of auth helpers, so this file keeps that surface while delegating all
+provider decisions to the registry.
 
-So: preflight before claiming, cache the answer briefly, and record the failure
-where the user will actually see it rather than in a log nobody opens.
-
-  python3 scripts/agent.py --check    # is a spawned agent usable right now?
+  python3 scripts/agent.py --check
+  python3 scripts/agent.py --check --provider openai
 """
 
 import argparse
 import json
-import subprocess
 import sys
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import toolpath  # noqa: E402
+import providers  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[1]
-STATE = Path.home() / ".job-application" / "agent-auth.json"
-# Long enough that a run of applications does not re-preflight constantly,
-# short enough that a re-login is picked up without restarting the watcher.
+
+AUTH_MARKERS = providers.AUTH_MARKERS
 CACHE_SECONDS = 600
-PREFLIGHT_TIMEOUT = 90
-
-AUTH_MARKERS = ("oauth", "401", "authenticate", "unauthorized", "invalid api key",
-                "please run /login", "credentials")
 
 
-def _probe():
-    """Cheapest possible round trip that proves the CLI can reach the API."""
+def resolve_provider(provider=None):
+    """Return an explicit provider or the first connected provider."""
+    if provider is not None:
+        if provider not in providers.PROVIDER_IDS:
+            raise providers.ProviderError(f"unknown provider: {provider}")
+        return provider
+    selected = providers.active_provider()
+    if not selected:
+        raise providers.ProviderError("no agent provider is connected")
+    return selected
+
+
+def _provider_row(status, provider):
+    return next(
+        (row for row in status.get("providers", []) if row.get("id") == provider),
+        None,
+    )
+
+
+def _fresh(row, now=None):
+    checked = (row or {}).get("lastCheckedAt")
+    if not checked:
+        return False
     try:
-        r = subprocess.run([toolpath.claude(), "-p", "Reply with exactly: OK"],
-                           capture_output=True, text=True, timeout=PREFLIGHT_TIMEOUT,
-                           cwd=str(REPO), env=toolpath.enriched_env())
-    except subprocess.TimeoutExpired:
-        return False, "the claude CLI did not respond within 90s"
-    except FileNotFoundError as exc:
+        value = datetime.fromisoformat(str(checked).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return 0 <= (current - value.astimezone(timezone.utc)).total_seconds() < CACHE_SECONDS
+
+
+def authenticated(force=False, provider=None):
+    """Return ``(ok, reason)`` for one connected native provider CLI.
+
+    ``force`` refreshes the native CLI health result. Without it, callers get
+    the registry's last result, which keeps the watcher's frequent idle checks
+    cheap. Runners use a forced check immediately before starting paid work.
+    """
+    try:
+        selected = resolve_provider(provider)
+        status = providers.public_status()
+        row = _provider_row(status, selected)
+        if force or not _fresh(row):
+            status = providers.refresh(selected)
+    except providers.ProviderError as exc:
         return False, str(exc)
-    blob = ((r.stdout or "") + (r.stderr or "")).strip()
-    if r.returncode == 0 and "OK" in blob:
+
+    row = _provider_row(status, selected)
+    if not row or not row.get("connected"):
+        return False, f"{selected} is not connected"
+    if row.get("healthy"):
         return True, ""
-    low = blob.lower()
-    if any(m in low for m in AUTH_MARKERS):
-        return False, blob.splitlines()[0][:200] if blob else "authentication failed"
-    return False, (blob.splitlines()[0][:200] if blob else f"claude exited {r.returncode}")
+
+    reasons = {
+        "authentication_required": "authentication is required",
+        "not_installed": "the provider CLI is not installed",
+        "unavailable": "the provider CLI is unavailable",
+        "unknown": "the provider has not passed a health check",
+    }
+    return False, reasons.get(row.get("status"), "the provider is not ready")
 
 
-def authenticated(force=False):
-    """(ok, reason). Cached, because a preflight before every spawn is wasteful."""
-    if not force and STATE.exists():
-        try:
-            cached = json.loads(STATE.read_text())
-            if time.time() - cached.get("at", 0) < CACHE_SECONDS:
-                return cached["ok"], cached.get("reason", "")
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
-    ok, reason = _probe()
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({"ok": ok, "reason": reason, "at": time.time()}))
-    STATE.chmod(0o600)
-    return ok, reason
+def invalidate(provider=None):
+    """Persist an authentication failure observed during real provider work.
 
-
-def invalidate():
-    """Drop the cache, so the next check re-probes. Call after a spawn 401s."""
-    STATE.unlink(missing_ok=True)
+    Kept for compatibility with existing runner callers. The registry owns the
+    durable health value, so there is no separate cache file to delete or probe
+    that can overwrite the stronger evidence from the failed request.
+    """
+    try:
+        selected = resolve_provider(provider)
+        return providers.mark_unhealthy(selected, "authentication_required")
+    except providers.ProviderError:
+        return None
 
 
 def looks_like_auth_failure(text):
     low = (text or "").lower()
-    return any(m in low for m in AUTH_MARKERS)
+    return any(marker in low for marker in AUTH_MARKERS)
 
 
-def blocked_reason(reason):
-    """One line the board can show the user, with the fix rather than the error."""
-    return (f"Claude CLI cannot authenticate ({reason}). "
-            "Run `claude login` in a terminal, then this resumes on its own.")
+def blocked_reason(reason, provider=None):
+    """One line for the board, naming a concrete sign-in action."""
+    detail = str(reason or "authentication failed").strip()[:200]
+    if provider in providers.PROVIDER_IDS:
+        name = providers.PROVIDER_INFO[provider]["name"]
+        return f"{name} agent cannot authenticate ({detail}). {providers.auth_hint(provider)}"
+    return (
+        f"The selected agent provider cannot authenticate ({detail}). Reconnect it in "
+        "Settings or sign in with its CLI, such as `codex login`, "
+        "`claude auth login --claudeai`, or `gemini`."
+    )
+
+
+def build_run_invocation(task_kind, prompt, provider=None, **kwargs):
+    """Compatibility facade for the provider-neutral command builder."""
+    selected = resolve_provider(provider)
+    return providers.build_run_invocation(selected, task_kind, prompt, **kwargs)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Check whether spawned agents can run.")
+    ap = argparse.ArgumentParser(description="Check whether a local agent provider can run.")
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--force", action="store_true", help="ignore the cache")
-    ap.parse_args()
-    ok, reason = authenticated(force=True)
-    print(json.dumps({"ok": ok, "reason": reason,
-                      "hint": None if ok else blocked_reason(reason)}, indent=2))
+    ap.add_argument("--force", action="store_true", help="run a fresh provider health check")
+    ap.add_argument("--provider", choices=providers.PROVIDER_IDS)
+    args = ap.parse_args()
+
+    try:
+        selected = resolve_provider(args.provider)
+    except providers.ProviderError as exc:
+        selected = args.provider
+        ok, reason = False, str(exc)
+    else:
+        ok, reason = authenticated(force=args.check or args.force, provider=selected)
+    print(json.dumps({
+        "ok": ok,
+        "provider": selected,
+        "reason": reason,
+        "hint": None if ok else blocked_reason(reason, selected),
+    }, indent=2))
     return 0 if ok else 1
 
 

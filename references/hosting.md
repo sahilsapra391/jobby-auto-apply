@@ -1,20 +1,19 @@
 # Hosting the dashboard
 
-The dashboard is a single self-contained HTML file built from the local store. Three ways to get at it, in increasing order of setup.
+The dashboard is a single self-contained HTML file built from the local store. Two ways to get at it, in increasing order of setup.
 
 | | Setup | Who can read it | Good for |
 |---|---|---|---|
 | Local file | none | you, on this machine | working at your desk |
-| Artifact | none | you, unless you share it | the default; a private page on claude.ai |
 | Vercel | one login | you, with the password | your own URL, readable from your phone |
 
-The Artifact path is what `SKILL.md` Phase 5 describes and it needs no account. Use Vercel when you want a URL you control, on your own domain if you like.
+Use Vercel when you want a URL you control, on your own domain if you like.
 
 ## What Vercel hosting actually does
 
-`scripts/publish.py` renders the board from `~/.job-application/`, inlines that HTML into a serverless function, and deploys it to your project's production alias. The deployment holds a **snapshot**. It never reaches back into the store, so nothing on Vercel updates until you publish again.
+`scripts/publish.py` renders the board from `~/.job-application/` and writes the HTML and changed application documents to Cloudflare Workers KV. The Vercel function reads that content from KV. Publishing is a content write, not a deployment, so code deployments and board refreshes have separate limits.
 
-Every publish overwrites the same URL, so you keep one bookmark.
+The hosted board still holds a **snapshot**. It never reaches back into the local store, so nothing changes until you publish again. Every publish updates the same URL, so you keep one bookmark.
 
 ## The password gate
 
@@ -50,7 +49,7 @@ Pass `--password` to choose your own, and `--project` to change the Vercel proje
 python3 scripts/publish.py
 ```
 
-Renders the board, deploys to production, and records the URL in the store as `dashboardUrl`. A fresh session finds it with:
+Renders the board and writes it to KV at the production URL already recorded as `dashboardUrl`. A fresh session finds that URL with:
 
 ```bash
 python3 scripts/store.py meta-get --key dashboardUrl
@@ -59,28 +58,41 @@ python3 scripts/store.py meta-get --key dashboardUrl
 Useful variants:
 
 ```bash
-python3 scripts/publish.py --local     # serve on localhost:3000, deploy nothing
-python3 scripts/publish.py --preview   # throwaway URL, leaves production alone
+python3 scripts/publish.py --local              # serve on localhost:3000
+python3 scripts/publish.py --deploy --preview   # also deploy code to a throwaway URL
 ```
 
 ## What a button actually does
 
-A page hosted on Vercel cannot start a process on the machine running the agent. Nothing about a published page grants it that. So no button runs anything directly. Each one **queues a request**, and the local watcher claims it and spawns the agent that does the work.
+A page hosted on Vercel cannot start a process on the user's device. Nothing about a published page grants it that. So no button runs anything directly. Each one **queues a request**, and the local watcher claims it.
 
-The path, end to end, is the same for all three:
+The Apply path uses two launchd services on one device:
 
-1. The button POSTs to `/api/scan`, `/api/apply` or `/api/submitted`, behind the same password as the board.
-2. The function writes one blob per request under the matching prefix in a private Blob store. The payload lives in the blob **pathname** (`apply/<timestamp>__<applicationId>.json`), not the body, because the store is private and its URLs cannot be fetched without a token. Listing the queue therefore never fetches content.
-3. `scripts/watch.py`, running as a launchd agent, reads all three queues in one call every two seconds.
-4. Marks are applied inline. A Scan or an Apply spawns a detached runner (`run_scan.py`, `run_apply.py`) which starts a headless Claude session to do the actual work.
+1. The button POSTs to `/api/apply`, behind the same password as the board. The function appends the application id to the control queue stored under one Cloudflare Workers KV key.
+2. `scripts/watch.py`, running as a launchd agent on the Mac, polls the control queue every three seconds and claims the request. Marks are still applied inline, and Scan starts its own detached runner.
+3. The watcher selects the first connected provider, saves that choice with the application, and submits an encrypted resume-and-cover-letter job. Cloudflare receives AES-256-GCM ciphertext plus an opaque job id, timestamps, state, and a fixed error code.
+4. `scripts/document_worker.py --loop --local` claims one document job at a time on the same device. It runs the requested provider CLI with no browser, then accepts output only after the fixed content, provenance, layout, PDF, and cover-letter checks pass.
+5. The document client authenticates the verified result, validates the complete set before installing any file, and replaces each file atomically. It then starts `run_apply.py` with the same provider and the exact resume and cover letter. This second provider process attaches to the local browser, fills the form, and records a terminal outcome.
 
-Two seconds is the whole lag. A click reaches a running agent almost immediately.
+A control click still reaches the watcher within a few seconds. Document generation is a separate serial local stage.
+
+### Provider selection is explicit and sticky
+
+Jobby supports the native OpenAI Codex, Anthropic Claude Code, and Gemini CLIs. One `/settings` Connect click queues the provider for **Your Device**. Both local services share the provider registry and the vendor's native account store.
+
+Connect opens the provider's official browser authentication through its native CLI. OpenAI runs `codex login` for a ChatGPT account, Anthropic runs `claude auth login --claudeai` for a Claude subscription, and Gemini starts its Sign in with Google flow. The provider CLI owns the credential. Jobby records only connection order and health, and agent work counts against that account's subscription limits or usage quota.
+
+The first provider connected remains active until it is disconnected. A health, authentication, or exact-model failure blocks new work and appears on the board. Jobby does not switch to another connected provider automatically. An existing document job also keeps the provider saved when it was created.
+
+Every spawned task names a fixed model in its command: OpenAI uses `gpt-5.6-luna`, Anthropic uses `claude-sonnet-5`, and Gemini uses `gemini-3.7-flash`. Document, form, and scan tasks never inherit a CLI default.
+
+The provider process is the actor, not the approval gate. Document acceptance, duplicate refusal, exact-file checks, `finish.py --pre-submit`, and terminal-outcome verification remain fixed program logic shared by all three providers.
 
 ### Retry, Drop and the Dropped lane
 
 **Retry**, on a Needs you card, is the apply queue again. When the user has done the thing that was blocking an application (created the account, cleared the CAPTCHA, accepted a legal agreement), Retry re-runs the agent, which reuses the documents already built and picks up from the form rather than starting over. There is no separate retry queue because retrying and applying are the same operation.
 
-**Drop** says the user has decided against a role. It is available in three places: an `x` on each Watching row, a Drop button on a Needs you card, and Stop on an In flight card. Dropping something in flight also kills the runner: the runner is spawned in its own session, so the whole process group is signalled, or the `claude` session under it keeps driving the browser. `drop.py` checks the note on the lock before signalling anything, since by the time a drop is claimed the lock may be held by a different application and killing the wrong run is worse than not killing at all.
+**Drop** says the user has decided against a role. It is available in three places: an `x` on each Watching row, a Drop button on a Needs you card, and Stop on an In flight card. Dropping something in flight also kills the local runner: the runner is spawned in its own session, so the whole process group is signalled, or the selected provider CLI keeps driving the browser. `drop.py` checks the note on the lock before signalling anything, since by the time a drop is claimed the lock may be held by a different application and killing the wrong run is worse than not killing at all.
 
 Dropped is deliberately not the same as `abandoned`. Abandoned records that a submission attempt failed or was logged in error; dropped records a decision. So the session is kept rather than deleted, which also stops the next sweep re-finding the role and offering it again.
 
@@ -96,10 +108,13 @@ Each dropped row keeps where the application had got to, because "dropped while 
 
 The lane sits apart from the other four in the tab bar. Nothing in it is waiting on anyone, so it should not read as a queue.
 
-### Five at a time, one agent each
+### Five local form slots, one serial document worker
 
-Up to five applications run concurrently. Each is owned by one agent from start
-to finish; no agent ever handles two. Slots are lock files holding a pid, so a
+Up to five form-filling runs can work concurrently on the Mac. Each local run
+owns one browser slot until it reaches a terminal outcome. The local worker builds
+documents one job at a time. The document process ends
+before the separate local form process begins, so no provider session owns an
+application from start to finish. Slots are lock files holding a pid, so a
 runner that dies frees its own slot and a watcher restart does not lose track.
 
 Two details here are load-bearing, and both were measured rather than assumed.
@@ -139,13 +154,13 @@ python3 scripts/watch.py --status      # which slots are busy and with what
 
 An application can take forty five minutes. The watcher spawns runners detached and tracks them with a lock file under `~/.job-application/locks/`, so a long application never freezes the board or stops other clicks being noticed.
 
-The locks are also what cap concurrency at three and keep one agent to one application. They hold a pid rather than living in memory, so they survive a watcher restart, and a dead pid releases its own slot automatically: a runner killed mid-flight cannot wedge the pipeline.
+The locks are also what cap local form concurrency at five and keep one browser slot to one application. They live on disk, so they survive a watcher restart. A parked application keeps its slot after the runner exits, and Retry plus Open & finish return to that same browser. Completed, abandoned, and dropped sessions clear their tabs and private browser artifacts before the slot is released.
 
 ### Setting up the queue
 
 The queue lives in Cloudflare Workers KV. It started on Vercel Blob, and Blob suspended the store once the watcher began polling it. The interesting part is not the vendor but the shape of the limit: free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows 100,000 key reads a day and only 1,000 list requests, so a queue you have to list in order to read is unusable at any poll rate worth having.
 
-So the whole queue is one key. A poll is a single read, 28,800 a day at a three second interval against a ceiling of 100,000. Writes happen only when somebody clicks or a runner claims, a few dozen a day against 1,000. R2 has the same trap in different units: list is a Class A operation with a 1,000,000/month allowance, which a three second poll very nearly exhausts on its own.
+The application queue is one key, so the five-second local poll costs 17,280 reads a day. Provider settings use their own local control key, so claiming a connection request can never write an older copy over a fresh Apply click. The local worker republishes sanitized provider health every ten minutes, inside the API's fifteen-minute freshness window. The retired remote-provider key remains only for backward compatibility. R2 has the same trap in different units: list is a Class A operation with a 1,000,000/month allowance, which a short poll nearly exhausts on its own.
 
 The cost of coalescing is that a write becomes read-modify-write with no compare-and-swap, so a click landing in the same instant as a claim can be lost. That is already covered: the board re-sends clicks it remembers, and enqueue dedupes by application id.
 
@@ -186,7 +201,7 @@ python3 scripts/queue_check.py --write
 
 The watcher polls every few seconds so a click reaches an agent almost immediately. It is tempting to make that number very small. Do not: at two seconds the old Blob-backed queue ran roughly 1.3 million operations a month and the store was suspended.
 
-Three to five seconds keeps a click feeling instant while using well under a fifth of the daily KV read allowance. `scripts/watch.py --install --interval 3` sets it.
+Five seconds keeps a click feeling immediate while leaving room for encrypted document status and settings reads. `scripts/watch.py --install --interval 5` sets it.
 
 ### Installing the watcher
 
@@ -195,13 +210,22 @@ python3 scripts/watch.py --install
 python3 scripts/watch.py --status
 ```
 
+The installer retains its launchd Python across later reinstalls. A repository
+under macOS Documents can be protected by Privacy controls per interpreter. If
+launchd reports `Operation not permitted` while opening `scripts/watch.py`,
+reload once with an interpreter that already has Documents access:
+
+```bash
+python3 scripts/watch.py --install --service-python /absolute/path/to/python3
+```
+
 `--status` prints the queue depths, which runner holds a lock, and whether anything is blocking the pipeline. It has no side effects, so it is the right first thing to run when a button seems not to work.
 
 ## Four ways this pipeline has failed
 
 Each of these produced a board that looked fine while doing nothing, which is why the current design is shaped the way it is.
 
-**launchd does not give you your PATH.** It provides `/usr/bin:/bin:/usr/sbin:/sbin` and nothing more. `node`, `vercel` and `claude` all live in `/opt/homebrew/bin`, so every queue read died with `FileNotFoundError` and every publish failed. This ran for hours. `scripts/toolpath.py` now resolves every binary to an absolute path, and the plist sets `EnvironmentVariables.PATH` as a second line of defence. Verify with:
+**launchd does not give you your PATH.** It provides `/usr/bin:/bin:/usr/sbin:/sbin` and nothing more. `node`, `vercel` and the then-only `claude` CLI all lived in `/opt/homebrew/bin`, so every queue read died with `FileNotFoundError` and every publish failed. This ran for hours. `scripts/toolpath.py` now resolves every binary, including `codex`, `claude`, and `gemini`, to an absolute path. The plist sets `EnvironmentVariables.PATH` as a second line of defence. Verify with:
 
 ```bash
 env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin python3 scripts/toolpath.py
@@ -211,19 +235,19 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin python3 scripts/toolpath.
 
 **Claiming a whole queue to process one item.** `queue.mjs claim` deletes every pending request. `run_apply` read the queue, ran the first item, then called it, destroying fourteen Apply clicks that had never been touched. Use `claim-one`. A worker that processes one item deletes one item.
 
-**A runner that cannot authenticate still eats the request.** An expired or revoked `claude` OAuth token makes every spawn exit instantly with a 401, and because the request was claimed first, one user click vanished per cycle. Runners now preflight with `scripts/agent.py` before claiming, the watcher will not spawn while auth is broken, and the reason appears as a banner on the board rather than in a log nobody opens.
+**A runner that cannot authenticate still eats the request.** This first happened when an expired `claude` OAuth token made every spawn exit instantly with a 401. Because the request was claimed first, one user click vanished per cycle. Runners now preflight the selected native CLI before claiming, the watcher will not spawn while its active provider is broken, and the reason appears as a banner on the board rather than in a log nobody opens. Another connected provider is not treated as a fallback.
 
 ```bash
 python3 scripts/agent.py --check
 ```
 
-If that fails, run `claude login` in a terminal. The watcher re-checks on its own and clears the banner.
+If that fails, reconnect the named provider in `/settings` or use its native login command on the host named by the error. The watcher re-checks on its own and clears the banner.
 
 ## The browser a spawned agent gets
 
-A `claude -p` session started by the watcher has no MCP servers at all, so by default it has no browser. The Claude for Chrome extension attaches to one session at a time, and that one belongs to whoever is at the keyboard. Left alone, the daemon could tailor an application's documents and then had nowhere to put them.
+A noninteractive Codex, Claude Code, or Gemini CLI process does not inherit a browser connection. `scripts/providers.py` adds a bounded local browser server explicitly for form tasks. Local document tasks never receive a browser, and the form task cannot create or change the documents it receives. `scripts/browser_mcp_proxy.py` removes arbitrary navigation, code execution, network and storage tools, blocks Enter-based submission, and binds uploads to the two staged PDFs.
 
-So spawned agents get their own: `@playwright/mcp`, pinned, driving Chrome against a persistent profile at `~/.job-application/browser-profile`.
+Each local form agent drives Chrome against a persistent slot profile under `~/.job-application/`.
 
 ```bash
 python3 scripts/browser.py --check
@@ -257,13 +281,23 @@ Add the ping URL to `~/.job-application/config.env`, **not** to `deploy/.env.loc
 
 ```
 HEALTHCHECKS_URL=https://hc-ping.com/<your-uuid>
+JOBBY_WORKER_KEY=<local document queue 32-byte base64 key>
 ```
 
-The distinction matters. `vercel env pull` regenerates `deploy/.env.local` from the Vercel project and silently discards anything added by hand, which is exactly how the first ping URL disappeared. That file belongs to Vercel. Settings that belong to this machine go in `~/.job-application/config.env`, which nothing overwrites, and which wins when both define the same key.
+The safe setter replaces only that assignment, collapses stale duplicates, and
+does not print the URL:
 
-Set **period 5 minutes, grace 10 minutes**.
+```bash
+python3 scripts/worker_key.py set-healthchecks https://hc-ping.com/<your-uuid>
+```
 
-The watcher pings every 30 seconds when idle and immediately on any real event, so a 5 minute period means ten consecutive pings would have to vanish before the grace clock even starts: a network blip never raises a false alarm, and a genuinely dead watcher is caught inside 15 minutes. A 1 hour grace is worth avoiding, since an hour of silence is roughly the length of the outage this was added to catch. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
+Generate `JOBBY_WORKER_KEY` once with `python3 scripts/worker_key.py ensure`. Do not put it in the Vercel project. Both local services read the same mode-600 config file. `references/oci-worker.md` is retired historical recovery material.
+
+The config-file distinction matters. `vercel env pull` regenerates `deploy/.env.local` from the Vercel project and silently discards anything added by hand, which is exactly how the first ping URL disappeared. That file belongs to Vercel. Settings that belong to this machine go in `~/.job-application/config.env`, which nothing overwrites, and which wins when both define the same key.
+
+Set **period 1 hour, grace 10 minutes**.
+
+The watcher sends a quiet heartbeat every 55 minutes and can ping sooner when real work occurs. Failures use the Healthchecks `/fail` endpoint. A one-hour period with ten minutes of grace tolerates ordinary scheduling drift while still reporting a stopped local service. `python3 scripts/watch.py --status` reports `health: true` once it is configured.
 
 ### Recovering lost requests
 
@@ -287,15 +321,20 @@ The environment variable is read at request time, but a redeploy is the reliable
 ## Files
 
 ```
-deploy/api/board.js        the gate and the response headers
-deploy/api/_dashboard.js   generated by publish.py; holds real application data, gitignored
-deploy/vercel.json         routes every path to the function
-deploy/public/robots.txt   disallow all
-deploy/dev-server.mjs      runs the same handler locally; never uploaded
-scripts/publish.py         render, inline, deploy, record the URL
+deploy/api/board.js         the gate, response headers, queue and settings endpoints
+deploy/kvcontent.mjs        board, submitted documents, and sanitized host status
+deploy/kvqueue.mjs          the one-key control queue
+deploy/kvjobs.mjs           encrypted document-job transport and fixed status records
+deploy/document-jobs.mjs    fixed local command bridge for document jobs
+deploy/vercel.json          routes every path to the function
+deploy/public/robots.txt    disallow all
+deploy/dev-server.mjs       runs the same handler locally; never uploaded
+scripts/publish.py          render and write content to KV, record the stable URL
+scripts/document_job.py     Mac client for encrypted document work
+scripts/document_worker.py  serial local document worker
 ```
 
-`_dashboard.js` carries your applications, so it is written owner-readable and excluded from git. Check that it is still ignored before committing, particularly after editing `.gitignore`.
+Board HTML and application documents no longer enter the repository or a deployment. `publish.py` sends them to KV through owner-only temporary files.
 
 ## Costs and limits
 

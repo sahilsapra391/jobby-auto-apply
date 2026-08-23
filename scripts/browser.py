@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Give spawned agents a browser of their own.
 
-A `claude -p` session started by the watcher has no MCP servers, so it has no
-browser: the Chrome extension attaches to one session at a time and that one
-belongs to whoever is at the keyboard. Without this the daemon could tailor the
-documents for an application and then had nowhere to put them.
+A headless agent session started by the watcher has no MCP servers by default,
+so it has no browser. Without this the daemon could tailor the documents for an
+application and then have nowhere to put them.
 
 The profile is persistent and separate from the user's real Chrome, at
 ~/.job-application/browser-profile. Persistent because a fresh profile means
@@ -19,8 +18,11 @@ live profile unattended is not something to do quietly.
 """
 
 import argparse
+import hashlib
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -41,6 +43,9 @@ CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 # that fills application forms because a release happened overnight.
 PACKAGE = "@playwright/mcp@0.0.79"
 SERVER = "browser"
+APPLICATION_SERVER = "jobby"
+APPLICATION_MCP = Path(__file__).resolve().parent / "application_mcp.py"
+BROWSER_MCP_PROXY = Path(__file__).resolve().parent / "browser_mcp_proxy.py"
 
 # The browser is long-lived and the agent attaches to it, rather than each run
 # starting its own and taking it down on the way out. That was the reason a
@@ -92,34 +97,273 @@ def config_file(slot):
     return STATE / f"browser-mcp-{slot}.json"
 
 
-def write_config(slot=None):
-    """MCP config for one slot, with absolute paths because launchd gives
-    children no PATH. Each slot points at its OWN browser: two agents sharing a
-    CDP endpoint end up driving the same tab."""
-    slot = slot or SLOTS[0]
-    for d in (_profile_dir(slot), ARTIFACTS):
-        d.mkdir(parents=True, exist_ok=True)
-        d.chmod(0o700)
-    npx = toolpath.find("npx")
-    cfg = {
-        "mcpServers": {
-            SERVER: {
-                "command": npx,
-                # --cdp-endpoint attaches to the browser started by serve()
-                # instead of launching a throwaway one, so whatever a run leaves
-                # on screen is still there once the run has finished.
-                #
-                # --output-dir keeps Playwright's traces, console logs and page
-                # snapshots out of the repo. They default to .playwright-mcp/ in
-                # the working directory, and a snapshot of a filled application
-                # form holds the user's name, phone and home address.
-                "args": ["-y", PACKAGE,
-                         "--cdp-endpoint", cdp_for(slot),
-                         "--output-dir", str(ARTIFACTS / slot)],
-                "env": {"PATH": toolpath.search_path()},
-            }
-        }
+def gemini_settings_file(slot):
+    return STATE / f"gemini-settings-{slot}.json"
+
+
+def _private_artifact_directory(path):
+    path = Path(path)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(parents=True, mode=0o700)
+        info = path.lstat()
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+    ):
+        raise OSError("unsafe browser artifact directory")
+    path.chmod(0o700)
+    return path.resolve(strict=True)
+
+
+def artifact_root_for(slot):
+    if slot not in SLOTS:
+        raise ValueError("unknown browser slot")
+    root = _private_artifact_directory(ARTIFACTS)
+    slot_root = _private_artifact_directory(root / slot)
+    if slot_root.parent != root:
+        raise OSError("unsafe browser slot artifact directory")
+    return slot_root
+
+
+def _copy_verified_pdf(source_value, destination, expected_size, expected_digest):
+    source = Path(source_value)
+    if not source.is_absolute() or source.is_symlink():
+        raise ValueError("application upload source must be an absolute regular file")
+    if (
+        isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size < 6
+        or not isinstance(expected_digest, str)
+        or len(expected_digest) != 64
+    ):
+        raise ValueError("application upload fingerprint is invalid")
+
+    source_fd = os.open(
+        source,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    destination_fd = -1
+    digest = hashlib.sha256()
+    copied = 0
+    try:
+        source_info = os.fstat(source_fd)
+        if not stat.S_ISREG(source_info.st_mode):
+            raise ValueError("application upload source is not a regular file")
+        destination_fd = os.open(
+            destination,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            copied += len(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(destination_fd, view)
+                view = view[written:]
+        os.fsync(destination_fd)
+    finally:
+        os.close(source_fd)
+        if destination_fd >= 0:
+            os.close(destination_fd)
+
+    if copied != expected_size or digest.hexdigest() != expected_digest.lower():
+        destination.unlink(missing_ok=True)
+        raise ValueError("application upload changed after validation")
+    with destination.open("rb") as stream:
+        if stream.read(5) != b"%PDF-":
+            destination.unlink(missing_ok=True)
+            raise ValueError("application upload is not a PDF")
+    destination.chmod(0o600)
+    return {
+        "path": str(destination.resolve(strict=True)),
+        "size": copied,
+        "sha256": digest.hexdigest(),
     }
+
+
+def stage_application_uploads(slot, application_id, artifacts):
+    """Copy only the two verified PDFs into Playwright's permitted root."""
+    if (
+        not isinstance(application_id, str)
+        or not application_id
+        or len(application_id) > 128
+        or ".." in application_id
+        or not all(character.isalnum() or character in "-_." for character in application_id)
+    ):
+        raise ValueError("application id is unsafe for upload staging")
+    if not isinstance(artifacts, dict) or set(artifacts) != {"resume", "coverLetter"}:
+        raise ValueError("application upload artifacts are incomplete")
+
+    slot_root = artifact_root_for(slot)
+    uploads = _private_artifact_directory(slot_root / "uploads")
+    target = uploads / application_id
+    if target.is_symlink():
+        raise OSError("unsafe application upload directory")
+    if target.exists():
+        info = target.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError("unsafe application upload directory")
+        shutil.rmtree(target, ignore_errors=False)
+    target.mkdir(mode=0o700)
+
+    try:
+        staged = {}
+        for label, filename in (
+            ("resume", "resume.pdf"),
+            ("coverLetter", "cover-letter.pdf"),
+        ):
+            source = artifacts[label]
+            if not isinstance(source, dict):
+                raise ValueError("application upload metadata is invalid")
+            staged[label] = _copy_verified_pdf(
+                source.get("path"),
+                target / filename,
+                source.get("size"),
+                source.get("sha256"),
+            )
+        return staged
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+
+
+def server_config(slot=None, application_context=None):
+    """Canonical Playwright MCP server definition for every agent CLI."""
+    slot = slot or SLOTS[0]
+    profile = _profile_dir(slot)
+    profile.mkdir(parents=True, exist_ok=True)
+    profile.chmod(0o700)
+    output_root = artifact_root_for(slot)
+    child = [
+        toolpath.find("npx"), "-y", PACKAGE,
+        "--cdp-endpoint", cdp_for(slot),
+        "--output-dir", str(output_root),
+    ]
+    if application_context is None:
+        # Diagnostic configs do not start provider agents. Apply runs always
+        # supply an application context and pass through the firewall below.
+        return {
+            "command": child[0],
+            "args": child[1:],
+            "env": {"PATH": toolpath.search_path()},
+        }
+
+    resume_upload = _application_value(application_context, "uploadResume")
+    cover_upload = _application_value(application_context, "uploadCover")
+    for path in (resume_upload, cover_upload):
+        if not Path(path).is_absolute():
+            raise ValueError("application upload paths must be absolute")
+    return {
+        "command": str(Path(sys.executable).resolve()),
+        "args": [
+            str(BROWSER_MCP_PROXY),
+            "--upload", resume_upload,
+            "--upload", cover_upload,
+            "--",
+            *child,
+        ],
+        "env": {
+            "PATH": toolpath.search_path(),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+        },
+    }
+
+
+def _application_value(application_context, name):
+    if not isinstance(application_context, dict):
+        raise ValueError("application context must be an object")
+    value = application_context.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"application context needs {name}")
+    if "\x00" in value or "\r" in value or "\n" in value:
+        raise ValueError(f"application context has an unsafe {name}")
+    return value.strip()
+
+
+def application_server_config(application_context):
+    """A stdio server bound to one application and two upload artifacts.
+
+    The paths are argv, not model-controlled tool arguments. The server checks
+    that they are absolute, regular PDF files before accepting any MCP calls.
+    ``resumeHtml`` is optional because the server can derive the worker's
+    standard hidden render-source name from the resume PDF.
+    """
+    if not isinstance(application_context, dict):
+        raise ValueError("application context must be an object")
+    unknown = sorted(
+        set(application_context) - {
+            "applicationId", "resume", "cover", "resumeHtml",
+            "uploadResume", "uploadCover",
+        }
+    )
+    if unknown:
+        raise ValueError("application context has an unsupported field")
+    application_id = _application_value(application_context, "applicationId")
+    resume = _application_value(application_context, "resume")
+    cover = _application_value(application_context, "cover")
+    if (len(application_id) > 128 or ".." in application_id
+            or not all(c.isalnum() or c in "-_." for c in application_id)):
+        raise ValueError("application context has an unsafe applicationId")
+    if not Path(resume).expanduser().is_absolute() or not Path(cover).expanduser().is_absolute():
+        raise ValueError("application artifact paths must be absolute")
+    args = [
+        str(APPLICATION_MCP),
+        "--application-id", application_id,
+        "--resume", resume,
+        "--cover", cover,
+    ]
+    resume_html = application_context.get("resumeHtml")
+    if resume_html is not None:
+        resume_html = _application_value(application_context, "resumeHtml")
+        if not Path(resume_html).expanduser().is_absolute():
+            raise ValueError("resumeHtml must be an absolute path")
+        args.extend(["--resume-html", resume_html])
+    return {
+        "command": str(Path(sys.executable).resolve()),
+        "args": args,
+        "env": {
+            "PATH": toolpath.search_path(),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+        },
+    }
+
+
+def server_configs(slot=None, application_context=None):
+    """Canonical server mapping for Claude, Codex, and Gemini.
+
+    With no application context this preserves the original browser-only
+    contract. Apply runs pass a mapping with ``applicationId``, ``resume`` and
+    ``cover`` to add the narrow ``jobby`` server.
+    """
+    servers = {
+        SERVER: server_config(slot, application_context=application_context)
+    }
+    if application_context is not None:
+        servers[APPLICATION_SERVER] = application_server_config(application_context)
+    return servers
+
+
+def mcp_servers(slot=None, application_context=None):
+    """Backward-compatible alias for callers using the generic MCP name."""
+    return server_configs(slot, application_context)
+
+
+def write_config(slot=None, application_context=None):
+    """Claude-compatible MCP config for one isolated browser slot."""
+    slot = slot or SLOTS[0]
+    cfg = {"mcpServers": server_configs(slot, application_context)}
     STATE.mkdir(parents=True, exist_ok=True)
     path = config_file(slot)
     path.write_text(json.dumps(cfg, indent=2))
@@ -127,11 +371,35 @@ def write_config(slot=None):
     return path
 
 
-def config_path(slot=None):
+def config_path(slot=None, application_context=None):
     slot = slot or SLOTS[0]
-    path = config_file(slot)
-    if not path.exists():
-        return write_config(slot)
+    # Re-render on every run. It is tiny, and this prevents a pinned package or
+    # slot definition change from leaving an old unattended config in place.
+    return write_config(slot, application_context)
+
+
+def write_gemini_settings(slot=None, application_context=None):
+    """Gemini CLI system settings with the same isolated browser server.
+
+    The runner points only its process at this file. Gemini's normal home stays
+    untouched so its locally cached account login remains available.
+    """
+    slot = slot or SLOTS[0]
+    servers = server_configs(slot, application_context)
+    for server in servers.values():
+        server["trust"] = True
+    # Import here so providers can still load this module lazily for apply
+    # invocations without a module-import cycle.
+    import providers  # noqa: PLC0415
+
+    cfg = providers.gemini_hardened_settings("apply")
+    cfg["mcp"] = {"allowed": list(servers), "excluded": []}
+    cfg["admin"]["mcp"] = {"enabled": True}
+    cfg["mcpServers"] = servers
+    STATE.mkdir(parents=True, exist_ok=True)
+    path = gemini_settings_file(slot)
+    path.write_text(json.dumps(cfg, indent=2))
+    path.chmod(0o600)
     return path
 
 
@@ -250,6 +518,79 @@ def tabs(slot=None):
     return [t for t in (_cdp("/json/list", slot) or []) if t.get("type") == "page"]
 
 
+def clear_slot(slot):
+    """Remove page state before a slot is handed to another application.
+
+    A stopped browser has no live form state, so it is already clear. When it
+    is running, close every page and verify that no non-blank page survived.
+    Callers keep the slot reserved unless ``cleared`` is true.
+    """
+    if slot not in SLOTS:
+        return {"cleared": False, "slot": slot, "error": "unknown browser slot"}
+    # Checking only ARTIFACTS/slot is not enough. If ARTIFACTS itself is a
+    # symlink, resolving both parent and child makes the relationship appear
+    # safe and the cleanup can delete a same-named directory outside Jobby.
+    try:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        parent_stat = ARTIFACTS.lstat()
+        if (stat.S_ISLNK(parent_stat.st_mode)
+                or not stat.S_ISDIR(parent_stat.st_mode)
+                or parent_stat.st_uid != os.getuid()):
+            raise OSError("unsafe artifact parent")
+        ARTIFACTS.chmod(0o700)
+    except OSError:
+        return {"cleared": False, "slot": slot, "error": "artifact cleanup failed"}
+    artifact_path = ARTIFACTS / slot
+    if artifact_path.is_symlink():
+        return {"cleared": False, "slot": slot, "error": "artifact cleanup failed"}
+    artifact_root = artifact_path.resolve()
+    try:
+        artifacts_parent = ARTIFACTS.resolve()
+        if artifact_root.parent != artifacts_parent:
+            raise OSError("unsafe artifact directory")
+    except OSError:
+        return {"cleared": False, "slot": slot, "error": "artifact cleanup failed"}
+
+    if not running(slot):
+        try:
+            if artifact_root.exists():
+                shutil.rmtree(artifact_root, ignore_errors=False)
+        except OSError:
+            return {"cleared": False, "slot": slot, "error": "artifact cleanup failed"}
+        return {"cleared": True, "slot": slot, "running": False, "closed": 0}
+
+    pages = tabs(slot)
+    for page in pages:
+        target = page.get("id")
+        if target:
+            _cdp(f"/json/close/{target}", slot)
+
+    remaining = []
+    for _ in range(20):
+        remaining = [
+            page for page in tabs(slot)
+            if (page.get("url") or "").strip().lower() not in {"", "about:blank"}
+        ]
+        if not remaining:
+            break
+        time.sleep(0.1)
+    if remaining:
+        return {
+            "cleared": False,
+            "slot": slot,
+            "closed": len(pages) - len(remaining),
+            "error": "one or more application pages could not be closed",
+        }
+    try:
+        if artifact_root.exists():
+            shutil.rmtree(artifact_root, ignore_errors=False)
+    except OSError:
+        return {"cleared": False, "slot": slot, "closed": len(pages),
+                "error": "artifact cleanup failed"}
+    return {"cleared": True, "slot": slot, "running": running(slot),
+            "closed": len(pages)}
+
+
 def _open_tab(url, slot=None):
     """Open a new tab in a slot's browser. Chrome wants PUT for /json/new."""
     base = cdp_for(slot) if slot else CDP
@@ -262,7 +603,7 @@ def _open_tab(url, slot=None):
         return None
 
 
-def focus(url, open_if_missing=True):
+def focus(url, open_if_missing=True, slot=None):
     """Bring the tab already showing this posting to the front.
 
     Matching is on origin plus path, ignoring query and fragment, because an ATS
@@ -273,11 +614,18 @@ def focus(url, open_if_missing=True):
     a miss. The point of the button is to land the user in the browser that holds
     the profile and the logins, whether or not a run left something behind.
     """
-    live = [s for s in SLOTS if running(s)]
+    if slot is not None and slot not in SLOTS:
+        return {"focused": False, "why": "unknown browser slot"}
+    live = ([slot] if slot and running(slot)
+            else [] if slot
+            else [s for s in SLOTS if running(s)])
     if not live:
         return {"focused": False, "why": "no browser is running"}
-    # The tab could be in any slot's browser, so look across all of them.
-    everything = tabs()
+    # A parked application supplies its slot, and must never drift into another
+    # application's window. The all-slot search remains for interactive uses
+    # that have no recorded owner.
+    everything = ([{**page, "slot": slot} for page in tabs(slot)]
+                  if slot else tabs())
     want = _key(url)
     hit = next((t for t in everything if _key(t.get("url", "")) == want), None)
     if hit is None:

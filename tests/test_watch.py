@@ -15,12 +15,16 @@ import importlib.util
 import inspect
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import pathlib
 import tempfile
 import unittest
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -69,6 +73,61 @@ class ToolPathTests(unittest.TestCase):
         self.assertIn("/opt/homebrew/bin", env["PATH"])
 
 
+class LaunchdInstallTests(unittest.TestCase):
+    def test_install_registers_the_watcher_and_local_document_service(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            watcher_plist = root / "LaunchAgents" / "ai.jobby.watch.plist"
+            document_plist = root / "LaunchAgents" / "ai.jobby.documents.plist"
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with (
+                mock.patch.object(watch, "PLIST", watcher_plist),
+                mock.patch.object(watch, "DOCUMENT_PLIST", document_plist),
+                mock.patch.object(watch, "LOG_DIR", root / "logs"),
+                mock.patch.object(watch, "LOCK_DIR", root / "locks"),
+                mock.patch.object(watch, "run", return_value=completed) as run,
+                mock.patch("builtins.print"),
+            ):
+                self.assertEqual(watch.install(5, sys.executable), 0)
+
+            watcher = plistlib.loads(watcher_plist.read_bytes())
+            documents = plistlib.loads(document_plist.read_bytes())
+            self.assertEqual(watcher["Label"], "ai.jobby.watch")
+            self.assertEqual(documents["Label"], "ai.jobby.documents")
+            self.assertEqual(watcher["ProgramArguments"][0], sys.executable)
+            self.assertEqual(documents["ProgramArguments"][0], sys.executable)
+            self.assertEqual(documents["ProgramArguments"][-2:], ["--loop", "--local"])
+            self.assertIn("document_worker.py", documents["ProgramArguments"][1])
+            loaded = [call.args[0] for call in run.call_args_list]
+            self.assertIn(["launchctl", "load", str(watcher_plist)], loaded)
+            self.assertIn(["launchctl", "load", str(document_plist)], loaded)
+
+    def test_install_retains_the_previous_launchd_interpreter(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            watcher_plist = root / "LaunchAgents" / "ai.jobby.watch.plist"
+            document_plist = root / "LaunchAgents" / "ai.jobby.documents.plist"
+            watcher_plist.parent.mkdir(parents=True)
+            watcher_plist.write_bytes(plistlib.dumps({
+                "ProgramArguments": [sys.executable, "/old/watch.py"],
+            }))
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with (
+                mock.patch.object(watch, "PLIST", watcher_plist),
+                mock.patch.object(watch, "DOCUMENT_PLIST", document_plist),
+                mock.patch.object(watch, "LOG_DIR", root / "logs"),
+                mock.patch.object(watch, "LOCK_DIR", root / "locks"),
+                mock.patch.object(watch, "run", return_value=completed),
+                mock.patch("builtins.print"),
+            ):
+                self.assertEqual(watch.install(5), 0)
+
+            watcher = plistlib.loads(watcher_plist.read_bytes())
+            documents = plistlib.loads(document_plist.read_bytes())
+            self.assertEqual(watcher["ProgramArguments"][0], sys.executable)
+            self.assertEqual(documents["ProgramArguments"][0], sys.executable)
+
+
 class AuthDetectionTests(unittest.TestCase):
     def test_recognises_the_revoked_token_message(self):
         self.assertTrue(agent.looks_like_auth_failure(
@@ -79,7 +138,7 @@ class AuthDetectionTests(unittest.TestCase):
 
     def test_the_blocked_message_names_the_fix_not_just_the_error(self):
         msg = agent.blocked_reason("401")
-        self.assertIn("claude login", msg)
+        self.assertIn("claude auth login", msg)
 
 
 class LockTests(unittest.TestCase):
@@ -189,6 +248,139 @@ class TickErrorTests(unittest.TestCase):
             watch.store = original
 
 
+class ProviderControlTests(unittest.TestCase):
+    def test_connect_forwards_the_shared_cross_worker_order_key(self):
+        connection_key = (
+            "1-1787497200000-00000000-0000-4000-8000-000000000001"
+        )
+        request = {
+            "provider": "openai",
+            "action": "connect",
+            "connectionKey": connection_key,
+        }
+        registry = mock.Mock()
+        registry.connect.return_value = {
+            "activeProvider": "openai",
+            "providers": [{
+                "id": "openai", "connected": True, "healthy": False,
+            }],
+        }
+        with mock.patch.object(watch, "claim_all", return_value=[request]), \
+                mock.patch.object(
+                    watch.providers, "ProviderRegistry", return_value=registry), \
+                mock.patch.object(watch, "launch_provider_login", return_value=True), \
+                mock.patch.object(
+                    watch.provider_login, "publish_status", return_value=True):
+            watch.process_local_provider_controls({"providerLocal": [request]})
+
+        registry.connect.assert_called_once_with(
+            "openai", connection_key=connection_key
+        )
+
+    def test_local_controls_are_allowlisted_and_do_not_claim_document_controls(self):
+        local = [
+            {"provider": "openai", "action": "disconnect"},
+            {"provider": "not-a-provider", "action": "connect"},
+            {"provider": "gemini", "action": "delete"},
+        ]
+        remote = [{"provider": "anthropic", "action": "disconnect"}]
+        q = {"providerLocal": list(local), "providerDocuments": list(remote)}
+        registry = mock.Mock()
+        registry.disconnect.return_value = {
+            "activeProvider": None,
+            "providers": [],
+        }
+        with mock.patch.object(watch, "claim_all", return_value=local) as claim:
+            with mock.patch.object(
+                    watch.providers, "ProviderRegistry", return_value=registry):
+                with mock.patch.object(
+                        watch.provider_login, "publish_status", return_value=True) as publish:
+                    result = watch.process_local_provider_controls(q)
+
+        claim.assert_called_once_with("providerLocal/")
+        registry.disconnect.assert_called_once_with("openai")
+        registry.connect.assert_not_called()
+        registry.refresh.assert_not_called()
+        publish.assert_called_once_with(registry.disconnect.return_value)
+        self.assertEqual(q["providerDocuments"], remote)
+        self.assertEqual(len(result["providerLocal"]["rejected"]), 2)
+
+    def test_idle_local_control_lane_is_read_only_once_per_thirty_seconds(self):
+        previous = watch._last_provider_control_poll
+        previous_publish = watch._last_local_status_publish
+        watch._last_provider_control_poll = 100.0
+        watch._last_local_status_publish = 100.0
+        try:
+            with mock.patch.object(watch, "claim_all", return_value=[]) as claim:
+                self.assertEqual(watch.process_local_provider_controls({}, now=115), {})
+                claim.assert_not_called()
+                self.assertEqual(watch.process_local_provider_controls({}, now=130), {})
+                claim.assert_called_once_with("providerLocal/")
+        finally:
+            watch._last_provider_control_poll = previous
+            watch._last_local_status_publish = previous_publish
+
+    def test_idle_local_control_lane_refreshes_status_before_it_goes_offline(self):
+        previous_poll = watch._last_provider_control_poll
+        previous_publish = watch._last_local_status_publish
+        watch._last_provider_control_poll = 0.0
+        watch._last_local_status_publish = 0.0
+        registry = mock.Mock()
+        registry.public_status.return_value = {"providers": []}
+        try:
+            with mock.patch.object(watch, "claim_all", return_value=[]), \
+                    mock.patch.object(
+                        watch.providers, "ProviderRegistry", return_value=registry), \
+                    mock.patch.object(
+                        watch.provider_login, "publish_status", return_value=True) as publish:
+                self.assertEqual(
+                    watch.process_local_provider_controls(
+                        {}, now=watch.LOCAL_STATUS_HEARTBEAT_SECONDS
+                    ),
+                    {},
+                )
+            publish.assert_called_once_with(registry.public_status.return_value)
+            self.assertEqual(
+                watch._last_local_status_publish,
+                watch.LOCAL_STATUS_HEARTBEAT_SECONDS,
+            )
+        finally:
+            watch._last_provider_control_poll = previous_poll
+            watch._last_local_status_publish = previous_publish
+
+
+class DocumentProviderReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_cache = watch._document_status_cache
+        self.previous_poll = watch._last_document_status_poll
+        watch._document_status_cache = None
+        watch._last_document_status_poll = 0.0
+
+    def tearDown(self):
+        watch._document_status_cache = self.previous_cache
+        watch._last_document_status_poll = self.previous_poll
+
+    def test_a_different_local_document_default_blocks_provider_use(self):
+        status = {
+            "worker": "documents",
+            "checkedAt": datetime.now(timezone.utc).isoformat(),
+            "activeProvider": "gemini",
+            "providers": [
+                {"id": "openai", "connected": True, "status": "connected"},
+                {"id": "gemini", "connected": True, "status": "connected"},
+            ],
+        }
+        result = SimpleNamespace(
+            returncode=0, stdout=json.dumps(status), stderr=""
+        )
+        with mock.patch.object(watch.toolpath, "node", return_value="/node"), \
+                mock.patch.object(watch.toolpath, "queue_env", return_value={}), \
+                mock.patch.object(watch.subprocess, "run", return_value=result):
+            ready, why = watch.document_provider_ready("openai", now=100)
+        self.assertFalse(ready)
+        self.assertIn("not the local document worker default", why)
+
+
 class BrowserConfigTests(unittest.TestCase):
     """The browser given to spawned agents.
 
@@ -290,11 +482,13 @@ class BrowserConfigTests(unittest.TestCase):
         self.assertIn("@", pkg.replace("@playwright/mcp", ""))
         self.assertNotIn("latest", pkg)
 
-    def test_config_path_writes_when_absent_and_reuses_when_present(self):
+    def test_config_path_writes_when_absent_and_regenerates_when_present(self):
         first = self.browser.config_path()
         self.assertTrue(first.exists())
         first.write_text('{"marker": true}')
-        self.assertEqual(json.loads(self.browser.config_path().read_text()), {"marker": True})
+        regenerated = json.loads(self.browser.config_path().read_text())
+        self.assertNotIn("marker", regenerated)
+        self.assertIn("browser", regenerated["mcpServers"])
 
 
 class HeartbeatTests(unittest.TestCase):
@@ -323,11 +517,9 @@ class HeartbeatTests(unittest.TestCase):
         self.assertFalse(watch.heartbeat_due("", "", 5))
         self.assertTrue(watch.heartbeat_due("", "", watch.HEARTBEAT_SECONDS + 1))
 
-    def test_the_heartbeat_leaves_room_under_a_one_minute_period(self):
-        # healthchecks alerts when pings stop arriving. The interval must be
-        # comfortably shorter than the configured period, or a single dropped
-        # ping reads as death.
-        self.assertLessEqual(watch.HEARTBEAT_SECONDS, 30)
+    def test_the_heartbeat_leaves_room_under_the_one_hour_period(self):
+        self.assertGreaterEqual(watch.HEARTBEAT_SECONDS, 50 * 60)
+        self.assertLess(watch.HEARTBEAT_SECONDS, 60 * 60)
 
 
 class ApplySlotTests(unittest.TestCase):
@@ -402,6 +594,186 @@ class ApplySlotTests(unittest.TestCase):
             capture_output=True, text=True, cwd=str(ROOT))
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--id is required", (r.stderr or "") + (r.stdout or ""))
+
+
+class ProviderNeutralApplyTests(unittest.TestCase):
+    """Document generation stays remote while application filling stays local."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.run_calls = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @staticmethod
+    def result(stdout="{}", returncode=0, stderr=""):
+        return SimpleNamespace(stdout=stdout, returncode=returncode, stderr=stderr)
+
+    def fake_store(self, args):
+        if args[:1] == ["session-load"]:
+            return self.result(json.dumps({
+                "applicationId": "acme-pm",
+                "status": "review",
+                "pendingFields": [],
+            }))
+        if args[:1] in (["history-list"], ["session-list"]):
+            return self.result("[]")
+        if args[:1] == ["meta-get"]:
+            key = args[args.index("--key") + 1]
+            return self.result(json.dumps({key: None}))
+        return self.result()
+
+    def fake_run(self, argv, **kwargs):
+        self.run_calls.append([str(value) for value in argv])
+        return self.result()
+
+    @contextmanager
+    def tick_harness(self, provider, document_state, *, item=None,
+                     patch_document_helper=True, remote_ready=(True, "")):
+        item = item or {"applicationId": "acme-pm"}
+        queue = {"apply": [dict(item)]}
+        registry = mock.Mock()
+        registry.active_provider.return_value = provider
+        registry.public_status.return_value = {
+            "activeProvider": provider,
+            "ready": bool(provider),
+            "providers": [],
+        }
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(watch, "STATE_DIR", self.root))
+            stack.enter_context(mock.patch.object(watch, "LOCK_DIR", self.root / "locks"))
+            stack.enter_context(mock.patch.object(watch, "poll_queues", return_value=queue))
+            stack.enter_context(mock.patch.object(
+                watch, "process_local_provider_controls", return_value={}))
+            stack.enter_context(mock.patch.object(watch, "apply_found_decisions", return_value={}))
+            stack.enter_context(mock.patch.object(watch, "store", side_effect=self.fake_store))
+            stack.enter_context(mock.patch.object(watch, "run", side_effect=self.fake_run))
+            stack.enter_context(mock.patch.object(watch, "blocked_message", return_value=""))
+            stack.enter_context(mock.patch.object(watch, "tier1_due", return_value=(False, None)))
+            stack.enter_context(mock.patch.object(watch, "sweep_stuck", return_value=[]))
+            stack.enter_context(mock.patch.object(watch, "fingerprint", return_value="stable"))
+            stack.enter_context(mock.patch.object(
+                watch, "publish", return_value={"published": False}))
+            stack.enter_context(mock.patch.object(watch, "lock_holder", return_value=None))
+            stack.enter_context(mock.patch.object(watch, "running_applications", return_value={}))
+            stack.enter_context(mock.patch.object(
+                watch, "free_apply_slots", return_value=["apply-1"]))
+            reserve = stack.enter_context(mock.patch.object(watch, "reserve", return_value=True))
+            claim = stack.enter_context(mock.patch.object(
+                watch, "claim_one", return_value=[dict(item)]))
+            serve = stack.enter_context(mock.patch.object(watch.browser, "serve"))
+            spawn = stack.enter_context(mock.patch.object(watch, "spawn", return_value=7311))
+            stack.enter_context(mock.patch.object(
+                watch.agent, "authenticated", return_value=(True, "")))
+            stack.enter_context(mock.patch.object(
+                watch.providers, "ProviderRegistry", return_value=registry))
+            stack.enter_context(mock.patch.object(
+                watch.providers, "active_provider", return_value=provider))
+            document_readiness = stack.enter_context(mock.patch.object(
+                watch, "document_provider_ready", return_value=remote_ready))
+            prepare = None
+            if patch_document_helper:
+                prepare = stack.enter_context(mock.patch.object(
+                    watch, "prepare_document_head", return_value=document_state))
+            yield {
+                "queue": queue,
+                "registry": registry,
+                "reserve": reserve,
+                "claim": claim,
+                "serve": serve,
+                "spawn": spawn,
+                "prepare": prepare,
+                "documentReadiness": document_readiness,
+            }
+
+    def test_no_active_provider_leaves_the_apply_request_unclaimed(self):
+        with self.tick_harness(None, None) as calls:
+            changed = watch.tick()
+        calls["prepare"].assert_not_called()
+        calls["claim"].assert_not_called()
+        calls["reserve"].assert_not_called()
+        self.assertEqual(calls["queue"]["apply"], [{"applicationId": "acme-pm"}])
+        self.assertIn("waitingOnProvider", changed)
+
+    def test_pending_oci_documents_do_not_reserve_or_start_a_browser(self):
+        pending = {"state": "queued", "provider": "openai"}
+        with self.tick_harness("openai", pending) as calls:
+            watch.tick()
+        calls["prepare"].assert_called_once_with(
+            {"applicationId": "acme-pm"}, "openai")
+        calls["claim"].assert_not_called()
+        calls["reserve"].assert_not_called()
+        calls["serve"].assert_not_called()
+        calls["spawn"].assert_not_called()
+
+    def test_mismatched_worker_defaults_leave_the_request_unclaimed(self):
+        ready = {"state": "ready", "provider": "openai"}
+        mismatch = (False, "openai is not the local document worker default")
+        with self.tick_harness(
+                "openai", ready, remote_ready=mismatch) as calls:
+            changed = watch.tick()
+        calls["documentReadiness"].assert_called_once_with("openai")
+        calls["prepare"].assert_not_called()
+        calls["claim"].assert_not_called()
+        calls["reserve"].assert_not_called()
+        calls["serve"].assert_not_called()
+        calls["spawn"].assert_not_called()
+        self.assertEqual(changed["waitingOnDocumentProvider"]["provider"], "openai")
+        self.assertIn("not the local document worker default",
+                      changed["waitingOnDocumentProvider"]["why"])
+
+    def test_only_an_explicit_retry_replaces_a_failed_document_job(self):
+        failed = {"state": "failed", "provider": "openai"}
+        replacement = {"state": "queued", "provider": "gemini"}
+        item = {"applicationId": "acme-pm", "retry": True}
+        with mock.patch.object(watch.document_job, "get_state", return_value=failed):
+            with mock.patch.object(watch.document_job, "sync") as sync:
+                with mock.patch.object(
+                        watch.document_job, "retry_failed", return_value=replacement) as retry:
+                    state = watch.prepare_document_head(item, "gemini")
+        retry.assert_called_once_with("acme-pm", "gemini")
+        sync.assert_not_called()
+        self.assertIs(state, replacement)
+
+    def test_ready_documents_spawn_apply_with_the_saved_provider(self):
+        # The active setting can change after enqueue. The job's saved provider
+        # still owns both its completed documents and its local form run.
+        ready = {"state": "ready", "provider": "gemini"}
+        with self.tick_harness("openai", ready) as calls:
+            watch.tick()
+        calls["claim"].assert_called_once_with("apply/")
+        calls["serve"].assert_called_once_with("apply-1")
+        calls["spawn"].assert_called_once()
+        argv = list(calls["spawn"].call_args.args[1])
+        self.assertEqual(argv[argv.index("--provider") + 1], "gemini")
+        self.assertEqual(argv[argv.index("--id") + 1], "acme-pm")
+
+    def test_terminal_document_failure_is_claimed_and_parked_without_retry(self):
+        failed = {
+            "state": "failed",
+            "provider": "openai",
+            "errorCode": "generation_failed",
+        }
+        with self.tick_harness(
+                "openai", failed, item={"applicationId": "acme-pm", "retry": False},
+                patch_document_helper=False) as calls:
+            with mock.patch.object(watch.document_job, "get_state", return_value=failed):
+                with mock.patch.object(watch.document_job, "sync", return_value=failed) as sync:
+                    with mock.patch.object(watch.document_job, "retry_failed") as retry:
+                        watch.tick()
+        sync.assert_called_once_with("acme-pm", "openai")
+        retry.assert_not_called()
+        calls["claim"].assert_called_once_with("apply/")
+        calls["reserve"].assert_not_called()
+        calls["serve"].assert_not_called()
+        calls["spawn"].assert_not_called()
+        parks = [argv for argv in self.run_calls
+                 if len(argv) > 1 and pathlib.Path(argv[1]).name == "finish.py"]
+        self.assertEqual(len(parks), 1)
+        self.assertIn("--park", parks[0])
+        self.assertIn("generation_failed", " ".join(parks[0]))
 
 
 class SlotRaceTests(unittest.TestCase):
@@ -794,15 +1166,21 @@ class SlotReleaseTests(unittest.TestCase):
         self.assertIsNone(watch.lock_holder("apply-3"))
         self.assertTrue(watch.reserve("apply-3", note="starting"))
 
-    def test_the_claim_is_wrapped_so_a_failure_releases_the_slot(self):
-        # Structural: the window between reserve() and spawn() must release the
-        # lock on any exception. Asserted on the source because driving a real
-        # KV failure in a unit test would need the network.
-        source = (pathlib.Path(watch.__file__).read_text())
-        window = source[source.index("for slot in free_apply_slots():"):]
-        window = window[:window.index("applyStarted")]
+    def test_the_single_ready_slot_wraps_claim_and_spawn_in_one_release_window(self):
+        # Structural: driving a real KV claim failure would need the network.
+        # The ready-only path reserves one slot, then one exception handler owns
+        # claim, browser startup, and runner spawn failures.
+        source = pathlib.Path(watch.__file__).read_text()
+        window = source[source.index("free_slots = free_apply_slots()"):]
+        window = window[:window.index("changed.setdefault(\"applyStarted\"")]
+        self.assertIn("candidate_slots = candidate_apply_slots(head_id)", window)
+        self.assertIn("slot = candidate_slots[0]", window)
+        self.assertIn("if reserve(slot, note=head_id):", window)
+        self.assertIn('claimed = claim_one("apply/")', window)
+        self.assertIn("persist_browser_slot(head_id, slot)", window)
+        self.assertIn("browser.serve(slot)", window)
         self.assertIn("except Exception:", window)
-        self.assertGreaterEqual(window.count("lock_path(slot).unlink(missing_ok=True)"), 3)
+        self.assertIn("lock_path(slot).unlink(missing_ok=True)", window)
 
 
 class RenderVersionTests(unittest.TestCase):
@@ -833,6 +1211,24 @@ class RenderVersionTests(unittest.TestCase):
 
     def test_it_is_stable_when_nothing_changes(self):
         self.assertEqual(watch.render_version(), watch.render_version())
+
+    def test_it_moves_when_the_settings_panel_changes(self):
+        original = watch.REPO
+        with tempfile.TemporaryDirectory() as d:
+            fake = pathlib.Path(d)
+            (fake / "scripts").mkdir()
+            (fake / "scripts" / "dashboard.py").write_text("dashboard")
+            (fake / "scripts" / "found_lane.py").write_text("found")
+            settings = fake / "scripts" / "settings_panel.py"
+            settings.write_text("settings one")
+            watch.REPO = fake
+            try:
+                before = watch.render_version()
+                settings.write_text("settings two")
+                after = watch.render_version()
+            finally:
+                watch.REPO = original
+        self.assertNotEqual(before, after)
 
     def test_a_missing_renderer_is_still_a_stable_value(self):
         original = watch.REPO

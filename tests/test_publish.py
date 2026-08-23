@@ -177,6 +177,45 @@ class CliTest(unittest.TestCase):
             publish.toolpath.find = original
 
 
+class ProviderPayloadTests(unittest.TestCase):
+    def test_raw_registry_is_sanitized_for_the_board(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "providers.json").write_text(json.dumps({
+                "version": 1,
+                "nextConnectionOrder": 3,
+                "connections": {
+                    "gemini": {
+                        "connected": True,
+                        "connectionOrder": 2,
+                        "health": "authentication_required",
+                        "lastCheckedAt": "2026-08-23T15:00:00Z",
+                        "secret": "must-not-leak",
+                    },
+                    "openai": {
+                        "connected": True,
+                        "connectionOrder": 1,
+                        "health": "healthy",
+                    },
+                },
+            }), encoding="utf-8")
+
+            payload = publish.provider_payload(str(root))
+
+        self.assertEqual(payload["activeProvider"], "openai")
+        rows = {item["id"]: item for item in payload["providers"]}
+        self.assertEqual(rows["openai"]["status"], "connected")
+        self.assertEqual(rows["gemini"]["status"], "needs_auth")
+        self.assertNotIn("secret", json.dumps(payload))
+
+    def test_missing_registry_yields_three_disconnected_providers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = publish.provider_payload(tmp)
+        self.assertIsNone(payload["activeProvider"])
+        self.assertEqual(len(payload["providers"]), 3)
+        self.assertTrue(all(item["status"] == "disconnected"
+                            for item in payload["providers"]))
+
 class DegradedRenderGuardTests(unittest.TestCase):
     """The board must never lose data the store still has.
 

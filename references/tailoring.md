@@ -22,15 +22,19 @@ Drafting a screening answer then becomes selection and voice, not invention: pic
 
 ## Per-application documents
 
-**Every application gets its own resume and its own cover letter.** No exceptions, no reuse between postings. Both are built by the **`resume-tailor` skill**, which clones the source resume's layout exactly and changes only the words.
+**Every application gets its own resume and its own cover letter.** No exceptions, no reuse between postings. The serial document worker builds both on Your Device, and the separate form agent does not create or rewrite either file.
 
-Pick the base resume first, then draft. Drafting runs on **Claude Opus 5** (`claude-opus-5`). Delegate it to a subagent pinned to that model, one subagent per application, which also keeps the posting text and PDF work out of the orchestrating session's context. The subagent returns the two file paths and a list of what it changed; it does not return page dumps.
+The watcher chooses the base resume, reduces the document identity, and sends the posting, confirmed story facts, writing samples, and base PDF through an AES-256-GCM document queue. The queue may sit in Cloudflare KV, but decryption and all agent work happen on Your Device. The document model has no application browser or file tools. It returns structured prose, then trusted worker code renders inside a private task directory. The authenticated result is installed as one complete set before form filling starts.
 
-### What resume-tailor guarantees, and what it does not
+The job names the first-connected active provider from the one local registry. A failure blocks the job instead of switching providers. Every invocation also names its model: OpenAI uses `gpt-5.6-luna`, Anthropic uses `claude-sonnet-5`, and Gemini uses `gemini-3.7-flash`. No document task inherits a CLI default. Gemini output telemetry must name only `gemini-3.7-flash`, or the run is rejected.
 
-The skill freezes the things most likely to be quietly falsified: education, certifications, name, address, phone, email and hyperlinks are copied verbatim, and it is instructed never to invent accomplishments or metrics. Its stated method is to keep each bullet's existing accomplishment as the lead and weave job-description language into it, rather than rewriting the bullet around the posting.
+### What the document pipeline guarantees, and what it does not
 
-It does not guarantee the result. It is a language model rewriting prose next to a job description full of attractive claims, which is exactly the situation that produces drift. So verify every output before it is uploaded.
+The fixed resume template keeps education, certifications, employers, employment titles, dates, and contact structure outside the model's editable fields. The provider supplies bounded prose overrides. `resume_build.py` rejects the wrong number of sections or experience entries, and identity comes from the reduced profile at render time.
+
+The provider's exit code is not approval. After it exits, `document_worker.py` independently requires exactly four regular output files, rejects unresolved template tokens and unsafe paths, checks PDF signatures and size limits, requires `unsourcedTerms` to be zero, geometrically compares the resume with the base, and verifies the cover letter's content, identity, readability, one-page layout, and omission of the street address. The document client checks names, hashes, types, application id, and provider again, validates the whole set before installing any file, and replaces each file atomically.
+
+Those gates do not make arbitrary prose true. A language model still rewrites next to a job description full of attractive claims, which is exactly the situation that produces drift. The base resume and confirmed story facts remain the only factual sources, and anything they do not support stays out.
 
 ### One deliberate exception to "titles are frozen"
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Absolute paths to the external binaries this skill shells out to.
+"""Absolute paths to the external binaries this project shells out to.
 
 launchd starts agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin and nothing else.
-node, vercel and claude all live in /opt/homebrew/bin on this machine, so every
+node and several agent CLIs live outside launchd's PATH on this machine, so every
 bare-name subprocess call in a launchd-run script dies with FileNotFoundError.
 That is not hypothetical: the watcher ran for hours reporting healthy cycles
 while every queue read and every publish failed exactly this way.
@@ -22,8 +22,12 @@ from pathlib import Path
 # Homebrew on Apple silicon, then Intel, then nvm's current, then the system.
 # Ordered by how likely it is to be the one the user actually installed.
 EXTRA_DIRS = [
+    # Codex is bundled with the ChatGPT desktop app on this machine. Keep this
+    # ahead of package-manager paths so the app and its CLI stay on one build.
+    "/Applications/ChatGPT.app/Contents/Resources",
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    "/snap/bin",
     str(Path.home() / ".nvm" / "current" / "bin"),
     str(Path.home() / ".local" / "bin"),
     str(Path.home() / ".bun" / "bin"),
@@ -74,6 +78,22 @@ def vercel(required=True):
 
 def claude(required=True):
     return find("claude", required)
+
+
+def codex(required=True):
+    return find("codex", required)
+
+
+def gemini(required=True):
+    return find("gemini", required)
+
+
+def agent_binary(provider, required=True):
+    """Resolve the CLI used by a provider without accepting arbitrary names."""
+    resolvers = {"anthropic": claude, "openai": codex, "gemini": gemini}
+    if provider not in resolvers:
+        raise ValueError(f"unknown agent provider: {provider}")
+    return resolvers[provider](required)
 
 
 def python(required=True):
@@ -145,7 +165,9 @@ def queue_env(env=None):
     them itself is how half of them ended up out of step.
     """
     out = enriched_env(env)
-    wanted = set(QUEUE_VARS) | {"HEALTHCHECKS_URL", "DASHBOARD_PASSWORD"}
+    wanted = set(QUEUE_VARS) | {
+        "HEALTHCHECKS_URL", "DASHBOARD_PASSWORD", "JOBBY_WORKER_KEY",
+    }
     for k, v in settings().items():
         if k in wanted and v:
             out[k] = v
@@ -161,10 +183,13 @@ def queue_env(env=None):
 
 def report():
     out = {"searchPath": search_path().split(os.pathsep), "tools": {}}
-    for name in ("node", "vercel", "claude"):
+    for name in ("node", "vercel", "claude", "codex", "gemini"):
         out["tools"][name] = find(name, required=False) or "MISSING"
     out["tools"]["python"] = python()
-    out["ok"] = all(v != "MISSING" for v in out["tools"].values())
+    core_ok = all(out["tools"][name] != "MISSING" for name in ("node", "vercel"))
+    provider_ok = any(out["tools"][name] != "MISSING"
+                      for name in ("claude", "codex", "gemini"))
+    out["ok"] = core_ok and provider_ok
     return out
 
 

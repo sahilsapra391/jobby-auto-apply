@@ -26,8 +26,11 @@ Standard library only.
 """
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -118,6 +121,30 @@ def session(aid):
     return read_json([STORE, "session-load", "--id", aid], default={})
 
 
+def save_session(aid, entry):
+    result = subprocess.run(
+        [sys.executable, str(STORE), "session-save", "--id", aid, "--input", "-"],
+        input=json.dumps(entry), capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"finish: session-save failed: {(result.stderr or '').strip()[:300]}"
+        )
+
+
+def latest_event(aid):
+    events = read_json([STORE, "history-list"], default=[])
+    matching = [
+        item for item in events
+        if isinstance(item, dict) and item.get("applicationId") == aid
+    ]
+    return max(matching, key=lambda item: str(item.get("at") or "")) if matching else None
+
+
+def _nonce_hash(nonce):
+    return hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+
+
 def pre_submit(aid):
     """Everything that must be true before the click, then the write-ahead."""
     entry = session(aid)
@@ -127,6 +154,12 @@ def pre_submit(aid):
         return {"proceed": False,
                 "reason": "the user cancelled this application while you were working. "
                           "Stop. Do not submit and do not change the status back."}
+    latest = latest_event(aid)
+    if latest and latest.get("event") in {"submitting", "completed"}:
+        return {
+            "proceed": False,
+            "reason": "a submission attempt is already recorded for this application",
+        }
 
     # dupe_check exits 1 when it finds a duplicate, so its verdict lives in
     # stdout regardless of the exit code. Reading it with a default of
@@ -153,15 +186,23 @@ def pre_submit(aid):
         return {"proceed": False, "reason": "this would be a second application to the "
                                             "same job", "guard": guard}
 
+    nonce = secrets.token_urlsafe(32)
+    nonce_hash = _nonce_hash(nonce)
+    entry["submissionGuard"] = {
+        "applicationId": aid,
+        "nonceHash": nonce_hash,
+        "used": False,
+    }
+    save_session(aid, entry)
     append_event({"event": "submitting", "applicationId": aid,
                   "company": entry.get("company"), "role": entry.get("role"),
-                  "url": entry.get("url")})
+                  "url": entry.get("url"), "submissionNonceHash": nonce_hash})
     set_phase(aid, "Submitting", "write-ahead logged")
     return {"proceed": True, "company": entry.get("company"), "role": entry.get("role"),
-            "wroteWriteAhead": True}
+            "wroteWriteAhead": True, "submissionNonce": nonce}
 
 
-def completed(aid, confirmation, resume, cover):
+def completed(aid, confirmation, resume, cover, nonce):
     entry = session(aid)
     if not entry.get("company"):
         # Writing the event anyway would put a row with no company and no role
@@ -169,6 +210,26 @@ def completed(aid, confirmation, resume, cover):
         raise SystemExit(f"finish: no session for {aid}, so the company and role "
                          f"behind this submission cannot be recorded. Do not "
                          f"re-submit; report it instead.")
+    guard = entry.get("submissionGuard")
+    latest = latest_event(aid)
+    if (
+        not isinstance(guard, dict)
+        or guard.get("applicationId") != aid
+        or guard.get("used") is not False
+        or not isinstance(nonce, str)
+        or not 20 <= len(nonce) <= 200
+        or not isinstance(guard.get("nonceHash"), str)
+        or not hmac.compare_digest(guard["nonceHash"], _nonce_hash(nonce))
+        or not isinstance(latest, dict)
+        or latest.get("event") != "submitting"
+        or not hmac.compare_digest(
+            str(latest.get("submissionNonceHash") or ""), guard["nonceHash"]
+        )
+    ):
+        raise SystemExit(
+            "finish: completion refused because no matching unused pre-submit "
+            "record exists for this application"
+        )
     payload = {"event": "completed", "applicationId": aid,
                "company": entry.get("company"), "role": entry.get("role"),
                "url": entry.get("url"), "confirmation": confirmation}
@@ -180,6 +241,9 @@ def completed(aid, confirmation, resume, cover):
     if cover:
         payload["coverLetter"] = Path(cover).name
     event = append_event(payload)
+    guard["used"] = True
+    entry["submissionGuard"] = guard
+    save_session(aid, entry)
     set_phase(aid, "Verifying", "confirmation recorded")
     return {"logged": True, "eventId": event.get("eventId"),
             "synced": sync_board(),
@@ -227,6 +291,7 @@ def main():
     mode.add_argument("--completed", action="store_true")
     mode.add_argument("--park", action="store_true")
     ap.add_argument("--confirmation")
+    ap.add_argument("--nonce")
     ap.add_argument("--resume")
     ap.add_argument("--cover")
     ap.add_argument("--pending", action="append", default=[],
@@ -245,7 +310,11 @@ def main():
                              "wording you saw. Without it there is no evidence the "
                              "application went through, and an unverified completion is "
                              "what makes the board disagree with reality.")
-        out = completed(args.id, args.confirmation, args.resume, args.cover)
+        if not (args.nonce or "").strip():
+            raise SystemExit("finish: --completed needs the nonce returned by --pre-submit")
+        out = completed(
+            args.id, args.confirmation, args.resume, args.cover, args.nonce.strip()
+        )
     else:
         if not args.pending:
             raise SystemExit("finish: --park needs at least one --pending naming the "

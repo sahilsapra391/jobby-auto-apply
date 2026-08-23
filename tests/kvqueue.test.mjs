@@ -14,17 +14,28 @@ const ENV = { CF_ACCOUNT_ID: 'acct', CF_KV_NAMESPACE_ID: 'ns', CF_API_TOKEN: 'to
 
 /** Stand in for Cloudflare, so no test ever touches the real namespace. */
 function fakeKV({ status = 200, body = null, failWrite = false } = {}) {
-  const state = { value: body, writes: 0, reads: 0 };
+  const values = new Map();
+  if (body !== null) values.set('jobby:queue', body);
+  const state = { values, writes: 0, reads: 0 };
+  Object.defineProperty(state, 'value', {
+    get: () => values.get('jobby:queue') ?? null,
+    set: (value) => values.set('jobby:queue', value),
+  });
   global.fetch = async (url, opts = {}) => {
+    const parsed = new URL(url);
+    const marker = '/values/';
+    const key = decodeURIComponent(parsed.pathname.slice(
+      parsed.pathname.indexOf(marker) + marker.length
+    ));
     if ((opts.method || 'GET') === 'GET') {
       state.reads += 1;
       if (status !== 200) return { ok: false, status, text: async () => 'boom' };
-      if (state.value === null) return { ok: false, status: 404, text: async () => 'not found' };
-      return { ok: true, status: 200, text: async () => JSON.stringify(state.value) };
+      if (!values.has(key)) return { ok: false, status: 404, text: async () => 'not found' };
+      return { ok: true, status: 200, text: async () => JSON.stringify(values.get(key)) };
     }
     state.writes += 1;
     if (failWrite) return { ok: false, status: 403, text: async () => 'forbidden' };
-    state.value = JSON.parse(opts.body.get('value'));
+    values.set(key, JSON.parse(opts.body.get('value')));
     return { ok: true, status: 200, text: async () => '{}' };
   };
   return state;
@@ -40,7 +51,8 @@ test('a key that was never written is an empty queue, not an error', async () =>
   fakeKV({ body: null });
   assert.deepEqual(await readQueue(ENV), {
     apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
-    watch: [], pass: [], searchConfig: null,
+    watch: [], pass: [], providerLocal: [], providerDocuments: [],
+    searchConfig: null,
   });
 });
 
@@ -132,7 +144,33 @@ test('dropping does not disturb the other queues', async () => {
 
 const FULL = () => ({
   apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
-  watch: [], pass: [], searchConfig: null,
+  watch: [], pass: [], providerLocal: [], providerDocuments: [],
+  searchConfig: null,
+});
+
+test('provider controls use separate local and document worker lanes', async () => {
+  assert.ok(QUEUES.includes('providerLocal'));
+  assert.ok(QUEUES.includes('providerDocuments'));
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'providerLocal', 'connect-openai',
+    { provider: 'openai', action: 'connect' });
+  await enqueue(ENV, 'providerDocuments', 'connect-openai',
+    { provider: 'openai', action: 'connect' });
+  const local = await claimAll(ENV, 'providerLocal');
+  const documents = await claimAll(ENV, 'providerDocuments');
+  assert.equal(local[0].provider, 'openai');
+  assert.equal(documents.length, 1,
+    'the Mac must not consume the OCI worker action');
+});
+
+test('OCI provider claims cannot rewrite the application queue', async () => {
+  const kv = fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'keep-this-click');
+  await enqueue(ENV, 'providerDocuments', 'connect-gemini',
+    { provider: 'gemini', action: 'connect' });
+  await claimAll(ENV, 'providerDocuments');
+  assert.equal(kv.values.has('jobby:queue:providerDocuments'), true);
+  assert.equal((await readQueue(ENV)).apply[0].applicationId, 'keep-this-click');
 });
 
 test('the eye and pass ride the existing key with no new one', async () => {

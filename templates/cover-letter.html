@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{documentTitle}}</title>
+<style>
+  @page { size: 612pt 792pt; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #ffffff;
+    color: #202735;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.48;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet {
+    width: 612pt;
+    min-height: 792pt;
+    padding: 39pt 50pt 44pt;
+  }
+  header {
+    border-bottom: 1.5pt solid #2163ca;
+    padding-bottom: 13pt;
+    margin-bottom: 23pt;
+  }
+  h1 {
+    color: #2163ca;
+    font-size: 23pt;
+    font-weight: 600;
+    letter-spacing: 0.15pt;
+    line-height: 1.1;
+    margin: 0 0 7pt;
+  }
+  .contact, .links {
+    align-items: center;
+    color: #465064;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 9pt;
+    gap: 3pt 7pt;
+    line-height: 1.35;
+  }
+  .links { margin-top: 3pt; }
+  .divider { color: #9aa3b2; }
+  a { color: #1b5dbf; text-decoration: none; }
+  .date { color: #465064; margin: 0 0 14pt; }
+  .recipient { margin-bottom: 14pt; }
+  .recipient strong { color: #202735; font-weight: 600; }
+  .subject {
+    border-left: 2.5pt solid #2163ca;
+    color: #1d4f91;
+    font-size: 10pt;
+    font-weight: 600;
+    margin: 0 0 18pt;
+    padding: 3pt 0 3pt 10pt;
+  }
+  .salutation { margin: 0 0 12pt; }
+  .body p {
+    margin: 0 0 11pt;
+    orphans: 3;
+    widows: 3;
+  }
+  .signoff { margin-top: 17pt; }
+  .signature {
+    color: #1d4f91;
+    font-size: 11pt;
+    font-weight: 600;
+    margin-top: 15pt;
+  }
+</style>
+</head>
+<body>
+<main class="sheet">
+  <header>
+    <h1>{{candidateName}}</h1>
+    <div class="contact">{{contactLine}}</div>
+    {{profileLinks}}
+  </header>
+
+  <p class="date">{{date}}</p>
+  <div class="recipient">
+    <strong>Hiring Team</strong><br>
+    {{employer}}
+  </div>
+  <div class="subject">Re: {{role}}</div>
+  <p class="salutation">Dear {{salutation}},</p>
+  <section class="body">
+    {{body}}
+  </section>
+  <div class="signoff">Sincerely,</div>
+  <div class="signature">{{candidateName}}</div>
+</main>
+</body>
+</html>

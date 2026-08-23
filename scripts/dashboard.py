@@ -18,6 +18,7 @@ import json
 import re
 import os
 import sys
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
@@ -26,6 +27,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand  # noqa: E402
 import found_lane  # noqa: E402
+import settings_panel  # noqa: E402
 
 
 def root_dir(override=None):
@@ -80,6 +82,9 @@ def load_state(root):
         # the last-ingest line says when the last scan ran regardless.
         "jobs": read_json(root / "jobs.json", {}),
         "searchConfig": read_json(root / "search-config.json", None),
+        # Connection metadata only. Provider CLIs retain all account tokens in
+        # their own local stores, so nothing credential-shaped reaches HTML.
+        "providers": read_json(root / "providers.json", {}),
     }
 
 
@@ -90,7 +95,26 @@ def esc(v):
 def safe_url(url):
     """URLs come from scraped pages; only http(s) may become a clickable link."""
     u = str(url or "").strip()
-    return u if u.startswith(("https://", "http://")) else ""
+    if (
+        not u
+        or any(character.isspace() or ord(character) < 32 for character in u)
+        or any(character in u for character in "\\<>\"'")
+    ):
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(u)
+        _ = parsed.port
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ""
+    return urllib.parse.urlunsplit(parsed._replace(scheme=parsed.scheme.lower()))
 
 
 def link(url, label="Open"):
@@ -409,13 +433,13 @@ def build(state, generated):
         aid = entry.get("applicationId", "")
         hay = " ".join(str(x) for x in [entry.get("company"), entry.get("role"),
                                         lane, stage, reason] if x)
+        reason_line = f'<br><span class="muted">{esc(reason)}</span>' if reason else ""
         return (
             f'<tr data-hay="{esc(hay)}" data-state="{esc(lane)}" data-id="{esc(aid)}">'
             f'<td><strong>{esc(entry.get("company", ""))}</strong><br>'
             f'<span class="muted">{esc(entry.get("role", ""))}</span></td>'
             f'<td><span class="chip lane">{esc(lane)}</span></td>'
-            f'<td class="note-cell">{esc(stage)}'
-            f'{("<br><span class=" + chr(34) + "muted" + chr(34) + ">" + esc(reason) + "</span>") if reason else ""}</td>'
+            f'<td class="note-cell">{esc(stage)}{reason_line}</td>'
             f'<td class="when">{esc(when)}</td>'
             f'<td><div class="rowacts-inline">{link(posting_url(entry), "Posting")}'
             f'<button class="btn ghost undrop" data-id="{esc(aid)}" '
@@ -596,6 +620,18 @@ def build(state, generated):
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;
     font-size:17px; line-height:1.47; letter-spacing:-.022em;
     -webkit-font-smoothing:antialiased; }}
+  /* Home and Settings sit in the centre of the app bar, between the brand and
+     theme control, using the same control language as the lane tabs. */
+  .primary-nav {{ width:max-content; max-width:100%; margin:0; padding:.24rem;
+    display:flex; align-items:center; justify-content:center; gap:.18rem;
+    background:var(--seg); border:1px solid var(--hair); border-radius:999px;
+    justify-self:center; }}
+  .primary-nav a {{ display:flex; align-items:center; justify-content:center; min-height:2.15rem;
+    padding:.42rem .95rem; border-radius:999px; color:var(--ink-2); text-decoration:none;
+    font-size:.88rem; font-weight:650; }}
+  .primary-nav a:hover {{ color:var(--ink); background:var(--sunk); }}
+  .primary-nav a[aria-current="page"] {{ color:var(--ink); background:var(--card);
+    box-shadow:var(--sh); }}
   .wrap {{ max-width:860px; margin:0 auto; padding:clamp(2rem,6vw,4rem) 1.25rem 6rem; }}
   /* Tables get the whole screen; prose-width containers keep the rest readable. */
   .panel .sheet {{ max-width:none; width:min(1800px, calc(100vw - 2.5rem));
@@ -612,9 +648,9 @@ def build(state, generated):
      theme blocks invert; the wordmark rides currentColor. */
   .jb-defs {{ position:absolute; width:0; height:0; overflow:hidden; }}
   .appbar {{ max-width:860px; margin:0 auto; padding:1.15rem 1.25rem 0;
-    display:flex; align-items:center; justify-content:space-between; gap:1rem; }}
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:1rem; }}
   .brand {{ display:inline-flex; align-items:center; color:var(--ink);
-    text-decoration:none; border-radius:8px; }}
+    text-decoration:none; border-radius:8px; justify-self:start; }}
   .brand:focus-visible {{ outline:3px solid var(--blue); outline-offset:4px; }}
   /* The circle is tangent to its viewBox on all four sides, so the default
      SVG overflow:hidden shaves the antialiased edge and the curve reads flat
@@ -658,7 +694,7 @@ def build(state, generated):
     .jb-morph .heromark, .jb-mascot2, .jb-mascot2 * {{ transition-duration:.01ms !important; }} }}
 
   .themeseg {{ display:inline-flex; background:var(--seg); border-radius:100px;
-    padding:3px; gap:2px; flex:none; }}
+    padding:3px; gap:2px; flex:none; justify-self:end; }}
   .themebtn {{ border:none; background:none; color:var(--ink-3); font:inherit;
     cursor:pointer; width:2.1rem; height:1.75rem; padding:0; border-radius:100px;
     display:inline-flex; align-items:center; justify-content:center;
@@ -668,7 +704,12 @@ def build(state, generated):
   .themebtn.on {{ background:var(--card); color:var(--ink);
     box-shadow:0 1px 3px rgba(0,0,0,.12); }}
   .themebtn:focus-visible {{ outline:3px solid var(--blue); outline-offset:2px; }}
-  @media (max-width:600px) {{ .lockup {{ height:1.4rem; }}
+  @media (max-width:600px) {{ .appbar {{ padding:.9rem .75rem 0; gap:.4rem;
+      grid-template-columns:auto 1fr auto; }}
+    .lockup {{ height:1.4rem; }}
+    .primary-nav {{ padding:.18rem; gap:.1rem; }}
+    .primary-nav a {{ min-height:1.9rem; padding:.34rem .62rem; font-size:.8rem; }}
+    .themebtn {{ width:1.75rem; }}
     .jb-morph, .jb-morph .heromark {{ width:60px; height:60px; }}
     .jb-mascot2 {{ height:95px; }} }}
 
@@ -868,6 +909,7 @@ def build(state, generated):
     line-height:1.45; text-align:center; }}
   .sysbanner strong {{ font-weight:650; }}
 {found_lane.CSS}
+{settings_panel.CSS}
 </style>
 
 {brand.defs()}
@@ -876,6 +918,10 @@ def build(state, generated):
 
 <header class="appbar">
   <div class="brand">{brand.lockup()}</div>
+  <nav class="primary-nav" aria-label="Primary">
+    <a href="/" data-primary-view="home">Home</a>
+    <a href="/settings" data-primary-view="settings">Settings</a>
+  </nav>
   <div class="themeseg" role="radiogroup" aria-label="Colour theme">
       <button class="themebtn" data-theme-set="auto" role="radio" aria-checked="false" title="Match system" aria-label="Match system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4a8.6 8.6 0 0 1 0 17.2Z" fill="currentColor" stroke="none"/></svg></button>
       <button class="themebtn" data-theme-set="light" role="radio" aria-checked="false" title="Light" aria-label="Light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2M12 19.4v2M4.4 12h-2M21.6 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"/></svg></button>
@@ -949,6 +995,8 @@ def build(state, generated):
       <thead><tr><th>Role</th><th>Dropped from</th><th>Where it had got to</th><th>When</th><th></th></tr></thead>
       <tbody>{dropped_rows}</tbody></table></div></div>''' if dropped else empty_state("dropped")}
   </div>
+
+  {settings_panel.panel(state.get("providers") or {})}
 </div>
 
 <script type="application/json" id="jb-found-data">{found_lane.payload(found, found_census, found_total)}</script>
@@ -1018,13 +1066,51 @@ def build(state, generated):
       tr.setAttribute('data-hay', (company + ' ' + role + ' submitted').toLowerCase());
       tr.setAttribute('data-state', 'completed');
       var today = new Date().toISOString().slice(0, 10);
-      tr.innerHTML = '<td></td><td></td>'
-        + '<td><span class="chip">submitted</span></td>'
-        + '<td class="when">' + today + '</td>'
-        + '<td>' + (url ? '<a class="go" href="' + url + '" target="_blank" rel="noopener">Posting &nearr;</a>' : '<span class="muted">no link</span>') + '</td>'
-        + '<td><span class="muted">&mdash;</span></td><td><span class="muted">&mdash;</span></td>';
-      tr.children[0].textContent = company;
-      tr.children[1].textContent = role;
+      function addCell(text, className) {{
+        var td = document.createElement('td');
+        if (className) td.className = className;
+        td.textContent = text;
+        tr.appendChild(td);
+        return td;
+      }}
+      addCell(company);
+      addCell(role);
+      var stateCell = addCell('');
+      var chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = 'submitted';
+      stateCell.appendChild(chip);
+      addCell(today, 'when');
+      var postingCell = addCell('');
+      var safePosting = '';
+      try {{
+        var parsedPosting = new URL(url);
+        if ((parsedPosting.protocol === 'http:' || parsedPosting.protocol === 'https:')
+            && !parsedPosting.username && !parsedPosting.password) {{
+          safePosting = parsedPosting.href;
+        }}
+      }} catch (e) {{}}
+      if (safePosting) {{
+        var postingLink = document.createElement('a');
+        postingLink.className = 'go';
+        postingLink.setAttribute('href', safePosting);
+        postingLink.setAttribute('target', '_blank');
+        postingLink.setAttribute('rel', 'noopener');
+        postingLink.textContent = 'Posting ↗';
+        postingCell.appendChild(postingLink);
+      }} else {{
+        var noLink = document.createElement('span');
+        noLink.className = 'muted';
+        noLink.textContent = 'no link';
+        postingCell.appendChild(noLink);
+      }}
+      for (var missing = 0; missing < 2; missing += 1) {{
+        var emptyCell = addCell('');
+        var empty = document.createElement('span');
+        empty.className = 'muted';
+        empty.textContent = 'Not available';
+        emptyCell.appendChild(empty);
+      }}
       tbody.insertBefore(tr, tbody.firstChild);
     }}
     card.remove();
@@ -1061,7 +1147,7 @@ def build(state, generated):
       b.textContent = 'Saving...';
       fetch('/api/submitted', {{
         method: 'POST',
-        headers: {{ 'content-type': 'application/json' }},
+        headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
         body: JSON.stringify({{
           applicationId: card.dataset.id,
           company: card.dataset.company,
@@ -1096,7 +1182,9 @@ def build(state, generated):
     scanBtn.addEventListener('click', function () {{
       scanBtn.disabled = true;
       say('Queueing...');
-      fetch('/api/scan', {{ method: 'POST' }})
+      fetch('/api/scan', {{ method: 'POST',
+        headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
+        body: '{{}}' }})
         .then(function (r) {{ return r.json().then(function (b) {{ return {{ s: r.status, b: b }}; }}); }})
         .then(function (res) {{
           if (res.b && res.b.ok) {{
@@ -1248,7 +1336,7 @@ def build(state, generated):
       placeholderCard(company, role, id);
       fetch('/api/apply', {{
         method: 'POST',
-        headers: {{ 'content-type': 'application/json' }},
+        headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
         body: JSON.stringify({{ applicationId: id }}),
       }}).catch(function () {{}});
     }});
@@ -1265,7 +1353,7 @@ def build(state, generated):
       b.textContent = 'Queueing...';
       fetch('/api/apply', {{
         method: 'POST',
-        headers: {{ 'content-type': 'application/json' }},
+        headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
         body: JSON.stringify({{ applicationId: b.dataset.id }}),
       }})
         .then(function (r) {{ return r.json().then(function (x) {{ return {{ s: r.status, b: x }}; }}); }})
@@ -1307,7 +1395,7 @@ def build(state, generated):
   function post(path, id) {{
     return fetch(path, {{
       method: 'POST',
-      headers: {{ 'content-type': 'application/json' }},
+      headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
       body: JSON.stringify({{ applicationId: id }}),
     }}).then(function (r) {{ return r.json().catch(function () {{ return {{}}; }}); }});
   }}
@@ -1529,6 +1617,7 @@ def build(state, generated):
   ['act', 'flight', 'done', 'watch'].forEach(applyFilter);
 
 {found_lane.SCRIPT}
+{settings_panel.SCRIPT}
   document.querySelectorAll('.copy').forEach(function (b) {{
     b.addEventListener('click', function () {{
       navigator.clipboard.writeText(b.dataset.msg).then(function () {{

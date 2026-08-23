@@ -20,16 +20,21 @@ differ, the difference is called out.
 Jobby applies to jobs. Not "finds jobs" or "drafts a cover letter": it sources
 roles, writes a resume and cover letter specific to each posting, fills the
 employer's form, submits it, and records the confirmation the site showed. A
-person presses one button and, about three seconds later, an agent is working.
+person presses one button and, about three seconds later, the Mac watcher sees
+the request.
 
-It is two things bolted together:
+It has three cooperating parts:
 
-1. **A Claude Skill** (`SKILL.md` plus `references/`) that tells an agent how to
-   do a job application well: what to extract, what to never invent, how each ATS
-   behaves, how to tailor a resume without lying.
-2. **A daemon and a board.** A launchd agent on the user's Mac watches a queue,
-   spawns headless Claude sessions to do the work, and publishes a password-gated
-   dashboard the user drives from their phone.
+1. **A provider-neutral task layer** (`SKILL.md`, `references/`, and the guarded
+   helper scripts) that defines what to extract, what to never invent, how each
+   ATS behaves, and how to tailor a resume without lying. OpenAI Codex,
+   Anthropic Claude Code, and Gemini CLI run the same bounded task contracts.
+2. **A Mac control and form worker.** A launchd process watches the control
+   queue, chooses the sticky active provider, coordinates document work, and
+   starts a local provider CLI only for browser form filling and submission.
+3. **A serial local document worker and the board.** A second launchd service
+   handles encrypted resume and cover-letter jobs without an application
+   browser. The password-gated Vercel board remains the user's control surface.
 
 The design constraint that shapes everything: **applications go out under a real
 name and cannot be recalled.** A wrong salary figure or an overstated year count
@@ -60,52 +65,57 @@ What happens between a click and a submitted application.
     user presses Apply on a role
         │  POST /api/apply   { applicationId }
         ▼
-  CLOUDFLARE WORKERS KV        one key: jobby:queue
-    { apply: [...], scan: [...], marked: [...],
-      drop: [...], restore: [...], focus: [...] }
+  CLOUDFLARE WORKERS KV CONTROL QUEUE       application key plus isolated provider lanes
+    { apply: [...], scan: [...], marked: [...], drop: [...],
+      restore: [...], focus: [...], watch: [...], pass: [...] }
         │
-        │  polled every 3s, one read
+        │  polled every 5s, one read
         ▼
-  WATCHER  (launchd agent on the Mac, scripts/watch.py)
-    ├─ single_watcher()      only one watcher may tick
-    ├─ poll_queues()         all six queues in one call
-    ├─ marks applied inline
-    ├─ reserve(slot)         O_EXCL, one of apply-1/2/3
-    ├─ claim_one("apply/")   claiming happens ONLY here
-    └─ spawn detached ───────────────┐
-                                     ▼
-  RUNNER  (scripts/run_apply.py --id <app> --slot apply-N)
-    ├─ dupe_check --guard            already applied? already in flight?
-    ├─ agent.authenticated()         can a spawned agent even run?
-    ├─ browser.serve(slot)           this slot's Chrome, its own port
-    └─ claude -p <prompt> ───────────┐
-                                     ▼
-  AGENT  (headless Claude session, one application, start to finish)
-    1. brief.py --id <app>           ONE call: watch entry, posting, duplicate
-                                     verdict, base resume, identity, what
-                                     documents already exist. Writes jd-<app>.txt.
-    2. reuse or build resume + cover letter
-         ats_match --suggest      which of the posting's words are earned
-         resume_pdf verify        layout matches the base exactly
-         ats_match                unsourcedTerms must be empty
-    3. open the form in its slot's browser, fill, read every value back
-    4. finish.py --pre-submit        ONE call: cancelled? duplicate? then the
-                                     write-ahead `submitting`. Refuses closed:
-                                     no verdict from the guard means no submit,
-                                     and a refusal writes nothing at all.
-    5. submit once → verify
-    6. finish.py --completed         ONE call: the `completed` event with the
-       --confirmation '<quoted>'     confirmation actually observed, plus
-                                     sync_board. Or --park to send it to
-                                     Needs you with the blocker named.
+  MAC WATCHER  (launchd, scripts/watch.py)
+    ├─ single_watcher()              only one watcher may tick
+    ├─ claim_one("apply/")           claiming happens only here
+    ├─ providers.active_provider()   first connected, not first healthy
+    ├─ agent.authenticated(provider) local native CLI must be ready
+    └─ document_job.ensure()         save provider and opaque job id first
+        │
+        │  AES-256-GCM request, fixed status only
+        ▼
+  CLOUDFLARE WORKERS KV DOCUMENT JOBS
+        │
+        │  claimed by the second launchd service
+        ▼
+  LOCAL DOCUMENT WORKER  (scripts/document_worker.py --loop --local)
+    ├─ claim one job                 serial on Your Device
+    ├─ require requested CLI         shared local provider registry
+    ├─ provider CLI, fixed model     document task only, no browser
+    ├─ validate_artifacts()          fixed checks run outside the model
+    └─ encrypted result              four verified files plus checks
+        │
+        ▼
+  MAC DOCUMENT CLIENT  (scripts/document_job.py)
+    ├─ authenticate and validate the complete result
+    ├─ install each file atomically
+    └─ start detached form runner with the saved provider
+        │
+        ▼
+  LOCAL FORM RUNNER  (scripts/run_apply.py --id <app> --provider <p> --slot apply-N)
+    ├─ dupe_check --guard            already applied or already in flight?
+    ├─ fingerprint exact PDFs        refuse missing or changed artifacts
+    ├─ browser.serve(slot)           local Chrome, own port and profile
+    └─ provider CLI, fixed model     browser form task only
+        1. open and fill the form, then read every value back
+        2. finish.py --pre-submit    cancelled? duplicate? write `submitting`
+        3. submit once, then verify visible confirmation
+        4. finish.py --completed     quote confirmation and exact documents
+           or finish.py --park       Needs you with named blockers
         │
         ▼
   STORE (~/.job-application) → dashboard.py renders → KV → board
 ```
 
-Each numbered stage reports a phase (`phase.py`), so the board shows live
-progress: Queued → Building documents → Filling the form →
-Submitting → Verifying.
+The two local workers report phases through `phase.py`, so the board shows live
+progress: Queued → Building documents → Filling the form → Submitting →
+Verifying. The document provider process ends before the form process starts.
 
 ---
 
@@ -121,9 +131,41 @@ matters: the round trip is seconds, and a reload inside that window used to make
 a click look like it had failed.
 
 **The daemon cannot do the work itself.** It cannot tailor a resume or drive a
-browser. So it spawns headless Claude sessions. That makes the CLI's auth a
-load-bearing dependency and makes the spawn boundary the place where most of the
-safety checks live.
+browser. It coordinates two bounded provider processes instead. The local
+document process gets the document inputs and no browser. The later form
+process gets verified document paths, form answers, and a local browser, but no
+authority to rewrite documents. Both processes use the same local native CLI
+login. The boundaries around each process are where the fixed safety checks
+live.
+
+**Provider choice must be predictable.** `providers.py` records OpenAI,
+Anthropic, and Gemini connections in order. The first connected provider stays
+active even when its health check fails, because silently changing accounts or
+models in the middle of an application is worse than stopping. Disconnecting it
+promotes the next connection. A document job saves its provider and the later
+Mac form run uses that same provider. There is no automatic failover.
+
+Credentials and health are device-local. One Settings action updates the shared
+provider registry used by both local workers. The chosen provider must be
+installed and authenticated under the operating-system user that runs the
+services. Credentials remain in each vendor CLI's native account store and
+never enter Jobby's queue.
+
+Connect launches the native CLI's browser authentication. OpenAI runs `codex
+login` with the ChatGPT account flow. Anthropic runs `claude auth login
+--claudeai` so the account uses its Claude subscription rather than Console API
+billing. Gemini starts its interactive Sign in with Google flow. Jobby stores no
+OAuth credential. Agent work consumes the selected account's subscription
+limits or usage quota.
+
+The command builder pins a model for every document, form, and scan task:
+OpenAI `gpt-5.6-luna`, Anthropic `claude-sonnet-5`, and Gemini
+`gemini-3.7-flash`. No spawned task inherits the CLI default.
+
+Provider-neutral does not mean provider-decided safety. Duplicate refusal,
+artifact acceptance, allowed output paths, pre-submit write-ahead, confirmation
+recording, and terminal-outcome checks remain fixed Python and Node gates. The
+same gates run regardless of which CLI produced the prose or browser actions.
 
 **Free tiers price the wrong thing cheaply.** Two separate outages came from
 this, covered in §12.
@@ -132,16 +174,26 @@ this, covered in §12.
 
 ## 4. Components
 
-### Local, on the Mac (`scripts/`)
+### Shared scripts, with runtime ownership noted (`scripts/`)
+
+The Mac owns the repository, store, watcher, browser, sourcing, board
+publishing, document worker, and form runner. Oracle is not part of the active
+runtime.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `watch.py` | 741 | The daemon. Polls, claims, reserves slots, spawns runners, sweeps stuck work, publishes, reports health. |
+| `watch.py` | 1070 | Mac daemon. Polls and claims the control queue, coordinates encrypted document jobs, reserves browser slots, spawns form runners, publishes, reports health. |
 | `store.py` | 586 | All persistence. Profile, answers, history, sessions, role index, meta. Atomic writes, topic-matched answer lookup. |
-| `browser.py` | 398 | One long-lived Chrome per slot, on its own port and profile. Tab focus, profile cloning. |
-| `publish.py` | 364 | Renders the board, pushes it and the documents to KV, guards against a degraded render. |
-| `resume_pdf.py` | 341 | Renders a tailored PDF via headless Chrome and verifies it geometrically against the base. |
-| `ats_match.py` | 338 | Keyword coverage, and the `--suggest` pass that separates earned vocabulary from unclaimable. |
+| `providers.py` | 700 | Host-local registry for OpenAI, Anthropic, and Gemini. Owns connection order, sticky active selection, health, fixed models, and native CLI commands. |
+| `provider_login.py` | 90 | Runs one native CLI login on the current host, then records that provider as connected to Jobby. |
+| `document_job.py` | 595 | Mac client. Saves the provider and opaque job id, sends and retrieves encrypted document work, validates and installs complete results. |
+| `document_contract.py` | 326 | Minimal plaintext boundary at the two trusted hosts. Excludes street address and form answers, validates bundles and returned files. |
+| `document_worker.py` | 977 | Local launchd service. Claims one encrypted job at a time, runs the requested CLI without a browser, applies fixed gates, and scrubs plaintext. |
+| `browser.py` | 415 | Mac only. One long-lived Chrome per form slot, on its own port and profile. Tab focus, profile cloning. |
+| `publish.py` | 428 | Mac only. Renders the board and writes it, submitted documents, and sanitized provider status to KV. |
+| `resume_pdf.py` | 399 | Local document gate. Renders a tailored PDF via headless Chrome and verifies it geometrically against the base. |
+| `ats_match.py` | 390 | Keyword coverage, and the `--suggest` pass that separates earned vocabulary from unclaimable. |
+| `cover_letter.py` | 502 | Fixed cover-letter schema, template renderer, and PDF checks for identity, readability, one page, and street-address omission. |
 | `dashboard.py` | 1470 | Generates the entire board as a single self-contained HTML page. |
 | `found_lane.py` | 640 | The Found lane: job payload, filter bar, and the client script that renders the cards. |
 | `ingest.py` | 400 | One sourcing pass: fetch, gate, enrich, score, upsert, prune, account. |
@@ -152,19 +204,19 @@ this, covered in §12.
 | `search_config.py` | 250 | The saved search: schema, region packs, validation, versioning. |
 | `sources_registry.py` | 150 | The source catalog and the accounting that keeps "every source" honest. |
 | `promote.py` | 130 | 👁 and Pass: a Found job becoming a Watching session, or a tombstone. |
-| `sources/` | 1,200 | Fourteen Tier-1 connectors and the polite-fetching base they share. |
-| `run_apply.py` | 300 | Runs one application end to end by spawning an agent. Never claims for itself. |
+| `sources/` | 1,500 | Twenty-one Tier-1 connectors and the polite-fetching base they share, including Workday CXS JSON POST support. |
+| `run_apply.py` | 545 | Mac form-only runner. Requires and fingerprints the prepared PDFs, then spawns the saved provider with the local browser. Never claims or creates documents. |
 | `drop.py` | 187 | The user deciding against a role. Kills the runner if it is mid-flight. |
 | `run_scan.py` | 149 | Runs one sourcing sweep by spawning an agent. |
 | `file_docs.py` | 148 | Files documents into `applications/<Company>/`, role-qualified when a company has several. |
-| `toolpath.py` | 158 | Absolute paths to `node`, `vercel`, `claude`, `npx`. Merged config from two files. |
+| `toolpath.py` | 198 | Absolute paths to `node`, `vercel`, `npx`, `codex`, `claude`, and `gemini`. Merged config from two files. |
 | `dupe_check.py` | 146 | One application per job description, enforced before the browser opens. |
 | `seen.py` | 214 | Has this posting been through here before? Enforced on every new watch entry. |
 | `brief.py` | 194 | Everything a run needs to start, in one call. Replaces ~12 round trips. |
 | `finish.py` | 226 | The two ends of a submission, one call each, every check kept. |
 | `experience.py` | 200 | Lifts one role's content out of that posting's tailored resume. |
 | `apply_marks.py` | 128 | Applies "Mark submitted" clicks. |
-| `agent.py` | 101 | Preflights whether a spawned Claude session can authenticate. |
+| `agent.py` | 153 | Compatibility facade that resolves and preflights the selected native provider. It never chooses a healthy fallback. |
 | `sync_board.py` | 94 | Retires submitted roles out of Watching, republishes. |
 | `phase.py` | 91 | Live phase on an in-flight application; remembers the lane it came from. |
 | `brand.py` | 182 | Logo, favicon, mascot, lifted from the vendored brand pack. |
@@ -177,12 +229,27 @@ this, covered in §12.
 
 | File | Responsibility |
 |---|---|
-| `api/board.js` | The whole serverless function: Basic auth, CSP, the board, documents, six queue endpoints. |
+| `api/board.js` | The serverless function: Basic auth, CSP, board and submitted-document reads, control queues, and provider settings endpoints. |
 | `kv.mjs` | Cloudflare KV REST primitives, shared. |
-| `kvqueue.mjs` | The click queue: one key, `enqueue` / `claimOne` / `claimAll`, deduped by application id. Also holds the `watch` and `pass` arrays and the `searchConfig` object. |
-| `kvcontent.mjs` | Board HTML and documents in KV, with a short in-memory cache. |
+| `kvqueue.mjs` | The click queue: one application key plus the active local provider-control key and a retained legacy remote key, with `enqueue` / `claimOne` / `claimAll` and application-id deduplication. The application key also holds `watch`, `pass`, and `searchConfig`. |
+| `kvcontent.mjs` | Board HTML, submitted documents, and sanitized local status in KV, with a short in-memory cache. |
+| `kvjobs.mjs` | Per-job encrypted request and result records, leases, sanitized status, fixed error codes, and expiry. |
+| `document-jobs.mjs` | Fixed command bridge used by the two local services. Large plaintext travels through owner-only files, never process arguments. |
+| `local-status.mjs` | Publishes or reads sanitized device provider status for `/settings`. |
+| `worker-status.mjs` | Publishes or reads sanitized local document-worker readiness. It no longer creates a second settings target. |
 | `queue.mjs` | Local CLI over the queue: `poll`, `list`, `enqueue`, `claim-one`, `claim`. |
 | `publish-content.mjs` | Pushes board and documents to KV, skipping documents whose bytes are unchanged. |
+
+### Retired Oracle service (`deploy/oci/`)
+
+These files remain as historical recovery material. They are not installed,
+called, or displayed by the active product.
+
+| File | Responsibility |
+|---|---|
+| `setup.sh` | Installs the Ubuntu document toolchain, private Python environment, 2 GB swap when needed, and the systemd user service. |
+| `jobby-documents.service` | Runs the serial document worker as the authenticated Linux user and restarts it after failure. |
+| `config.env.example` | Lists the Cloudflare identifiers, token, and shared `JOBBY_WORKER_KEY` required on the worker. |
 
 ### The skill (`SKILL.md`, `references/`)
 
@@ -190,6 +257,7 @@ this, covered in §12.
 |---|---|
 | `SKILL.md` | The agent's operating manual: intake, sourcing, filling, the answer policies, what it will not do. |
 | `references/hosting.md` | The board, the queue, the watcher, the browsers, and every way this has broken. |
+| `references/oci-worker.md` | Retired Oracle recovery guide. Do not use it unless remote execution is explicitly restored. |
 | `references/platforms.md` | Per-ATS mechanics: what actually costs time on Greenhouse, Ashby, Workday, Lever, iCIMS, Google Careers. |
 | `references/sourcing.md` | Every channel, with search URL patterns and how to sweep each. |
 | `references/tailoring.md` | How to rewrite a resume into a posting's vocabulary without inventing. |
@@ -206,7 +274,7 @@ Everything lives in `~/.job-application/`, mode 700.
 | `profile.json` | object | Identity, work history, education, and `resumes[]` — one base per region, each with its own `identity` (phone, location, full address) and exactly one marked `default`. |
 | `answers.json` | key → entry | 118 reusable answers. Keys are normalised question slugs. Entries carry `question`, `value`, `state`, `tags`. |
 | `applications.jsonl` | append-only | 107 events. `started`, `reviewed`, `submitting`, `completed`, `abandoned`, plus outcomes `response` / `interview` / `offer` / `rejected`. |
-| `sessions/<id>.json` | one file per role | The working state of a role. Deleted once submitted. A session promoted from Found takes the job's id as its `applicationId`, which is what makes 👁 idempotent. |
+| `sessions/<id>.json` | one file per role | The working state of a role, including its sticky `documentJob` id, provider, state, and installed filenames while document work exists. Deleted once submitted. |
 | `roles.json` | id → role | Durable index of all 96 roles ever seen. Exists because sessions are deleted on completion, which would otherwise lose the posting URL. |
 | `jobs.json` | id → job | The discovery pool. One record per job description however many boards carry it, each with its sightings, its score and its state (`new` / `watched` / `passed` / `applied` / `expired`). Capped at 3,000; only `new` records are prunable. |
 | `passed.json` | id → tombstone | Jobs the user passed on. Outlives the job record, so pruning cannot resurrect one. |
@@ -214,9 +282,15 @@ Everything lives in `~/.job-application/`, mode 700.
 | `search-config.json` | object | The saved search, versioned. Its absence is meaningful — the hourly scan stays disarmed until it exists. |
 | `source-cache.json` | url → validator | `ETag` / `Last-Modified` per endpoint, so an unchanged board costs a request and no payload. |
 | `meta.json` | object | `dashboardUrl`, `blocked` (the banner), scan timestamps, `nextTier1ScanAt`, and `lastIngest` — the full account of the last sourcing pass. |
-| `config.env` | env | Machine-local settings, notably `HEALTHCHECKS_URL`. Separate from `deploy/.env.local` because `vercel env pull` regenerates that one and discards hand edits. |
-| `locks/` | one file per lock | `apply-1/2/3`, `scan`, `watcher`. Each holds a pid. |
+| `providers.json` | object | Device-local provider connection order and health. Mode 600. The first connection is active regardless of health; credentials remain in the vendor CLI store. Both local services share this file. |
+| `config.env` | env | Machine-local settings, notably `HEALTHCHECKS_URL` and `JOBBY_WORKER_KEY`. Separate from `deploy/.env.local` because `vercel env pull` regenerates that one and discards hand edits. |
+| `locks/` | one file per lock | `apply-1` through `apply-5`, `scan`, `watcher`. Each holds a pid. |
 | `browser-profile*/` | Chrome profiles | One per slot. Persist logins. |
+
+The decrypted local task directory is temporary, mode 700, and unique per job.
+The worker scrubs it after returning a result or publishing a fixed failure.
+Cloudflare retains ciphertext and sanitized status only until the job expires or
+the client deletes the retrieved job.
 
 ### Session status → board lane
 
@@ -258,9 +332,9 @@ Set apart in the tab bar: Dropped is a record, not a queue.
 
 | Control | Endpoint | Queue | Effect |
 |---|---|---|---|
-| Scan for new jobs | `/api/scan` | `scan` | Spawns a sourcing agent |
-| Apply | `/api/apply` | `apply` | Spawns an application agent |
-| Retry | `/api/retry` | `apply` | Same queue: re-running after a blocker is cleared *is* applying |
+| Scan for new jobs | `/api/scan` | `scan` | Spawns the active provider for a bounded sourcing task |
+| Apply | `/api/apply` | `apply` | Starts the encrypted local document stage, then the local form stage |
+| Retry | `/api/retry` | `apply` | Reuses verified documents and resumes the local form stage after a blocker is cleared |
 | Mark submitted | `/api/submitted` | `marked` | Logs a `completed` the user performed by hand |
 | Drop / Stop / × | `/api/drop` | `drop` | Records the decision, kills the runner if mid-flight |
 | Restore | `/api/restore` | `restore` | Puts a dropped role back in Watching |
@@ -294,8 +368,11 @@ remembered clicks on load.
 
 ## 7. Concurrency
 
-Up to **five applications at once**, each owned by one agent start to finish. No
-agent ever handles two.
+Up to **five local form runs at once**, each with its own browser slot. The
+local document service handles **one document job at a time**. Document
+creation and form filling are separate provider processes with a validated
+artifact handoff between them. No provider session owns an application start
+to finish.
 
 Two mechanisms carry this, both established by measurement rather than reasoning:
 
@@ -314,6 +391,10 @@ Submit on it. Each slot has its own Chrome on its own debugging port (9222 upwar
 defined once in browser.py with watch.py deriving its locks from it. Chrome's `SingletonLock` forbids sharing a profile, so each has its own,
 and `--clone-logins` copies a signed-in profile across so the user signs in once.
 
+The document serial limit is separate from browser slots. A completed document
+job releases the document process before its form run starts, and other local
+forms can continue while the document service builds the next set.
+
 Supporting guarantees:
 
 - Slot reservation is `O_CREAT|O_EXCL`. Check-then-act let two watchers hand out
@@ -331,32 +412,55 @@ Supporting guarantees:
 
 Every application gets its own resume and cover letter. Never a reused file.
 
-**Layout is cloned, not re-designed.** `resume_pdf.py render` uses headless
-Chrome `--print-to-pdf` (not WeasyPrint, which does not match). `verify` then
-diffs the output against the base geometrically and fails on a changed margin, a
-missing accent colour, a font size with no counterpart, or a contact block that
-wrapped to two lines.
+**The client defines a narrow request.** `document_contract.py` selects the base
+resume and sends only the posting, reduced document identity, confirmed story
+facts, writing samples, and the base PDF. Street address and application-form
+answers stay outside the document bundle. The request is sealed with
+AES-256-GCM before
+Cloudflare Workers KV receives it. KV sees an opaque UUID, timestamps, queue
+state, and a fixed error code. It never receives provider credentials.
 
-**Content is checked separately.** Employers, dates, employment titles and
-numbers are frozen. Only the profile title at the top adapts.
+**The local document service does document work only.** `document_worker.py`
+claims one job at a time, requires the provider saved in the request to be
+connected and healthy on the device, and starts the matching native CLI without
+a browser. It does not use another connected provider when that check fails.
+The shared command builder pins `gpt-5.6-luna`, `claude-sonnet-5`, or
+`gemini-3.7-flash`, so a vendor CLI default cannot change the task later.
 
-**Vocabulary is pushed hard, within evidence.** `ats_match.py --suggest` splits a
-posting's vocabulary into:
+The provider receives inline task data in an empty read-only sandbox and returns
+bounded prose overrides and cover-letter content as structured JSON. Trusted
+Python renders the files only after the provider exits. The fixed resume template keeps identity, education,
+certifications, employers, employment titles, and dates outside the editable
+fields. `ats_match.py --suggest` splits the posting vocabulary into two groups:
 
-- `rewritable` — the posting's word for something the base resume or story bank
-  already supports, with the evidence attached (`experimentation` ← `launchdarkly`).
-  These are a rewrite, not a claim.
-- `notClaimable` — no evidence. Never used.
+- `rewritable`: the posting's word for something the base resume or story bank
+  already supports, with the evidence attached (`experimentation` from
+  `launchdarkly`). These are a rewrite, not a new claim.
+- `notClaimable`: no evidence. Never used.
 
-Agents then re-pick and re-order **Areas of Expertise**, regroup **Technical
-Proficiencies** under the posting's names, and lead **experience bullets** with
-the posting's phrasing. Suggestions carry the posting's own spelling, because
-matching runs on stems and "manag" in Areas of Expertise is worse than nothing.
+The provider re-picks and re-orders **Areas of Expertise**, regroups
+**Technical Proficiencies** under the posting's names, and leads **experience
+bullets** with supported posting language. Suggestions carry the posting's own
+spelling, because matching runs on stems and "manag" in Areas of Expertise is
+worse than nothing.
 
-**The check that keeps it honest:** `unsourcedTerms` must be empty before upload.
-A term there appears in both the posting and the tailored resume but in neither
-the base nor the story bank, which is the exact shape of a keyword lifted off the
-posting. High coverage with a non-empty unsourced list is not a good resume.
+**Acceptance is programmatic.** A successful provider exit is only a candidate
+result. `validate_artifacts()` requires exactly the two HTML files and two PDFs
+as regular bounded files, rejects unresolved tokens and extra output, and then
+runs independent gates:
+
+- `unsourcedTerms` must be zero against the base and confirmed story facts.
+- `resume_pdf.py verify` must match page geometry, margins, colours, font sizes,
+  and the contact-block layout against the selected base.
+- `cover_letter.py` must accept the fixed content schema and find the expected
+  identity and authored text in one readable PDF with no street address.
+
+Only then does the worker encrypt the four files and the fixed check summary for return. The Mac
+revalidates application id, provider, filenames, hashes, encodings, types, and
+completeness before creating any destination file, then replaces each file
+atomically. The local form runner fingerprints both PDFs before the browser
+opens, uploads those exact files, and verifies that neither changed before it
+accepts a terminal outcome.
 
 Documents are filed to `applications/<Company>/`, role-qualified when a company
 has several open roles, and published to KV under their basename so the board can
@@ -400,31 +504,35 @@ Filters: Product Manager and Business Analyst titles, roles asking up to 5 years
 
 ## 9a. The Discovery Engine
 
-*On the `feature/discovery-engine-phase-1` branch, under review. Not merged.*
+*Phase 1 is merged. Source coverage continues to grow on main with the same
+failure-accounting and polite-fetching invariants.*
 
 Sourcing used to be one thing: an agent sweep, driven by the Scan button, which
 costs tokens and meets hourly bots with the CAPTCHA walls Jobby refuses to
 solve. That is fine for a daily cycle and useless for catching a posting in its
 first hour. So sourcing is now two tiers, and only the cheap one runs hourly.
 
-**Tier 1** is HTTP and JSON: no LLM, no browser, no key for nine of its
-fourteen channels. Greenhouse, Lever and Ashby boards driven off the company
-registry, plus RemoteOK, We Work Remotely, Remotive, Himalayas, Working Nomads
-and The Muse. Adzuna, Jooble, Careerjet, Reed and USAJobs join them once their
-free keys are installed; until then each reports *skipped (no key)* on every
-run, visibly, rather than being quietly absent. A measured full pass across all
-fourteen: 212 postings seen, 53 kept, 15 requests, 13 seconds.
+**Tier 1** is HTTP and JSON: no LLM and no browser. Twenty-one registered
+channels include ten direct ATS families: Greenhouse, Lever, Ashby,
+SmartRecruiters, Workable, Recruitee, Personio, Breezy, Rippling and Workday
+CXS. Public remote feeds and six search APIs provide the rest. Missing keys,
+wrong tenant paths, 4xx responses and unchanged boards remain distinct visible
+states. Workday was verified live on 2026-08-23: GEICO's public CXS endpoint
+returned 282 jobs, while Acronis returned 422 and was counted independently.
 
 **Tier 2** is the existing agent sweep, on a rotating channel pack. Phase 3.
 
 The company registry is the flywheel. Every company in `companies.json` costs
-one JSON request an hour, forever, so coverage is a function of how many
+one polite board request per sweep, so coverage is a function of how many
 companies are known rather than how much an hour of scanning costs. It seeds
 from `roles.json` — every company Jobby has ever applied to, with its ATS read
 straight off the URL it applied through — plus a curated per-region pack whose
 96 board tokens were each fetched once against the platform's public API before
 being committed. Eight of 104 candidates did not resolve and were dropped
 rather than shipped hopefully: a wrong token is a 404 on every ingest forever.
+Every ingest also learns verified ATS tenants from normalized source URLs before
+search gating. An irrelevant posting can therefore expand future whole-board
+coverage. Aggregator URLs never become guessed tenant tokens.
 
 ### One job description, one record
 
@@ -530,14 +638,17 @@ application").
 | Layer | Technology | Why |
 |---|---|---|
 | Board hosting | **Vercel** serverless function, `framework: other` | Stable password-gated URL |
-| Board + document storage | **Cloudflare Workers KV** | See below |
-| Click queue | **Cloudflare Workers KV**, one key | See below |
-| Browser automation | **`@playwright/mcp` 0.0.79** over CDP to real Chrome | File uploads and native dropdowns |
-| PDF rendering | **headless Chrome `--print-to-pdf`** | WeasyPrint does not match the layout |
+| Board + submitted-document serving | **Cloudflare Workers KV** | Content updates without a Vercel deployment |
+| Control queue | **Cloudflare Workers KV**, one application key plus a local provider lane | See below |
+| Encrypted document transport | **Cloudflare Workers KV**, AES-256-GCM per request and result | Crash-safe serial leases; KV sees ciphertext and fixed status |
+| Document worker | Local **launchd** service, serial | Keeps document generation bounded on Your Device |
+| Browser automation | Mac-only **`@playwright/mcp` 0.0.79** over CDP to real Chrome | Persistent login, file uploads, and native dropdowns |
+| PDF rendering | Local **headless Chrome `--print-to-pdf`** with a private temporary profile | WeasyPrint does not match the layout |
 | PDF inspection | **pymupdf** | Geometric verification |
 | Vector tracing | **potrace** | Favicon: 40KB raster → 263-byte vector |
-| Agent runtime | **Claude Code CLI** headless (`claude -p`), Opus 5 | |
-| Scheduling | **launchd** user agent, 3s interval | |
+| Agent runtime | Native **OpenAI Codex**, **Anthropic Claude Code**, and **Gemini CLI** | Registry-selected local login, no automatic failover |
+| Fixed models | OpenAI `gpt-5.6-luna`; Anthropic `claude-sonnet-5`; Gemini `gemini-3.7-flash` | Every task names its model instead of inheriting a CLI default |
+| Scheduling | Two Mac **launchd** services | Five-second orchestration poll plus a serial document loop |
 | Monitoring | **healthchecks.io** dead-man's switch | |
 | Store | **JSON + JSONL on disk**, stdlib only | |
 | CI/CD | **GitHub → Vercel Git integration**, root directory `deploy/` | Merging to main deploys |
@@ -549,9 +660,12 @@ application").
 operations a month. Moved to Workers KV — but the naive port would have died
 faster, because KV allows 100,000 key reads a day and only **1,000 list
 requests**. Free tiers price *listing a collection* far more harshly than
-*reading a key*. So the entire queue lives under one key: a poll is a single
-read, 28,800/day at a 3s interval against a 100,000 ceiling. R2 has the same trap
-in different units.
+*reading a key*. The application queue lives under one key, so the five-second
+poll is 17,280 reads per day. Provider controls use an isolated key so a
+settings claim cannot rewrite application state. A ten-minute sanitized local
+status heartbeat stays inside the API's fifteen-minute freshness window without
+spending the KV write budget. R2 has the same trap in
+different units.
 
 **Vercel's 100 deploys/day ran out.** Publishing the board meant redeploying the
 whole site, and the board's change signature included each in-flight `phase` —
@@ -577,10 +691,14 @@ non-obvious.
 3. **`claim` deleted the whole queue** after processing one item, destroying
    fourteen Apply clicks that had never been touched. A worker that handles one
    item must delete one item.
-4. **`--permission-mode acceptEdits` does not cover Bash.** Every `python3` call
-   in a spawned agent was denied in a session that cannot ask for approval. It
-   reported the blockage clearly and exited 0, which read as success.
-5. **A spawned CLI session has no MCP servers**, so no browser.
+4. **Anthropic's `--permission-mode acceptEdits` does not cover Bash.** In the
+   original Claude-only runner, every `python3` call was denied in a session
+   that could not ask for approval. It reported the blockage clearly and exited
+   0, which read as success. The provider command builder now supplies bounded
+   task permissions per CLI, and fixed outcome checks run after the process.
+5. **A spawned CLI session has no MCP servers.** Each provider needs an explicit
+   browser configuration for local form tasks. Local document tasks receive
+   none.
 6. **Form state lives in the page, not the profile.** A browser that dies with its
    run takes twenty filled fields with it, which is why "Open & finish" used to
    land on a blank application.
@@ -682,8 +800,6 @@ remembers to run is how it drifts.
   flight.
 - **8 of 30 watch entries carry no posted date**, because the sweep that found
   them recorded none. Not repairable without re-visiting each posting.
-- **Interleaved agent logs** are per-slot now, but the auth-failure sniffer still
-  reads a shared log tail.
 - **`meta.blocked` is global**, so any runner can clear a banner another set.
 - **No cost tracking.** A batch of applications has a real token cost that nothing
   currently records.
@@ -782,7 +898,7 @@ jobby-auto-apply/
 ├── references/               sourcing, platforms, tailoring, storage, hosting,
 │                             and the source registry (117 channels, status-accounted)
 ├── sources.json              the machine copy of that registry
-├── scripts/                  32 Python modules (§4), incl. sources/ (14 connectors)
+├── scripts/                  Python modules (§4), incl. sources/ (21 connectors)
 ├── deploy/                   Vercel function + KV modules
 ├── assets/brand/             logo pack, favicon, mascot
 ├── docs/                     screenshots, this document, plans/ and reviews/

@@ -3,7 +3,7 @@
 
 Runs as a launchd agent so nothing has to be typed. Every tick it reads the
 three queues in one call and acts on whatever is waiting: marks are applied
-inline, a Scan or an Apply spawns a Claude session in the background.
+inline, a Scan or an Apply spawns the selected provider agent in the background.
 
 Three things here are deliberate, each of them a fix for a way this failed.
 
@@ -26,7 +26,7 @@ happened, and pushed to healthchecks.io so silence itself is an alert.
 
   python3 scripts/watch.py --once        # one tick, for testing
   python3 scripts/watch.py --status      # what is running, no side effects
-  python3 scripts/watch.py --interval 2  # loop (what launchd runs)
+  python3 scripts/watch.py --interval 5  # loop (what launchd runs)
   python3 scripts/watch.py --install     # install the launchd agent
   python3 scripts/watch.py --uninstall
 """
@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import plistlib
+import shlex
 import subprocess
 import sys
 import time
@@ -47,27 +48,43 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent  # noqa: E402
 import browser  # noqa: E402
+import document_job  # noqa: E402
+import provider_login  # noqa: E402
+import providers  # noqa: E402
 import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 STORE = REPO / "scripts" / "store.py"
 LABEL = "ai.jobby.watch"
+DOCUMENT_LABEL = "ai.jobby.documents"
 PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+DOCUMENT_PLIST = (
+    Path.home() / "Library" / "LaunchAgents" / f"{DOCUMENT_LABEL}.plist"
+)
 STATE_DIR = Path.home() / ".job-application"
 LOG_DIR = STATE_DIR / "logs"
 LOCK_DIR = STATE_DIR / "locks"
 
-# A click should feel immediate. Ticks are one blob list plus a little local IO,
-# so a couple of seconds costs almost nothing and is the difference between the
-# board feeling alive and feeling broken.
-DEFAULT_INTERVAL = 2
+# Five seconds keeps clicks responsive while leaving room in the Cloudflare KV
+# read budget for document status and settings checks.
+DEFAULT_INTERVAL = 5
+PROVIDER_CONTROL_INTERVAL_SECONDS = 30
+_last_provider_control_poll = 0.0
+# The public API treats a local status older than fifteen minutes as offline.
+# Refresh it every ten minutes even when no settings request is waiting.
+LOCAL_STATUS_HEARTBEAT_SECONDS = 10 * 60
+_last_local_status_publish = 0.0
+DOCUMENT_STATUS_INTERVAL_SECONDS = 30
+DOCUMENT_STATUS_STALE_SECONDS = 15 * 60
+_last_document_status_poll = 0.0
+_document_status_cache = None
 # Publishing shells out to vercel, so it is debounced behind an actual change,
 # with a floor so a long quiet stretch still refreshes eventually.
 PUBLISH_FLOOR_SECONDS = 900
-# How often to tell healthchecks we are alive when nothing is happening. Well
-# inside any sane period setting, so a single dropped ping never reads as death.
-HEARTBEAT_SECONDS = 30
+# The configured check expects one ping per hour with ten minutes of grace.
+# Fifty-five minutes leaves a small scheduling cushion without flooding it.
+HEARTBEAT_SECONDS = 55 * 60
 # An apply that has not reported a phase in this long is not coming back.
 STUCK_AFTER_SECONDS = 75 * 60
 # Jitter on the hourly sourcing scan, so a machine that has been up for a week
@@ -167,8 +184,29 @@ def lock_path(name):
     return LOCK_DIR / f"{name}.lock"
 
 
+def _durable_browser_owner(name, aid):
+    """Recover affinity when a runner dies before writing a parked lock."""
+    if name not in browser.SLOTS or not aid:
+        return None
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode != 0:
+        if "no session with that id" in (loaded.stderr or "").lower():
+            return None
+        return aid
+    try:
+        entry = json.loads(loaded.stdout or "{}")
+    except json.JSONDecodeError:
+        return aid
+    return aid if entry.get("browserSlot") == name else None
+
+
 def lock_holder(name):
-    """The live pid holding this lock, or None. Clears the lock if it is stale."""
+    """The live or parked owner of this lock, or None.
+
+    Parked browser slots outlive their runner on purpose. Their lock is cleared
+    only after the application reaches a terminal outcome and its page state
+    has been removed.
+    """
     p = lock_path(name)
     if not p.exists():
         return None
@@ -178,18 +216,54 @@ def lock_holder(name):
     except (json.JSONDecodeError, KeyError, ValueError, OSError):
         p.unlink(missing_ok=True)
         return None
+    if data.get("parked") is True:
+        return data
     if pid_alive(pid):
         return data
+    durable_owner = _durable_browser_owner(name, data.get("note"))
+    if durable_owner:
+        parked = {
+            "pid": 0,
+            "at": now_stamp(),
+            "note": durable_owner,
+            "parked": True,
+        }
+        _write_lock(name, parked)
+        return parked
     # The holder died without cleaning up: a crash, a reboot, a kill.
     p.unlink(missing_ok=True)
     return None
 
 
-def take_lock(name, pid, note=""):
+def _write_lock(name, data):
+    """Atomically replace one private lock record."""
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOCK_DIR, 0o700)
-    lock_path(name).write_text(json.dumps(
-        {"pid": pid, "at": now_stamp(), "note": note}))
+    target = lock_path(name)
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            json.dump(data, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def take_lock(name, pid, note=""):
+    _write_lock(name, {"pid": pid, "at": now_stamp(), "note": note})
+
+
+def park_slot(name, aid):
+    """Keep a browser slot owned after its runner exits."""
+    _write_lock(name, {
+        "pid": 0,
+        "at": now_stamp(),
+        "note": aid,
+        "parked": True,
+    })
 
 
 def reserve(name, note=""):
@@ -203,7 +277,12 @@ def reserve(name, note=""):
     """
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOCK_DIR, 0o700)
-    lock_holder(name)  # clears it first if the previous holder is dead
+    held = lock_holder(name)  # clears it first if the previous holder is dead
+    if held:
+        if held.get("parked") is True and held.get("note") == note:
+            take_lock(name, os.getpid(), note=note)
+            return True
+        return False
     try:
         fd = os.open(lock_path(name), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -248,9 +327,180 @@ def running_applications():
     out = {}
     for name in APPLY_LOCKS:
         held = lock_holder(name)
-        if held and held.get("note"):
+        if held and held.get("note") and held.get("parked") is not True:
             out[held["note"]] = name
     return out
+
+
+def _sessions():
+    result = store(["session-list"])
+    if result.returncode != 0:
+        raise TickError("application sessions are unreadable")
+    try:
+        value = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise TickError("application sessions returned unreadable output") from exc
+    if not isinstance(value, list):
+        raise TickError("application sessions returned the wrong shape")
+    return [entry for entry in value if isinstance(entry, dict)]
+
+
+def _save_session(entry):
+    aid = entry.get("applicationId")
+    if not aid:
+        raise TickError("cannot save a browser slot without an application id")
+    result = run(
+        [sys.executable, str(STORE), "session-save", "--id", aid, "--input", "-"],
+        input=json.dumps(entry),
+    )
+    if result.returncode != 0:
+        raise TickError(f"could not save browser ownership for {aid}")
+
+
+def browser_slot_for_application(aid, sessions=None):
+    """Return the recorded slot, with a parked lock as a recovery fallback."""
+    entries = sessions
+    if entries is None:
+        loaded = store(["session-load", "--id", aid])
+        if loaded.returncode == 0:
+            try:
+                entry = json.loads(loaded.stdout or "{}")
+            except json.JSONDecodeError:
+                entry = {}
+            entries = [entry] if isinstance(entry, dict) else []
+        else:
+            entries = []
+    for entry in entries:
+        if entry.get("applicationId") == aid and entry.get("browserSlot") in APPLY_LOCKS:
+            return entry["browserSlot"]
+    for slot in APPLY_LOCKS:
+        held = lock_holder(slot)
+        if held and held.get("parked") is True and held.get("note") == aid:
+            return slot
+    return None
+
+
+def persist_browser_slot(aid, slot):
+    """Save the slot before a runner can put private form state in it."""
+    if slot not in APPLY_LOCKS:
+        raise TickError("cannot assign an unknown browser slot")
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode != 0:
+        raise TickError(f"no application session for {aid}")
+    try:
+        entry = json.loads(loaded.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"application session is unreadable for {aid}") from exc
+    previous = entry.get("browserSlot")
+    if previous in APPLY_LOCKS and previous != slot:
+        raise TickError(f"application {aid} already owns {previous}")
+    entry["browserSlot"] = slot
+    _save_session(entry)
+    return previous == slot
+
+
+def _latest_history():
+    result = store(["history-list"])
+    if result.returncode != 0:
+        raise TickError("application history is unreadable")
+    try:
+        events = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise TickError("application history returned unreadable output") from exc
+    latest = {}
+    for event in sorted((x for x in events if isinstance(x, dict)),
+                        key=lambda x: x.get("at") or ""):
+        if event.get("applicationId"):
+            latest[event["applicationId"]] = event.get("event")
+    return latest
+
+
+def release_browser_slot(aid, slot=None, entry=None):
+    """Clear a terminal application's page, then release its durable owner."""
+    if entry is None:
+        loaded = store(["session-load", "--id", aid])
+        if loaded.returncode == 0:
+            try:
+                entry = json.loads(loaded.stdout or "{}")
+            except json.JSONDecodeError as exc:
+                raise TickError(f"application session is unreadable for {aid}") from exc
+        else:
+            entry = None
+    slot = slot or ((entry or {}).get("browserSlot"))
+    if slot not in APPLY_LOCKS:
+        return False
+
+    held = lock_holder(slot)
+    if held and held.get("note") != aid:
+        raise TickError(f"browser slot {slot} is owned by another application")
+    if held and held.get("parked") is not True:
+        return False
+
+    cleared = browser.clear_slot(slot)
+    if not cleared.get("cleared"):
+        park_slot(slot, aid)
+        return False
+
+    if entry is not None and entry.get("browserSlot") == slot:
+        entry.pop("browserSlot", None)
+        _save_session(entry)
+    lock_path(slot).unlink(missing_ok=True)
+    return True
+
+
+def reconcile_browser_slots():
+    """Restore parked reservations and release terminal ones after cleanup."""
+    sessions = _sessions()
+    latest = _latest_history()
+    by_slot = {}
+    released = []
+    parked = []
+    session_ids = {entry.get("applicationId") for entry in sessions}
+
+    for entry in sessions:
+        aid = entry.get("applicationId")
+        slot = entry.get("browserSlot")
+        if not aid or slot not in APPLY_LOCKS:
+            continue
+        if slot in by_slot and by_slot[slot] != aid:
+            raise TickError(f"browser slot {slot} is recorded for two applications")
+        by_slot[slot] = aid
+        terminal = entry.get("status") == "dropped" or latest.get(aid) in {
+            "completed", "abandoned"
+        }
+        if terminal:
+            if release_browser_slot(aid, slot, entry):
+                released.append({"applicationId": aid, "slot": slot})
+            continue
+        held = lock_holder(slot)
+        if held is None:
+            park_slot(slot, aid)
+            parked.append({"applicationId": aid, "slot": slot})
+        elif held.get("note") != aid:
+            raise TickError(f"browser slot {slot} is owned by another application")
+
+    # A terminal sync can remove its session before the watcher gets here. A
+    # parked lock with no session is still safe to release once its tabs clear.
+    for slot in APPLY_LOCKS:
+        held = lock_holder(slot)
+        aid = (held or {}).get("note")
+        if (held and held.get("parked") is True and aid not in session_ids
+                and release_browser_slot(aid, slot, entry=None)):
+            released.append({"applicationId": aid, "slot": slot})
+    return {"parked": parked, "released": released}
+
+
+def candidate_apply_slots(aid):
+    """Honor durable affinity, otherwise return genuinely unused slots."""
+    affinity = browser_slot_for_application(aid)
+    if not affinity:
+        return free_apply_slots()
+    held = lock_holder(affinity)
+    if held is None:
+        return [affinity]
+    if held.get("parked") is True and held.get("note") == aid:
+        return [affinity]
+    return []
 
 
 def queue_depth(q, name):
@@ -264,6 +514,155 @@ def claim_one(prefix):
     if r.returncode != 0:
         raise TickError(f"claim failed for {prefix}: {(r.stderr or '').strip()[:200]}")
     return json.loads(r.stdout or "[]")
+
+
+def claim_all(prefix):
+    """Take every request from one queue, with a failed write treated as a fault."""
+    r = subprocess.run([toolpath.node(), "queue.mjs", "claim", prefix], cwd=DEPLOY,
+                       capture_output=True, text=True, env=toolpath.queue_env(), timeout=60)
+    if r.returncode != 0:
+        raise TickError(f"claim failed for {prefix}: {(r.stderr or '').strip()[:200]}")
+    try:
+        return json.loads(r.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"claim returned junk for {prefix}") from exc
+
+
+PROVIDER_ACTIONS = frozenset(("connect", "disconnect", "refresh"))
+
+
+def launch_provider_login(provider_id):
+    """Open one allowlisted native CLI sign-in inside macOS Terminal."""
+    if provider_id not in providers.PROVIDER_IDS:
+        raise TickError("refusing an unknown provider login request")
+    command = shlex.join([
+        sys.executable,
+        str(REPO / "scripts" / "provider_login.py"),
+        "--provider",
+        provider_id,
+    ])
+    script = """on run argv
+tell application "Terminal"
+  activate
+  do script (item 1 of argv)
+end tell
+end run"""
+    result = run(["/usr/bin/osascript", "-e", script, command])
+    if result.returncode != 0:
+        raise TickError("the provider sign-in terminal could not be opened")
+    return True
+
+
+def process_local_provider_controls(q, now=None):
+    """Apply settings requests addressed to this Mac and publish safe status."""
+    global _last_provider_control_poll, _last_local_status_publish
+    checked_at = time.monotonic() if now is None else float(now)
+    forced = bool(q.get("providerLocal"))
+    if not forced and checked_at - _last_provider_control_poll < PROVIDER_CONTROL_INTERVAL_SECONDS:
+        return {}
+    _last_provider_control_poll = checked_at
+    claimed = claim_all("providerLocal/")
+    q["providerLocal"] = []
+    if not claimed:
+        if checked_at - _last_local_status_publish >= LOCAL_STATUS_HEARTBEAT_SECONDS:
+            registry = providers.ProviderRegistry()
+            if provider_login.publish_status(registry.public_status()):
+                _last_local_status_publish = checked_at
+        return {}
+    registry = providers.ProviderRegistry()
+    events = []
+    rejected = []
+    status = None
+    for item in claimed:
+        provider_id = item.get("provider") if isinstance(item, dict) else None
+        action = item.get("action") if isinstance(item, dict) else None
+        if provider_id not in providers.PROVIDER_IDS or action not in PROVIDER_ACTIONS:
+            rejected.append({"provider": provider_id, "action": action})
+            continue
+        try:
+            if action == "connect":
+                connection_key = item.get("connectionKey")
+                status = (
+                    registry.connect(provider_id, connection_key=connection_key)
+                    if connection_key is not None
+                    else registry.connect(provider_id)
+                )
+                row = next(
+                    entry for entry in status.get("providers", [])
+                    if entry.get("id") == provider_id
+                )
+                opened = False
+                if not (row.get("connected") and row.get("healthy")):
+                    opened = launch_provider_login(provider_id)
+                events.append({"provider": provider_id, "action": action,
+                               "loginOpened": opened})
+            elif action == "disconnect":
+                status = registry.disconnect(provider_id)
+                events.append({"provider": provider_id, "action": action})
+            else:
+                status = registry.refresh(provider_id)
+                events.append({"provider": provider_id, "action": action})
+        except (providers.ProviderError, StopIteration) as exc:
+            raise TickError("the local provider registry could not apply a settings request") from exc
+    if status is None:
+        status = registry.public_status()
+    published = provider_login.publish_status(status)
+    if published:
+        _last_local_status_publish = checked_at
+    result = {"requests": events, "statusPublished": published}
+    if rejected:
+        result["rejected"] = rejected
+    return {"providerLocal": result}
+
+
+def document_provider_ready(provider_id, now=None):
+    """Return local document-worker readiness without polling KV every tick."""
+    global _last_document_status_poll, _document_status_cache
+    checked_at = time.monotonic() if now is None else float(now)
+    if (
+        _document_status_cache is None
+        or checked_at - _last_document_status_poll >= DOCUMENT_STATUS_INTERVAL_SECONDS
+    ):
+        try:
+            result = subprocess.run(
+                [toolpath.node(), "worker-status.mjs", "read"],
+                cwd=DEPLOY,
+                capture_output=True,
+                text=True,
+                env=toolpath.queue_env(),
+                timeout=60,
+            )
+            _document_status_cache = (
+                json.loads(result.stdout or "null") if result.returncode == 0 else None
+            )
+        except (OSError, SystemExit, subprocess.TimeoutExpired, json.JSONDecodeError):
+            _document_status_cache = None
+        _last_document_status_poll = checked_at
+
+    status = _document_status_cache
+    if not isinstance(status, dict):
+        return False, "the local document worker is offline"
+    published = status.get("checkedAt")
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(
+            str(published).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return False, "the local document worker status is unreadable"
+    if age.total_seconds() > DOCUMENT_STATUS_STALE_SECONDS:
+        return False, "the local document worker status is stale"
+    row = next(
+        (
+            item for item in status.get("providers") or []
+            if isinstance(item, dict) and item.get("id") == provider_id
+        ),
+        None,
+    )
+    if not row or row.get("connected") is not True or row.get("status") != "connected":
+        return False, f"{provider_id} is not connected for local document work"
+    if status.get("activeProvider") != provider_id:
+        return False, f"{provider_id} is not the local document worker default"
+    return True, ""
 
 
 def poll_queues():
@@ -305,7 +704,8 @@ def fingerprint():
     # jobs has to count as a change. Without this the pool would fill up and
     # the published board would keep showing the last set of sessions.
     return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
-            f"{render_version()}|{search_config_version()}|" + "|".join(parts))
+            f"{provider_signature()}|{render_version()}|{search_config_version()}|"
+            + "|".join(parts))
 
 
 def search_config_version():
@@ -342,7 +742,7 @@ def render_version():
     any change to either, and none after that.
     """
     digest = hashlib.sha256()
-    for name in ("dashboard.py", "found_lane.py"):
+    for name in ("dashboard.py", "found_lane.py", "settings_panel.py"):
         try:
             digest.update((REPO / "scripts" / name).read_bytes())
         except OSError:
@@ -350,6 +750,21 @@ def render_version():
             # report. Here it just has to be a stable, distinct value.
             digest.update(b"missing:" + name.encode())
     return digest.hexdigest()[:12]
+
+
+def provider_signature():
+    """Safe provider state that should trigger a fresh published board."""
+    try:
+        status = providers.public_status()
+    except providers.ProviderError:
+        return "unreadable"
+    parts = [str(status.get("activeProvider") or "none")]
+    for row in status.get("providers") or []:
+        parts.append(
+            f"{row.get('id')}:{int(bool(row.get('connected')))}:"
+            f"{row.get('status') or 'unknown'}"
+        )
+    return "|".join(parts)
 
 
 def found_signature():
@@ -658,10 +1073,110 @@ def do_not_start(aid):
     return None
 
 
+DOCUMENT_PHASES = {
+    "submitting": (
+        "Building documents on Your Device",
+        "Sending the document job to the local worker",
+    ),
+    "queued": (
+        "Building documents on Your Device",
+        "Waiting for the local document worker",
+    ),
+    "claimed": (
+        "Building documents on Your Device",
+        "Your Device is generating the resume and cover letter",
+    ),
+    "completed": (
+        "Checking documents",
+        "Verifying and installing the generated files",
+    ),
+    "retrieved": (
+        "Checking documents",
+        "Verifying and installing the generated files",
+    ),
+    "ready": (
+        "Documents ready",
+        "Waiting for an on-device application slot",
+    ),
+}
+
+
+def set_phase_if_changed(aid, phase, detail):
+    """Write a board phase only when its visible value actually changed."""
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode != 0:
+        raise TickError(f"no application session for {aid}")
+    try:
+        entry = json.loads(loaded.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"application session is unreadable for {aid}") from exc
+    if entry.get("phase") == phase and entry.get("phaseDetail") == detail:
+        return False
+    result = run([
+        sys.executable,
+        str(REPO / "scripts" / "phase.py"),
+        "--id",
+        aid,
+        "--phase",
+        phase,
+        "--detail",
+        detail,
+    ])
+    if result.returncode != 0:
+        raise TickError(f"phase update failed for {aid}")
+    return True
+
+
+def prepare_document_head(item, provider_id):
+    """Submit or poll the head document job without claiming the Apply click."""
+    if not isinstance(item, dict) or not item.get("applicationId"):
+        raise TickError("the Apply queue head has no application id")
+    if provider_id not in providers.PROVIDER_IDS:
+        raise TickError("the selected provider is not supported")
+    aid = item["applicationId"]
+    try:
+        saved = document_job.get_state(aid)
+        if item.get("retry") is True and saved and saved.get("state") == "failed":
+            return document_job.retry_failed(aid, provider_id)
+        return document_job.sync(aid, provider_id)
+    except document_job.DocumentJobError as exc:
+        raise TickError(f"document job stopped with {exc.code}") from exc
+
+
+def park_document_failure(aid, state):
+    """Claim one failed Apply request and send it to an explicit Retry state."""
+    claimed = claim_one("apply/")
+    if not claimed or claimed[0].get("applicationId") != aid:
+        raise TickError("the Apply queue changed while parking a document failure")
+    code = state.get("errorCode") or "worker_failed"
+    detail = (
+        f"The local document worker stopped with {code}. Press Retry after checking "
+        "the provider and worker status in Settings."
+    )
+    result = run([
+        sys.executable,
+        str(REPO / "scripts" / "finish.py"),
+        "--id",
+        aid,
+        "--park",
+        "--pending",
+        "Document generation",
+        "--detail",
+        detail,
+    ])
+    if result.returncode != 0:
+        raise TickError(f"could not park failed document work for {aid}")
+    return {"applicationId": aid, "errorCode": code}
+
+
 def tick(force_publish=False):
     """One pass. Raises TickError if it could not do its job."""
     changed = {}
     q = poll_queues()
+    slot_changes = reconcile_browser_slots()
+    if slot_changes["parked"] or slot_changes["released"]:
+        changed["browserSlots"] = slot_changes
+    changed.update(process_local_provider_controls(q))
 
     # Drops first, and before anything is spawned. A drop can be the user
     # stopping a run that is happening right now, so acting on it late means the
@@ -680,6 +1195,10 @@ def tick(force_publish=False):
                      "--id", aid, "--no-publish"])
             if r.returncode == 0:
                 dropped.append(aid)
+                slot = browser_slot_for_application(aid)
+                if slot and release_browser_slot(aid, slot):
+                    changed.setdefault("browserSlotsReleased", []).append(
+                        {"applicationId": aid, "slot": slot})
         if dropped:
             changed["dropped"] = dropped
 
@@ -705,8 +1224,12 @@ def tick(force_publish=False):
             if not url:
                 changed["focus"] = {"applicationId": aid, "error": "no posting url on record"}
                 continue
-            browser.serve()
-            changed["focus"] = {"applicationId": aid, **browser.focus(url)}
+            slot = browser_slot_for_application(aid)
+            browser.serve(slot)
+            changed["focus"] = {
+                "applicationId": aid,
+                **browser.focus(url, slot=slot),
+            }
 
     if q.get("restore"):
         claimed = json.loads(subprocess.run(
@@ -741,50 +1264,152 @@ def tick(force_publish=False):
             raise TickError("apply_marks produced no result")
         if applied:
             changed["marks"] = [a.get("company") for a in applied]
+            for result in applied:
+                aid = result.get("applicationId")
+                if not aid or result.get("error"):
+                    continue
+                slot = browser_slot_for_application(aid)
+                if slot and release_browser_slot(aid, slot):
+                    changed.setdefault("browserSlotsReleased", []).append(
+                        {"applicationId": aid, "slot": slot})
 
-    # Anything sitting in the apply queue is in flight as far as the board is
-    # concerned, whether or not a runner has reached it yet. Applications run
-    # strictly one at a time, so a queued retry can wait behind a forty-five
-    # minute run; leaving the store saying "review" for that whole time meant a
-    # reload put the card back under Needs you and it read as the click having
-    # failed. The lane is decided here, in the store, so it survives a reload
-    # and looks the same on another device.
-    for item in q.get("apply", []):
-        aid = item.get("applicationId")
-        if not aid:
-            continue
-        loaded = store(["session-load", "--id", aid])
-        if loaded.returncode != 0:
-            continue
-        if (json.loads(loaded.stdout or "{}") or {}).get("status") == "inflight":
-            continue
-        run([sys.executable, str(REPO / "scripts" / "phase.py"), "--id", aid,
-             "--phase", "Queued", "--detail", "waiting for a runner"])
-        changed.setdefault("queued", []).append(aid)
+    apply_items = q.get("apply") or []
+    apply_head = apply_items[0] if apply_items else None
+    head_id = apply_head.get("applicationId") if isinstance(apply_head, dict) else None
 
-    # Nothing that needs a spawned agent is worth starting while the CLI cannot
-    # authenticate. The runners preflight too, so the queue is safe either way,
-    # but without this the watcher spawns a doomed process every couple of
-    # seconds. The check is cached, so this costs nothing per tick.
-    agent_ok = True
-    if q.get("scan") or q.get("apply"):
-        agent_ok, why = agent.authenticated()
-        if not agent_ok:
-            store(["meta-set", "--key", "blocked", "--value", agent.blocked_reason(why)])
-            changed.setdefault("waitingOnAuth", agent.blocked_reason(why))
+    # Tail applications stay visible as queued, but only the head can submit or
+    # Poll one serial document lane on this device. Tail applications remain
+    # queued so document generation stays bounded and preserves click order.
+    for item in apply_items[1:]:
+        aid = item.get("applicationId") if isinstance(item, dict) else None
+        if aid and set_phase_if_changed(aid, "Queued", "Waiting for an earlier application"):
+            changed.setdefault("queued", []).append(aid)
+
+    selected_provider = providers.active_provider()
+    document_state = None
+    document_provider = None
+    auth_block = None
+    selected_provider_ready = False
+
+    if apply_head:
+        if not head_id:
+            raise TickError("the Apply queue head has no application id")
+        busy = running_applications()
+        if head_id in busy:
+            claimed = claim_one("apply/")
+            if not claimed or claimed[0].get("applicationId") != head_id:
+                raise TickError("the Apply queue changed while removing a duplicate click")
+            q["apply"] = apply_items[1:]
+            changed.setdefault("alreadyRunning", []).append(
+                {"applicationId": head_id, "slot": busy[head_id]})
+            apply_head = None
+        elif apply_head.get("retry") is not True:
+            reason = do_not_start(head_id)
+            if reason:
+                claimed = claim_one("apply/")
+                if not claimed or claimed[0].get("applicationId") != head_id:
+                    raise TickError("the Apply queue changed while declining a request")
+                q["apply"] = apply_items[1:]
+                changed.setdefault("notStarted", []).append(
+                    {"applicationId": head_id, "why": reason})
+                apply_head = None
+
+    if apply_head:
+        if not selected_provider:
+            detail = "Connect an agent account for this Mac in Settings"
+            if set_phase_if_changed(head_id, "Waiting for provider", detail):
+                changed.setdefault("queued", []).append(head_id)
+            auth_block = agent.blocked_reason("no agent provider is connected")
+            changed["waitingOnProvider"] = head_id
+        else:
+            try:
+                existing_document = document_job.get_state(head_id)
+            except document_job.DocumentJobError:
+                existing_document = None
+            selected_provider_ready, local_why = agent.authenticated(
+                force=not bool(existing_document), provider=selected_provider
+            )
+            if not existing_document:
+                provider_login.publish_status(providers.public_status())
+            if not selected_provider_ready:
+                auth_block = agent.blocked_reason(local_why, selected_provider)
+                detail = "Reconnect the default provider on this Mac in Settings"
+                if set_phase_if_changed(head_id, "Waiting for provider", detail):
+                    changed.setdefault("queued", []).append(head_id)
+                changed["waitingOnAuth"] = auth_block
+            else:
+                remote_ready, remote_why = document_provider_ready(selected_provider)
+                if not remote_ready:
+                    detail = remote_why + ". Open Settings to finish the connection"
+                    if set_phase_if_changed(head_id, "Waiting for provider", detail):
+                        changed.setdefault("queued", []).append(head_id)
+                    changed["waitingOnDocumentProvider"] = {
+                        "applicationId": head_id,
+                        "provider": selected_provider,
+                        "why": remote_why,
+                    }
+                else:
+                    document_state = prepare_document_head(apply_head, selected_provider)
+                    document_provider = document_state.get("provider") or selected_provider
+                    state_name = document_state.get("state")
+                    if state_name == "failed":
+                        parked = park_document_failure(head_id, document_state)
+                        q["apply"] = apply_items[1:]
+                        changed["documentFailed"] = parked
+                        apply_head = None
+                    elif state_name not in DOCUMENT_PHASES:
+                        raise TickError(f"document job returned invalid state {state_name!r}")
+                    else:
+                        phase, detail = DOCUMENT_PHASES[state_name]
+                        error_code = document_state.get("lastErrorCode")
+                        if error_code:
+                            detail = f"{detail}. Status checks will retry after {error_code}"
+                        if set_phase_if_changed(head_id, phase, detail):
+                            changed["documentState"] = {
+                                "applicationId": head_id,
+                                "state": state_name,
+                                "provider": document_provider,
+                            }
+
+    # Scans use the first connected provider on this device. A document-ready
+    # application uses the provider saved with its job, even if Settings changed
+    # while the local worker was generating it. That prevents a silent switch.
+    scan_ok = False
+    scan_provider = selected_provider
+    if q.get("scan"):
+        if scan_provider:
+            scan_ok, why = agent.authenticated(provider=scan_provider)
+        else:
+            scan_ok, why = False, "no agent provider is connected"
+        if not scan_ok:
+            auth_block = agent.blocked_reason(why, scan_provider)
+            changed["waitingOnAuth"] = auth_block
+
+    apply_ok = False
+    if apply_head and document_job.is_ready(document_state):
+        apply_ok, why = agent.authenticated(provider=document_provider)
+        if not apply_ok:
+            auth_block = agent.blocked_reason(why, document_provider)
+            changed["waitingOnAuth"] = auth_block
+
+    if auth_block:
+        store(["meta-set", "--key", "blocked", "--value", auth_block])
     elif blocked_message():
-        # The queues are empty and the reason may be stale; re-check cheaply so
-        # the banner clears itself once the user has logged back in.
-        ok, _ = agent.authenticated()
-        if ok:
+        status = providers.public_status()
+        if status.get("ready"):
             store(["meta-set", "--key", "blocked", "--value", ""])
             changed["unblocked"] = True
 
-    # One scan at a time, and never while an application is mid-flight: a sweep
-    # rewriting the watch list under a running apply is asking for trouble.
-    if agent_ok and q.get("scan") and not lock_holder("scan"):
-        pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "run_scan.py")],
-                    "scan-runs.log", note="scan")
+    # One scan at a time. The runner claims its own scan request only after its
+    # forced provider preflight passes.
+    if scan_ok and q.get("scan") and not lock_holder("scan"):
+        pid = spawn(
+            "scan",
+            [sys.executable, str(REPO / "scripts" / "run_scan.py"),
+             "--provider", scan_provider],
+            "scan-runs.log",
+            note="scan",
+        )
         changed["scanStarted"] = pid
 
     # The hourly Tier-1 sourcing pass. It shares the scan lock rather than
@@ -802,82 +1427,42 @@ def tick(force_publish=False):
                                  "--tier", "1"], "ingest-runs.log", note="tier1-ingest")
             changed["tier1ScanStarted"] = {"pid": pid, "nextAt": nxt}
 
-    # Up to APPLY_SLOTS applications at once, one agent per application, start to
-    # finish. The claim happens HERE rather than inside the runner, and that is
-    # the whole point: the queue is a single KV key updated by read-modify-write
-    # with no compare-and-swap, so two runners claiming at the same instant both
-    # take the same head of the queue and the same job gets applied to twice.
-    # Verified, not assumed. This tick is single-threaded, so claiming in it is
-    # sequential however many runners are already in flight.
-    if agent_ok and not lock_holder("scan"):
-        for slot in free_apply_slots():
-            if not queue_depth(q, "apply"):
-                break
-            # Reserve BEFORE claiming. Claiming first and then losing the slot
-            # would take a request off the queue with nothing to run it.
-            if not reserve(slot, note="starting"):
-                continue
-            # Everything from here to the spawn has to release the slot if it
-            # throws. reserve() writes THIS process's pid on purpose, so the
-            # slot is not mistaken for stale in the moment before the runner
-            # starts, which means a lock left behind here holds a live pid and
-            # lock_holder will never clear it. The slot would be gone until the
-            # watcher restarted. claim_one raises on a failed KV write, and a
-            # KV write did fail today, so this is the path that loses a slot.
+    # The device claims an Apply click only after the local document worker
+    # returned all four verified files and the saved provider passed auth.
+    free_slots = free_apply_slots()
+    affinity_slot = browser_slot_for_application(head_id) if apply_head else None
+    candidate_slots = candidate_apply_slots(head_id) if apply_head else free_slots
+    if apply_ok and apply_head and candidate_slots and not lock_holder("scan"):
+        slot = candidate_slots[0]
+        retained = affinity_slot == slot
+        if reserve(slot, note=head_id):
             try:
                 claimed = claim_one("apply/")
-            except Exception:
-                lock_path(slot).unlink(missing_ok=True)
-                raise
-            if not claimed:
-                lock_path(slot).unlink(missing_ok=True)
-                break
-            aid = claimed[0].get("applicationId")
-            if not aid:
-                lock_path(slot).unlink(missing_ok=True)
-                continue
-            # Already being worked on. The board re-sends Apply clicks it
-            # remembers every time the page loads, and enqueue only dedupes
-            # against what is still IN the queue, so a reload after this one was
-            # claimed puts it straight back. Without this check a second agent
-            # takes the same application and it gets submitted twice.
-            busy = running_applications()
-            if aid in busy:
-                lock_path(slot).unlink(missing_ok=True)
-                changed.setdefault("alreadyRunning", []).append(
-                    {"applicationId": aid, "slot": busy[aid]})
-                continue
-
-            # Do not restart something the user has to finish, or has stopped.
-            #
-            # A parked application keeps a Retry button, and the board's local
-            # memory of an Apply click re-sent /api/apply on every page load, so
-            # the queue refilled itself. Each refill spawned a runner, the
-            # runner opened a browser, found the same blocker, parked again. The
-            # board side of that is fixed, but the queue is not the board's
-            # alone, and a stale entry outlives any one page. Claiming it and
-            # declining to spawn is what takes it off the queue for good.
-            reason = do_not_start(aid)
-            if reason:
-                lock_path(slot).unlink(missing_ok=True)
-                q["apply"] = [x for x in q.get("apply", [])
-                              if x.get("applicationId") != aid]
-                changed.setdefault("notStarted", []).append(
-                    {"applicationId": aid, "why": reason})
-                continue
-            q["apply"] = [x for x in q.get("apply", []) if x.get("applicationId") != aid]
-            try:
+                if not claimed or claimed[0].get("applicationId") != head_id:
+                    raise TickError("the Apply queue changed before the form runner started")
+                q["apply"] = apply_items[1:]
+                persist_browser_slot(head_id, slot)
                 browser.serve(slot)
-                pid = spawn(slot, [sys.executable, str(REPO / "scripts" / "run_apply.py"),
-                                   "--id", aid, "--slot", slot],
-                            f"{slot}.log", note=aid)
+                pid = spawn(
+                    slot,
+                    [sys.executable, str(REPO / "scripts" / "run_apply.py"),
+                     "--id", head_id, "--slot", slot,
+                     "--provider", document_provider],
+                    f"{slot}.log",
+                    note=head_id,
+                )
             except Exception:
-                # Same window: a browser that will not start, or a spawn that
-                # fails, must not cost the slot permanently.
-                lock_path(slot).unlink(missing_ok=True)
+                if retained:
+                    park_slot(slot, head_id)
+                else:
+                    lock_path(slot).unlink(missing_ok=True)
                 raise
-            changed.setdefault("applyStarted", []).append(
-                {"slot": slot, "pid": pid, "applicationId": aid})
+            changed.setdefault("applyStarted", []).append({
+                "slot": slot,
+                "pid": pid,
+                "applicationId": head_id,
+                "provider": document_provider,
+            })
 
     rescued = sweep_stuck({x.get("applicationId") for x in (q.get("apply") or [])})
     if rescued:
@@ -929,6 +1514,10 @@ def status():
                     "running": running_applications()}
     out["blocked"] = blocked_message() or None
     try:
+        out["providers"] = providers.public_status()
+    except providers.ProviderError as exc:
+        out["providers"] = {"error": str(exc)[:160]}
+    try:
         due, nxt = tier1_due()
         out["sourcing"] = {"searchSaved": search_config_saved(), "due": due,
                            "nextTier1ScanAt": nxt,
@@ -940,14 +1529,32 @@ def status():
 
 # --- launchd ----------------------------------------------------------------
 
-def install(interval=DEFAULT_INTERVAL):
+def _service_python(explicit=None):
+    """Choose and retain the interpreter launchd is already allowed to run."""
+    candidate = explicit
+    if candidate is None and PLIST.exists():
+        try:
+            current = plistlib.loads(PLIST.read_bytes())
+            arguments = current.get("ProgramArguments") or []
+            candidate = arguments[0] if arguments else None
+        except (OSError, plistlib.InvalidFileException, TypeError, ValueError):
+            candidate = None
+    candidate = candidate or sys.executable
+    path = Path(candidate).expanduser()
+    if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError("the launchd Python path must be an absolute executable file")
+    return str(path)
+
+
+def install(interval=DEFAULT_INTERVAL, python_executable=None):
+    service_python = _service_python(python_executable)
     for d in (LOG_DIR, LOCK_DIR):
         d.mkdir(parents=True, exist_ok=True)
         os.chmod(d, 0o700)
     PLIST.parent.mkdir(parents=True, exist_ok=True)
-    plist = {
+    watcher_plist = {
         "Label": LABEL,
-        "ProgramArguments": [sys.executable, str(REPO / "scripts" / "watch.py"),
+        "ProgramArguments": [service_python, str(REPO / "scripts" / "watch.py"),
                              "--interval", str(interval)],
         "RunAtLoad": True,
         "KeepAlive": True,
@@ -965,22 +1572,59 @@ def install(interval=DEFAULT_INTERVAL):
             "HOME": str(Path.home()),
         },
     }
-    PLIST.write_bytes(plistlib.dumps(plist))
-    run(["launchctl", "unload", str(PLIST)])
-    loaded = run(["launchctl", "load", str(PLIST)])
-    ok = loaded.returncode == 0
+    document_plist = {
+        "Label": DOCUMENT_LABEL,
+        "ProgramArguments": [
+            service_python,
+            str(REPO / "scripts" / "document_worker.py"),
+            "--loop",
+            "--local",
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "WorkingDirectory": str(REPO),
+        "StandardOutPath": str(LOG_DIR / "documents.log"),
+        "StandardErrorPath": str(LOG_DIR / "documents.err"),
+        "ProcessType": "Background",
+        "LowPriorityIO": True,
+        "EnvironmentVariables": {
+            "PATH": toolpath.search_path(),
+            "HOME": str(Path.home()),
+            "MALLOC_ARENA_MAX": "2",
+            "NODE_OPTIONS": "--max-old-space-size=512",
+        },
+    }
+    PLIST.write_bytes(plistlib.dumps(watcher_plist))
+    DOCUMENT_PLIST.write_bytes(plistlib.dumps(document_plist))
+    for path in (PLIST, DOCUMENT_PLIST):
+        run(["launchctl", "unload", str(path)])
+    watcher_loaded = run(["launchctl", "load", str(PLIST)])
+    documents_loaded = run(["launchctl", "load", str(DOCUMENT_PLIST)])
+    ok = watcher_loaded.returncode == 0 and documents_loaded.returncode == 0
     print(json.dumps({
-        "installed": ok, "label": LABEL, "plist": str(PLIST), "intervalSeconds": interval,
+        "installed": ok,
+        "services": {
+            "watcher": {"label": LABEL, "plist": str(PLIST)},
+            "documents": {
+                "label": DOCUMENT_LABEL,
+                "plist": str(DOCUMENT_PLIST),
+            },
+        },
+        "intervalSeconds": interval,
         "log": str(LOG_DIR / "watch.log"),
-        "error": (loaded.stderr or "").strip()[:200] or None,
+        "error": (
+            (watcher_loaded.stderr or documents_loaded.stderr or "").strip()[:200]
+            or None
+        ),
     }, indent=2))
     return 0 if ok else 1
 
 
 def uninstall():
-    run(["launchctl", "unload", str(PLIST)])
-    if PLIST.exists():
-        PLIST.unlink()
+    for path in (PLIST, DOCUMENT_PLIST):
+        run(["launchctl", "unload", str(path)])
+        if path.exists():
+            path.unlink()
     print(json.dumps({"uninstalled": True}, indent=2))
     return 0
 
@@ -992,10 +1636,14 @@ def main():
     ap.add_argument("--interval", type=int, default=0)
     ap.add_argument("--install", action="store_true")
     ap.add_argument("--uninstall", action="store_true")
+    ap.add_argument(
+        "--service-python",
+        help="absolute Python executable for launchd; later installs retain it",
+    )
     args = ap.parse_args()
 
     if args.install:
-        return install(args.interval or DEFAULT_INTERVAL)
+        return install(args.interval or DEFAULT_INTERVAL, args.service_python)
     if args.uninstall:
         return uninstall()
     if args.status:
