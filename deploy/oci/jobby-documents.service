@@ -1,0 +1,42 @@
+[Unit]
+Description=Jobby remote document worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/jobby-auto-apply
+EnvironmentFile=%h/.job-application/config.env
+Environment=JOBBY_CHROMIUM_LOW_MEMORY=1
+Environment=JOBBY_PROVIDER_CONTROL_POLL_SECONDS=30
+Environment=MALLOC_ARENA_MAX=2
+Environment="NODE_OPTIONS=--max-old-space-size=384"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
+ExecStart=%h/jobby-auto-apply/.venv/bin/python %h/jobby-auto-apply/scripts/document_worker.py --loop
+Restart=always
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+ReadOnlyPaths=%h/jobby-auto-apply
+ReadWritePaths=%h/.job-application
+ReadWritePaths=-%h/.codex -%h/.claude -%h/.gemini
+InaccessiblePaths=-%h/.ssh
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+MemoryHigh=75%
+MemoryMax=88%
+MemorySwapMax=200%
+TasksMax=192
+LimitNOFILE=4096
+Nice=5
+OOMScoreAdjust=250
+KillMode=mixed
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Local PDF toolchain for per-application resumes and cover letters.
+"""Portable PDF toolchain for per-application resumes and cover letters.
 
-The `resume-tailor` skill documents a Linux recipe: apt-get, WeasyPrint, and
-paths under /mnt/user-data/. None of that exists on a Mac. This script is the
-macOS equivalent of the same three steps, so the skill's method works here
-without editing the skill.
+The Mac uses its installed Chrome. The OCI document worker uses Chromium on
+Ubuntu. Keeping both behind the same commands means a document is rendered and
+checked the same way before it reaches the application browser.
 
   check    what is installed, and what a given resume needs
   render   HTML to PDF through the Chrome already on this machine
@@ -22,18 +21,24 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/snap/bin/chromium",
+    "/snap/bin/chromium-browser",
 ]
 
 FONT_DIRS = [
     Path("/System/Library/Fonts"),
     Path("/Library/Fonts"),
     Path.home() / "Library/Fonts",
+    Path("/usr/share/fonts"),
+    Path("/usr/local/share/fonts"),
+    Path.home() / ".local" / "share" / "fonts",
 ]
 
 # Office ships the real Microsoft fonts inside its app bundles, where the system
@@ -72,13 +77,13 @@ def find_chrome():
     for path in CHROME_CANDIDATES:
         if Path(path).exists():
             return path
-    for name in ("chromium", "google-chrome"):
+    for name in ("chromium", "chromium-browser", "google-chrome"):
         found = shutil.which(name)
         if found:
             return found
     raise ToolError(
-        "no Chrome or Chromium found. Install Google Chrome, which this skill "
-        "already needs for the Claude for Chrome extension."
+        "no Chrome or Chromium found. Install Google Chrome on macOS or "
+        "chromium-browser on Ubuntu."
     )
 
 
@@ -178,7 +183,8 @@ def cmd_check(args):
                                f"weights such as Light)")
                     elif sub:
                         fix = (f"{base} is not installed. Its metric-compatible "
-                               f"substitute is {sub[0]}: brew install --cask {sub[1]}")
+                               f"substitute is {sub[0]}. Install the matching font "
+                               "package for this operating system.")
                     else:
                         fix = (f"{base} is not installed and has no known metric "
                                f"substitute. Chrome will fall back and line breaks "
@@ -201,6 +207,28 @@ def source_fonts(pdf_path):
     return fonts
 
 
+def chrome_command(chrome, out, source_uri, *, profile_dir=None):
+    """Build the print command, with a bounded Linux profile for tiny workers."""
+    command = [chrome, "--headless", "--disable-gpu"]
+    if os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY") == "1":
+        if profile_dir is None:
+            raise ToolError("low-memory Chromium requires a private profile directory")
+        command.extend([
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-background-networking",
+            "--disable-extensions",
+            "--renderer-process-limit=1",
+            f"--user-data-dir={profile_dir}",
+        ])
+    command.extend([
+        "--no-pdf-header-footer",
+        f"--print-to-pdf={out}",
+        source_uri,
+    ])
+    return command
+
+
 def cmd_render(args):
     chrome = find_chrome()
     html = Path(args.html).expanduser().resolve()
@@ -209,14 +237,26 @@ def cmd_render(args):
     out = Path(args.out).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Deliberately no --user-data-dir: passing a fresh one makes Chrome hang on
-    # macOS first-run setup. Headless uses its own profile, so this coexists
-    # with the Chrome the user already has open driving their applications.
-    proc = subprocess.run(
-        [chrome, "--headless", "--disable-gpu", "--no-pdf-header-footer",
-         f"--print-to-pdf={out}", html.as_uri()],
-        capture_output=True, text=True, timeout=60,
-    )
+    low_memory = os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY") == "1"
+    if low_memory:
+        # The locked-down OCI unit cannot write to ~/.config. Give each render
+        # a private profile beside its output and remove it after Chrome exits.
+        with tempfile.TemporaryDirectory(
+            prefix=".chrome-profile.", dir=out.parent,
+        ) as profile:
+            proc = subprocess.run(
+                chrome_command(
+                    chrome, out, html.as_uri(), profile_dir=Path(profile),
+                ),
+                capture_output=True, text=True, timeout=60,
+            )
+    else:
+        # A fresh --user-data-dir can hang on macOS first-run setup. Headless
+        # uses its own profile and coexists with the user's application Chrome.
+        proc = subprocess.run(
+            chrome_command(chrome, out, html.as_uri()),
+            capture_output=True, text=True, timeout=60,
+        )
     if not out.exists():
         raise ToolError(f"Chrome produced no PDF: {(proc.stderr or '').strip()[:400]}")
     os.chmod(out, 0o600)

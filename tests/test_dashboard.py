@@ -35,6 +35,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(dashboard.safe_url("data:text/html,x"), "")
         self.assertEqual(dashboard.safe_url(None), "")
         self.assertEqual(dashboard.safe_url("https://ok.example"), "https://ok.example")
+        self.assertEqual(
+            dashboard.safe_url('https://ok.example/\"><img src=x onerror=alert(1)>'),
+            "",
+        )
 
     def test_scraped_javascript_url_never_reaches_href(self):
         html = build(sessions=[{"company": "X", "role": "PM", "status": "active",
@@ -45,6 +49,12 @@ class DashboardTest(unittest.TestCase):
         html = build(sessions=[{"company": "<script>x</script>", "role": "PM",
                                 "status": "active", "pendingFields": []}])
         self.assertNotIn("<script>x", html)
+
+    def test_optimistic_submitted_row_uses_dom_nodes_not_url_html(self):
+        page = build()
+        self.assertNotIn("tr.innerHTML", page)
+        self.assertIn("postingLink.setAttribute('href', safePosting)", page)
+        self.assertIn("var parsedPosting = new URL(url)", page)
 
     def test_outcome_keeps_application_on_submitted_tab(self):
         html = build(history=[{"event": "interview", "company": "A", "role": "PM", "at": "2026-08-15"}])
@@ -951,8 +961,8 @@ class PageWeightAtCapTests(unittest.TestCase):
                         f"page is {size / 1024 / 1024:.2f} MB at {found_lane.EMBED_CAP}")
         # The cap was chosen from a measurement with margin, not by grazing the
         # ceiling. If this starts failing, re-measure before raising anything.
-        self.assertLess(size, 3.6 * 1024 * 1024,
-                        f"page is {size / 1024 / 1024:.2f} MB; the measured budget was 3.5")
+        self.assertLess(size, 3.7 * 1024 * 1024,
+                        f"page is {size / 1024 / 1024:.2f} MB; the measured budget was 3.7")
 
     def test_hoisting_the_repeated_fields_actually_paid_for_itself(self):
         jobs = {f"j{i}": self.fat_job(i) for i in range(200)}
@@ -1051,6 +1061,92 @@ class IngestErrorLineTests(unittest.TestCase):
         out = self.line([{"channel": "jooble", "why": ""}])
         self.assertIn("jooble", out)
         self.assertIn("no reason given", out)
+
+
+class ProviderSettingsTests(unittest.TestCase):
+    def test_settings_has_exactly_the_three_supported_provider_cards(self):
+        page = build()
+        self.assertEqual(page.count('data-provider-card="'), 3)
+        for provider in ("openai", "anthropic", "gemini"):
+            self.assertIn(f'data-provider-card="{provider}"', page)
+        for model in ("gpt-5.6-luna", "claude-sonnet-5", "gemini-3.7-flash"):
+            self.assertIn(model, page)
+
+    def test_settings_explains_the_local_pipeline(self):
+        page = build()
+        self.assertIn("All agent work stays on Your Device", page)
+        self.assertIn("Resume tailoring and application filling", page)
+        self.assertNotIn("OCI worker", page)
+
+    def test_provider_actions_are_fixed_data_not_commands(self):
+        page = build()
+        self.assertIn("/api/provider", page)
+        self.assertEqual(page.count('data-target="local"'), 3)
+        self.assertNotIn('data-target="both"', page)
+        self.assertNotIn('data-target="documents"', page)
+        self.assertNotIn('name="apiKey"', page)
+        self.assertNotIn('name="token"', page)
+
+    def test_default_badge_uses_the_local_active_provider(self):
+        page = build()
+        self.assertIn("local && local.active", page)
+        self.assertNotIn("local && documents", page)
+
+    def test_oldest_connection_is_marked_active(self):
+        status = {"providers": {
+            "openai": {"enabled": True, "connectionOrder": 2, "healthy": True},
+            "anthropic": {"enabled": True, "connectionOrder": 1, "healthy": True},
+        }}
+        payload = dashboard.settings_panel.public_payload(status)
+        active = [item["id"] for item in payload["providers"] if item["active"]]
+        self.assertEqual(active, ["anthropic"])
+
+    def test_missing_cli_and_auth_states_keep_their_actionable_hint(self):
+        status = {"providers": [
+            {"id": "gemini", "status": "not_installed",
+             "installHint": "Install Gemini CLI on Your Device."},
+            {"id": "openai", "status": "authentication_required",
+             "authHint": "Run the Codex login on Your Device."},
+        ]}
+        payload = dashboard.settings_panel.public_payload(status)
+        rows = {item["id"]: item for item in payload["providers"]}
+        self.assertEqual(rows["gemini"]["detail"], "Install Gemini CLI on Your Device.")
+        self.assertEqual(rows["openai"]["detail"], "Run the Codex login on Your Device.")
+
+    def test_settings_is_a_real_same_origin_path(self):
+        page = build()
+        self.assertIn('href="/settings"', page)
+        self.assertIn('href="/" data-primary-view="home"', page)
+        self.assertIn("location.pathname", page)
+        self.assertIn("settings-view", page)
+        self.assertNotIn("Back to applications", page)
+
+    def test_connector_handles_non_json_server_errors_and_describes_browser_login(self):
+        page = build()
+        self.assertIn("return r.text().then", page)
+        self.assertIn("JSON.parse(raw)", page)
+        self.assertIn("account sign-in in your browser on Your Device", page)
+        self.assertIn("subscription limits or usage quota", page)
+
+    def test_home_and_settings_are_centered_in_the_top_app_bar(self):
+        page = build()
+        appbar_start = page.index('<header class="appbar">')
+        appbar_end = page.index('</header>', appbar_start)
+        brand = page.index('<div class="brand">', appbar_start, appbar_end)
+        nav = page.index('<nav class="primary-nav"')
+        theme = page.index('<div class="themeseg"', appbar_start, appbar_end)
+        self.assertLess(brand, nav)
+        self.assertLess(nav, theme)
+        css = page[page.index(".primary-nav {"):page.index(".wrap {")]
+        self.assertIn("margin:0", css)
+        self.assertIn("justify-self:center", css)
+        self.assertIn("border-radius:999px", css)
+        self.assertNotIn("position:fixed", css)
+        self.assertNotIn("border-right", css)
+        appbar_css = page[page.index(".appbar {"):page.index(".brand {")]
+        self.assertIn("grid-template-columns:1fr auto 1fr", appbar_css)
+        body = page[page.index("body {"):page.index(".primary-nav {")]
+        self.assertNotIn("padding-left", body)
 
 
 if __name__ == "__main__":

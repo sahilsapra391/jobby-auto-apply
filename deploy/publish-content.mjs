@@ -5,7 +5,7 @@
 // afternoon, and why a build from GitHub had nothing to serve: the board was
 // generated into an untracked module that only ever existed on this machine.
 //
-//   node publish-content.mjs <board.html> <documents.json>
+//   node publish-content.mjs <board.html> <documents.json> <providers.json>
 //
 // documents.json is {name: base64}. Only documents whose contents changed are
 // written, because KV allows a thousand writes a day and republishing forty
@@ -15,17 +15,18 @@ import { createHash } from 'node:crypto';
 import { putBoard, putDoc, docKey } from './kvcontent.mjs';
 import { kvGet } from './kv.mjs';
 
-const [htmlPath, docsPath] = process.argv.slice(2);
+const [htmlPath, docsPath, providersPath] = process.argv.slice(2);
 if (!htmlPath) {
-  console.error('usage: publish-content.mjs <board.html> [documents.json]');
+  console.error('usage: publish-content.mjs <board.html> [documents.json] [providers.json]');
   process.exit(2);
 }
 
 const env = process.env;
 const html = readFileSync(htmlPath, 'utf8');
 const generatedAt = new Date().toISOString();
+const providers = providersPath ? JSON.parse(readFileSync(providersPath, 'utf8')) : null;
 
-await putBoard(env, html, generatedAt);
+await putBoard(env, html, generatedAt, providers);
 
 const out = { board: { bytes: html.length, generatedAt }, documents: { written: 0, skipped: 0 } };
 

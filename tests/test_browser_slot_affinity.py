@@ -1,0 +1,217 @@
+"""Browser slot ownership across parked application sessions."""
+
+import json
+import os
+import pathlib
+import sys
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import browser  # noqa: E402
+import run_apply  # noqa: E402
+import watch  # noqa: E402
+
+
+class ParkedReservationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.original_lock_dir = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.temp.name)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original_lock_dir
+        self.temp.cleanup()
+
+    def test_parked_slot_stays_reserved_after_runner_exit(self):
+        watch.park_slot("apply-2", "acme-pm")
+
+        self.assertNotIn("apply-2", watch.free_apply_slots())
+        self.assertNotIn("acme-pm", watch.running_applications())
+        self.assertFalse(watch.reserve("apply-2", note="another-application"))
+
+    def test_the_same_application_can_reclaim_its_parked_slot(self):
+        watch.park_slot("apply-3", "acme-pm")
+
+        self.assertEqual(watch.candidate_apply_slots("acme-pm"), ["apply-3"])
+        self.assertTrue(watch.reserve("apply-3", note="acme-pm"))
+        holder = watch.lock_holder("apply-3")
+        self.assertEqual(holder["pid"], os.getpid())
+        self.assertNotIn("parked", holder)
+
+    def test_dead_runner_becomes_parked_when_the_session_keeps_affinity(self):
+        watch.take_lock("apply-1", 999999, note="acme-pm")
+        stored = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "applicationId": "acme-pm",
+                "browserSlot": "apply-1",
+            }),
+            stderr="",
+        )
+        with mock.patch.object(watch, "store", return_value=stored):
+            holder = watch.lock_holder("apply-1")
+
+        self.assertTrue(holder["parked"])
+        self.assertEqual(holder["note"], "acme-pm")
+
+    def test_affinity_never_falls_through_to_a_different_free_slot(self):
+        watch.park_slot("apply-4", "different-application")
+        with mock.patch.object(
+                watch, "browser_slot_for_application", return_value="apply-4"):
+            self.assertEqual(watch.candidate_apply_slots("acme-pm"), [])
+
+
+class SlotReconciliationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.original_lock_dir = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.temp.name)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original_lock_dir
+        self.temp.cleanup()
+
+    @staticmethod
+    def parked_session():
+        return {
+            "applicationId": "acme-pm",
+            "status": "review",
+            "pendingFields": [{"question": "Enter the OTP"}],
+            "browserSlot": "apply-2",
+        }
+
+    def test_restart_rebuilds_a_parked_reservation_from_the_session(self):
+        entry = self.parked_session()
+        with mock.patch.object(watch, "_sessions", return_value=[entry]), \
+                mock.patch.object(watch, "_latest_history", return_value={}):
+            result = watch.reconcile_browser_slots()
+
+        self.assertEqual(result["parked"], [
+            {"applicationId": "acme-pm", "slot": "apply-2"}
+        ])
+        self.assertTrue(watch.lock_holder("apply-2")["parked"])
+
+    def test_terminal_completion_clears_tabs_and_state_before_unlock(self):
+        entry = self.parked_session()
+        watch.park_slot("apply-2", "acme-pm")
+        order = []
+
+        def cleared(slot):
+            order.append(("clear", slot, watch.lock_path(slot).exists()))
+            return {"cleared": True, "slot": slot}
+
+        def saved(session):
+            order.append(("save", session.get("browserSlot"),
+                          watch.lock_path("apply-2").exists()))
+
+        with mock.patch.object(watch, "_sessions", return_value=[entry]), \
+                mock.patch.object(
+                    watch, "_latest_history", return_value={"acme-pm": "completed"}), \
+                mock.patch.object(watch.browser, "clear_slot", side_effect=cleared), \
+                mock.patch.object(watch, "_save_session", side_effect=saved):
+            result = watch.reconcile_browser_slots()
+
+        self.assertEqual(order, [
+            ("clear", "apply-2", True),
+            ("save", None, True),
+        ])
+        self.assertFalse(watch.lock_path("apply-2").exists())
+        self.assertNotIn("browserSlot", entry)
+        self.assertEqual(result["released"], [
+            {"applicationId": "acme-pm", "slot": "apply-2"}
+        ])
+
+    def test_failed_tab_cleanup_keeps_affinity_and_reservation(self):
+        entry = self.parked_session()
+        watch.park_slot("apply-2", "acme-pm")
+        with mock.patch.object(
+                watch.browser, "clear_slot",
+                return_value={"cleared": False, "slot": "apply-2", "error": "busy"}), \
+                mock.patch.object(watch, "_save_session") as save:
+            released = watch.release_browser_slot("acme-pm", "apply-2", entry)
+
+        self.assertFalse(released)
+        self.assertEqual(entry["browserSlot"], "apply-2")
+        self.assertTrue(watch.lock_holder("apply-2")["parked"])
+        save.assert_not_called()
+
+
+class BrowserAffinityTests(unittest.TestCase):
+    def test_open_and_finish_searches_only_the_recorded_slot(self):
+        page = {
+            "id": "target-page",
+            "type": "page",
+            "url": "https://jobs.example.com/apply/123?step=two",
+            "title": "Application",
+        }
+        with mock.patch.object(browser, "running", return_value=True), \
+                mock.patch.object(browser, "tabs", return_value=[page]) as tabs, \
+                mock.patch.object(browser, "_cdp", return_value="ok") as cdp, \
+                mock.patch.object(browser.subprocess, "run", return_value=SimpleNamespace()):
+            result = browser.focus(
+                "https://jobs.example.com/apply/123", slot="apply-3"
+            )
+
+        tabs.assert_called_once_with("apply-3")
+        cdp.assert_called_once_with("/json/activate/target-page", "apply-3")
+        self.assertEqual(result["slot"], "apply-3")
+
+    def test_clear_slot_verifies_that_application_pages_are_gone(self):
+        page = {"id": "private-form", "type": "page", "url": "https://jobs.example.com"}
+        blank = {"id": "blank", "type": "page", "url": "about:blank"}
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(browser, "ARTIFACTS", pathlib.Path(directory)), \
+                    mock.patch.object(browser, "running", return_value=True), \
+                    mock.patch.object(browser, "tabs", side_effect=[[page], [blank]]), \
+                    mock.patch.object(browser, "_cdp", return_value="closing") as cdp:
+                result = browser.clear_slot("apply-1")
+
+        self.assertTrue(result["cleared"])
+        cdp.assert_called_once_with("/json/close/private-form", "apply-1")
+
+    def test_clear_slot_removes_persistent_mcp_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = browser.ARTIFACTS
+            browser.ARTIFACTS = pathlib.Path(directory)
+            private = browser.ARTIFACTS / "apply-2"
+            private.mkdir()
+            (private / "filled-form-snapshot.txt").write_text("private form")
+            try:
+                with mock.patch.object(browser, "running", return_value=False):
+                    result = browser.clear_slot("apply-2")
+            finally:
+                browser.ARTIFACTS = original
+        self.assertTrue(result["cleared"])
+        self.assertFalse(private.exists())
+
+    def test_runner_removes_affinity_only_after_terminal_cleanup(self):
+        session = {
+            "applicationId": "acme-pm",
+            "status": "inflight",
+            "browserSlot": "apply-5",
+        }
+        saved_payloads = []
+
+        def save(argv, **kwargs):
+            saved_payloads.append(json.loads(kwargs["input"]))
+            return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+        with mock.patch.object(
+                run_apply.browser, "clear_slot",
+                return_value={"cleared": True, "slot": "apply-5"}) as clear, \
+                mock.patch.object(run_apply, "_current_session", return_value=session), \
+                mock.patch.object(run_apply.subprocess, "run", side_effect=save):
+            result = run_apply.release_terminal_browser_slot("acme-pm", "apply-5")
+
+        clear.assert_called_once_with("apply-5")
+        self.assertTrue(result["released"])
+        self.assertNotIn("browserSlot", saved_payloads[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

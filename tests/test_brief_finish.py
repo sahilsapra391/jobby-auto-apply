@@ -93,6 +93,11 @@ class PreSubmitTests(StoreTemp):
 
 
 class CompletedTests(StoreTemp):
+    def nonce(self, aid="acme-pm"):
+        result = run_finish(["--id", aid, "--pre-submit"], self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)["submissionNonce"]
+
     def test_a_completion_without_observed_confirmation_is_refused(self):
         self.session("acme-pm")
         r = run_finish(["--id", "acme-pm", "--completed", "--confirmation", "   "], self.root)
@@ -104,8 +109,10 @@ class CompletedTests(StoreTemp):
         # A full path here silently dropped the document from the publish
         # bundle and produced a dashboard link to a document that did not exist.
         self.session("acme-pm")
+        nonce = self.nonce()
         out = json.loads(run_finish([
             "--id", "acme-pm", "--completed",
+            "--nonce", nonce,
             "--confirmation", "Your application was successfully submitted.",
             "--resume", "/abs/where/Sahil_Sapra_Acme_Resume.pdf",
             "--cover", "/abs/where/Sahil_Sapra_Acme_CoverLetter.pdf"], self.root).stdout)
@@ -115,6 +122,50 @@ class CompletedTests(StoreTemp):
         self.assertNotIn("/", event["resumeVariant"])
         self.assertEqual(event["confirmation"],
                          "Your application was successfully submitted.")
+
+    def test_completion_before_pre_submit_is_refused(self):
+        self.session("acme-pm")
+        result = run_finish([
+            "--id", "acme-pm", "--completed", "--nonce", "x" * 32,
+            "--confirmation", "Application received",
+        ], self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.events(), [])
+
+    def test_completion_nonce_is_one_use(self):
+        self.session("acme-pm")
+        nonce = self.nonce()
+        args = [
+            "--id", "acme-pm", "--completed", "--nonce", nonce,
+            "--confirmation", "Application received",
+        ]
+        first = run_finish(args, self.root)
+        second = run_finish(args, self.root)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertEqual(
+            [event["event"] for event in self.events()],
+            ["submitting", "completed"],
+        )
+
+    def test_nonce_from_another_application_is_refused(self):
+        self.session("acme-pm")
+        self.session(
+            "other-pm", company="Other", role="Engineer",
+            url="https://example.com/jobs/2",
+        )
+        other_nonce = self.nonce("other-pm")
+        own_nonce = self.nonce("acme-pm")
+        self.assertNotEqual(other_nonce, own_nonce)
+        result = run_finish([
+            "--id", "acme-pm", "--completed", "--nonce", other_nonce,
+            "--confirmation", "Application received",
+        ], self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            [event["event"] for event in self.events()],
+            ["submitting", "submitting"],
+        )
 
 
 class ParkTests(StoreTemp):

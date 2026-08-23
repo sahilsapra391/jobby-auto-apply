@@ -2,21 +2,21 @@
 
 <img src="docs/logo.png" alt="Jobby" width="720">
 
-**I stopped applying to jobs myself. A Claude agent does it now.**
+**I stopped applying to jobs myself. Jobby agents do it now.**
 
 One tailored resume and cover letter per posting. Forms filled and submitted end to end.
 A board that tells me the truth about what is actually happening.
 
-`MIT` · `Claude Skill` · `macOS`
+`MIT` · `OpenAI` · `Anthropic` · `Gemini` · `macOS`
 
 </div>
 
 ---
 
-Jobby is a [Claude Skill](https://docs.claude.com/en/docs/claude-code/skills) plus a small
-daemon. Press **Apply** on a role and, about three seconds later, an agent is building a resume
-for that specific posting, opening the form in a browser, filling it, and submitting it. When
-something genuinely needs a person, it stops and says exactly what and why.
+Jobby is a provider-neutral agent pipeline with two local workers. Press **Apply** on a role and
+the serial document worker builds and checks a resume and cover letter on Your Device. Once both
+files pass the fixed gates, a separate local agent opens the form, fills it, and submits it.
+OpenAI Codex, Anthropic Claude Code, and Gemini CLI use the same bounded task contracts.
 
 It does not invent anything. Every claim on a generated resume has to trace back to a resume you
 wrote, an answer you gave, or a story you told it. Where it cannot answer honestly, it stops.
@@ -88,8 +88,16 @@ Your street address goes into application forms when they ask, and never onto a 
 ```bash
 python3 scripts/store.py init          # create the local store
 python3 scripts/publish.py --setup     # link Vercel, set a board password
-python3 scripts/watch.py --install     # install the watcher
+python3 scripts/watch.py --install     # install watcher and local document service
 python3 scripts/queue_check.py --write # prove the queue works end to end
+```
+
+The installer retains the Python executable recorded in the launchd plist. If
+macOS privacy denies a new interpreter access to a repository under Documents,
+rerun the install once with an interpreter that already has access:
+
+```bash
+python3 scripts/watch.py --install --service-python /absolute/path/to/python3
 ```
 
 The queue lives in Cloudflare Workers KV and the board is served from it. Put these in
@@ -105,7 +113,29 @@ Machine-local settings go in `~/.job-application/config.env`, which nothing over
 
 ```
 HEALTHCHECKS_URL=https://hc-ping.com/<uuid>
+JOBBY_WORKER_KEY=<local document queue 32-byte base64 key>
 ```
+
+Use `python3 scripts/worker_key.py set-healthchecks https://hc-ping.com/<uuid>`
+to replace the ping URL atomically without printing it or changing the worker
+key.
+
+Open `/settings` on the board and connect one or more providers. The first connected provider
+stays active until you disconnect it. Resume tailoring, cover-letter creation, scans, and form
+filling all use that provider on Your Device. Credentials remain in the provider CLI's native
+account store. Connect opens the provider CLI's official browser login. OpenAI uses the ChatGPT
+account flow, Anthropic explicitly uses the Claude subscription flow, and Gemini uses Sign in
+with Google. Work counts against that account's subscription limits or usage quota. Jobby stores
+only connection order, health, and exact-model verification time.
+Every run uses a fixed model: `gpt-5.6-luna` for OpenAI, `claude-sonnet-5` for Anthropic, and
+`gemini-3.7-flash` for Gemini. Jobby never inherits a provider CLI's changing default model.
+If the requested model is unavailable or Gemini reports a different served model, the connection
+fails closed. Jobby does not silently switch to another connected provider.
+
+Home and Settings appear as two centred pills in the top app bar, between the Jobby logo and the
+theme control. Home is the full application dashboard. Settings owns the three provider
+connections. A future Profile pill can join the same control without changing the dashboard
+lanes.
 
 Then sign the agent's browser in once, which every later run inherits:
 
@@ -115,21 +145,68 @@ python3 scripts/browser.py --login https://www.linkedin.com
 
 ## How it actually works
 
-A page on Vercel cannot start a process on your laptop. So every button queues a request, and
-`scripts/watch.py`, running as a launchd agent, reads all the queues in a single call every three
-seconds and spawns the agent that does the work. A click reaches a running agent in about three
-seconds.
+A page on Vercel cannot start a process on your laptop. Every button queues a request.
+`scripts/watch.py` reads the control queue and coordinates the pipeline. The launchd installation
+also starts `scripts/document_worker.py --loop --local`, which claims one encrypted document job
+at a time on the same Mac. Cloudflare KV sees ciphertext and fixed status fields, not the candidate
+profile, job description, resume, or cover letter. The local result is authenticated, validated as
+one complete set, and installed before form filling starts.
 
 Runs are spawned detached and tracked by a pid lock file. One application at a time, and a
 forty-five minute run never freezes the board. A dead pid releases the lock on its own, so a
 runner killed mid-flight cannot wedge the pipeline.
 
-Spawned CLI sessions have no browser of their own, so they attach over CDP to a long-lived Chrome
-with a persistent profile. That is what makes a parked application resumable: form values live in
-the page, not the profile, so a browser that dies with its run takes every filled field with it.
+Spawned form sessions attach over CDP to one long-lived Chrome per application slot. A local MCP
+firewall exposes only bounded form actions. It removes arbitrary JavaScript, shell, network-log,
+storage, and navigation tools, blocks Enter-based submission, and permits uploads only for the two
+hash-verified PDFs staged for that application. That is what makes a parked application resumable
+without giving page text a general code-execution path.
 
-Everything the watcher does is reported to [healthchecks.io](https://healthchecks.io), failures
-included. The point is the silence. If the process dies, the pings stop and you hear about it.
+Submission is a two-step local state transition. `pre_submit` writes a `submitting` event and
+returns a one-use nonce. `record_completed` requires that nonce, the same application, the latest
+event still being `submitting`, and exact visible confirmation text. A page cannot move a role to
+Submitted by merely telling the model to call the completion tool.
+
+The watcher reports to [healthchecks.io](https://healthchecks.io), failures included. Its quiet
+heartbeat is every 55 minutes, which fits a one-hour check with ten minutes of grace. If the local
+service dies, the pings stop.
+
+## Job discovery and ATS coverage
+
+The Found lane is fed by twenty-one Tier-1 channels. Ten are direct ATS board
+connectors: Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee,
+Personio, Breezy, Rippling and Workday CXS. The rest are public feeds and keyed search APIs.
+The scan header distinguishes jobs seen from jobs newly admitted. A connector
+can be healthy and report zero new jobs when its boards are unchanged, or when
+every result was already stored, filtered, or merged.
+
+ATS coverage is company-driven. These systems do not expose a global stream of
+every customer's jobs. Each request needs a verified company board token, so a
+connector with no known tenants adds no postings. Public endpoints are connected
+only after their live shape has been verified. Auth-walled systems remain marked
+`planned` or `blocked` in [`references/sources-registry.md`](references/sources-registry.md)
+rather than returning a convincing empty result. The implementation and next
+connector groups are tracked in
+[`docs/plans/ats-coverage-triage.md`](docs/plans/ats-coverage-triage.md).
+
+The registry grows during every ingest. Any normalized sighting that contains a
+real ATS URL can add or complete that employer's tenant record even when the job
+itself fails today's search gate. Aggregator URLs never become tenant evidence.
+The fifty explicitly requested ATS families have a machine-checked accounting
+contract in `scripts/sources_registry.py`; connected, planned and blocked are
+all visible states, while absence is a test failure.
+
+Aggregator access follows the same honesty rule. Tsenta is planned pending an
+authorized discovery-feed API. Simplify and Wellfound prohibit the collection
+needed for a local job database, Indeed's APIs require an approved partner use,
+and Naukri blocked automated access during verification. Their reasons are in
+the source registry rather than hidden behind empty runs.
+
+Date filtering preserves exact timestamps as compact epoch seconds. The 6-hour view uses the source's
+exact posting instant where one exists. If an ATS provides only a calendar date,
+it uses Jobby's exact first-seen instant for that sub-day view. Wider windows use
+the employer's posting date. This distinction is pinned through the real compact
+payload and client filter in `tests/test_found_script.py`.
 
 ## Things it learned the hard way
 
@@ -141,7 +218,8 @@ Each of these is a comment in the code, because each cost real time:
 - `vercel` and `npx` are `#!/usr/bin/env node` scripts. An absolute path does not save you: `env`
   resolves `node` against the child's PATH.
 - Free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows
-  100,000 reads a day and 1,000 list requests, so the whole queue lives under one key.
+  100,000 reads a day and 1,000 list requests. The application queue uses one key. Provider
+  connection actions use one local-device lane, and the retired remote-provider lane is not polled.
 - Publishing the board used to redeploy the site. Vercel allows 100 deploys a day and one
   application reports six phases. The board is served from KV now; deployments carry only code.
 - A worker that processes one item must delete one item. `claim` once destroyed fourteen queued
@@ -159,5 +237,5 @@ authorised. Invent an answer to a required field.
 python3 -m pytest tests/ -q
 ```
 
-101 tests, including `node --test` coverage of the queue logic run from inside the Python suite,
-so the JavaScript cannot drift.
+The suite includes Python tests, Node API and queue tests, real Chrome render checks, provider
+command-contract tests, and browser-firewall protocol tests.

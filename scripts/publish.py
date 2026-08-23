@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import toolpath  # noqa: E402
+import settings_panel  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
@@ -194,7 +195,7 @@ def cmd_local(args, _base):
     # from KV, so local serving needs the content pushed too.
     summary = build_dashboard(args.root)
     docs = build_documents(args.root)
-    push_content(summary.pop("html"), docs.pop("docs"))
+    push_content(summary.pop("html"), docs.pop("docs"), provider_payload(args.root))
     password = os.environ.get(PASSWORD_ENV) or "local"
     print(f"Serving on http://localhost:{args.port} (password: {password})")
     env = {**os.environ, PASSWORD_ENV: password}
@@ -255,7 +256,20 @@ def guard_render(summary, root):
             "empty or half-written store. The published board is untouched.")
 
 
-def push_content(html, docs):
+def provider_payload(root=None):
+    """Read provider state without publishing CLI output or credentials."""
+    store_root = Path(root).expanduser().resolve() if root else Path(
+        os.environ.get("JOB_APPLICATION_DIR", "~/.job-application")
+    ).expanduser().resolve()
+    state_path = store_root / "providers.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        state = {}
+    return settings_panel.public_payload(state)
+
+
+def push_content(html, docs, providers=None):
     """Write the rendered board and the documents into KV.
 
     Via files in a temp directory rather than argv: the board is a quarter of a
@@ -264,10 +278,14 @@ def push_content(html, docs):
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "board.html"
         docs_path = Path(tmp) / "documents.json"
+        providers_path = Path(tmp) / "providers.json"
         html_path.write_text(html, encoding="utf-8")
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
+        providers_path.write_text(
+            json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
+        )
         r = subprocess.run([toolpath.node(), "publish-content.mjs",
-                            str(html_path), str(docs_path)],
+                            str(html_path), str(docs_path), str(providers_path)],
                            cwd=DEPLOY, capture_output=True, text=True,
                            env=toolpath.queue_env())
     if r.returncode != 0:
@@ -306,7 +324,9 @@ def cmd_publish(args, base):
                           "submitted": summary.get("submitted")}, indent=2))
         return 0
 
-    result = push_content(summary.pop("html"), docs.pop("docs"))
+    result = push_content(
+        summary.pop("html"), docs.pop("docs"), provider_payload(args.root)
+    )
     print(f"Board written to KV: {result['board']['bytes'] / 1024:.0f} KB, "
           f"{result['documents']['written']} documents written, "
           f"{result['documents']['skipped']} unchanged")

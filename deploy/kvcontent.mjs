@@ -13,6 +13,8 @@
 import { kvGet, kvPut, configured } from './kv.mjs';
 
 export const BOARD_KEY = 'jobby:board';
+export const LOCAL_STATUS_KEY = 'jobby:worker:local:status';
+export const WORKER_STATUS_KEY = 'jobby:worker:documents:status';
 export const docKey = (name) => `jobby:doc:${name}`;
 
 // A serverless instance handles several requests before it is recycled, so a
@@ -35,9 +37,37 @@ export async function getBoard(env) {
   return value;
 }
 
-export async function putBoard(env, html, generatedAt) {
+export async function putBoard(env, html, generatedAt, providers = null) {
   cached = null;
-  return kvPut(env, BOARD_KEY, JSON.stringify({ html, generatedAt }));
+  return kvPut(env, BOARD_KEY, JSON.stringify({ html, generatedAt, providers }));
+}
+
+export async function getWorkerStatus(env) {
+  const raw = await kvGet(env, WORKER_STATUS_KEY);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function getLocalStatus(env) {
+  const raw = await kvGet(env, LOCAL_STATUS_KEY);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function putLocalStatus(env, status) {
+  return kvPut(env, LOCAL_STATUS_KEY, JSON.stringify(status));
+}
+
+export async function putWorkerStatus(env, status) {
+  return kvPut(env, WORKER_STATUS_KEY, JSON.stringify(status));
 }
 
 /** Base64 of one application document, or null if it was never published. */

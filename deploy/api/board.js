@@ -8,7 +8,7 @@
 // Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
 // board.
 
-import { getBoard, getDoc } from '../kvcontent.mjs';
+import { getBoard, getDoc, getLocalStatus } from '../kvcontent.mjs';
 
 const REALM = 'Application board';
 
@@ -88,9 +88,85 @@ const json = (body, status) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },
 });
 
+function rejectCrossSiteMutation(request) {
+  if (request.method !== 'POST') return null;
+  const expectedOrigin = new URL(request.url).origin;
+  if (request.headers.get('origin') !== expectedOrigin) {
+    return json({ ok: false, error: 'cross-site request refused' }, 403);
+  }
+  const contentType = (request.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.startsWith('application/json')) {
+    return json({ ok: false, error: 'application/json required' }, 415);
+  }
+  if (request.headers.get('x-jobby-request') !== '1') {
+    return json({ ok: false, error: 'request token missing' }, 403);
+  }
+  return null;
+}
+
+const PROVIDERS = new Set(['openai', 'anthropic', 'gemini']);
+const PROVIDER_ACTIONS = new Set(['connect', 'disconnect', 'refresh']);
+const PROVIDER_TARGETS = {
+  local: 'providerLocal',
+};
+const WORKER_STALE_MS = 15 * 60 * 1000;
+
+function freshStatus(value) {
+  if (!value || typeof value !== 'object') return null;
+  const checked = Date.parse(value.checkedAt || '');
+  if (!Number.isFinite(checked) || Date.now() - checked > WORKER_STALE_MS) return null;
+  return value;
+}
+
+async function handleProviderAction(request) {
+  if (!configured(process.env)) {
+    return json({ ok: false, error: 'queue not configured' }, 503);
+  }
+  if (request.method !== 'POST') {
+    return text('Method not allowed.\n', 405, { allow: 'POST' });
+  }
+  try {
+    const body = await request.json().catch(() => ({}));
+    const provider = String(body.provider || '').trim();
+    const action = String(body.action || '').trim();
+    const target = String(body.target || '').trim();
+    if (!PROVIDERS.has(provider)) {
+      return json({ ok: false, error: 'unknown provider' }, 400);
+    }
+    if (!PROVIDER_ACTIONS.has(action)) {
+      return json({ ok: false, error: 'unknown provider action' }, 400);
+    }
+    // Older published boards sent target=both. Treat that as the one local
+    // registry so an open tab keeps working after the local-only migration.
+    const normalizedTarget = target === 'both' ? 'local' : target;
+    const queues = normalizedTarget === 'local'
+      ? Object.entries(PROVIDER_TARGETS)
+      : Object.entries(PROVIDER_TARGETS).filter(([name]) => name === target);
+    if (!queues.length) {
+      return json({ ok: false, error: 'unknown provider target' }, 400);
+    }
+    const id = `${action}-${provider}`;
+    // The sortable key makes the first successful Connect click sticky.
+    const connectionKey = action === 'connect'
+      ? `1-${String(Date.now()).padStart(13, '0')}-${crypto.randomUUID()}`
+      : null;
+    const results = await Promise.all(queues.map(async ([name, queue]) => ({
+      target: name,
+      ...(await kvEnqueue(process.env, queue, id, {
+        provider,
+        action,
+        ...(connectionKey ? { connectionKey } : {}),
+      })),
+    })));
+    return json({ ok: true, target, provider, action, queued: results }, 202);
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+}
+
 // All three buttons are the same shape: POST to ask for something, GET to see
 // what is waiting, DELETE for a local runner to claim the oldest.
-async function handleQueue(request, queue) {
+async function handleQueue(request, queue, pathname = '') {
   if (!configured(process.env)) {
     return json({
       ok: false, error: 'queue not configured',
@@ -108,7 +184,7 @@ async function handleQueue(request, queue) {
       // "Add your own link" rides the scan queue rather than growing an
       // endpoint of its own. Only http(s) is accepted: the value ends up in an
       // agent's prompt and in an href, and neither should take a javascript:.
-      const extra = {};
+      const extra = pathname === '/api/retry' ? { retry: true } : {};
       if (queue === 'scan' && body.url) {
         const link = String(body.url).trim();
         if (!/^https?:\/\//i.test(link)) return json({ ok: false, error: 'the link must be http or https' }, 400);
@@ -199,11 +275,30 @@ export default {
       });
     }
 
+    const rejectedMutation = rejectCrossSiteMutation(request);
+    if (rejectedMutation) return rejectedMutation;
+
     // The board buttons. A page on Vercel cannot start a process on the
     // user's machine, so each click is parked in the queue and the local
     // watcher claims it and spawns the agent that does the work.
     if (QUEUES[pathname]) {
-      return handleQueue(request, QUEUES[pathname]);
+      return handleQueue(request, QUEUES[pathname], pathname);
+    }
+
+    if (pathname === '/api/provider') {
+      return handleProviderAction(request);
+    }
+
+    if (pathname === '/api/providers' && request.method === 'GET') {
+      const [board, localStatus] = await Promise.all([
+        getBoard(process.env).catch(() => null),
+        getLocalStatus(process.env).catch(() => null),
+      ]);
+      return json({
+        ok: true,
+        local: freshStatus(localStatus) ||
+          freshStatus(board && board.providers ? board.providers : null),
+      }, 200);
     }
 
     // The saved search. Not a queue: one object, written by the board and
