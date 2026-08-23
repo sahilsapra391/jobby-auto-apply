@@ -140,14 +140,16 @@ Chrome PDF rendering. Local browser verification measured the Home and Settings
 control at the exact horizontal centre of the top app bar and found three
 provider cards with no Back to applications control.
 
-Production code deployment is not complete. The approval guard refused
-`vercel deploy --prod --yes` from `deploy/` because changing the live Vercel
-service needs explicit production approval. That command uploads server code
-only. It does not publish local board data or application documents. A separate
-`python3 scripts/publish.py --deploy` attempt was also refused because that
-command first uploads the live board and application documents to Cloudflare
-KV. Do not use the second command unless the user explicitly approves both
-destinations.
+Production code deployment is waiting on PR #4:
+`https://github.com/sahilsapra391/jobby-auto-apply/pull/4`. Its Vercel preview
+for the `jobby-board` project is READY and both Vercel checks pass. Merging the
+PR into `main` is the production release action. The Vercel function calls
+Cloudflare KV through its REST API. There is no separately deployed Cloudflare
+Worker in this request path.
+
+Do not run `python3 scripts/publish.py --deploy` as a substitute for merging
+the PR. That command first uploads the live board and application documents to
+Cloudflare KV, which is a separate content publication action.
 
 ## Worktree discipline
 
