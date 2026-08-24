@@ -652,6 +652,18 @@ class CompanyRegistryTests(unittest.TestCase):
         merged = seed_companies.merge_company(verified, learned)
         self.assertEqual((merged["ats"], merged["token"]), ("workable", "kahoot"))
 
+    def test_verified_pack_replaces_a_stale_learned_careers_url(self):
+        learned = seed_companies.blank_company("Acronis", "CH", "roles")
+        learned.update({
+            "ats": "workday", "token": "acronis",
+            "careersUrl": "https://acronis.wd3.myworkdayjobs.com/Acronis",
+        })
+        registry, _summary = seed_companies.seed(
+            {"acronis": learned}, seed_companies.from_pack())
+        self.assertEqual(
+            registry["acronis"]["careersUrl"],
+            "https://acronis.wd502.myworkdayjobs.com/acronis_careers")
+
     def test_a_normalized_direct_sighting_can_grow_the_registry(self):
         rows = seed_companies.from_postings([{
             "company": "Acme", "canonicalUrl": "https://jobs.lever.co/acme/123",

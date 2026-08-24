@@ -550,8 +550,10 @@ SmartRecruiters, Workable, Recruitee, Personio, Breezy, Rippling, Workday CXS,
 Pinpoint, Teamtailor, JazzHR, Oracle Recruiting Cloud and Gem. Public remote
 feeds and six search APIs provide the rest. Missing keys,
 wrong tenant paths, 4xx responses and unchanged boards remain distinct visible
-states. Workday was verified live on 2026-08-23: GEICO's public CXS endpoint
-returned 282 jobs, while Acronis returned 422 and was counted independently.
+states. Workday was verified live on 2026-08-23. On 2026-08-24, Acronis moved
+from its failing `wd3/Acronis` site to the live `wd502/acronis_careers` site.
+The verified seed URL now replaces stale role-derived site URLs, so future
+registry rebuilds retain the repair instead of restoring the dead endpoint.
 
 **Tier 2** is the existing agent sweep, on a rotating channel pack. Phase 3.
 
