@@ -448,7 +448,8 @@ class FoundLaneTests(unittest.TestCase):
     def test_a_country_code_becomes_a_country_name(self):
         self.assertEqual(found_lane.place({"location": {"country": "GB", "city": "London"}}),
                          "London, United Kingdom")
-        self.assertEqual(found_lane.place({"location": {"country": "AE"}}), "UAE")
+        self.assertEqual(found_lane.place({"location": {"country": "AE"}}),
+                         "United Arab Emirates")
 
     def test_anywhere_in_the_world_reads_as_worldwide(self):
         self.assertEqual(found_lane.place({"location": {"raw": "Anywhere in the World"}}),

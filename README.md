@@ -204,6 +204,16 @@ The scan header distinguishes jobs seen from jobs newly admitted. A connector
 can be healthy and report zero new jobs when its boards are unchanged, or when
 every result was already stored, filtered, or merged.
 
+Found uses one compact hierarchical location picker instead of a wall of
+pills. It contains 199 fully named locations under North America, South
+America, Europe, Asia, Africa, and Oceania. A continent checkbox selects or
+clears every country in that group. Each country remains independently
+selectable and has an `Only` action that clears every other location.
+`Worldwide` selects the complete set, while `Clear all` gives a blank starting
+point for a narrow search. An empty saved `locations` array still means
+Worldwide for compatibility. Partial selections save explicit country codes,
+and old region-pack searches expand into their country checkboxes on load.
+
 ATS coverage is company-driven. These systems do not expose a global stream of
 every customer's jobs. Each request needs a verified company board token, so a
 connector with no known tenants adds no postings. Public endpoints are connected
