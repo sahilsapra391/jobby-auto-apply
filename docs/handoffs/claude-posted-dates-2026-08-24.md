@@ -49,3 +49,9 @@ Run `scripts/repair_posted_dates.py` first. It is dry by default and clears only
 records where one of those connectors remains canonical. `--apply` persists
 through the atomic private-store writer. Fresh connector runs then restore real
 publication dates where the source offers one.
+
+The refresh happens before search gating for an identity already in the store.
+This ordering is deliberate. A saved seven-day window may reject a thirteen-day
+Workday sighting, but that known record still needs to learn that it was posted
+thirteen days ago. A gated new identity never enters the store. The ingest
+report exposes the count as `datesRefreshed`.

@@ -241,6 +241,29 @@ class AccountingTests(IngestCase):
         self.assertEqual(report["gatedOut"], 1)
         self.assertTrue(any("search terms" in why for why in report["gatedOutBy"]))
 
+    def test_a_gated_known_job_still_learns_its_source_posted_date(self):
+        existing = posting(posted_at=None)
+        existing["score"] = {"total": 80}
+        jobs_store.save_jobs(self.root, {existing["id"]: existing})
+        old_sighting = posting(posted_at=when(13))
+
+        report, jobs = self.run_ingest(
+            {"workday": channel([old_sighting], name="workday")},
+            config={"postedWithin": "7d"})
+
+        self.assertEqual(report["kept"], 0)
+        self.assertEqual(report["gatedOut"], 1)
+        self.assertEqual(report["datesRefreshed"], 1)
+        self.assertEqual(jobs[existing["id"]]["postedAt"], when(13))
+
+    def test_a_gated_new_job_still_does_not_enter_the_store(self):
+        old_sighting = posting(posted_at=when(13))
+        report, jobs = self.run_ingest(
+            {"workday": channel([old_sighting], name="workday")},
+            config={"postedWithin": "7d"})
+        self.assertEqual(report["datesRefreshed"], 0)
+        self.assertEqual(jobs, {})
+
 
 class RequestAccountingTests(IngestCase):
     def test_the_run_counts_every_request_including_body_fetches(self):

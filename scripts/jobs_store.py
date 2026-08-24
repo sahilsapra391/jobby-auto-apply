@@ -155,6 +155,23 @@ def clear_untrusted_legacy_dates(jobs):
     return changed
 
 
+def refresh_posted_date(existing, incoming):
+    """Copy genuine source date evidence onto an already stored identity.
+
+    This is intentionally narrower than an upsert. Search gating decides which
+    new jobs enter Found, but it must not stop a known record from learning its
+    publication date on a later source sighting.
+    """
+    found = incoming.get("postedAt")
+    if not parse_stamp(found):
+        return False
+    held = existing.get("postedAt")
+    if parse_stamp(held) and str(held) <= str(found):
+        return False
+    existing["postedAt"] = found
+    return True
+
+
 def load_passed(root):
     return _read(paths(root)["passed"], {})
 

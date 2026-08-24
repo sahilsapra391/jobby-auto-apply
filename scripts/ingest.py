@@ -248,6 +248,7 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         "at": jobs_store.now_stamp(), "tier": "1", "found": 0, "kept": 0,
         "deduped": 0, "gatedOut": 0, "byChannel": {}, "channelsSkipped": [],
         "errors": [], "gatedOutBy": {}, "requests": 0, "pruned": 0,
+        "datesRefreshed": 0,
         "usingDefaults": False, "configVersion": 0, "dryRun": bool(dry_run),
     }
 
@@ -302,6 +303,14 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
             discovered_companies.extend(seed_companies.from_postings([posting]))
             found += 1
             report["found"] += 1
+
+            # A saved job may predate a connector's real publish-date support.
+            # Refresh that one trusted field before today's search gate. The
+            # gate still prevents a rejected new job from entering the store.
+            held_id, _held_how = identity.match(index, posting)
+            if (held_id is not None and
+                    jobs_store.refresh_posted_date(jobs[held_id], posting)):
+                report["datesRefreshed"] += 1
 
             if _tombstoned(tombstones, posting,
                            identity.job_id(posting, index.alias_map)):
