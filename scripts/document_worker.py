@@ -1069,7 +1069,8 @@ def _normalize_openai_content(raw: Mapping[str, Any]) -> Mapping[str, Any]:
 def validate_provider_content(
     raw: Mapping[str, Any], runtime: Mapping[str, Any]
 ) -> dict[str, Any]:
-    if runtime.get("provider") == "openai":
+    openai = runtime.get("provider") == "openai"
+    if openai:
         raw = _normalize_openai_content(raw)
     if not _payload_shape(raw):
         raise ResultInvalid("provider result has an invalid top-level shape")
@@ -1083,14 +1084,28 @@ def validate_provider_content(
     )
     if letter_keys not in (required_letter_keys, required_letter_keys | {"date"}):
         raise ResultInvalid("coverLetter has an invalid shape")
+    company = str(runtime.get("company") or "").strip()
+    role = str(runtime.get("role") or "").strip()
     try:
         base = _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
         overrides = _validate_resume_overrides(raw["resumeOverrides"], base)
-        letter = cover_letter.validate_content(raw["coverLetter"])
+    except ResultInvalid:
+        if not openai:
+            raise
+        # OpenAI's strict schema guarantees the outer shape, but cannot express
+        # list lengths derived from the base resume. A bad override must never
+        # sink the whole job. Inherit the verified base wording instead.
+        overrides = {}
+    letter_raw = dict(raw["coverLetter"])
+    if openai:
+        # These are trusted request fields, not model claims. Correcting them is
+        # safer than accepting a model spelling drift or rejecting every file.
+        letter_raw["employer"] = company
+        letter_raw["role"] = role
+    try:
+        letter = cover_letter.validate_content(letter_raw)
     except cover_letter.CoverLetterError as exc:
         raise ResultInvalid("coverLetter has an invalid shape") from exc
-    company = str(runtime.get("company") or "").strip()
-    role = str(runtime.get("role") or "").strip()
     if letter["employer"] != company or letter["role"] != role:
         raise ResultInvalid("coverLetter employer or role does not match the job")
     return {"resumeOverrides": overrides, "coverLetter": letter}

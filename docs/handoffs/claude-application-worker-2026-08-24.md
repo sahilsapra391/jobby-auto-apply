@@ -60,3 +60,21 @@ correct with several roles in one folder. Do not log unsupported terms or copy
 them into queue error metadata. Do not automatically submit either affected
 application while verifying this repair. Retry may generate documents and start
 form filling, but submission still requires the normal guarded confirmation.
+
+## Production follow-up
+
+Two explicit Versant retries on 2026-08-24 parsed valid JSON and then failed
+before content validation or rendering. The OpenAI response schema guarantees
+the outer object shape, but it cannot express resume list lengths derived from
+the installed base resume. `validate_provider_content` now treats an invalid
+OpenAI resume override as optional tailoring and inherits the complete verified
+base resume. It also replaces the letter's employer and role with the trusted
+request values before validation. Other providers retain strict rejection.
+Malformed letter prose, unsupported top-level fields, rendering failures, ATS
+provenance, layout, and PDF checks still fail closed.
+
+The production IFS retry passed exact document ownership and launched the form
+runner. It then parked honestly because the retained trusted tab was
+`about:blank`; it did not open or submit an unverified destination. The
+production Versant job remains safe to Retry after the updated document worker
+process loads this revision.

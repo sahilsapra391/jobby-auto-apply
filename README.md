@@ -45,6 +45,10 @@ resume override group, the worker drops that group, falls back to the verified
 base wording for that section, and validates the artifacts again. A runner that
 still refuses before opening a form returns the application to its prior lane
 and releases its empty browser slot instead of sitting in In flight forever.
+OpenAI strict output cannot encode resume list lengths that come from the base
+file. If those dynamic lengths are wrong, the worker inherits the complete
+verified base resume. The employer and role on the letter always come from the
+trusted job request, never from model spelling.
 
 ### Watching
 

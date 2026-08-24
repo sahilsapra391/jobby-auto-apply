@@ -1019,6 +1019,30 @@ class ProviderResponseTests(unittest.TestCase):
         with self.assertRaises(worker.ResultInvalid):
             worker.validate_provider_content(payload, runtime)
 
+    def test_openai_inherits_base_when_dynamic_override_lengths_are_invalid(self):
+        runtime = {
+            "company": "Private Company", "role": "Private Role",
+            "provider": "openai",
+        }
+        payload = provider_payload()
+        payload["resumeOverrides"] = {
+            "areasOfExpertise": ["Too short for the base resume"],
+        }
+        clean = worker.validate_provider_content(payload, runtime)
+        self.assertEqual(clean["resumeOverrides"], {})
+
+    def test_openai_uses_trusted_job_identity_for_the_cover_letter(self):
+        runtime = {
+            "company": "Private Company", "role": "Private Role",
+            "provider": "openai",
+        }
+        payload = provider_payload()
+        payload["coverLetter"]["employer"] = "Model spelling drift"
+        payload["coverLetter"]["role"] = "Wrong role"
+        clean = worker.validate_provider_content(payload, runtime)
+        self.assertEqual(clean["coverLetter"]["employer"], "Private Company")
+        self.assertEqual(clean["coverLetter"]["role"], "Private Role")
+
     def test_provider_response_has_a_hard_size_limit(self):
         with mock.patch.object(worker, "MAX_MODEL_RESPONSE_BYTES", 8):
             with self.assertRaises(worker.ResultInvalid):
