@@ -90,6 +90,64 @@ def load_state(root):
     }
 
 
+SESSION_PUBLIC_FIELDS = {
+    "alignment", "applicationId", "applyUrl", "ats", "blockerNote", "company",
+    "comp", "coreSkills", "coverLetter", "datePosted", "discipline",
+    "droppedAt", "droppedFrom", "droppedReason", "droppedStage", "fitScore",
+    "foundAt", "jobNumber", "linkedinUrl", "location", "note", "pendingFields",
+    "pendingNote", "phase", "phaseAt", "phaseDetail", "postedAgo", "postedDate",
+    "postedDays", "postingUrl", "previousStatus", "promotedFrom", "realLocation",
+    "region", "requisition", "resumeVariant", "role", "seenOnBoards", "source",
+    "sponsorshipStance", "status", "step", "sweptAt", "updatedAt", "url",
+    "verifiedLive", "workSite", "yearsMin", "yearsText",
+}
+HISTORY_PUBLIC_FIELDS = {
+    "applicationId", "at", "company", "confirmation", "coverLetter",
+    "event", "resumeVariant", "role", "url",
+}
+ROLE_PUBLIC_FIELDS = {
+    "applicationId", "ats", "canonicalUrl", "company", "companyWebsite",
+    "confirmation", "confirmedAt", "coverLetter", "logoUrl", "resumeVariant",
+    "region", "role", "source", "url",
+}
+
+
+def _public_records(records, fields):
+    """Keep only values that the password-gated board renderer consumes."""
+    return [
+        {key: value for key, value in record.items() if key in fields}
+        for record in records
+        if isinstance(record, dict)
+    ]
+
+
+def publishable_state(state):
+    """Return the minimum renderer input safe to persist as board state.
+
+    The deployed UI renders this payload with the renderer from its own Git
+    commit. KV therefore carries changing application facts, never executable
+    HTML or provider credentials. Job discovery records are already a public
+    posting projection and retain their full shape so filter and scoring logic
+    stays identical between local and deployed renders.
+    """
+    roles = state.get("roles") or {}
+    return {
+        "profile": {"firstName": (state.get("profile") or {}).get("firstName")},
+        "sessions": _public_records(state.get("sessions") or [], SESSION_PUBLIC_FIELDS),
+        "history": _public_records(state.get("history") or [], HISTORY_PUBLIC_FIELDS),
+        "roles": {
+            str(key): {field: value for field, value in record.items()
+                       if field in ROLE_PUBLIC_FIELDS}
+            for key, record in roles.items()
+            if isinstance(record, dict)
+        },
+        "meta": state.get("meta") or {},
+        "jobs": state.get("jobs") or {},
+        "searchConfig": state.get("searchConfig"),
+        "providers": settings_panel.public_payload(state.get("providers") or {}),
+    }
+
+
 def esc(v):
     return html.escape(str(v if v is not None else ""))
 
@@ -1664,6 +1722,7 @@ def main():
     ap = argparse.ArgumentParser(description="Build the job-application dashboard.")
     ap.add_argument("--out", required=True, help="output HTML path")
     ap.add_argument("--root", help="store directory")
+    ap.add_argument("--state-out", help="optional sanitized renderer-state JSON path")
     args = ap.parse_args()
 
     root = root_dir(args.root)
@@ -1676,6 +1735,13 @@ def main():
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(build(state, generated), encoding="utf-8")
+    if args.state_out:
+        state_out = Path(args.state_out).expanduser()
+        state_out.parent.mkdir(parents=True, exist_ok=True)
+        state_out.write_text(
+            json.dumps(publishable_state(state), separators=(",", ":")),
+            encoding="utf-8",
+        )
 
     print(json.dumps({
         "written": str(out),

@@ -125,9 +125,12 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/provider_login.py`: native interactive login and status publication.
 - `scripts/settings_panel.py`: the three connection cards and local-only copy.
 - `scripts/dashboard.py`: self-contained board, centred Home and Settings pills.
+- `scripts/sync_vercel_renderer.py`: deterministic copy step for the deployed renderer.
 - `scripts/premium_ui.py`: Soft Premium tokens, layout, motion, and responsive rules.
 - `scripts/company_logos.py`: trusted logo selection, proxy URLs, and monogram fallback.
-- `deploy/api/board.js`: same-origin settings route and local provider actions.
+- `deploy/api/page.py`: password-gated server render using sanitized KV state and deployed code.
+- `deploy/api/board.js`: queue, document, logo, health, and provider endpoints.
+- `deploy/renderer/`: generated deployment copy of the renderer. Never edit it directly.
 - `scripts/watch.py`: Apply orchestration, three launchd plists, health pings.
 - `scripts/document_job.py`: encrypted document-job client and local installation.
 - `scripts/document_worker.py`: serial local document generator and fixed gates.
@@ -257,13 +260,17 @@ checks still fail closed. See
 
 PR #5 is the production release for the provider health, failover, dedicated
 control service, secure API-key connectors, browser slot fix, and resume
-integrity gate. Its Vercel preview passed before merge. The Vercel function
-calls Cloudflare KV through its REST API. There is no separately deployed
-Cloudflare Worker in this request path.
+integrity gate. Its Vercel preview passed before merge. The Vercel functions
+call Cloudflare KV through its REST API. There is no separately deployed
+Cloudflare Worker in this request path. The page function renders
+`jobby:board-state` with the renderer bundled in its own Git commit. Do not
+restore active HTML serving from `jobby:board`; that value exists only for the
+rolling migration from deployments created before PR #13.
 
 Do not run `python3 scripts/publish.py --deploy` as a substitute for merging
-the PR. That command first uploads the live board and application documents to
-Cloudflare KV, which is a separate content publication action.
+the PR. Publishing updates sanitized state and application documents in KV.
+Git deployment owns the renderer. After changing any renderer module listed in
+`scripts/sync_vercel_renderer.py`, run that script before testing or committing.
 
 ## Worktree discipline
 

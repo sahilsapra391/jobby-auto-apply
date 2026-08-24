@@ -1,4 +1,4 @@
-// Serves the generated dashboard behind a password.
+// Serves the dashboard's queue, document, logo, health, and provider endpoints.
 //
 // The board names companies, roles, referral contacts and drafted messages, so
 // it is not something to leave on a public URL. Vercel's own Deployment
@@ -8,7 +8,7 @@
 // Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
 // board.
 
-import { getBoard, getDoc, getLocalStatus } from '../kvcontent.mjs';
+import { getBoard, getBoardState, getDoc, getLocalStatus } from '../kvcontent.mjs';
 
 const REALM = 'Application board';
 
@@ -36,25 +36,6 @@ function suppliedPassword(request) {
   const colon = decoded.indexOf(':');
   return colon === -1 ? null : decoded.slice(colon + 1);
 }
-
-// default-src 'none' means a posting that smuggled markup through the store
-// still cannot phone anything home. The board itself needs only inline
-// style/script and outbound links.
-const CSP = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  // 'unsafe-inline' for the board's own scripts, 'self' for Vercel Analytics
-  "script-src 'unsafe-inline' 'self'",
-  "img-src 'self' data:",
-  // The icons and manifest are static files under public/, which Vercel serves
-  // before the catch-all rewrite. Without this, default-src 'none' blocks the
-  // manifest fetch and the board cannot be installed to a home screen.
-  "manifest-src 'self'",
-  "connect-src 'self'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join('; ');
 
 const BASE_HEADERS = {
   'cache-control': 'no-store, max-age=0',
@@ -303,11 +284,18 @@ export default {
     // Unauthenticated, and says nothing about the search: enough to confirm a
     // deploy landed without typing the password.
     if (pathname === '/healthz') {
-      const health = await getBoard(process.env).catch(() => null);
+      const [state, legacy] = await Promise.all([
+        getBoardState(process.env).catch(() => null),
+        getBoard(process.env).catch(() => null),
+      ]);
       return new Response(JSON.stringify({
         ok: true,
-        generatedAt: health ? health.generatedAt : null,
-        boardPublished: health !== null,
+        rendererCommit: process.env.VERCEL_GIT_COMMIT_SHA || null,
+        rendererSchemaVersion: 1,
+        stateGeneratedAt: state ? state.generatedAt : null,
+        stateSchemaVersion: state ? state.rendererSchemaVersion : null,
+        statePublished: state !== null,
+        legacyGeneratedAt: legacy ? legacy.generatedAt : null,
       }), {
         status: 200,
         headers: { 'content-type': 'application/json', ...BASE_HEADERS },
@@ -395,25 +383,6 @@ export default {
       return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
     }
 
-    // The page itself comes from KV, so publishing it is a write rather than a
-    // deployment. Deployments carry only code now.
-    let board;
-    try {
-      board = await getBoard(process.env);
-    } catch (err) {
-      return text(`The board could not be read: ${String(err.message || err)}\n`, 502);
-    }
-    if (!board) {
-      return text('No board has been published yet.\n' +
-                  'Run: python3 scripts/publish.py\n', 503);
-    }
-    return new Response(request.method === 'HEAD' ? null : board.html, {
-      status: 200,
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-        'content-security-policy': CSP,
-        ...BASE_HEADERS,
-      },
-    });
+    return text('Not found.\n', 404);
   },
 };

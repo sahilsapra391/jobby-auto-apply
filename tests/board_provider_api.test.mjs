@@ -34,7 +34,7 @@ globalThis.fetch = async (input, options = {}) => {
 };
 
 const { default: handler } = await import('../deploy/api/board.js');
-const { putBoard } = await import('../deploy/kvcontent.mjs');
+const { putBoard, putBoardState, getBoardState } = await import('../deploy/kvcontent.mjs');
 
 function auth() {
   return `Basic ${Buffer.from('user:test-password').toString('base64')}`;
@@ -66,6 +66,24 @@ test('provider controls stay behind the dashboard password', async () => {
   );
   assert.equal(response.status, 401);
   assert.equal(values.size, 0);
+});
+
+test('sanitized board state is compressed and health reports its publication', async () => {
+  const state = JSON.stringify({ profile: { firstName: 'A' }, sessions: [] });
+  await putBoardState(process.env, state, '2026-08-24T12:00:00Z');
+  const envelope = await getBoardState(process.env);
+  assert.equal(envelope.schemaVersion, 1);
+  assert.equal(envelope.rendererSchemaVersion, 1);
+  assert.equal(envelope.encoding, 'gzip+base64');
+  assert.equal(envelope.generatedAt, '2026-08-24T12:00:00Z');
+  assert.notEqual(envelope.payload, Buffer.from(state).toString('base64'));
+
+  const response = await handler.fetch(request('/healthz', undefined, 'GET', false));
+  assert.equal(response.status, 200);
+  const health = await response.json();
+  assert.equal(health.statePublished, true);
+  assert.equal(health.stateGeneratedAt, '2026-08-24T12:00:00Z');
+  assert.equal(health.rendererSchemaVersion, health.stateSchemaVersion);
 });
 
 test('company logos stay behind the password and proxy only safe domains', async () => {
