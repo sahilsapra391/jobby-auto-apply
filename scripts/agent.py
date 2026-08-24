@@ -25,14 +25,14 @@ CACHE_SECONDS = 600
 
 
 def resolve_provider(provider=None):
-    """Return an explicit provider or the first connected provider."""
+    """Return an explicit provider or the first healthy connected provider."""
     if provider is not None:
         if provider not in providers.PROVIDER_IDS:
             raise providers.ProviderError(f"unknown provider: {provider}")
         return provider
     selected = providers.active_provider()
     if not selected:
-        raise providers.ProviderError("no agent provider is connected")
+        raise providers.ProviderError("no connected agent provider is healthy")
     return selected
 
 
@@ -114,9 +114,10 @@ def blocked_reason(reason, provider=None):
         name = providers.PROVIDER_INFO[provider]["name"]
         return f"{name} agent cannot authenticate ({detail}). {providers.auth_hint(provider)}"
     return (
-        f"The selected agent provider cannot authenticate ({detail}). Reconnect it in "
-        "Settings or sign in with its CLI, such as `codex login`, "
-        "`claude auth login --claudeai`, or `gemini`."
+        f"No connected agent provider can run ({detail}). Open Settings to reconnect "
+        "an account or restore its usage. Jobby will use the first healthy connection "
+        "automatically. OpenAI uses `codex login`; Anthropic and Gemini use "
+        "local API keys entered through Settings."
     )
 
 
