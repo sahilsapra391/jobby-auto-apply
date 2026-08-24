@@ -1101,6 +1101,20 @@ class ProviderSettingsTests(unittest.TestCase):
         active = [item["id"] for item in payload["providers"] if item["active"]]
         self.assertEqual(active, ["anthropic"])
 
+    def test_explicit_no_healthy_provider_does_not_badge_an_unhealthy_connection(self):
+        status = {
+            "activeProvider": None,
+            "providers": [{
+                "id": "openai",
+                "connected": True,
+                "connectionOrder": 1,
+                "healthy": False,
+                "status": "unavailable",
+            }],
+        }
+        payload = dashboard.settings_panel.public_payload(status)
+        self.assertFalse(any(item["active"] for item in payload["providers"]))
+
     def test_missing_cli_and_auth_states_keep_their_actionable_hint(self):
         status = {"providers": [
             {"id": "gemini", "status": "not_installed",
@@ -1126,7 +1140,9 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertIn("return r.text().then", page)
         self.assertIn("JSON.parse(raw)", page)
         self.assertIn("account sign-in in your browser on Your Device", page)
-        self.assertIn("subscription limits or usage quota", page)
+        self.assertIn("account's usage quota", page)
+        self.assertIn("API key page and a private terminal prompt", page)
+        self.assertIn("p.status !== 'checking'", page)
 
     def test_home_and_settings_are_centered_in_the_top_app_bar(self):
         page = build()

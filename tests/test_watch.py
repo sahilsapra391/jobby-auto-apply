@@ -79,10 +79,12 @@ class LaunchdInstallTests(unittest.TestCase):
             root = pathlib.Path(d)
             watcher_plist = root / "LaunchAgents" / "ai.jobby.watch.plist"
             document_plist = root / "LaunchAgents" / "ai.jobby.documents.plist"
+            provider_plist = root / "LaunchAgents" / "ai.jobby.providers.plist"
             completed = SimpleNamespace(returncode=0, stdout="", stderr="")
             with (
                 mock.patch.object(watch, "PLIST", watcher_plist),
                 mock.patch.object(watch, "DOCUMENT_PLIST", document_plist),
+                mock.patch.object(watch, "PROVIDER_PLIST", provider_plist),
                 mock.patch.object(watch, "LOG_DIR", root / "logs"),
                 mock.patch.object(watch, "LOCK_DIR", root / "locks"),
                 mock.patch.object(watch, "run", return_value=completed) as run,
@@ -92,8 +94,10 @@ class LaunchdInstallTests(unittest.TestCase):
 
             watcher = plistlib.loads(watcher_plist.read_bytes())
             documents = plistlib.loads(document_plist.read_bytes())
+            provider_controls = plistlib.loads(provider_plist.read_bytes())
             self.assertEqual(watcher["Label"], "ai.jobby.watch")
             self.assertEqual(documents["Label"], "ai.jobby.documents")
+            self.assertEqual(provider_controls["Label"], "ai.jobby.providers")
             self.assertEqual(watcher["ProgramArguments"][0], sys.executable)
             self.assertEqual(documents["ProgramArguments"][0], sys.executable)
             self.assertEqual(documents["ProgramArguments"][-2:], ["--loop", "--local"])
@@ -101,12 +105,14 @@ class LaunchdInstallTests(unittest.TestCase):
             loaded = [call.args[0] for call in run.call_args_list]
             self.assertIn(["launchctl", "load", str(watcher_plist)], loaded)
             self.assertIn(["launchctl", "load", str(document_plist)], loaded)
+            self.assertIn(["launchctl", "load", str(provider_plist)], loaded)
 
     def test_install_retains_the_previous_launchd_interpreter(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
             watcher_plist = root / "LaunchAgents" / "ai.jobby.watch.plist"
             document_plist = root / "LaunchAgents" / "ai.jobby.documents.plist"
+            provider_plist = root / "LaunchAgents" / "ai.jobby.providers.plist"
             watcher_plist.parent.mkdir(parents=True)
             watcher_plist.write_bytes(plistlib.dumps({
                 "ProgramArguments": [sys.executable, "/old/watch.py"],
@@ -115,6 +121,7 @@ class LaunchdInstallTests(unittest.TestCase):
             with (
                 mock.patch.object(watch, "PLIST", watcher_plist),
                 mock.patch.object(watch, "DOCUMENT_PLIST", document_plist),
+                mock.patch.object(watch, "PROVIDER_PLIST", provider_plist),
                 mock.patch.object(watch, "LOG_DIR", root / "logs"),
                 mock.patch.object(watch, "LOCK_DIR", root / "locks"),
                 mock.patch.object(watch, "run", return_value=completed),
@@ -138,7 +145,7 @@ class AuthDetectionTests(unittest.TestCase):
 
     def test_the_blocked_message_names_the_fix_not_just_the_error(self):
         msg = agent.blocked_reason("401")
-        self.assertIn("claude auth login", msg)
+        self.assertIn("API key", msg)
 
 
 class LockTests(unittest.TestCase):
@@ -259,7 +266,7 @@ class ProviderControlTests(unittest.TestCase):
             "connectionKey": connection_key,
         }
         registry = mock.Mock()
-        registry.connect.return_value = {
+        registry.begin_connect.return_value = {
             "activeProvider": "openai",
             "providers": [{
                 "id": "openai", "connected": True, "healthy": False,
@@ -273,7 +280,7 @@ class ProviderControlTests(unittest.TestCase):
                     watch.provider_login, "publish_status", return_value=True):
             watch.process_local_provider_controls({"providerLocal": [request]})
 
-        registry.connect.assert_called_once_with(
+        registry.begin_connect.assert_called_once_with(
             "openai", connection_key=connection_key
         )
 
@@ -298,7 +305,7 @@ class ProviderControlTests(unittest.TestCase):
                     result = watch.process_local_provider_controls(q)
 
         claim.assert_called_once_with("providerLocal/")
-        registry.disconnect.assert_called_once_with("openai")
+        registry.disconnect.assert_called_once_with("openai", forget_secret=True)
         registry.connect.assert_not_called()
         registry.refresh.assert_not_called()
         publish.assert_called_once_with(registry.disconnect.return_value)
@@ -360,7 +367,7 @@ class DocumentProviderReadinessTests(unittest.TestCase):
         watch._document_status_cache = self.previous_cache
         watch._last_document_status_poll = self.previous_poll
 
-    def test_a_different_local_document_default_blocks_provider_use(self):
+    def test_a_different_worker_default_does_not_block_shared_local_registry(self):
         status = {
             "worker": "documents",
             "checkedAt": datetime.now(timezone.utc).isoformat(),
@@ -377,8 +384,8 @@ class DocumentProviderReadinessTests(unittest.TestCase):
                 mock.patch.object(watch.toolpath, "queue_env", return_value={}), \
                 mock.patch.object(watch.subprocess, "run", return_value=result):
             ready, why = watch.document_provider_ready("openai", now=100)
-        self.assertFalse(ready)
-        self.assertIn("not the local document worker default", why)
+        self.assertTrue(ready)
+        self.assertEqual(why, "")
 
 
 class BrowserConfigTests(unittest.TestCase):
@@ -671,6 +678,12 @@ class ProviderNeutralApplyTests(unittest.TestCase):
                 watch.providers, "ProviderRegistry", return_value=registry))
             stack.enter_context(mock.patch.object(
                 watch.providers, "active_provider", return_value=provider))
+            stack.enter_context(mock.patch.object(
+                watch, "select_provider_for_work", return_value={
+                    "activeProvider": provider,
+                    "ready": bool(provider),
+                    "providers": [],
+                }))
             document_readiness = stack.enter_context(mock.patch.object(
                 watch, "document_provider_ready", return_value=remote_ready))
             prepare = None
@@ -737,9 +750,9 @@ class ProviderNeutralApplyTests(unittest.TestCase):
         sync.assert_not_called()
         self.assertIs(state, replacement)
 
-    def test_ready_documents_spawn_apply_with_the_saved_provider(self):
-        # The active setting can change after enqueue. The job's saved provider
-        # still owns both its completed documents and its local form run.
+    def test_ready_documents_handoff_the_form_to_the_current_healthy_provider(self):
+        # The document remains tied to Gemini while it is generated. The next
+        # stage can use the currently healthy OpenAI connection.
         ready = {"state": "ready", "provider": "gemini"}
         with self.tick_harness("openai", ready) as calls:
             watch.tick()
@@ -747,7 +760,7 @@ class ProviderNeutralApplyTests(unittest.TestCase):
         calls["serve"].assert_called_once_with("apply-1")
         calls["spawn"].assert_called_once()
         argv = list(calls["spawn"].call_args.args[1])
-        self.assertEqual(argv[argv.index("--provider") + 1], "gemini")
+        self.assertEqual(argv[argv.index("--provider") + 1], "openai")
         self.assertEqual(argv[argv.index("--id") + 1], "acme-pm")
 
     def test_terminal_document_failure_is_claimed_and_parked_without_retry(self):

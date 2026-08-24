@@ -717,7 +717,7 @@ def main():
                           for t in tabs()], indent=2))
         return 0
     if args.focus:
-        out = focus(args.focus)
+        out = focus(args.focus, slot=args.slot)
         print(json.dumps(out, indent=2))
         return 0 if out["focused"] else 1
     if args.check:
@@ -738,7 +738,7 @@ def main():
     if started.get("error"):
         print(json.dumps(started, indent=2))
         return 1
-    out = focus(args.login)
+    out = focus(args.login, slot=slot)
     out["signInHere"] = (
         f"Sign in in the window that came up ({slot}). Then run "
         "`python3 scripts/browser.py --stop && python3 scripts/browser.py --clone-logins` "

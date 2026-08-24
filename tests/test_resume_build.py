@@ -136,6 +136,62 @@ class RenderGuardTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", out)
 
 
+class IntegrityGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.base = {
+            "roles": [{"lede": "Owned delivery.", "bullets": [
+                "Reduced data retrieval latency by 68% across 75 customer migrations.",
+                "Raised automated test coverage from 62% to 81% while preserving release stability.",
+            ]}]
+        }
+
+    def tailored(self, first=None, second=None):
+        value = json.loads(json.dumps(self.base))
+        if first is not None:
+            value["roles"][0]["bullets"][0] = first
+        if second is not None:
+            value["roles"][0]["bullets"][1] = second
+        return value
+
+    def test_supported_keyword_weave_passes(self):
+        tailored = self.tailored(
+            "Reduced p99 data retrieval latency by 68% across 75 customer migrations."
+        )
+        rb.assert_integrity(self.base, tailored)
+
+    def test_exact_duplicate_is_rejected(self):
+        tailored = self.tailored(second=self.base["roles"][0]["bullets"][0])
+        with self.assertRaises(rb.ResumeIntegrityError):
+            rb.assert_integrity(self.base, tailored)
+
+    def test_near_duplicate_is_rejected(self):
+        tailored = self.tailored(
+            second="Reduced retrieval latency by 68% across all 75 customer migrations."
+        )
+        with self.assertRaises(rb.ResumeIntegrityError):
+            rb.assert_integrity(self.base, tailored)
+
+    def test_metric_or_version_drift_is_rejected(self):
+        tailored = self.tailored(
+            "Reduced data retrieval latency by 72% across 75 customer migrations."
+        )
+        with self.assertRaises(rb.ResumeIntegrityError):
+            rb.assert_integrity(self.base, tailored)
+
+    def test_replacing_the_accomplishment_is_rejected(self):
+        tailored = self.tailored(
+            "Launched a new billing product for 68% of 75 enterprise customers."
+        )
+        with self.assertRaises(rb.ResumeIntegrityError):
+            rb.assert_integrity(self.base, tailored)
+
+    def test_bullet_count_drift_is_rejected(self):
+        tailored = self.tailored()
+        tailored["roles"][0]["bullets"].pop()
+        with self.assertRaises(rb.ResumeIntegrityError):
+            rb.assert_integrity(self.base, tailored)
+
+
 class ShippedTemplateTests(unittest.TestCase):
     def test_the_shipped_template_and_base_render_together(self):
         if not (TEMPLATE.exists() and BASE.exists()):
@@ -157,6 +213,12 @@ class ShippedTemplateTests(unittest.TestCase):
         # resumes used six, seven and eight.
         self.assertIn("{{technical}}", t)
         self.assertGreater(len(base["technical"]), 0)
+
+    def test_the_shipped_base_has_no_duplicate_or_drifted_points(self):
+        if not BASE.exists():
+            self.skipTest("base content not present")
+        base = json.loads(BASE.read_text())
+        rb.assert_integrity(base, base)
 
 class VariableTechnicalTests(unittest.TestCase):
     """Regrouping Technical Proficiencies is part of the tailoring.

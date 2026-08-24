@@ -33,13 +33,14 @@ def public_payload(status):
     """Return only fields that are safe to publish behind the board password."""
     source = _cards(status)
     active = status.get("activeProvider") if isinstance(status, dict) else None
+    has_active_field = isinstance(status, dict) and "activeProvider" in status
     ordered_source = None
     if isinstance(status, dict):
         if isinstance(status.get("connections"), dict):
             ordered_source = status["connections"]
         elif isinstance(status.get("providers"), dict):
             ordered_source = status["providers"]
-    if not active and ordered_source is not None:
+    if not has_active_field and not active and ordered_source is not None:
         ordered = [
             (item.get("connectionOrder"), provider)
             for provider, item in ordered_source.items()
@@ -142,9 +143,10 @@ def panel(status=None):
         <div>
           <p class="eyebrow">Agent providers</p>
           <h2 id="settings-title">Choose who does the work</h2>
-          <p>The first provider you connect becomes the default for the full pipeline.
-             Resume tailoring and application filling both use that provider on Your Device.
-             Disconnect the default to promote the next connection.</p>
+          <p>Jobby checks connected providers in your connection order and uses the first
+             account that can run. If its login or usage fails, new work moves to the next
+             healthy connection automatically. Resume tailoring and application filling
+             both use that selected provider on Your Device.</p>
         </div>
       </div>
       <div class="split-note">
@@ -153,9 +155,10 @@ def panel(status=None):
         connected provider to fill the application in the local signed-in browser.
       </div>
       <div class="provider-grid">{''.join(cards)}</div>
-      <p class="credential-note">Jobby stores connection order and health only. Account tokens
-         remain in each provider CLI on Your Device. Disconnecting here does not sign the CLI
-         out globally. Agent work uses that account's subscription limits or usage quota.</p>
+      <p class="credential-note">Jobby stores connection order and health only in the dashboard.
+         OpenAI credentials remain in Codex. Anthropic and Gemini API keys stay in owner-only
+         files on Your Device and are removed when you disconnect. No provider credential is
+         sent to Vercel or Cloudflare. Agent work uses that account's usage quota.</p>
       <div class="provider-message" id="provider-message" role="status" aria-live="polite"></div>
     </section>
     <script type="application/json" id="jb-provider-data">{payload_json}</script>
@@ -229,6 +232,8 @@ SCRIPT = r"""
       error: 'Connection error'
     };
     var hostStatus = { local: {} };
+    var pending = {};
+    var fastPoll = null;
     function paintAction(card) {
       var provider = card.dataset.providerCard;
       var local = hostStatus.local[provider];
@@ -256,6 +261,23 @@ SCRIPT = r"""
         var p = byId[card.dataset.providerCard];
         var state = card.querySelector('[data-provider-state="' + target + '"]');
         if (!state) return;
+        var waiting = pending[card.dataset.providerCard];
+        if (waiting) {
+          var completed = waiting.action === 'disconnect'
+            ? Boolean(p && !p.enabled)
+            : Boolean(p && p.enabled && p.status !== 'checking');
+          if (completed) {
+            delete pending[card.dataset.providerCard];
+            waiting = null;
+          }
+        }
+        if (waiting) {
+          state.textContent = waiting.action === 'connect'
+            ? 'Waiting for sign-in' : 'Disconnecting';
+          state.className = 'provider-state pending';
+          paintAction(card);
+          return;
+        }
         if (!p) {
           state.textContent = 'Your Device is offline';
           state.className = 'provider-state bad';
@@ -280,17 +302,39 @@ SCRIPT = r"""
         })
         .catch(function () { paintHost('local', null); });
     }
+    function startFastPolling() {
+      if (fastPoll) return;
+      fastPoll = setInterval(function () {
+        refreshProviders();
+        if (!Object.keys(pending).length) {
+          clearInterval(fastPoll);
+          fastPoll = null;
+        }
+      }, 1000);
+    }
     if (document.body.classList.contains('settings-view')) {
       refreshProviders();
       setInterval(refreshProviders, 30000);
     }
     document.querySelectorAll('.provider-action').forEach(function (button) {
       button.addEventListener('click', function () {
-        document.querySelectorAll('.provider-action').forEach(function (item) {
-          item.disabled = true;
-        });
         var body = { provider: button.dataset.provider, target: button.dataset.target,
                      action: button.dataset.action };
+        var providerNames = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' };
+        var accountFlow = body.provider === 'openai';
+        pending[body.provider] = { action: body.action, started: Date.now() };
+        button.disabled = true;
+        var card = button.closest('[data-provider-card]');
+        var state = card.querySelector('[data-provider-state="local"]');
+        state.textContent = body.action === 'connect'
+          ? (accountFlow ? 'Requesting sign-in' : 'Requesting API key')
+          : 'Disconnecting';
+        state.className = 'provider-state pending';
+        message.textContent = body.action === 'connect'
+          ? 'Requesting the ' + providerNames[body.provider] +
+            (accountFlow ? ' sign-in' : ' API key prompt') + ' on Your Device…'
+          : 'Disconnecting ' + providerNames[body.provider] + ' from Jobby…';
+        startFastPolling();
         fetch('/api/provider', { method: 'POST', credentials: 'same-origin',
           headers: { 'content-type': 'application/json', 'x-jobby-request': '1' },
           body: JSON.stringify(body) })
@@ -304,18 +348,20 @@ SCRIPT = r"""
           })
           .then(function (result) {
             if (!result.ok) throw new Error(result.b.error || 'Could not queue connection');
-            var providerNames = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' };
             message.textContent = body.action === 'connect'
-              ? 'Opening the ' + providerNames[body.provider] + ' account sign-in in your browser on Your Device. Keep the terminal window open until Jobby confirms the connection.'
-              : 'Provider disconnected from Jobby on Your Device.';
-            setTimeout(refreshProviders, 2500);
-            setTimeout(refreshProviders, 8000);
+              ? (accountFlow
+                ? 'Opening the OpenAI account sign-in in your browser on Your Device. Keep the terminal window open until Jobby confirms the connection.'
+                : 'Opening the official ' + providerNames[body.provider] + ' API key page and a private terminal prompt on Your Device. Paste the key there and keep the terminal open until Jobby validates the pinned model.')
+              : 'Disconnect requested. Jobby is updating Your Device now.';
+            refreshProviders();
           })
-          .catch(function (error) { message.textContent = error.message; })
+          .catch(function (error) {
+            delete pending[body.provider];
+            message.textContent = error.message;
+            refreshProviders();
+          })
           .finally(function () {
-            document.querySelectorAll('.provider-action').forEach(function (item) {
-              item.disabled = false;
-            });
+            button.disabled = false;
           });
       });
     });

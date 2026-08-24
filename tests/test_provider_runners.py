@@ -65,8 +65,8 @@ class AgentFacadeTests(unittest.TestCase):
     def test_generic_blocked_message_covers_each_supported_cli(self):
         message = agent.blocked_reason("401")
         self.assertIn("codex login", message)
-        self.assertIn("claude auth login", message)
-        self.assertIn("gemini", message)
+        self.assertIn("API key", message)
+        self.assertIn("Gemini", message)
 
 
 class BrowserStub:

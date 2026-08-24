@@ -228,6 +228,18 @@ class JobLog:
         "request validated",
         "provider started",
         "provider finished",
+        "response parsed",
+        "content validated",
+        "artifacts rendered",
+        "artifact files rejected",
+        "artifact ATS rejected",
+        "artifact layout rejected",
+        "artifact cover letter rejected",
+        "cover letter overflow rejected",
+        "cover letter content rejected",
+        "cover letter fields rejected",
+        "cover letter readability rejected",
+        "cover letter address rejected",
         "artifacts validated",
         "result published",
         "failure published",
@@ -563,6 +575,7 @@ def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]
 
 def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
     """Validate content, provenance, geometry, and cover letter completeness."""
+    runtime["artifactValidationStage"] = "files"
     output_root = Path(runtime["outputRoot"]).resolve()
     names = runtime.get("outputs") or {}
     expected = {
@@ -592,7 +605,9 @@ def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
         if not pdf_path.read_bytes()[:5].startswith(b"%PDF"):
             raise ResultInvalid("a generated PDF is invalid")
 
+    runtime["artifactValidationStage"] = "ats"
     ats = _ats_checks(runtime, resume_pdf_path)
+    runtime["artifactValidationStage"] = "layout"
     try:
         layout = resume_pdf.cmd_verify(type(
             "VerifyArgs",
@@ -604,6 +619,7 @@ def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
     if not layout.get("match"):
         raise ResultInvalid("resume layout does not match the base resume")
 
+    runtime["artifactValidationStage"] = "cover_letter"
     content_path = Path(runtime["taskRoot"]) / "cover-content.json"
     content = _read_small_json(content_path)
     try:
@@ -614,7 +630,19 @@ def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
     except (cover_letter.CoverLetterError, ResultInvalid) as exc:
         raise ResultInvalid("cover letter could not be checked") from exc
     if not cover_check.get("ok"):
+        overflow = cover_check.get("overflowSignals") or {}
+        if overflow.get("detected") is True:
+            runtime["artifactValidationDetail"] = "cover_overflow"
+        elif cover_check.get("contentComplete") is not True:
+            runtime["artifactValidationDetail"] = "cover_content"
+        elif not all((cover_check.get("requiredFields") or {}).values()):
+            runtime["artifactValidationDetail"] = "cover_fields"
+        elif cover_check.get("readable") is not True:
+            runtime["artifactValidationDetail"] = "cover_readability"
+        elif cover_check.get("streetAddressOmitted") is not True:
+            runtime["artifactValidationDetail"] = "cover_address"
         raise ResultInvalid("cover letter verification failed")
+    runtime["artifactValidationStage"] = "complete"
 
     return {
         "resume": {
@@ -719,8 +747,19 @@ For resumeOverrides, keep every list the same length as the corresponding suppli
 base list. A roles array may stop after its last changed role and may use null entries
 to inherit earlier roles. A role may contain lede and bullets only. bullets may be a
 full same-length array or an object mapping existing zero-based indexes to replacements.
+When the output schema requires a resume field that should inherit, return null for that
+field. Change only the strongest supported matches for this job. Keep every replacement
+at or below the approximate length of the original text so the verified resume layout
+does not grow or clip.
 Keep employers, titles, dates, credentials, and metrics unchanged. Use each supported
 ATS rewrite that reads naturally. Never use an atsGuidance.notClaimable term.
+Preserve the original accomplishment and sentence structure in every changed bullet.
+Only weave in job-description keywords that fit naturally. Do not merge two source
+bullets, copy one bullet into another slot, repeat a point, or produce exact or
+near-duplicate bullets anywhere in the resume.
+
+Keep the cover letter to one page. opening and closing must each be at most 450
+characters. Return one or two evidence paragraphs, each at most 650 characters.
 
 The base resume and storyFacts are the only sources for candidate facts. Writing samples
 show voice only. Never turn a writing sample or job-description claim into a candidate
@@ -961,9 +1000,40 @@ def _validate_resume_overrides(
     return clean
 
 
+def _normalize_openai_content(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Convert strict-schema null sentinels to the shared provider contract."""
+    if not _payload_shape(raw):
+        return raw
+    overrides = raw.get("resumeOverrides")
+    letter = raw.get("coverLetter")
+    if not isinstance(overrides, dict) or not isinstance(letter, dict):
+        return raw
+
+    clean_overrides = {
+        key: value for key, value in overrides.items() if value is not None
+    }
+    roles = clean_overrides.get("roles")
+    if isinstance(roles, list):
+        clean_roles = []
+        for role in roles:
+            if not isinstance(role, dict):
+                clean_roles.append(role)
+                continue
+            patch = {key: value for key, value in role.items() if value is not None}
+            clean_roles.append(patch or None)
+        clean_overrides["roles"] = clean_roles
+
+    clean_letter = dict(letter)
+    if clean_letter.get("date") is None:
+        clean_letter.pop("date", None)
+    return {"resumeOverrides": clean_overrides, "coverLetter": clean_letter}
+
+
 def validate_provider_content(
     raw: Mapping[str, Any], runtime: Mapping[str, Any]
 ) -> dict[str, Any]:
+    if runtime.get("provider") == "openai":
+        raw = _normalize_openai_content(raw)
     if not _payload_shape(raw):
         raise ResultInvalid("provider result has an invalid top-level shape")
     required_letter_keys = {
@@ -1001,6 +1071,7 @@ def render_provider_content(
             Path(runtime["storeRoot"]) / "profile.json", MAX_PROMPT_SECTION_BYTES
         )
         merged = resume_build.merge(base, generated["resumeOverrides"])
+        resume_build.assert_integrity(base, merged)
         merged["region"] = runtime.get("region")
         merged["storeRoot"] = runtime["storeRoot"]
         resume_template = RESUME_TEMPLATE.read_text(encoding="utf-8")
@@ -1023,7 +1094,12 @@ def render_provider_content(
         )
 
         previous_low_memory = os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY")
-        os.environ["JOBBY_CHROMIUM_LOW_MEMORY"] = "1"
+        if sys.platform.startswith("linux"):
+            os.environ["JOBBY_CHROMIUM_LOW_MEMORY"] = "1"
+        else:
+            # The private low-memory profile is for constrained Linux workers.
+            # A fresh Chrome profile can hang during macOS first-run setup.
+            os.environ.pop("JOBBY_CHROMIUM_LOW_MEMORY", None)
         try:
             resume_pdf.cmd_render(type("RenderArgs", (), {
                 "html": str(resume_html_path),
@@ -1044,6 +1120,7 @@ def render_provider_content(
         TypeError,
         ValueError,
         SystemExit,
+        resume_build.ResumeIntegrityError,
         cover_letter.CoverLetterError,
         resume_pdf.ToolError,
     ) as exc:
@@ -1296,6 +1373,108 @@ def _response_schema() -> dict[str, Any]:
     }
 
 
+def _openai_response_schema() -> dict[str, Any]:
+    """Return the document contract in OpenAI strict-schema form.
+
+    OpenAI requires every object property to be listed in ``required``. Null
+    represents an inherited resume field or the optional cover-letter date;
+    ``_normalize_openai_content`` removes those sentinels before validation.
+    """
+    text = {"type": "string", "minLength": 1}
+    opening_text = {"type": "string", "minLength": 20, "maxLength": 450}
+    evidence_text = {"type": "string", "minLength": 20, "maxLength": 650}
+    closing_text = {"type": "string", "minLength": 20, "maxLength": 450}
+    nullable_text = {"anyOf": [{"type": "null"}, text]}
+    role = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["lede", "bullets"],
+        "properties": {
+            "lede": nullable_text,
+            "bullets": {
+                "anyOf": [
+                    {"type": "null"},
+                    {"type": "array", "items": text},
+                ]
+            },
+        },
+    }
+    resume_properties = {
+        "banner": nullable_text,
+        "summary": nullable_text,
+        "areasOfExpertise": {
+            "anyOf": [
+                {"type": "null"},
+                {"type": "array", "items": text},
+            ]
+        },
+        "technical": {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["label", "items"],
+                        "properties": {"label": text, "items": text},
+                    },
+                },
+            ]
+        },
+        "roles": {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "array",
+                    "items": {"anyOf": [{"type": "null"}, role]},
+                },
+            ]
+        },
+    }
+    letter_properties = {
+        "employer": text,
+        "role": text,
+        "salutation": text,
+        "opening": opening_text,
+        "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": evidence_text,
+        },
+        "closing": closing_text,
+        "date": {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "string",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                },
+            ]
+        },
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["resumeOverrides", "coverLetter"],
+        "properties": {
+            "resumeOverrides": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(resume_properties),
+                "properties": resume_properties,
+            },
+            "coverLetter": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(letter_properties),
+                "properties": letter_properties,
+            },
+        },
+    }
+
+
 def no_tools_document_invocation(
     invocation: providers.RunInvocation,
 ) -> providers.RunInvocation:
@@ -1356,6 +1535,10 @@ def no_tools_document_invocation(
             argv[sandbox_index + 1] = "read-only"
         except (ValueError, IndexError) as exc:
             raise GenerationFailed("OpenAI document sandbox is missing") from exc
+        schema_path = invocation.cwd / "document-response.schema.json"
+        private_json(schema_path, _openai_response_schema())
+        prompt_index = len(argv) - 1 if argv and argv[-1] == "-" else len(argv)
+        argv[prompt_index:prompt_index] = ["--output-schema", str(schema_path)]
     elif invocation.provider_id == "gemini":
         try:
             output_index = argv.index("--output-format")
@@ -1424,6 +1607,12 @@ def sandbox_document_invocation(
         for key, value in invocation.env.items()
         if key in {"LANG", "LC_ALL", "LC_CTYPE", "NODE_OPTIONS", "TZ"} and value
     }
+    provider_key = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }.get(invocation.provider_id)
+    if provider_key and invocation.env.get(provider_key):
+        child_env[provider_key] = invocation.env[provider_key]
     child_env.update({
         "HOME": str(sandbox_home),
         "LOGNAME": "jobby-agent",
@@ -1975,11 +2164,31 @@ class DocumentWorker:
 
             try:
                 parsed = self.response_parser(provider_output)
+                log.record("response parsed")
                 generated = self.content_validator(parsed, runtime)
+                log.record("content validated")
                 self.artifact_renderer(runtime, generated)
+                log.record("artifacts rendered")
                 runtime["checks"] = self.artifact_validator(runtime)
                 packed = self.pack_result(runtime)
             except Exception as exc:
+                stage_event = {
+                    "files": "artifact files rejected",
+                    "ats": "artifact ATS rejected",
+                    "layout": "artifact layout rejected",
+                    "cover_letter": "artifact cover letter rejected",
+                }.get(runtime.get("artifactValidationStage"))
+                detail_event = {
+                    "cover_overflow": "cover letter overflow rejected",
+                    "cover_content": "cover letter content rejected",
+                    "cover_fields": "cover letter fields rejected",
+                    "cover_readability": "cover letter readability rejected",
+                    "cover_address": "cover letter address rejected",
+                }.get(runtime.get("artifactValidationDetail"))
+                if detail_event:
+                    log.record(detail_event)
+                if stage_event:
+                    log.record(stage_event)
                 raise ResultInvalid("generated artifacts failed validation") from exc
             log.record("artifacts validated")
 
@@ -2012,7 +2221,10 @@ class DocumentWorker:
 
     def run_loop(self) -> None:
         self.scrub_abandoned_tasks()
-        self.publish_status(refresh=True)
+        # Publish cached health immediately so a slow or broken secondary
+        # provider cannot delay the first document claim. Each claimed job
+        # verifies its requested provider in _requested_provider before work.
+        self.publish_status(refresh=False)
         backoff = self.poll_seconds
         last_status = self.monotonic()
         next_control_poll = last_status
@@ -2037,7 +2249,7 @@ class DocumentWorker:
                     self.sleeper(self.poll_seconds)
             now = self.monotonic()
             if now - last_status >= 5 * 60:
-                self.publish_status(refresh=True)
+                self.publish_status(refresh=False)
                 last_status = now
 
 

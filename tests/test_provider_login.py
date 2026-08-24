@@ -69,6 +69,35 @@ class LoginTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIsNone(registry.connected_provider)
 
+    @mock.patch.object(provider_login, "publish_status", return_value=True)
+    @mock.patch.object(provider_login.webbrowser, "open", return_value=True)
+    @mock.patch.object(provider_login.getpass, "getpass", return_value="local-api-key")
+    @mock.patch.object(provider_login.providers.provider_secrets, "delete")
+    @mock.patch.object(provider_login.providers.provider_secrets, "store")
+    def test_api_provider_opens_official_key_page_and_validates_exact_model(
+        self, store, delete, _prompt, browser, _publish
+    ):
+        class ApiRegistry:
+            connected_provider = None
+
+            def connect(self, provider):
+                self.connected_provider = provider
+                return {"activeProvider": provider, "providers": [{
+                    "id": provider, "connected": True, "healthy": True,
+                    "status": "healthy", "detail": "",
+                }]}
+
+            def public_status(self):
+                return {"activeProvider": None, "providers": []}
+
+        registry = ApiRegistry()
+        result = provider_login.login("gemini", registry=registry)
+        self.assertTrue(result["ok"])
+        store.assert_called_once_with("gemini", "local-api-key")
+        delete.assert_not_called()
+        self.assertEqual(registry.connected_provider, "gemini")
+        self.assertIn("aistudio.google.com", browser.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()
