@@ -114,6 +114,14 @@ class ResultInvalid(WorkerError):
     code = "result_invalid"
 
 
+class UnsupportedTerms(ResultInvalid):
+    """Internal ATS rejection carrying terms that must never leave the worker."""
+
+    def __init__(self, terms: list[str]):
+        self.terms = list(terms)
+        super().__init__("the tailored resume contains unsupported terms")
+
+
 class TransportError(RuntimeError):
     """The queue could not be read or updated safely."""
 
@@ -233,6 +241,7 @@ class JobLog:
         "artifacts rendered",
         "artifact files rejected",
         "artifact ATS rejected",
+        "unsupported ATS overrides removed",
         "artifact layout rejected",
         "artifact cover letter rejected",
         "cover letter overflow rejected",
@@ -564,13 +573,36 @@ def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]
             continue
         unsourced.append(term)
     if unsourced:
-        raise ResultInvalid("the tailored resume contains unsupported terms")
+        raise UnsupportedTerms(unsourced)
     coverage = round(100 * len(matched) / len(keywords), 1) if keywords else 0.0
     return {
         "coverage": coverage,
         "keywordsScored": len(keywords),
         "unsourcedTerms": 0,
     }
+
+
+def remove_unsupported_overrides(
+    generated: Mapping[str, Any], terms: list[str]
+) -> dict[str, Any]:
+    """Drop unsafe override groups and keep the verified base wording.
+
+    The model may occasionally introduce a job-description phrase that is not
+    supported by the base resume or story facts. Rejecting the whole job makes
+    Retry repeat the same prompt. Removing only the override group containing
+    that phrase preserves every safe group and lets the base resume supply the
+    rejected section.
+    """
+    clean = json.loads(json.dumps(generated))
+    overrides = clean.get("resumeOverrides")
+    if not isinstance(overrides, dict):
+        return clean
+    for key in list(overrides):
+        text = json.dumps(overrides[key], ensure_ascii=False)
+        tokens = ats_match.tokens(text)
+        if any(ats_match.contains(tokens, term) for term in terms):
+            overrides.pop(key, None)
+    return clean
 
 
 def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
@@ -2169,7 +2201,15 @@ class DocumentWorker:
                 log.record("content validated")
                 self.artifact_renderer(runtime, generated)
                 log.record("artifacts rendered")
-                runtime["checks"] = self.artifact_validator(runtime)
+                try:
+                    runtime["checks"] = self.artifact_validator(runtime)
+                except UnsupportedTerms as exc:
+                    corrected = remove_unsupported_overrides(generated, exc.terms)
+                    if corrected == generated:
+                        raise
+                    self.artifact_renderer(runtime, corrected)
+                    log.record("unsupported ATS overrides removed")
+                    runtime["checks"] = self.artifact_validator(runtime)
                 packed = self.pack_result(runtime)
             except Exception as exc:
                 stage_event = {

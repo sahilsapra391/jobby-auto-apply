@@ -358,6 +358,19 @@ def _set_phase(application_id, *args):
     )
 
 
+def restore_preflight_refusal(application_id, slot, reason):
+    """Return a refused start to its prior lane and release its empty slot."""
+    _set_phase(
+        application_id,
+        "--restore",
+        "--phase",
+        "Stopped",
+        "--detail",
+        reason,
+    )
+    return release_terminal_browser_slot(application_id, slot)
+
+
 def _refuse_duplicate(application_id, summary):
     duplicate = summary.get("duplicate") or {}
     verdict = duplicate.get("duplicate")
@@ -414,10 +427,12 @@ def main():
         artifacts = artifact_snapshot(summary)
         prompt = build_prompt(summary, artifacts)
     except ApplyRefusal as exc:
+        release = restore_preflight_refusal(application_id, args.slot, str(exc))
         print(json.dumps({
             "applicationId": application_id,
             "ready": False,
             "why": str(exc),
+            "browserSlotRelease": release,
         }, indent=2))
         return 2
 

@@ -174,6 +174,24 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
         with self.assertRaises(run_apply.ApplyRefusal):
             run_apply.artifact_snapshot(self.summary)
 
+    def test_preflight_refusal_restores_lane_and_releases_empty_slot(self):
+        self.summary["documentsReady"] = False
+        released = {"released": True, "slot": "apply-2"}
+        with mock.patch.object(
+                sys, "argv", ["run_apply.py", "--id", "acme-pm",
+                              "--provider", "openai", "--slot", "apply-2"]), \
+                mock.patch.object(run_apply, "load_brief", return_value=self.summary), \
+                mock.patch.object(run_apply, "_refuse_duplicate", return_value=False), \
+                mock.patch.object(
+                    run_apply, "restore_preflight_refusal", return_value=released) as restore, \
+                mock.patch("builtins.print"):
+            result = run_apply.main()
+        self.assertEqual(result, 2)
+        restore.assert_called_once_with(
+            "acme-pm", "apply-2",
+            "the tailored resume and cover letter are not both ready",
+        )
+
     def test_prompt_is_form_only_and_names_the_supplied_files(self):
         artifacts = run_apply.artifact_snapshot(self.summary)
         prompt = run_apply.build_prompt(self.summary, artifacts)

@@ -32,6 +32,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 import store  # noqa: E402
+import document_contract  # noqa: E402
 
 def applications_dir():
     """Where tailored documents live.
@@ -100,7 +101,7 @@ def pick_base(profile, region):
     return resumes[0] if resumes else None
 
 
-def find_documents(folder, role):
+def find_documents(folder, role, expected=None):
     """The resume and cover letter already sitting in the company folder.
 
     Only PDFs. The .resume.html render source is deliberately not offered as a
@@ -119,7 +120,7 @@ def find_documents(folder, role):
     covers = [p for p in pdfs if "cover" in p.stem.lower()]
     resumes = [p for p in pdfs if p not in covers]
 
-    def choose(candidates):
+    def choose(candidates, expected_name=None):
         """The document belonging to THIS role, or nothing.
 
         Exactly one candidate means one role has been worked at this company, so
@@ -137,14 +138,19 @@ def find_documents(folder, role):
         uploads is another role's resume under the user's name. Rebuilding costs
         a few minutes; that costs the application.
         """
+        if expected_name:
+            exact = [p for p in candidates if p.name == expected_name]
+            if len(exact) == 1:
+                return exact[0], False
         if not candidates:
             return None, False
         if len(candidates) == 1:
             return candidates[0], False
         return None, True
 
-    resume, r_ambiguous = choose(resumes)
-    cover, c_ambiguous = choose(covers)
+    expected = expected or {}
+    resume, r_ambiguous = choose(resumes, expected.get("resumePdf"))
+    cover, c_ambiguous = choose(covers, expected.get("coverPdf"))
     out["resume"] = str(resume) if resume else None
     out["coverLetter"] = str(cover) if cover else None
     out["ambiguous"] = r_ambiguous or c_ambiguous
@@ -210,7 +216,9 @@ def build(aid):
         jd_path = None
 
     base = pick_base(profile, entry.get("region"))
-    docs = find_documents(folder, entry.get("role"))
+    expected_documents = document_contract.output_names(
+        profile, company, entry.get("role"))
+    docs = find_documents(folder, entry.get("role"), expected_documents)
     pending = entry.get("pendingFields") or []
 
     return {

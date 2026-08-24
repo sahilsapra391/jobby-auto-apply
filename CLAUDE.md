@@ -86,6 +86,16 @@ Submission uses a one-use nonce. `pre_submit` writes the `submitting` event and
 returns the nonce. `record_completed` must present that nonce for the same
 application while the latest event is still `submitting`, along with visible
 confirmation text. Direct completion, reuse, and cross-application use fail.
+Generated nonces begin with `jobby_`. Keep that prefix because an unprefixed
+URL-safe token can begin with `-` and argparse then reads it as an option.
+
+## Application worker repair, 2026-08-24
+
+Read `docs/handoffs/claude-application-worker-2026-08-24.md` before changing
+document selection, ATS validation, browser-slot ownership, or Apply refusal
+handling. The repair is covered by the real brief selector, worker pipeline,
+watcher state machine, and provider-runner tests. Do not replace exact document
+ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 
 ## Main implementation seams
 

@@ -148,6 +148,16 @@ class CompletedTests(StoreTemp):
             ["submitting", "completed"],
         )
 
+    def test_generated_nonce_can_never_look_like_an_option(self):
+        self.session("acme-pm")
+        nonce = self.nonce()
+        self.assertTrue(nonce.startswith("jobby_"))
+        result = run_finish([
+            "--id", "acme-pm", "--completed", "--nonce", nonce,
+            "--confirmation", "Application received",
+        ], self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_nonce_from_another_application_is_refused(self):
         self.session("acme-pm")
         self.session(
@@ -322,6 +332,22 @@ class DocumentOwnershipTests(unittest.TestCase):
                             "Sahil_Sapra_Plaid_CoverLetter.pdf"])
         docs = brief.find_documents(folder, "Staff Product Manager, Internal AI")
         self.assertTrue(docs["resume"].endswith("Plaid_Resume.pdf"))
+        self.assertFalse(docs["ambiguous"])
+
+    def test_an_exact_generated_pair_wins_over_an_older_generic_pair(self):
+        folder = self.make([
+            "Sahil_Sapra_IFS_Resume.pdf",
+            "Sahil_Sapra_IFS_CoverLetter.pdf",
+            "Sahil_Sapra_IFS_Outbound_PM_Resume.pdf",
+            "Sahil_Sapra_IFS_Outbound_PM_CoverLetter.pdf",
+        ])
+        expected = {
+            "resumePdf": "Sahil_Sapra_IFS_Outbound_PM_Resume.pdf",
+            "coverPdf": "Sahil_Sapra_IFS_Outbound_PM_CoverLetter.pdf",
+        }
+        docs = brief.find_documents(folder, "Outbound PM", expected)
+        self.assertTrue(docs["resume"].endswith(expected["resumePdf"]))
+        self.assertTrue(docs["coverLetter"].endswith(expected["coverPdf"]))
         self.assertFalse(docs["ambiguous"])
 
     def test_one_roles_name_being_a_prefix_of_anothers_does_not_win(self):

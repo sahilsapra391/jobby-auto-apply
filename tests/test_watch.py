@@ -763,6 +763,24 @@ class ProviderNeutralApplyTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--provider") + 1], "openai")
         self.assertEqual(argv[argv.index("--id") + 1], "acme-pm")
 
+    def test_resolved_document_failure_is_removed_before_form_handoff(self):
+        loaded = self.result(json.dumps({
+            "applicationId": "acme-pm",
+            "status": "review",
+            "pendingFields": [
+                {"field": "Document generation", "reason": "result_invalid"},
+                {"field": "Account", "reason": "sign in"},
+            ],
+        }))
+        with mock.patch.object(watch, "store", return_value=loaded), \
+                mock.patch.object(watch, "_save_session") as save:
+            changed = watch.clear_document_failure("acme-pm")
+        self.assertTrue(changed)
+        saved = save.call_args.args[0]
+        self.assertEqual(saved["pendingFields"], [
+            {"field": "Account", "reason": "sign in"},
+        ])
+
     def test_terminal_document_failure_is_claimed_and_parked_without_retry(self):
         failed = {
             "state": "failed",
