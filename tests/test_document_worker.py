@@ -782,6 +782,18 @@ class WorkerPipelineTests(unittest.TestCase):
         self.assertIn("unsupported ATS overrides removed", log)
         self.assertNotIn("unsupported platform", log)
 
+    def test_cross_section_unsupported_phrase_falls_back_to_base_resume(self):
+        generated = {
+            "resumeOverrides": {
+                "banner": "Unsupported",
+                "summary": "platform work",
+            },
+            "coverLetter": provider_payload()["coverLetter"],
+        }
+        corrected = worker.remove_unsupported_overrides(
+            generated, ["unsupported platform"])
+        self.assertEqual(corrected["resumeOverrides"], {})
+
     def test_malformed_provider_data_gets_result_code_before_rendering(self):
         self.provider_runner.output = '{"resumeOverrides":{}}'
         self.worker.run_once()
