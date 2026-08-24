@@ -50,6 +50,16 @@ class DashboardTest(unittest.TestCase):
                                 "status": "active", "pendingFields": []}])
         self.assertNotIn("<script>x", html)
 
+    def test_company_cards_render_a_safe_logo_with_monogram_fallback(self):
+        html = build(sessions=[{
+            "company": "Northstar Labs", "role": "PM", "status": "active",
+            "pendingFields": [],
+            "logoUrl": "https://cdn-images.himalayas.app/northstar",
+        }])
+        self.assertIn('class="company-mark"', html)
+        self.assertIn("/api/company-logo?src=", html)
+        self.assertIn("<span>NL</span>", html)
+
     def test_optimistic_submitted_row_uses_dom_nodes_not_url_html(self):
         page = build()
         self.assertNotIn("tr.innerHTML", page)
@@ -148,6 +158,9 @@ class BrandTest(unittest.TestCase):
         html = build()
         for mode in ("auto", "light", "dark"):
             self.assertIn(f'data-theme-set="{mode}"', html)
+        for label in ("System", "Light", "Dark"):
+            self.assertIn(f'aria-label="{label} theme"', html)
+            self.assertNotIn(f'<span>{label}</span>', html)
 
     def test_theme_is_applied_before_the_stylesheet(self):
         # Restoring the saved theme after paint shows one frame of the OS
@@ -161,6 +174,25 @@ class BrandTest(unittest.TestCase):
         html = build()
         self.assertIn("data:image/svg+xml;base64,", html)
         self.assertNotIn('href="/favicon', html)
+
+    def test_soft_premium_shell_keeps_the_brand_gimmick(self):
+        html = build()
+        self.assertIn("Jobby is a free agent.</h1>", html)
+        self.assertIn('class="jb-morph"', html)
+        self.assertIn('aria-label="Reveal Jobby mascot"', html)
+        self.assertNotIn("Scan for new jobs</button>", html)
+        self.assertIn(">Scan now</button>", html)
+        self.assertIn("--radius:15px", html)
+        self.assertIn("view-transition-name:jobby-content", html)
+
+    def test_first_party_visible_copy_has_no_em_dash(self):
+        page = build()
+        page = re.sub(r"<script\b.*?</script>", "", page, flags=re.S | re.I)
+        page = re.sub(r"<style\b.*?</style>", "", page, flags=re.S | re.I)
+        page = re.sub(r"<!--.*?-->", "", page, flags=re.S)
+        visible = re.sub(r"<[^>]+>", " ", page)
+        self.assertNotIn(chr(0x2014), visible)
+        self.assertNotIn("&mdash;", visible)
 
 
 
@@ -381,7 +413,14 @@ class FoundLaneTests(unittest.TestCase):
         for name in order:
             if name not in seen:
                 seen.add(name); tabs.append(name)
-        self.assertEqual(tabs, ["found", "watch", "flight", "act", "done", "dropped"])
+        self.assertEqual(tabs, ["found", "watch", "flight", "act", "done"])
+
+    def test_dropped_applications_live_in_the_bottom_corner_dialog(self):
+        html = self.render([self.job()])
+        self.assertNotIn('data-tab="dropped"', html)
+        self.assertIn('class="dropped-dock"', html)
+        self.assertIn('class="dropped-dialog" id="p-dropped"', html)
+        self.assertIn('aria-haspopup="dialog"', html)
 
     def test_the_lane_breaks_out_to_the_full_page_width(self):
         # A grid of cards inside an 860px prose column is two per row.

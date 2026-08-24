@@ -13,10 +13,32 @@ pipeline. Do not deploy to, connect to, edit, or delete the user's Oracle VM
 unless the user explicitly restores remote execution.
 
 The top-level UI has two centred pills in the top app bar, between the Jobby
-logo and the theme control: Home and Settings. Home contains the full Found,
-Needs you, Submitted, Watching, In flight, and Dropped dashboard. Settings
-contains provider connections. There is no left rail and no Back to
-applications button. A future Profile pill can join the centred control later.
+logo and the theme control: Home and Settings. Home contains the Found,
+Watching, In flight, Needs you, and Submitted workflow. Dropped is a separate
+lower-left archive control and dialog, not a workflow tab. Settings contains
+provider connections. There is no left rail and no Back to applications
+button. A future Profile pill can join the centred control later.
+
+The active visual system is Soft Premium, with restrained Option 1 hierarchy.
+Its isolated tokens and responsive overrides live in `scripts/premium_ui.py`.
+System, Light, and Dark are three icon-only controls. System removes the saved
+theme override so the page continues to follow the operating system. Cross-document
+and in-page transitions use the browser View Transitions API when present, and
+the reduced-motion media query disables decorative motion. The hero mark sits
+on the right where the old large scan button used to be. Keep its existing
+logo-to-mascot hover reveal. The only scan action in the UI is Scan now inside
+the Found status banner.
+
+Company identity is centralized in `scripts/company_logos.py`. Job feeds may
+store a trusted `logoUrl`, and promoted roles carry that value into Watching.
+Source ingestion also records an employer-owned website when a job description
+links to a domain matching the company name. The board otherwise derives a
+real employer domain from direct employer posting URLs. Never use an ATS or job
+aggregator favicon as an employer mark.
+The authenticated `/api/company-logo` route in `deploy/api/board.js` validates
+the request, fetches the image server-side, limits response size and type, and
+returns a private cached response. The browser must only load same-origin logo
+URLs. Monograms are the required fallback.
 
 Found locations use the hierarchical picker in `scripts/found_lane.py`.
 `COUNTRY_NAMES` supplies full visible names and `CONTINENT_COUNTRIES` assigns
@@ -103,6 +125,8 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/provider_login.py`: native interactive login and status publication.
 - `scripts/settings_panel.py`: the three connection cards and local-only copy.
 - `scripts/dashboard.py`: self-contained board, centred Home and Settings pills.
+- `scripts/premium_ui.py`: Soft Premium tokens, layout, motion, and responsive rules.
+- `scripts/company_logos.py`: trusted logo selection, proxy URLs, and monogram fallback.
 - `deploy/api/board.js`: same-origin settings route and local provider actions.
 - `scripts/watch.py`: Apply orchestration, three launchd plists, health pings.
 - `scripts/document_job.py`: encrypted document-job client and local installation.
@@ -188,11 +212,22 @@ control, the active pill follows the route, and Settings shows OpenAI,
 Anthropic, and Gemini cards labelled Your Device. No left rail, Back to
 applications control, OCI worker, or Cloud Agent appears in the active UI.
 
-Current branch verification ran 1,137 Python tests. The 1,133 non-Chrome tests
-passed; four Chrome render cases could not create a PDF inside the Codex
-filesystem sandbox. The ten Chrome render cases pass when run at the host
-level. The installed launchd service supplied a second real render proof
-through the successful IFS job. All 44 Node tests pass. Local browser
+Soft Premium browser verification passed at desktop and 390 by 844 phone
+sizes. System, Light, and Dark switch in place without console errors. The
+phone page has no document-level horizontal overflow. The Dropped control is
+absent from the five-tab workflow, expands at the lower left, and opens its
+searchable archive dialog. Found cards use a one-row desktop treatment, stack
+on phones, and expose their existing details by hover or explicit activation.
+Trusted logo URLs render through the same-origin proxy, with monograms left in
+place when no trustworthy employer image exists. The local generated Found
+page resolved 891 of its 906 rendered records to a trusted employer logo URL.
+The remaining 15 use monograms until a later source scan supplies a feed logo,
+direct employer domain, or matching employer-owned website link.
+
+Current branch verification ran 1,168 Python tests at the host level. All
+passed, with one intentional skip, including the Chrome PDF render cases. The
+installed launchd service supplied a second real render proof through the
+successful IFS job. All 45 Node tests pass. Local browser
 verification measured the Home and Settings control at the exact horizontal
 centre of the top app bar and found three provider cards with no Back to
 applications control.

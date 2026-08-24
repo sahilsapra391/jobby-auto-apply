@@ -72,6 +72,8 @@ def session_from_job(job):
         "status": "watch",
         "url": job.get("canonicalUrl") or "",
         "source": job.get("canonicalSource") or "",
+        "logoUrl": job.get("logoUrl") or "",
+        "companyWebsite": job.get("companyWebsite") or "",
         "location": location.get("raw") or "",
         "region": location.get("country") or "",
         "coreSkills": (job.get("tags") or [])[:MAX_SKILLS],

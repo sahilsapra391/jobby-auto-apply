@@ -20,6 +20,7 @@ alongside two legal-notice keys. Himalayas dates in epoch seconds. Working
 Nomads returns a bare array with comma-separated tags in a string.
 """
 
+import re
 import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
@@ -81,7 +82,7 @@ def remoteok(fetcher, limit=None, **_):
             location=base.parse_location(entry.get("location")),
             workplace="remote", posted_at=entry.get("date") or entry.get("epoch"),
             description=entry.get("description") or "", tags=entry.get("tags") or [],
-            salary=salary)
+            salary=salary, logo_url=entry.get("company_logo") or entry.get("logo"))
     return _simple(fetcher, "remoteok", REMOTEOK_URL, lambda d: d, parse, limit)
 
 
@@ -94,7 +95,8 @@ def remotive(fetcher, limit=None, **_):
             workplace="remote", posted_at=entry.get("publication_date"),
             description=entry.get("description") or "",
             tags=(entry.get("tags") or []) + ([entry["category"]] if entry.get("category") else []),
-            salary=entry.get("salary") or None)
+            salary=entry.get("salary") or None,
+            logo_url=entry.get("company_logo") or entry.get("company_logo_url"))
     return _simple(fetcher, "remotive", REMOTIVE_URL, lambda d: d.get("jobs") or [], parse, limit)
 
 
@@ -107,7 +109,8 @@ def himalayas(fetcher, limit=None, **_):
             location=base.parse_location(", ".join(str(r) for r in restrictions)),
             workplace="remote", posted_at=entry.get("pubDate"),
             description=entry.get("description") or entry.get("excerpt") or "",
-            tags=(entry.get("categories") or []) + (entry.get("seniority") or []))
+            tags=(entry.get("categories") or []) + (entry.get("seniority") or []),
+            logo_url=entry.get("companyLogo"))
     return _simple(fetcher, "himalayas", HIMALAYAS_URL, lambda d: d.get("jobs") or [],
                    parse, limit)
 
@@ -135,11 +138,14 @@ def parse_wwr_rss(xml_text):
             return (found.text or "").strip() if found is not None else ""
         title = text("title")
         company, _, role = title.partition(":")
+        description = text("description")
+        logo = re.search(r'<img[^>]+src=["\']([^"\']+)', description, re.I)
         entries.append({
             "company": company.strip() if role else "",
             "title": (role or title).strip(),
             "url": text("link"),
-            "description": text("description"),
+            "description": description,
+            "logoUrl": logo.group(1) if logo else "",
             "pubDate": text("pubDate"),
             "region": text("region"),
         })
@@ -167,7 +173,7 @@ def weworkremotely(fetcher, limit=None, **_):
             "weworkremotely", SOURCE_CLASS, TIER, entry.get("company"), entry.get("title"),
             entry.get("url"), location=base.parse_location(entry.get("region")),
             workplace="remote", posted_at=_rfc822(entry.get("pubDate")),
-            description=entry.get("description") or "")
+            description=entry.get("description") or "", logo_url=entry.get("logoUrl"))
     return base.ok("weworkremotely", _collect("weworkremotely", entries, parse, limit),
                    requests, note=f"{len(entries)} in the feed")
 

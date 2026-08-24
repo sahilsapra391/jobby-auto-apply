@@ -26,7 +26,9 @@ from pathlib import Path, PurePosixPath
 # path (which the tests do), where scripts/ would not be on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand  # noqa: E402
+import company_logos  # noqa: E402
 import found_lane  # noqa: E402
+import premium_ui  # noqa: E402
 import settings_panel  # noqa: E402
 
 
@@ -126,7 +128,7 @@ def link(url, label="Open"):
 
 def render_pending(fields):
     if not fields:
-        return '<li class="done">Nothing outstanding &mdash; ready to submit</li>'
+        return '<li class="done">Nothing outstanding. Ready to submit.</li>'
     out = []
     for f in fields:
         q = esc(f.get("question", "Unknown field"))
@@ -141,6 +143,31 @@ def build(state, generated):
     history = state["history"]
     profile = state["profile"]
     roles = state.get("roles", {})
+    jobs = state.get("jobs") or {}
+    logo_jobs = {}
+    for job in jobs.values():
+        company = str(job.get("company") or "").strip().casefold()
+        if company and company not in logo_jobs:
+            logo_jobs[company] = job
+
+    def logo_entry(entry):
+        """Combine durable role and discovery metadata for one company mark."""
+        combined = {}
+        company = str(entry.get("company") or "").strip().casefold()
+        if company in logo_jobs:
+            combined.update(logo_jobs[company])
+        aid = entry.get("applicationId")
+        if aid and isinstance(roles.get(aid), dict):
+            combined.update(roles[aid])
+        combined.update(entry)
+        return combined
+
+    def company_mark(entry):
+        return company_logos.mark(
+            entry.get("company") or "",
+            logo_entry(entry),
+            posting_url(entry),
+        )
 
     def posting_url(entry):
         """The posting link, from the entry or the durable role index."""
@@ -202,9 +229,9 @@ def build(state, generated):
                  data-company="{esc(s.get('company',''))}" data-role="{esc(s.get('role',''))}"
                  data-url="{esc(safe_url(posting_url(s)))}">
           <header>
-            <div>
+            <div class="company-title">{company_mark(s)}<div>
               <h3>{esc(s.get('company', 'Unknown'))}</h3>
-              <p class="role">{esc(s.get('role', ''))}</p>
+              <p class="role">{esc(s.get('role', ''))}</p></div>
             </div>
             <span class="chip {chip}">{esc(badge)}</span>
           </header>
@@ -244,9 +271,9 @@ def build(state, generated):
         return f"""
         <article class="card flight" data-id="{esc(entry.get('applicationId',''))}">
           <header>
-            <div>
+            <div class="company-title">{company_mark(entry)}<div>
               <h3>{esc(entry.get('company', ''))}</h3>
-              <p class="role">{esc(entry.get('role', ''))}</p>
+              <p class="role">{esc(entry.get('role', ''))}</p></div>
             </div>
             <span class="chip warm">in flight</span>
           </header>
@@ -300,7 +327,7 @@ def build(state, generated):
             return (f'<a class="go" href="/doc/{quote(PurePosixPath(v).name)}" '
                     f'target="_blank" rel="noopener">PDF &nearr;</a>')
         if not v or v == "-":
-            return '<span class="muted">&mdash;</span>'
+            return '<span class="muted">Not available</span>'
         # e.g. "not accepted by this form", "pasted as text into Additional Information"
         short = "sent as text" if "text" in v.lower() else "not requested"
         return f'<span class="muted" title="{esc(v)}">{esc(short)}</span>'
@@ -309,7 +336,8 @@ def build(state, generated):
         cls, label = outcome_chip.get(e.get("event"), ("", e.get("event")))
         hay = " ".join(str(x) for x in [e.get('company'), e.get('role'), label] if x)
         return (f"<tr data-hay=\"{esc(hay)}\" data-state=\"{esc(e.get('event') or '')}\">"
-                f"<td>{esc(e.get('company'))}</td><td>{esc(e.get('role'))}</td>"
+                f"<td><div class='company-cell'>{company_mark(e)}<span>{esc(e.get('company'))}</span></div></td>"
+                f"<td>{esc(e.get('role'))}</td>"
                 f"<td><span class='chip {cls}'>{esc(label)}</span></td>"
                 f"<td class='when'>{esc((e.get('at') or '')[:10])}</td>"
                 f"<td>{link(posting_url(e), 'Posting')}</td>"
@@ -322,7 +350,7 @@ def build(state, generated):
     ) or "<tr><td colspan='8' class='muted'>Nothing submitted yet</td></tr>"
 
     unconfirmed = "".join(
-        f"<li>{esc(c)} &mdash; {esc(r)}"
+        f"<li><strong>{esc(c)}</strong><span class=\"ui-separator\">{esc(r)}</span>"
         f"{' <strong>(submission attempted, interrupted before confirmation)</strong>' if interrupted else ''}</li>"
         for c, r, interrupted in sorted(reviewed_only, key=lambda t: (str(t[0]), str(t[1]))) if c
     )
@@ -436,8 +464,8 @@ def build(state, generated):
         reason_line = f'<br><span class="muted">{esc(reason)}</span>' if reason else ""
         return (
             f'<tr data-hay="{esc(hay)}" data-state="{esc(lane)}" data-id="{esc(aid)}">'
-            f'<td><strong>{esc(entry.get("company", ""))}</strong><br>'
-            f'<span class="muted">{esc(entry.get("role", ""))}</span></td>'
+            f'<td><div class="company-cell">{company_mark(entry)}<span><strong>{esc(entry.get("company", ""))}</strong><br>'
+            f'<span class="muted">{esc(entry.get("role", ""))}</span></span></div></td>'
             f'<td><span class="chip lane">{esc(lane)}</span></td>'
             f'<td class="note-cell">{esc(stage)}{reason_line}</td>'
             f'<td class="when">{esc(when)}</td>'
@@ -453,8 +481,8 @@ def build(state, generated):
         f"<tr data-hay=\"{esc(' '.join(str(x) for x in [s.get('company'), s.get('role'), s.get('location') or s.get('realLocation'), ' '.join(s.get('coreSkills') or []), s.get('alignment') or ''] if x))}\" "
         f"data-fresh=\"{1 if isinstance(s.get('postedDays'), int) and s.get('postedDays') <= 7 else 0}\" "
         f"data-region=\"{esc(s.get('region') or '')}\" data-disc=\"{esc(s.get('discipline') or '')}\">"
-        f"<td><strong>{esc(s.get('company'))}</strong><br><span class='muted'>{esc(s.get('role'))}</span>"
-        f"{discipline_tag(s)}</td>"
+        f"<td><div class='company-cell'>{company_mark(s)}<span><strong>{esc(s.get('company'))}</strong><br>"
+        f"<span class='muted'>{esc(s.get('role'))}</span>{discipline_tag(s)}</span></div></td>"
         f"<td class='when'>{posted_cell(s)}</td>"
         f"<td>{years_cell(s)}</td>"
         f"<td class='loc'>{esc(s.get('location') or s.get('realLocation') or '')}</td>"
@@ -500,7 +528,7 @@ def build(state, generated):
         "flight": ("Nothing in flight.",
                    "What are you doing? Go apply for more jobs."),
         "watch": ("Nothing on the watch list.",
-                  "Press Scan for new jobs and it will go looking."),
+                  "Press Scan now and it will go looking."),
         "done": ("Nothing submitted yet.",
                  "The first one has to start somewhere."),
         "dropped": ("Nothing dropped.",
@@ -530,9 +558,6 @@ def build(state, generated):
         ("flight", "In flight", len(inflight)),
         ("act", "Needs you", len(blocked)),
         ("done", "Submitted", len(submitted)),
-        # Set apart from the four working lanes: nothing here is waiting on
-        # anyone, it is a record of decisions already made.
-        ("dropped", "Dropped", len(dropped)),
     ]
 
     stopped = str((state.get("meta") or {}).get("blocked") or "").strip()
@@ -545,8 +570,7 @@ def build(state, generated):
     # leads, exactly as it did before there was a Found lane.
     default_tab = "found" if found_total else "act"
     tabnav = "".join(
-        f'<button class="tab{" on" if k == default_tab else ""}'
-        f'{" aside" if k == "dropped" else ""}" data-tab="{k}" role="tab" '
+        f'<button class="tab{" on" if k == default_tab else ""}" data-tab="{k}" role="tab" '
         f'aria-selected="{"true" if k == default_tab else "false"}" aria-controls="p-{k}">'
         f'{esc(label)}<span class="n">{n}</span></button>'
         for k, label, n in tabs
@@ -560,8 +584,8 @@ def build(state, generated):
 <meta charset="utf-8">
 <title>Jobby is a free agent!</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme:light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme:dark)">
+<meta name="theme-color" content="#f7f3ed" media="(prefers-color-scheme:light)">
+<meta name="theme-color" content="#141519" media="(prefers-color-scheme:dark)">
 {brand.favicon_links()}
 <!-- Served from deploy/public/ when hosted; harmlessly absent for a local file. -->
 <link rel="manifest" href="/site.webmanifest">
@@ -766,7 +790,7 @@ def build(state, generated):
   ul.todo li.done::before {{ content:"\\2713"; background:none; width:auto; height:auto;
     left:0; top:0; font-weight:700; }}
   .why {{ color:var(--ink-2); }}
-  .why::before {{ content:" \\2014 "; }}
+  .why::before {{ content:": "; }}
 
   .act {{ display:flex; gap:.55rem; flex-wrap:wrap; align-items:center; margin-top:auto;
     padding-top:.95rem; border-top:1px solid var(--hair); }}
@@ -910,6 +934,7 @@ def build(state, generated):
   .sysbanner strong {{ font-weight:650; }}
 {found_lane.CSS}
 {settings_panel.CSS}
+{premium_ui.CSS}
 </style>
 
 {brand.defs()}
@@ -923,24 +948,22 @@ def build(state, generated):
     <a href="/settings" data-primary-view="settings">Settings</a>
   </nav>
   <div class="themeseg" role="radiogroup" aria-label="Colour theme">
-      <button class="themebtn" data-theme-set="auto" role="radio" aria-checked="false" title="Match system" aria-label="Match system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4a8.6 8.6 0 0 1 0 17.2Z" fill="currentColor" stroke="none"/></svg></button>
-      <button class="themebtn" data-theme-set="light" role="radio" aria-checked="false" title="Light" aria-label="Light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2M12 19.4v2M4.4 12h-2M21.6 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"/></svg></button>
-      <button class="themebtn" data-theme-set="dark" role="radio" aria-checked="false" title="Dark" aria-label="Dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"/></svg></button>
+      <button class="themebtn" data-theme-set="auto" role="radio" aria-checked="false" title="Use system theme" aria-label="System theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
+      <button class="themebtn" data-theme-set="light" role="radio" aria-checked="false" title="Use light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2M12 19.4v2M4.4 12h-2M21.6 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"/></svg></button>
+      <button class="themebtn" data-theme-set="dark" role="radio" aria-checked="false" title="Use dark theme" aria-label="Dark theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"/></svg></button>
   </div>
 </header>
 
 <div class="wrap">
   <div class="top">
-    <div class="jb-morph" tabindex="0" role="img" aria-label="Jobby">
+    <div class="hero-copy">
+      <h1>Jobby is a free agent.</h1>
+      <p class="lede">{f"{len(blocked)} waiting on you" if blocked else "Nothing blocked"}{f" &middot; {len(inflight)} in flight" if inflight else ""}</p>
+      <p class="stamp">{esc(name)} &middot; Updated {esc(generated)}</p>
+    </div>
+    <div class="jb-morph" tabindex="0" role="img" aria-label="Reveal Jobby mascot">
       {brand.icon(cls="heromark jb-badge", label="")}
       {brand.mascot()}
-    </div>
-    <h1>Jobby is a free agent!</h1>
-    <p class="lede">{f"{len(blocked)} waiting on you" if blocked else "Nothing blocked"}{f" &middot; {len(inflight)} in flight" if inflight else ""}</p>
-    <p class="stamp">{esc(name)} &middot; {esc(generated)}</p>
-    <div class="scanbar">
-      <button class="btn scan" id="scanbtn">Scan for new jobs</button>
-      <span class="scanmsg" id="scanmsg"></span>
     </div>
   </div>
 
@@ -984,20 +1007,25 @@ def build(state, generated):
       <tbody>{watch_rows}</tbody></table></div></div>''' if watch else empty_state("watch")}
   </div>
 
-  <div class="panel watch" id="p-dropped" role="tabpanel">
-    {'<p class="hint">Roles you decided against. Kept so they are not re-found and offered again.</p>' if dropped else ''}
-    {filter_bar("dropped", [(l, l) for l in dropped_lanes], len(dropped), wide=True)}
-    {f'''<div class="sheet"><div class="tablewrap"><table>
-      <colgroup>
-        <col style="width:26%"><col style="width:12%"><col style="width:38%">
-        <col style="width:11%"><col style="width:13%">
-      </colgroup>
-      <thead><tr><th>Role</th><th>Dropped from</th><th>Where it had got to</th><th>When</th><th></th></tr></thead>
-      <tbody>{dropped_rows}</tbody></table></div></div>''' if dropped else empty_state("dropped")}
-  </div>
-
   {settings_panel.panel(state.get("providers") or {})}
 </div>
+
+<button class="dropped-dock" id="dropped-open" type="button" aria-haspopup="dialog" aria-controls="p-dropped">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+  <span class="dropped-label">Dropped</span><span class="dropped-count">{len(dropped)}</span>
+</button>
+<dialog class="dropped-dialog" id="p-dropped" aria-labelledby="dropped-title">
+  <div class="dialog-head">
+    <div><p class="eyebrow">Archive</p><h2 id="dropped-title">Dropped applications</h2></div>
+    <button class="dialog-close" id="dropped-close" type="button" aria-label="Close dropped applications">&times;</button>
+  </div>
+  {'<p class="hint">Roles you decided against. They stay here so Jobby does not offer them again.</p>' if dropped else ''}
+  {filter_bar("dropped", [(l, l) for l in dropped_lanes], len(dropped), wide=False)}
+  {f'''<div class="sheet"><div class="tablewrap"><table>
+    <colgroup><col style="width:25%"><col style="width:13%"><col style="width:31%"><col style="width:11%"><col style="width:20%"></colgroup>
+    <thead><tr><th>Role</th><th>Dropped from</th><th>Last stage</th><th>When</th><th></th></tr></thead>
+    <tbody>{dropped_rows}</tbody></table></div></div>''' if dropped else empty_state("dropped")}
+</dialog>
 
 <script type="application/json" id="jb-found-data">{found_lane.payload(found, found_census, found_total)}</script>
 <script>
@@ -1033,23 +1061,54 @@ def build(state, generated):
     b.addEventListener('click', function () {{ setTheme(b.dataset.themeSet); }});
   }});
   paintTheme(document.documentElement.dataset.theme || 'auto');
+  function prepareCompanyLogo(img) {{
+    function loaded() {{
+      if (img.naturalWidth > 1 && img.naturalHeight > 1) img.classList.add('loaded');
+      else img.remove();
+    }}
+    img.addEventListener('load', loaded);
+    img.addEventListener('error', function () {{ img.remove(); }});
+    if (img.complete) loaded();
+  }}
+  document.querySelectorAll('[data-company-logo]').forEach(prepareCompanyLogo);
+  window.jobbyPrepareCompanyLogo = prepareCompanyLogo;
 
   var tabs = document.querySelectorAll('.tab');
+  function activateTab(t) {{
+    tabs.forEach(function (o) {{ o.classList.remove('on'); o.setAttribute('aria-selected','false'); }});
+    document.querySelectorAll('.panel').forEach(function (p) {{ p.classList.remove('on'); }});
+    t.classList.add('on'); t.setAttribute('aria-selected','true');
+    var p = document.getElementById('p-' + t.dataset.tab);
+    if (p) p.classList.add('on');
+  }}
   tabs.forEach(function (t) {{
     t.addEventListener('click', function () {{
-      tabs.forEach(function (o) {{ o.classList.remove('on'); o.setAttribute('aria-selected','false'); }});
-      document.querySelectorAll('.panel').forEach(function (p) {{ p.classList.remove('on'); }});
-      t.classList.add('on'); t.setAttribute('aria-selected','true');
-      var p = document.getElementById('p-' + t.dataset.tab);
-      if (p) p.classList.add('on');
+      if (document.startViewTransition) document.startViewTransition(function () {{ activateTab(t); }});
+      else activateTab(t);
     }});
+  }});
+  var droppedDialog = document.getElementById('p-dropped');
+  var droppedOpen = document.getElementById('dropped-open');
+  var droppedClose = document.getElementById('dropped-close');
+  if (droppedOpen && droppedDialog) droppedOpen.addEventListener('click', function () {{
+    if (droppedDialog.showModal) droppedDialog.showModal();
+    else droppedDialog.setAttribute('open', '');
+  }});
+  if (droppedClose && droppedDialog) droppedClose.addEventListener('click', function () {{
+    if (droppedDialog.close) droppedDialog.close();
+    else droppedDialog.removeAttribute('open');
+  }});
+  if (droppedDialog) droppedDialog.addEventListener('click', function (event) {{
+    if (event.target === droppedDialog && droppedDialog.close) droppedDialog.close();
   }});
   // "Confirm submitted" moves a card out of Needs you and into Submitted. The
   // board cannot write to the store on the agent's machine, so the change is
   // queued and a local poller applies it. The card is moved optimistically so
   // the tab reflects reality immediately, and the queue makes it durable.
   function tabCount(tab, delta) {{
-    var el = document.querySelector('.tab[data-tab="' + tab + '"] .n');
+    var el = tab === 'dropped'
+      ? document.querySelector('.dropped-count')
+      : document.querySelector('.tab[data-tab="' + tab + '"] .n');
     if (!el) return;
     var n = parseInt(el.textContent, 10);
     if (!isNaN(n)) el.textContent = Math.max(0, n + delta);
@@ -1171,35 +1230,6 @@ def build(state, generated):
         }});
     }});
   }});
-
-  // Scan button. The board cannot start anything on the machine running the
-  // agent, so this only queues a request; a local poller picks it up and runs
-  // the actual scan. The message says so plainly rather than implying it ran.
-  var scanBtn = document.getElementById('scanbtn');
-  var scanMsg = document.getElementById('scanmsg');
-  function say(text, cls) {{ scanMsg.textContent = text; scanMsg.className = 'scanmsg ' + (cls || ''); }}
-  if (scanBtn) {{
-    scanBtn.addEventListener('click', function () {{
-      scanBtn.disabled = true;
-      say('Queueing...');
-      fetch('/api/scan', {{ method: 'POST',
-        headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
-        body: '{{}}' }})
-        .then(function (r) {{ return r.json().then(function (b) {{ return {{ s: r.status, b: b }}; }}); }})
-        .then(function (res) {{
-          if (res.b && res.b.ok) {{
-            say('Queued. The agent picks this up on its next check, usually within a few minutes.', 'ok');
-          }} else if (res.s === 503) {{
-            say('Scan queue is not set up yet on this deployment.', 'err');
-            scanBtn.disabled = false;
-          }} else {{
-            say((res.b && res.b.error) || 'Could not queue the scan.', 'err');
-            scanBtn.disabled = false;
-          }}
-        }})
-        .catch(function () {{ say('Could not reach the scan queue.', 'err'); scanBtn.disabled = false; }});
-    }});
-  }}
 
   // Apply clicks are remembered locally, because the watcher takes up to a
   // minute to mark the role in flight. Without this a reload in that window

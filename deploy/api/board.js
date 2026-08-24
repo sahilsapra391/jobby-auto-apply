@@ -45,7 +45,7 @@ const CSP = [
   "style-src 'unsafe-inline'",
   // 'unsafe-inline' for the board's own scripts, 'self' for Vercel Analytics
   "script-src 'unsafe-inline' 'self'",
-  "img-src data:",
+  "img-src 'self' data:",
   // The icons and manifest are static files under public/, which Vercel serves
   // before the catch-all rewrite. Without this, default-src 'none' blocks the
   // manifest fetch and the board cannot be installed to a home screen.
@@ -242,9 +242,63 @@ async function handleSearchConfig(request) {
   return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
 }
 
+const LOGO_HOSTS = new Set([
+  'cdn-images.himalayas.app',
+  'remotive.com',
+  'remoteok.com',
+  'wwr-pro.s3.amazonaws.com',
+  'we-work-remotely.imgix.net',
+]);
+
+function trustedLogoSource(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    return LOGO_HOSTS.has(url.hostname.toLowerCase()) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleCompanyLogo(request, requestUrl) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
+  }
+  const source = trustedLogoSource(requestUrl.searchParams.get('src') || '');
+  const domain = String(requestUrl.searchParams.get('domain') || '').toLowerCase();
+  const safeDomain = /^[a-z0-9.-]{3,253}$/.test(domain)
+    && domain.includes('.')
+    && !domain.startsWith('.')
+    && !domain.endsWith('.')
+    && !domain.includes('..');
+  const target = source || (safeDomain
+    ? new URL(`https://www.google.com/s2/favicons?domain_url=https://${domain}&sz=128`)
+    : null);
+  if (!target) return text('No company logo.\n', 404);
+  try {
+    const upstream = await fetch(target, { redirect: 'follow' });
+    if (source && !trustedLogoSource(upstream.url)) return text('No company logo.\n', 404);
+    const type = (upstream.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    if (!upstream.ok || !type.startsWith('image/')) return text('No company logo.\n', 404);
+    const bytes = await upstream.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 750000) return text('No company logo.\n', 404);
+    return new Response(request.method === 'HEAD' ? null : bytes, {
+      status: 200,
+      headers: {
+        ...BASE_HEADERS,
+        'cache-control': 'private, max-age=86400',
+        'content-type': type,
+      },
+    });
+  } catch {
+    return text('No company logo.\n', 404);
+  }
+}
+
 export default {
   async fetch(request) {
-    const { pathname } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const { pathname } = requestUrl;
 
     // Unauthenticated, and says nothing about the search: enough to confirm a
     // deploy landed without typing the password.
@@ -274,6 +328,10 @@ export default {
       return text('Authentication required.\n', 401, {
         'www-authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
       });
+    }
+
+    if (pathname === '/api/company-logo') {
+      return handleCompanyLogo(request, requestUrl);
     }
 
     const rejectedMutation = rejectCrossSiteMutation(request);

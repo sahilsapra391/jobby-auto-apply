@@ -166,6 +166,8 @@ def blank_job(job_id, company, title, **fields):
         "normTitle": fields.pop("normTitle", "") or norm_title(title),
         "canonicalUrl": "",
         "canonicalSource": "",
+        "logoUrl": None,
+        "companyWebsite": None,
         "sources": [],
         "location": {"raw": "", "city": None, "region": None, "country": None},
         "workplace": None,
@@ -267,7 +269,8 @@ def merge_records(existing, incoming):
 
     incoming_wins = (canonical_rank(_class_of(incoming))
                      < canonical_rank(_class_of(existing)))
-    for field in ("company", "title", "workplace", "lang", "salary", "industry"):
+    for field in ("company", "title", "workplace", "lang", "salary", "industry",
+                  "logoUrl", "companyWebsite"):
         new = incoming.get(field)
         if new not in (None, "", []) and (incoming_wins or merged.get(field) in (None, "", [])):
             merged[field] = new

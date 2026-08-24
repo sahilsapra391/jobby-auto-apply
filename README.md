@@ -23,7 +23,25 @@ wrote, an answer you gave, or a story you told it. Where it cannot answer honest
 
 ## The board
 
-Five lanes. Four are work; the fifth is a record of decisions.
+Five workflow lanes show the path from Found through Submitted. Dropped roles sit in a separate
+archive opened from the trash control at the lower left, so rejected work does not look active.
+
+The interface uses the Soft Premium visual system: warm stone surfaces in light mode, graphite
+surfaces in dark mode, restrained violet actions, and a serif display face paired with a compact
+system sans serif for dense job data. Three compact icons select System, Light, or Dark. System
+tracks the operating system without saving an override.
+
+Home and Settings use native page transitions where the browser supports them. Lane changes,
+cards, dialogs, buttons, and provider cards share one easing curve, while reduced-motion settings
+disable decorative animation. Job cards lift and reveal more detail on hover, and remain expandable
+by click or keyboard. The Jobby mark sits at the right of the hero and keeps its mascot reveal as an
+optional hover detail. The Found status banner contains the one Scan now action.
+
+Employer marks come from trusted job feeds, direct employer posting domains, and employer-owned
+links published inside job descriptions. They load through the authenticated same-origin
+`/api/company-logo` proxy. Jobby never presents Greenhouse, Workday, Lever, or another recruiting
+vendor as the employer logo. If a source exposes no trustworthy company identity, the card shows a
+stable company monogram instead.
 
 ### Needs you
 
@@ -66,12 +84,12 @@ succeeded", the words the site showed.
 
 <img src="docs/submitted.png" alt="Submitted" width="900">
 
-### In flight, and Dropped
+### In flight and Dropped
 
 **In flight** shows live progress through building documents, filling, submitting and verifying,
-and lets you **Stop** a run mid-form. **Dropped** is what you said no to, and it records the lane
-it came from and how far it had got: *not started*, *waiting on you: create a Workday account*, or
-*Filling the form (14 of 18 fields)*.
+and lets you **Stop** a run mid-form. The lower-left **Dropped** control expands on hover and opens
+the archive. It records the lane each role came from and how far it had got: *not started*,
+*waiting on you: create a Workday account*, or *Filling the form (14 of 18 fields)*.
 
 <img src="docs/dropped.png" alt="Dropped" width="900">
 

@@ -12,6 +12,11 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
   const method = options.method || 'GET';
+  if (url.hostname === 'www.google.com' && url.pathname === '/s2/favicons') {
+    return new Response(Uint8Array.from([137, 80, 78, 71]), {
+      status: 200, headers: { 'content-type': 'image/png' },
+    });
+  }
   const marker = '/storage/kv/namespaces/namespace/values/';
   const position = url.pathname.indexOf(marker);
   if (position < 0) return new Response('', { status: 404 });
@@ -61,6 +66,25 @@ test('provider controls stay behind the dashboard password', async () => {
   );
   assert.equal(response.status, 401);
   assert.equal(values.size, 0);
+});
+
+test('company logos stay behind the password and proxy only safe domains', async () => {
+  const anonymous = await handler.fetch(
+    request('/api/company-logo?domain=example.com', undefined, 'GET', false)
+  );
+  assert.equal(anonymous.status, 401);
+
+  const logo = await handler.fetch(
+    request('/api/company-logo?domain=example.com', undefined, 'GET')
+  );
+  assert.equal(logo.status, 200);
+  assert.equal(logo.headers.get('content-type'), 'image/png');
+  assert.match(logo.headers.get('cache-control'), /private/);
+
+  const unsafe = await handler.fetch(
+    request('/api/company-logo?src=https%3A%2F%2Fhostile.example%2Ftrack.png', undefined, 'GET')
+  );
+  assert.equal(unsafe.status, 404);
 });
 
 test('authenticated cross-site and simple-content posts are refused', async () => {

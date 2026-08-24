@@ -319,6 +319,17 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(result["postings"])
         self.assertTrue(result["postings"][0]["company"])
         self.assertNotIn(":", result["postings"][0]["title"][:1])
+        self.assertIn("we-work-remotely.imgix.net", result["postings"][0]["logoUrl"])
+
+    def test_feeds_preserve_real_company_logo_urls(self):
+        for fn, host, name in (
+            (feeds.remotive, "remotive.com", "remotive.json"),
+            (feeds.himalayas, "himalayas.app", "himalayas.json"),
+        ):
+            with self.subTest(feed=name):
+                result = fn(fetcher({host: (200, fixture(name))}))
+                logos = [job.get("logoUrl") for job in result["postings"]]
+                self.assertTrue(any(logos), logos)
 
     def test_malformed_rss_is_an_error_not_a_crash(self):
         f = fetcher({"weworkremotely.com": (200, "<rss><channel>truncated")})
@@ -975,6 +986,7 @@ class BoardPlatformTests(unittest.TestCase):
         self.assertGreater(len(job["descriptionExcerpt"]), 500)
         self.assertTrue(job["descFingerprint"])
         self.assertTrue(job["extracted"]["yearsText"])
+        self.assertEqual(job["companyWebsite"], "https://www.innovaccer.com")
 
     def test_recruitee_reads_its_own_workplace_flags(self):
         result, _ = self.run_one("recruitee", "recruitee.com", "recruitee_board.json")
