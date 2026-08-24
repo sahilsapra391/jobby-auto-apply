@@ -44,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import extract  # noqa: E402
+import company_logos  # noqa: E402
 import identity  # noqa: E402
 import jobs_store  # noqa: E402
 import toolpath  # noqa: E402
@@ -605,7 +606,7 @@ def iso_stamp(value):
 
 def posting(source, source_class, tier, company, title, url, *, location=None,
             workplace=None, posted_at=None, description="", tags=None, salary=None,
-            lang=None, seen_at=None, url_stable=True):
+            lang=None, seen_at=None, url_stable=True, logo_url=None):
     """One board's version of a posting, in the one shape everything downstream
     expects. Connectors differ; this does not."""
     seen = seen_at or jobs_store.now_stamp()
@@ -616,6 +617,8 @@ def posting(source, source_class, tier, company, title, url, *, location=None,
     record.update({
         "canonicalUrl": clean_url,
         "canonicalSource": source,
+        "logoUrl": logo_url,
+        "companyWebsite": company_logos.website_from_description(company, description),
         "sources": [{"source": source, "sourceClass": source_class, "tier": tier,
                      "url": clean_url, "firstSeenAt": seen,
                      # Declared false by a channel that hands out a fresh

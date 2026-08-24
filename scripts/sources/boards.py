@@ -221,6 +221,7 @@ def personio(fetcher, companies=None, limit=None, **_):
 
 def _breezy_job(entry, company):
     loc = entry.get("location") or {}
+    employer = entry.get("company") or {}
     country = ((loc.get("country") or {}).get("id")
                if isinstance(loc.get("country"), dict) else loc.get("country"))
     location = base.parse_location(loc.get("name"),
@@ -229,14 +230,15 @@ def _breezy_job(entry, company):
         loc.get("name"), entry.get("name"))
     return base.posting(
         "breezy", SOURCE_CLASS, TIER,
-        (entry.get("company") or {}).get("name") or company.get("name"),
+        employer.get("name") or company.get("name"),
         entry.get("name"), entry.get("url"),
         location=location, workplace=workplace,
         posted_at=entry.get("published_date"),
         description=entry.get("description") or "",
         tags=[t for t in (entry.get("department"),
                           (entry.get("type") or {}).get("name")) if t],
-        salary=entry.get("salary") or None)
+        salary=entry.get("salary") or None,
+        logo_url=employer.get("logo_url") or None)
 
 
 def breezy(fetcher, companies=None, limit=None, **_):

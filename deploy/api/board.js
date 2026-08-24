@@ -1,4 +1,4 @@
-// Serves the generated dashboard behind a password.
+// Serves the dashboard's queue, document, logo, health, and provider endpoints.
 //
 // The board names companies, roles, referral contacts and drafted messages, so
 // it is not something to leave on a public URL. Vercel's own Deployment
@@ -8,7 +8,7 @@
 // Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
 // board.
 
-import { getBoard, getDoc, getLocalStatus } from '../kvcontent.mjs';
+import { getBoard, getBoardState, getDoc, getLocalStatus } from '../kvcontent.mjs';
 
 const REALM = 'Application board';
 
@@ -36,25 +36,6 @@ function suppliedPassword(request) {
   const colon = decoded.indexOf(':');
   return colon === -1 ? null : decoded.slice(colon + 1);
 }
-
-// default-src 'none' means a posting that smuggled markup through the store
-// still cannot phone anything home. The board itself needs only inline
-// style/script and outbound links.
-const CSP = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  // 'unsafe-inline' for the board's own scripts, 'self' for Vercel Analytics
-  "script-src 'unsafe-inline' 'self'",
-  "img-src data:",
-  // The icons and manifest are static files under public/, which Vercel serves
-  // before the catch-all rewrite. Without this, default-src 'none' blocks the
-  // manifest fetch and the board cannot be installed to a home screen.
-  "manifest-src 'self'",
-  "connect-src 'self'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join('; ');
 
 const BASE_HEADERS = {
   'cache-control': 'no-store, max-age=0',
@@ -242,18 +223,79 @@ async function handleSearchConfig(request) {
   return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
 }
 
+const LOGO_HOSTS = new Set([
+  'cdn-images.himalayas.app',
+  'remotive.com',
+  'remoteok.com',
+  'wwr-pro.s3.amazonaws.com',
+  'we-work-remotely.imgix.net',
+]);
+
+function trustedLogoSource(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    return LOGO_HOSTS.has(url.hostname.toLowerCase()) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleCompanyLogo(request, requestUrl) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
+  }
+  const source = trustedLogoSource(requestUrl.searchParams.get('src') || '');
+  const domain = String(requestUrl.searchParams.get('domain') || '').toLowerCase();
+  const safeDomain = /^[a-z0-9.-]{3,253}$/.test(domain)
+    && domain.includes('.')
+    && !domain.startsWith('.')
+    && !domain.endsWith('.')
+    && !domain.includes('..');
+  const target = source || (safeDomain
+    ? new URL(`https://www.google.com/s2/favicons?domain_url=https://${domain}&sz=128`)
+    : null);
+  if (!target) return text('No company logo.\n', 404);
+  try {
+    const upstream = await fetch(target, { redirect: 'follow' });
+    if (source && !trustedLogoSource(upstream.url)) return text('No company logo.\n', 404);
+    const type = (upstream.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    if (!upstream.ok || !type.startsWith('image/')) return text('No company logo.\n', 404);
+    const bytes = await upstream.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 750000) return text('No company logo.\n', 404);
+    return new Response(request.method === 'HEAD' ? null : bytes, {
+      status: 200,
+      headers: {
+        ...BASE_HEADERS,
+        'cache-control': 'private, max-age=86400',
+        'content-type': type,
+      },
+    });
+  } catch {
+    return text('No company logo.\n', 404);
+  }
+}
+
 export default {
   async fetch(request) {
-    const { pathname } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const { pathname } = requestUrl;
 
     // Unauthenticated, and says nothing about the search: enough to confirm a
     // deploy landed without typing the password.
     if (pathname === '/healthz') {
-      const health = await getBoard(process.env).catch(() => null);
+      const [state, legacy] = await Promise.all([
+        getBoardState(process.env).catch(() => null),
+        getBoard(process.env).catch(() => null),
+      ]);
       return new Response(JSON.stringify({
         ok: true,
-        generatedAt: health ? health.generatedAt : null,
-        boardPublished: health !== null,
+        rendererCommit: process.env.VERCEL_GIT_COMMIT_SHA || null,
+        rendererSchemaVersion: 1,
+        stateGeneratedAt: state ? state.generatedAt : null,
+        stateSchemaVersion: state ? state.rendererSchemaVersion : null,
+        statePublished: state !== null,
+        legacyGeneratedAt: legacy ? legacy.generatedAt : null,
       }), {
         status: 200,
         headers: { 'content-type': 'application/json', ...BASE_HEADERS },
@@ -274,6 +316,10 @@ export default {
       return text('Authentication required.\n', 401, {
         'www-authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
       });
+    }
+
+    if (pathname === '/api/company-logo') {
+      return handleCompanyLogo(request, requestUrl);
     }
 
     const rejectedMutation = rejectCrossSiteMutation(request);
@@ -337,25 +383,6 @@ export default {
       return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
     }
 
-    // The page itself comes from KV, so publishing it is a write rather than a
-    // deployment. Deployments carry only code now.
-    let board;
-    try {
-      board = await getBoard(process.env);
-    } catch (err) {
-      return text(`The board could not be read: ${String(err.message || err)}\n`, 502);
-    }
-    if (!board) {
-      return text('No board has been published yet.\n' +
-                  'Run: python3 scripts/publish.py\n', 503);
-    }
-    return new Response(request.method === 'HEAD' ? null : board.html, {
-      status: 200,
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-        'content-security-policy': CSP,
-        ...BASE_HEADERS,
-      },
-    });
+    return text('Not found.\n', 404);
   },
 };

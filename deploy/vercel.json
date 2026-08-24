@@ -1,6 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/page.py": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/board" }
+    { "source": "/", "destination": "/api/page" },
+    { "source": "/settings", "destination": "/api/page" },
+    { "source": "/healthz", "destination": "/api/board" },
+    { "source": "/doc/(.*)", "destination": "/api/board" },
+    { "source": "/api/(.*)", "destination": "/api/board" }
   ]
 }

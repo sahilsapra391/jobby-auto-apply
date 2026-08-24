@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import company_logos  # noqa: E402
 import match_score  # noqa: E402
 import search_config  # noqa: E402
 
@@ -137,6 +138,7 @@ def compact(job, why_table):
         "rank": direct_rank(job),
         "co": job.get("company") or "",
         "ti": tidy_title(job.get("title")),
+        "lg": company_logos.proxy_url(job, job.get("canonicalUrl") or ""),
         "url": safe_url(job.get("canonicalUrl")),
         "src": SOURCE_LABELS.get(job.get("canonicalSource") or "",
                                  (job.get("canonicalSource") or "").title()),
@@ -654,7 +656,7 @@ def last_ingest_line(meta):
         for channel, whys in list(per_channel.items())[:3]:
             reason = short_reason(whys[0])
             count = f" &times;{len(whys)}" if len(whys) > 1 else ""
-            parts.append(f"{esc(channel)}{count} &mdash; {esc(reason)}")
+            parts.append(f"{esc(channel)}{count}: {esc(reason)}")
         more = len(per_channel) - 3
         if more > 0:
             parts.append(f"and {more} more")
@@ -1475,20 +1477,41 @@ SCRIPT = r"""
     return b;
   }
 
+  function companyMark(job) {
+    var mark = el('span', 'company-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    var words = String(job.co || '').match(/[A-Za-z0-9]+/g) || [];
+    var initial = words.length ? words[0].charAt(0) + (words[1] ? words[1].charAt(0) : '') : '?';
+    mark.appendChild(el('span', null, initial.toUpperCase()));
+    if (job.lg) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.setAttribute('data-company-logo', '');
+      img.src = job.lg;
+      if (window.jobbyPrepareCompanyLogo) window.jobbyPrepareCompanyLogo(img);
+      mark.appendChild(img);
+    }
+    return mark;
+  }
+
   function card(job) {
     var article = el('article', 'jb-card');
     article.setAttribute('data-id', job.id);
 
     var head = el('div', 'jb-head');
+    var identity = el('div', 'jb-identity');
+    identity.appendChild(companyMark(job));
+    var titles = el('div');
+    titles.appendChild(el('p', 'jb-co', job.co));
+    titles.appendChild(el('h3', 'jb-ti', job.ti));
+    identity.appendChild(titles);
+    head.appendChild(identity);
     var ring = el('div', 'jb-ring');
     var pct = typeof job.sc === 'number' ? job.sc : 0;
     ring.style.background = 'conic-gradient(' + ringColour(pct) + ' ' + pct + '%, var(--sunk) 0)';
     ring.appendChild(el('i', null, pct + '%'));
     head.appendChild(ring);
-    var titles = el('div');
-    titles.appendChild(el('p', 'jb-co', job.co));
-    titles.appendChild(el('h3', 'jb-ti', job.ti));
-    head.appendChild(titles);
     article.appendChild(head);
 
     if (job.sum) article.appendChild(el('p', 'jb-sum', job.sum));

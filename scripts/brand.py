@@ -147,6 +147,15 @@ def _pinned_favicon_svg():
     return pinned
 
 
+def _favicon_bytes(name, public_name):
+    """Read a source asset locally or its public deployment copy on Vercel."""
+    source = BRAND / "01-favicon" / name
+    if source.exists():
+        return source.read_bytes()
+    public = Path(__file__).resolve().parents[1] / "public" / public_name
+    return public.read_bytes()
+
+
 def favicon_links():
     """Favicon markup, inlined so a saved copy of the board keeps its icon.
 
@@ -155,8 +164,10 @@ def favicon_links():
     browsers that ignore SVG icons.
     """
     svg = base64.b64encode(_pinned_favicon_svg().encode("utf-8")).decode()
-    ico = base64.b64encode((BRAND / "01-favicon/favicon.ico").read_bytes()).decode()
-    touch = base64.b64encode((BRAND / "01-favicon/apple-touch-icon.png").read_bytes()).decode()
+    ico = base64.b64encode(_favicon_bytes("favicon.ico", "favicon.ico")).decode()
+    touch = base64.b64encode(
+        _favicon_bytes("apple-touch-icon.png", "apple-touch-icon.png")
+    ).decode()
     return (
         f'<link rel="icon" href="data:image/svg+xml;base64,{svg}" type="image/svg+xml">\n'
         f'<link rel="icon" href="data:image/x-icon;base64,{ico}" sizes="32x32">\n'

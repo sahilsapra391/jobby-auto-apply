@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Publish the dashboard to Vercel, behind a password, at a stable URL.
 
-Publishing writes the board and the application documents to Cloudflare KV. It
+Publishing writes sanitized board state and application documents to Cloudflare KV. It
 is not a deployment. The board changes dozens of times a day, Vercel's free plan
 allows a hundred deployments a day, and inlining the board into the function
 spent the lot in an afternoon. Code reaches production by merging to main.
 
   python3 scripts/publish.py --setup     # link the project, set the password
-  python3 scripts/publish.py             # write the board to KV
+  python3 scripts/publish.py             # write board state to KV
   python3 scripts/publish.py --deploy    # also push code from here
   python3 scripts/publish.py --local     # serve it on localhost instead
 
 Design notes:
-  - The board holds real application data and never enters the repo or a build.
+  - The board state holds real application data and never enters the repo or a build.
+  - Vercel owns the renderer. KV owns only sanitized state and documents, so a
+    code deployment cannot silently keep serving an older interface.
   - Documents are written only when their contents change, because KV allows a
     thousand writes a day and forty unchanged PDFs per refresh would spend it.
   - The URL is recorded in the store as dashboardUrl, so a fresh session can
@@ -68,27 +70,31 @@ def run(cmd, **kw):
 
 
 def build_dashboard(root):
-    """Render the board and hand back the page with a summary of it.
+    """Render the board and hand back its sanitized state and summary.
 
     It used to be written into deploy/api/_dashboard.js for the function to
     import, which meant a deployment for every board change and an untracked
-    file a GitHub build would not have. The page goes to KV instead.
+    file a GitHub build would not have. Sanitized renderer state goes to KV now.
     """
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "board.html"
-        cmd = [sys.executable, str(REPO / "scripts" / "dashboard.py"), "--out", str(out)]
+        state_out = Path(tmp) / "board-state.json"
+        cmd = [sys.executable, str(REPO / "scripts" / "dashboard.py"),
+               "--out", str(out), "--state-out", str(state_out)]
         if root:
             cmd += ["--root", root]
         proc = subprocess.run(cmd, text=True, capture_output=True)
         if proc.returncode != 0:
             raise PublishError((proc.stderr or "dashboard build failed").strip())
         html = out.read_text(encoding="utf-8")
+        state = json.loads(state_out.read_text(encoding="utf-8"))
         summary = json.loads(proc.stdout)
 
     from datetime import datetime, timezone
 
     summary["generatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     summary["html"] = html
+    summary["state"] = state
     return summary
 
 
@@ -191,15 +197,15 @@ def cmd_setup(args, base):
 
 
 def cmd_local(args, _base):
-    # The dev server runs the same handler as production, which reads the board
-    # from KV, so local serving needs the content pushed too.
+    # Local serving uses the exact rendered page without touching shared KV.
     summary = build_dashboard(args.root)
-    docs = build_documents(args.root)
-    push_content(summary.pop("html"), docs.pop("docs"), provider_payload(args.root))
     password = os.environ.get(PASSWORD_ENV) or "local"
     print(f"Serving on http://localhost:{args.port} (password: {password})")
-    env = {**os.environ, PASSWORD_ENV: password}
-    return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
+    with tempfile.TemporaryDirectory() as tmp:
+        page = Path(tmp) / "board.html"
+        page.write_text(summary["html"], encoding="utf-8")
+        env = {**os.environ, PASSWORD_ENV: password, "JOBBY_LOCAL_BOARD_FILE": str(page)}
+        return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
 
 
 def current_url(root):
@@ -269,34 +275,38 @@ def provider_payload(root=None):
     return settings_panel.public_payload(state)
 
 
-def push_content(html, docs, providers=None):
-    """Write the rendered board and the documents into KV.
+def push_content(html, state, docs, providers=None):
+    """Write sanitized board state and documents into KV.
 
-    Via files in a temp directory rather than argv: the board is a quarter of a
-    megabyte and the documents several more, which no argument list will take.
+    The legacy HTML remains a migration fallback until all local publishers run
+    this release. New Vercel deployments render ``state`` with their own code.
+    Files are used instead of argv because the payloads are several megabytes.
     """
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "board.html"
+        state_path = Path(tmp) / "board-state.json"
         docs_path = Path(tmp) / "documents.json"
         providers_path = Path(tmp) / "providers.json"
         html_path.write_text(html, encoding="utf-8")
+        state_path.write_text(json.dumps(state, separators=(",", ":")), encoding="utf-8")
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
         )
         r = subprocess.run([toolpath.node(), "publish-content.mjs",
-                            str(html_path), str(docs_path), str(providers_path)],
+                            str(html_path), str(docs_path), str(providers_path),
+                            str(state_path)],
                            cwd=DEPLOY, capture_output=True, text=True,
                            env=toolpath.queue_env())
     if r.returncode != 0:
-        raise PublishError(f"could not write the board to KV: {(r.stderr or '').strip()[:400]}")
+        raise PublishError(f"could not write board state to KV: {(r.stderr or '').strip()[:400]}")
     return json.loads(r.stdout or "{}")
 
 
 def cmd_publish(args, base):
     """Publish the board.
 
-    This writes the page and the documents to KV. It is not a deployment: the
+    This writes sanitized state and documents to KV. It is not a deployment: the
     board changes dozens of times a day and Vercel's free plan allows a hundred
     deployments, which is how a day's worth got spent in an afternoon. Code
     reaches production by merging to main, which is what Vercel is connected to.
@@ -325,9 +335,10 @@ def cmd_publish(args, base):
         return 0
 
     result = push_content(
-        summary.pop("html"), docs.pop("docs"), provider_payload(args.root)
+        summary.pop("html"), summary.pop("state"), docs.pop("docs"),
+        provider_payload(args.root)
     )
-    print(f"Board written to KV: {result['board']['bytes'] / 1024:.0f} KB, "
+    print(f"Board state written to KV: {result['state']['bytes'] / 1024:.0f} KB compressed, "
           f"{result['documents']['written']} documents written, "
           f"{result['documents']['skipped']} unchanged")
 
@@ -369,7 +380,7 @@ def main():
     ap.add_argument("--local", action="store_true", help="serve locally instead of deploying")
     ap.add_argument("--deploy", action="store_true",
                     help="also push code to Vercel from here. Normally unnecessary: "
-                         "merging to main deploys, and publishing the board is a KV write")
+                         "merging to main deploys, and publishing board state is a KV write")
     ap.add_argument("--preview", action="store_true", help="deploy to a preview URL, not production")
     ap.add_argument("--password", help="use this password instead of generating one")
     # Deliberately bland: this becomes the public hostname, and the board is

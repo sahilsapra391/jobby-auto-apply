@@ -23,7 +23,25 @@ wrote, an answer you gave, or a story you told it. Where it cannot answer honest
 
 ## The board
 
-Five lanes. Four are work; the fifth is a record of decisions.
+Five workflow lanes show the path from Found through Submitted. Dropped roles sit in a separate
+archive opened from the trash control at the lower left, so rejected work does not look active.
+
+The interface uses the Soft Premium visual system: warm stone surfaces in light mode, graphite
+surfaces in dark mode, restrained violet actions, and a serif display face paired with a compact
+system sans serif for dense job data. Three compact icons select System, Light, or Dark. System
+tracks the operating system without saving an override.
+
+Home and Settings use native page transitions where the browser supports them. Lane changes,
+cards, dialogs, buttons, and provider cards share one easing curve, while reduced-motion settings
+disable decorative animation. Job cards lift and reveal more detail on hover, and remain expandable
+by click or keyboard. The Jobby mark sits at the right of the hero and keeps its mascot reveal as an
+optional hover detail. The Found status banner contains the one Scan now action.
+
+Employer marks come from trusted job feeds, direct employer posting domains, and employer-owned
+links published inside job descriptions. They load through the authenticated same-origin
+`/api/company-logo` proxy. Jobby never presents Greenhouse, Workday, Lever, or another recruiting
+vendor as the employer logo. If a source exposes no trustworthy company identity, the card shows a
+stable company monogram instead.
 
 ### Needs you
 
@@ -66,12 +84,12 @@ succeeded", the words the site showed.
 
 <img src="docs/submitted.png" alt="Submitted" width="900">
 
-### In flight, and Dropped
+### In flight and Dropped
 
 **In flight** shows live progress through building documents, filling, submitting and verifying,
-and lets you **Stop** a run mid-form. **Dropped** is what you said no to, and it records the lane
-it came from and how far it had got: *not started*, *waiting on you: create a Workday account*, or
-*Filling the form (14 of 18 fields)*.
+and lets you **Stop** a run mid-form. The lower-left **Dropped** control expands on hover and opens
+the archive. It records the lane each role came from and how far it had got: *not started*,
+*waiting on you: create a Workday account*, or *Filling the form (14 of 18 fields)*.
 
 <img src="docs/dropped.png" alt="Dropped" width="900">
 
@@ -112,7 +130,10 @@ rerun the install once with an interpreter that already has access:
 python3 scripts/watch.py --install --service-python /absolute/path/to/python3
 ```
 
-The queue lives in Cloudflare Workers KV and the board is served from it. Put these in
+The control queue, encrypted document jobs, submitted PDFs, and sanitized board state live in
+Cloudflare Workers KV. Vercel serves and executes the dashboard renderer from the exact Git
+commit being deployed. KV never stores executable board HTML as the active page, so a preview or
+production deployment cannot silently keep the interface from an older release. Put these in
 `deploy/.env.local`:
 
 ```
@@ -182,13 +203,20 @@ python3 scripts/browser.py --login https://www.linkedin.com
 A page on Vercel cannot start a process on your laptop. Every button queues a request.
 `scripts/watch.py` reads the control queue and coordinates the pipeline. The launchd installation
 also starts `scripts/document_worker.py --loop --local`, which claims one encrypted document job
-at a time on the same Mac. Cloudflare KV sees ciphertext and fixed status fields, not the candidate
-profile, job description, resume, or cover letter. The local result is authenticated, validated as
-one complete set, and installed before form filling starts.
+at a time on the same Mac. Cloudflare KV sees encrypted document work plus the minimum sanitized
+state needed to draw the password-gated board. Provider credentials and the candidate's full
+profile never enter KV. The local result is authenticated, validated as one complete set, and
+installed before form filling starts.
 
 Runs are spawned detached and tracked by a pid lock file. One application at a time, and a
 forty-five minute run never freezes the board. A dead pid releases the lock on its own, so a
 runner killed mid-flight cannot wedge the pipeline.
+
+`scripts/publish.py` writes a gzip-compressed `jobby:board-state` envelope. The Vercel Python
+function in `deploy/api/page.py` reads that state and renders it through `deploy/renderer/`, which
+is a deterministic deployment copy of the renderer modules and required brand SVGs. After changing
+the renderer, run `python3 scripts/sync_vercel_renderer.py`. The test suite fails if the deployment
+copy differs from its source, which turns renderer drift into a build failure instead of a stale UI.
 
 Spawned form sessions attach over CDP to one long-lived Chrome per application slot. A local MCP
 firewall exposes only bounded form actions. It removes arbitrary JavaScript, shell, network-log,
@@ -287,7 +315,9 @@ Each of these is a comment in the code, because each cost real time:
   100,000 reads a day and 1,000 list requests. The application queue uses one key. Provider
   connection actions use one local-device lane, and the retired remote-provider lane is not polled.
 - Publishing the board used to redeploy the site. Vercel allows 100 deploys a day and one
-  application reports six phases. The board is served from KV now; deployments carry only code.
+  application reports several phases. Publishing now writes sanitized state to KV. The deployed
+  Vercel function renders that state with its own commit, so data refreshes do not deploy and code
+  deploys do not depend on a separately published HTML page.
 - A worker that processes one item must delete one item. `claim` once destroyed fourteen queued
   Apply clicks after running the first.
 
