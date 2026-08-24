@@ -758,6 +758,30 @@ class WorkerPipelineTests(unittest.TestCase):
         log = (self.worker.log_dir / f"{JOB_ID}.log").read_text()
         self.assertNotIn("private validation detail", log)
 
+    def test_unsupported_ats_override_is_removed_and_validated_again(self):
+        generated = provider_payload()
+        generated["resumeOverrides"] = {
+            "summary": "Supported work plus unsupported platform claim."
+        }
+        self.provider_runner.output = json.dumps(generated)
+        validations = []
+
+        def validate(_runtime):
+            validations.append(True)
+            if len(validations) == 1:
+                raise worker.UnsupportedTerms(["unsupported platform"])
+            return {"verified": True}
+
+        self.worker.artifact_validator = validate
+        self.worker.run_once()
+        self.assertEqual(len(self.transport.completed), 1)
+        self.assertFalse(self.transport.failed)
+        self.assertEqual(len(self.render_calls), 2)
+        self.assertNotIn("summary", self.render_calls[1][1]["resumeOverrides"])
+        log = (self.worker.log_dir / f"{JOB_ID}.log").read_text()
+        self.assertIn("unsupported ATS overrides removed", log)
+        self.assertNotIn("unsupported platform", log)
+
     def test_malformed_provider_data_gets_result_code_before_rendering(self):
         self.provider_runner.output = '{"resumeOverrides":{}}'
         self.worker.run_once()

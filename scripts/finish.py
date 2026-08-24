@@ -186,7 +186,10 @@ def pre_submit(aid):
         return {"proceed": False, "reason": "this would be a second application to the "
                                             "same job", "guard": guard}
 
-    nonce = secrets.token_urlsafe(32)
+    # token_urlsafe may begin with "-", which argparse reads as another option
+    # when the nonce is passed as the next --nonce argument. A fixed alphabetic
+    # prefix keeps every generated value unambiguous without reducing entropy.
+    nonce = "jobby_" + secrets.token_urlsafe(32)
     nonce_hash = _nonce_hash(nonce)
     entry["submissionGuard"] = {
         "applicationId": aid,

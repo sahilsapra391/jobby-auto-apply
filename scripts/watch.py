@@ -1170,6 +1170,29 @@ def set_phase_if_changed(aid, phase, detail):
     return True
 
 
+def clear_document_failure(aid):
+    """Remove a resolved document blocker without touching other blockers."""
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode != 0:
+        raise TickError(f"no application session for {aid}")
+    try:
+        entry = json.loads(loaded.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"application session is unreadable for {aid}") from exc
+    pending = entry.get("pendingFields") or []
+    remaining = [item for item in pending if not (
+        isinstance(item, dict) and item.get("field") == "Document generation"
+    )]
+    if remaining == pending:
+        return False
+    if remaining:
+        entry["pendingFields"] = remaining
+    else:
+        entry.pop("pendingFields", None)
+    _save_session(entry)
+    return True
+
+
 def prepare_document_head(item, provider_id):
     """Submit or poll the head document job without claiming the Apply click."""
     if not isinstance(item, dict) or not item.get("applicationId"):
@@ -1402,6 +1425,8 @@ def tick(force_publish=False):
                         raise TickError(f"document job returned invalid state {state_name!r}")
                     else:
                         phase, detail = DOCUMENT_PHASES[state_name]
+                        if state_name == "ready":
+                            clear_document_failure(head_id)
                         error_code = document_state.get("lastErrorCode")
                         if error_code:
                             detail = f"{detail}. Status checks will retry after {error_code}"

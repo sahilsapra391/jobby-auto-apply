@@ -36,6 +36,23 @@ It has three cooperating parts:
    handles encrypted resume and cover-letter jobs without an application
    browser. The password-gated Vercel board remains the user's control surface.
 
+The document-to-form seam is filename-exact. `document_contract.output_names`
+defines the four artifacts, `brief.py` prefers that exact role pair even when a
+company folder also contains older documents, and `run_apply.py` fingerprints
+the selected PDFs before the form worker starts. ATS provenance rejection no
+longer throws away an otherwise valid document job when one override group is
+at fault. The worker removes that unsafe override group, restores the base
+resume wording for the section, renders again, and repeats the complete ATS,
+layout, and cover-letter validation. The rejected terms remain private and do
+not enter logs or queue metadata.
+
+A preflight refusal also owns its state transition. It restores the session to
+its prior lane, clears the empty browser slot, and leaves a visible reason.
+Resolved `Document generation` blockers are removed before form handoff without
+touching any unrelated account, CAPTCHA, or legal blocker. Submission nonces
+carry a `jobby_` prefix so a URL-safe nonce beginning with `-` can never be
+misread as a command-line option.
+
 The design constraint that shapes everything: **applications go out under a real
 name and cannot be recalled.** A wrong salary figure or an overstated year count
 follows the user into interviews. So the system stops rather than guesses, and
