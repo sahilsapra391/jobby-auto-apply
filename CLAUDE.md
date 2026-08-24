@@ -204,6 +204,14 @@ Clear all produced zero matches, selecting North America checked all 23 child
 countries, Canada's `Only` action left one country, and Worldwide restored all
 199 locations. Long names wrap instead of truncating.
 
+Found date contract, added 2026-08-24: show, filter, sort, and retain by
+`postedAt` only. Never substitute `firstSeenAt`; it is internal discovery
+metadata. Never relabel a source's `updated` field as its posting date. Workday
+CXS `postedOn` values with an exact age resolve to an Eastern calendar date.
+Sources without a genuine publication field stay `Posted date unknown`. See
+`docs/handoffs/claude-posted-dates-2026-08-24.md` before changing connector or
+Found payload date fields.
+
 The exact Luna model probe and the real Luna document and form-agent paths
 passed. Anthropic and Gemini have no API keys on this Mac, so their exact live
 model calls remain intentionally unverified until the user connects each key

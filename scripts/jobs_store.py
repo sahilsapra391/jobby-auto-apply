@@ -432,7 +432,9 @@ def keep_priority(job):
                if isinstance(s, dict)]
     best = min(classes, key=canonical_rank, default="other")
     direct = 1 if canonical_rank(best) <= 1 else 0
-    when = job.get("postedAt") or job.get("firstSeenAt") or ""
+    # Discovery time is internal provenance, not job age. An undated record
+    # must never outrank a dated one merely because Jobby saw it recently.
+    when = job.get("postedAt") or ""
     return (direct, score, str(when))
 
 

@@ -146,7 +146,6 @@ def compact(job, why_table):
         # turns it back into "On-site" at draw time.
         "wp": job.get("workplace") if job.get("workplace") in WORKPLACE_LABELS else "",
         "pa": (job.get("postedAt") or "")[:10],
-        "fs": (job.get("firstSeenAt") or "")[:10],
         "sc": score.get("total"),
         "pt": [parts.get(name, 0) for name in COMPONENTS],
         "wy": [why_table.intern(why.get(name, "")) for name in COMPONENTS],
@@ -432,8 +431,7 @@ def sort_key(job):
     score = (job.get("score") or {}).get("total")
     return (0 if direct_rank(job) <= 1 else 1,
             -(score if isinstance(score, (int, float)) else -1),
-            "" if not (job.get("postedAt") or job.get("firstSeenAt")) else
-            _invert(job.get("postedAt") or job.get("firstSeenAt")))
+            "" if not job.get("postedAt") else _invert(job.get("postedAt")))
 
 
 def _invert(stamp):
@@ -1366,12 +1364,12 @@ SCRIPT = r"""
   function chip(text, cls) { return el('span', 'jb-chip' + (cls ? ' ' + cls : ''), text); }
 
   function ago(job) {
-    var when = job.pa || job.fs;
+    var when = job.pa;
     if (!when) return null;
     var days = Math.round((Date.now() - Date.parse(when + 'T00:00:00Z')) / 86400000);
     if (isNaN(days)) return null;
     var label = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
-    return (job.pa ? 'posted ' : 'seen ') + label;
+    return 'posted ' + label;
   }
   function ringColour(score) {
     if (score >= 75) return 'var(--green)';
@@ -1504,7 +1502,7 @@ SCRIPT = r"""
     else chips.appendChild(chip('Experience not stated', 'unknown'));
     var when = ago(job);
     if (when) chips.appendChild(chip(when));
-    else chips.appendChild(chip('No date', 'unknown'));
+    else chips.appendChild(chip('Posted date unknown', 'unknown'));
     if (job.sal) chips.appendChild(chip(job.sal, 'pay'));
     if (job.bd > 1) chips.appendChild(chip('On ' + job.bd + ' boards', 'boards'));
     chips.appendChild(chip(job.src || 'Unknown source',
@@ -1753,7 +1751,7 @@ SCRIPT = r"""
 
     var days = dateWindow();
     if (days !== null && days !== undefined) {
-      var when = job.pa || job.fs;
+      var when = job.pa;
       if (!when) { if (!unknownAllowed('postedAt')) return false; }
       else {
         var age = (Date.now() - Date.parse(when + 'T00:00:00Z')) / 86400000;
@@ -1910,7 +1908,7 @@ SCRIPT = r"""
     var how = value('jb-sort') || 'new';
     if (how === 'new') {
       rows = rows.slice().sort(function (a, b) {
-        return String(b.pa || b.fs || '').localeCompare(String(a.pa || a.fs || ''));
+        return String(b.pa || '').localeCompare(String(a.pa || ''));
       });
     } else if (how === 'direct') {
       // Direct listings first, best match within each group. Applying through

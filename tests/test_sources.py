@@ -23,6 +23,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -620,7 +621,8 @@ class NewDirectBoardTests(unittest.TestCase):
     def test_workday_post_uses_verified_host_tenant_and_site(self):
         body = json.dumps({"total": 1, "jobPostings": [{
             "title": "Product Manager", "externalPath": "/job/PM_R1",
-            "locationsText": "New York, NY", "timeType": "Full time"}]})
+            "locationsText": "New York, NY", "timeType": "Full time",
+            "postedOn": "Posted 13 Days Ago"}]})
         companies = {"acme": {"name": "Acme", "ats": "workday", "token": "acme",
                                 "careersUrl": "https://acme.wd1.myworkdayjobs.com/External"}}
         f = fetcher({"/wday/cxs/acme/External/jobs": (200, body)})
@@ -629,6 +631,47 @@ class NewDirectBoardTests(unittest.TestCase):
         request = f.fake_opener.calls[0]
         self.assertEqual(request.get_method(), "POST")
         self.assertIn("/wday/cxs/acme/External/jobs", request.full_url)
+        self.assertIsNotNone(result["postings"][0]["postedAt"])
+
+    def test_workday_relative_posted_dates_use_the_eastern_calendar(self):
+        # 02:00 UTC is still the prior evening in New York. Workday publishes
+        # an age rather than a timestamp, so the board's Eastern date contract
+        # decides which calendar day Jobby stores.
+        now = datetime(2026, 8, 24, 2, 0, tzinfo=timezone.utc)
+        self.assertEqual(workday.posted_date("Posted Today", now),
+                         "2026-08-23T00:00:00Z")
+        self.assertEqual(workday.posted_date("Posted Yesterday", now),
+                         "2026-08-22T00:00:00Z")
+        self.assertEqual(workday.posted_date("Posted 1 Day Ago", now),
+                         "2026-08-22T00:00:00Z")
+        self.assertEqual(workday.posted_date("  Posted 13 Days Ago  ", now),
+                         "2026-08-10T00:00:00Z")
+
+    def test_workday_inexact_or_missing_age_stays_unknown(self):
+        now = datetime(2026, 8, 24, tzinfo=timezone.utc)
+        for value in (None, "", "Posted 30+ Days Ago", "Recently posted", "13 days ago"):
+            with self.subTest(value=value):
+                self.assertIsNone(workday.posted_date(value, now))
+
+    def test_updated_fields_are_not_relabelled_as_posted_dates(self):
+        greenhouse_only_edit = {
+            "id": 1, "title": "PM", "absolute_url": "https://boards.greenhouse.io/a/1",
+            "updated_at": "2026-08-24T12:00:00Z", "location": {"name": "Remote"}}
+        self.assertIsNone(greenhouse.parse_job(greenhouse_only_edit, "Acme", "acme")["postedAt"])
+
+        recruitee_only_edit = {
+            "id": 1, "title": "PM", "careers_url": "https://acme.recruitee.com/o/pm",
+            "updated_at": "2026-08-24T12:00:00Z"}
+        self.assertIsNone(boards._recruitee_job(recruitee_only_edit, {"name": "Acme"})["postedAt"])
+
+        jooble_refresh = {"id": 1, "title": "PM", "company": "Acme",
+                          "link": "https://jooble.org/jdp/1", "updated": "2026-08-24"}
+        self.assertIsNone(jooble.parse_job(jooble_refresh)["postedAt"])
+
+        workable_draft = {"shortcode": "PM1", "title": "PM",
+                           "url": "https://apply.workable.com/acme/j/PM1/",
+                           "created_at": "2026-08-24T12:00:00Z"}
+        self.assertIsNone(boards._workable_job(workable_draft, {"name": "Acme"})["postedAt"])
 
     def test_workday_failure_is_not_an_empty_success(self):
         companies = {"acme": {"name": "Acme", "ats": "workday", "token": "acme",

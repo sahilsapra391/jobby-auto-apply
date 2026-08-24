@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Workday CXS public candidate boards, one verified tenant site at a time."""
 
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import base  # noqa: E402
@@ -13,6 +16,29 @@ PAGE_SIZE = 20
 # A corrupt total or an endpoint that repeats a page must still terminate. The
 # ceiling is reported as an error if a genuine board exceeds it.
 MAX_PAGES_PER_BOARD = 100
+EASTERN = ZoneInfo("America/New_York")
+
+
+def posted_date(value, now=None):
+    """Turn Workday's published age into the calendar date it represents.
+
+    CXS does not expose a timestamp. It returns values such as "Posted Today"
+    and "Posted 13 Days Ago". Exact day counts are safe to convert at fetch
+    time. A value such as "Posted 30+ Days Ago" has no exact date, so it stays
+    unknown instead of being presented as day 30.
+    """
+    text = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+    today = (now or datetime.now(timezone.utc)).astimezone(EASTERN).date()
+    if text == "posted today":
+        days = 0
+    elif text == "posted yesterday":
+        days = 1
+    else:
+        found = re.fullmatch(r"posted (\d+) days? ago", text)
+        if not found:
+            return None
+        days = int(found.group(1))
+    return (today - timedelta(days=days)).isoformat() + "T00:00:00Z"
 
 
 def board(company):
@@ -58,7 +84,7 @@ def fetch(fetcher, companies=None, limit=None, **_):
                     location=base.parse_location(raw),
                     workplace=(remote if remote in ("remote", "hybrid") else
                                base.detect_workplace(raw, entry.get("title"))),
-                    posted_at=None, description="",
+                    posted_at=posted_date(entry.get("postedOn")), description="",
                     tags=[x for x in [entry.get("timeType"), *(entry.get("bulletFields") or [])]
                           if x]))
                 if limit and len(postings) >= limit:

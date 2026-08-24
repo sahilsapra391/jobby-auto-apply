@@ -597,6 +597,15 @@ then a 64-bit simhash of the body within six bits. The merged record keeps
 every sighting, the earliest posted date, and the ATS copy as the one the board
 links to.
 
+Posting age has one source of truth: `postedAt`, derived only from a field the
+source describes as published or posted. `firstSeenAt` remains internal
+discovery provenance for stale-record maintenance and sightings. Found never
+uses it for the date chip, date filters, newest sorting, or cap retention.
+Workday CXS supplies relative text rather than a timestamp, so exact values
+such as `Posted 13 Days Ago` resolve against the Eastern calendar on fetch.
+Inexact text such as `Posted 30+ Days Ago`, and connectors with no publish
+field, remain unknown.
+
 Two guards go beyond the plan, both because the evidence to separate two
 postings sometimes already exists: the title-and-country rule does not merge
 when both bodies are known and their fingerprints are far apart, and the
@@ -850,8 +859,11 @@ remembers to run is how it drifts.
 - **Slots 2 and 3 have empty browser profiles.** LinkedIn Easy Apply parks there
   until `browser.py --stop && browser.py --clone-logins` is run with nothing in
   flight.
-- **8 of 30 watch entries carry no posted date**, because the sweep that found
-  them recorded none. Not repairable without re-visiting each posting.
+- **Some sources carry no posted date.** Pinpoint, JazzHR, Rippling, and Jooble's
+  current public payload do not expose an employer publication field that Jobby
+  can use honestly. Those records display `Posted date unknown`; discovery time
+  and aggregator update time never replace it. Older watch entries with no date
+  need a fresh source sighting before they can gain one.
 - **`meta.blocked` is global**, so any runner can clear a banner another set.
 - **No cost tracking.** A batch of applications has a real token cost that nothing
   currently records.

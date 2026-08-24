@@ -362,6 +362,14 @@ class PruneTests(unittest.TestCase):
         jobs, _ = jobs_store.prune(jobs, cap=2, at=self.now)
         self.assertEqual(sorted(jobs), ["j4", "j5"])
 
+    def test_retention_never_uses_first_seen_as_posted_date(self):
+        dated = job("dated", postedAt="2026-07-01T00:00:00Z",
+                    firstSeenAt="2026-07-01T00:00:00Z", score={"total": 80})
+        unknown = job("unknown", postedAt=None,
+                      firstSeenAt="2026-08-24T00:00:00Z", score={"total": 80})
+        self.assertGreater(jobs_store.keep_priority(dated),
+                           jobs_store.keep_priority(unknown))
+
     def test_a_careers_page_is_kept_like_an_ats_listing(self):
         jobs = {"agg": job("agg", score={"total": 99}, lastSeenAt=self.stamp(1),
                            sources=[{"source": "adzuna", "sourceClass": "aggregator",
