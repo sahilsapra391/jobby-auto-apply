@@ -54,8 +54,12 @@ ATS_URL_PATTERNS = [
     ("personio", re.compile(r"^([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)")),
     ("breezy", re.compile(r"^([A-Za-z0-9-]+)\.breezy\.hr")),
     ("teamtailor", re.compile(r"^([A-Za-z0-9-]+)\.teamtailor\.com")),
+    ("pinpoint", re.compile(r"^([A-Za-z0-9-]+)\.pinpointhq\.com")),
     ("bamboohr", re.compile(r"^([A-Za-z0-9-]+)\.bamboohr\.com")),
     ("jazzhr", re.compile(r"^([A-Za-z0-9-]+)\.applytojob\.com")),
+    ("gem", re.compile(r"^jobs\.gem\.com/([A-Za-z0-9-]+)")),
+    ("oracle_orc", re.compile(
+        r"^[A-Za-z0-9.-]+\.oraclecloud\.com/hcmUI/CandidateExperience/[^/]+/sites/([A-Za-z0-9_-]+)")),
     ("rippling", re.compile(r"^api\.rippling\.com/platform/api/ats/v1/board/([A-Za-z0-9-]+)")),
     ("smartrecruiters", re.compile(r"^careers\.smartrecruiters\.com/([A-Za-z0-9_.-]+)")),
     ("workday", re.compile(r"^([A-Za-z0-9-]+)\.wd\d+\.myworkdayjobs\.com")),
@@ -65,7 +69,8 @@ ATS_URL_PATTERNS = [
 # Platforms with a connector that can fetch a board directly. Everything else
 # in the registry is recorded but not yet reachable without a resolver.
 TIER1_PLATFORMS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable",
-                   "recruitee", "personio", "breezy", "rippling")
+                   "recruitee", "personio", "breezy", "rippling", "workday",
+                   "pinpoint", "teamtailor", "jazzhr", "oracle_orc", "gem")
 
 # Aggregator and search hosts. A posting reached through one of these says
 # nothing about the employer's ATS, so it must not become a board token.
@@ -707,9 +712,39 @@ def from_roles(roles):
             record["ats"] = ats
             record["token"] = token
             record["aliases"] = aliases_for(name, token)
+            if ats in ("workday", "oracle_orc"):
+                parsed = urlparse(str(entry.get("url") or ""))
+                parts = [p for p in parsed.path.split("/") if p]
+                if ats == "workday" and parts and parts[0].lower().startswith("en-"):
+                    parts.pop(0)
+                if ats == "workday" and parts:
+                    record["careersUrl"] = f"https://{parsed.netloc}/{parts[0]}"
+                elif ats == "oracle_orc":
+                    record["careersUrl"] = f"https://{parsed.netloc}"
         else:
             record["careersUrl"] = careers_url(entry.get("url"))
         out.append(record)
+    return out
+
+
+def from_postings(postings):
+    """Learn only direct ATS tenants carried by normalized sightings."""
+    out = []
+    for posting in postings or []:
+        urls = [posting.get("canonicalUrl")]
+        urls.extend(s.get("url") for s in (posting.get("sources") or [])
+                    if isinstance(s, dict))
+        for url in urls:
+            ats, _token = ats_from_url(url)
+            if not ats:
+                continue
+            role = {"company": posting.get("company"),
+                    "region": (posting.get("location") or {}).get("country"),
+                    "url": url}
+            records = from_roles({"posting": role})
+            if records:
+                out.append(records[0])
+            break
     return out
 
 

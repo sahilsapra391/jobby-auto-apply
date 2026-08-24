@@ -204,7 +204,7 @@ runtime.
 | `search_config.py` | 250 | The saved search: schema, region packs, validation, versioning. |
 | `sources_registry.py` | 150 | The source catalog and the accounting that keeps "every source" honest. |
 | `promote.py` | 130 | 👁 and Pass: a Found job becoming a Watching session, or a tombstone. |
-| `sources/` | 1,500 | Twenty-one Tier-1 connectors and the polite-fetching base they share, including Workday CXS JSON POST support. |
+| `sources/` | 1,700 | Twenty-six Tier-1 connectors and the polite-fetching base they share, including Workday CXS JSON POST support and a per-sweep host circuit breaker. |
 | `run_apply.py` | 545 | Mac form-only runner. Requires and fingerprints the prepared PDFs, then spawns the saved provider with the local browser. Never claims or creates documents. |
 | `drop.py` | 187 | The user deciding against a role. Kills the runner if it is mid-flight. |
 | `run_scan.py` | 149 | Runs one sourcing sweep by spawning an agent. |
@@ -512,10 +512,11 @@ costs tokens and meets hourly bots with the CAPTCHA walls Jobby refuses to
 solve. That is fine for a daily cycle and useless for catching a posting in its
 first hour. So sourcing is now two tiers, and only the cheap one runs hourly.
 
-**Tier 1** is HTTP and JSON: no LLM and no browser. Twenty-one registered
-channels include ten direct ATS families: Greenhouse, Lever, Ashby,
-SmartRecruiters, Workable, Recruitee, Personio, Breezy, Rippling and Workday
-CXS. Public remote feeds and six search APIs provide the rest. Missing keys,
+**Tier 1** is HTTP and JSON: no LLM and no browser. Twenty-six registered
+channels include fifteen direct ATS families: Greenhouse, Lever, Ashby,
+SmartRecruiters, Workable, Recruitee, Personio, Breezy, Rippling, Workday CXS,
+Pinpoint, Teamtailor, JazzHR, Oracle Recruiting Cloud and Gem. Public remote
+feeds and six search APIs provide the rest. Missing keys,
 wrong tenant paths, 4xx responses and unchanged boards remain distinct visible
 states. Workday was verified live on 2026-08-23: GEICO's public CXS endpoint
 returned 282 jobs, while Acronis returned 422 and was counted independently.

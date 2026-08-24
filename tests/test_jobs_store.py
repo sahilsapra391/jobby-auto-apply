@@ -602,6 +602,12 @@ class CompanyRegistryTests(unittest.TestCase):
             ("https://consultdss.recruitee.com/o/ai-product-owner", "recruitee", "consultdss"),
             ("https://wfglobal.zohorecruit.com/jobs/Careers/574752000028891183", "zoho", "wfglobal"),
             ("https://geico.wd1.myworkdayjobs.com/External", "workday", "geico"),
+            ("https://career.teamtailor.com/jobs/123-product", "teamtailor", "career"),
+            ("https://workwithus.pinpointhq.com/en/postings/abc", "pinpoint", "workwithus"),
+            ("https://focuskpi.applytojob.com/apply/jobs/details/abc", "jazzhr", "focuskpi"),
+            ("https://jobs.gem.com/lumalabs-ai/abc", "gem", "lumalabs-ai"),
+            ("https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1",
+             "oracle_orc", "CX_1"),
         ]
         for url, ats, token in cases:
             self.assertEqual(seed_companies.ats_from_url(url), (ats, token), url)
@@ -615,6 +621,20 @@ class CompanyRegistryTests(unittest.TestCase):
                     "https://www.instahyre.com/job-402799-senior-product-manager",
                     "https://www.indeed.com/viewjob?jk=abc"):
             self.assertEqual(seed_companies.ats_from_url(url), (None, None), url)
+
+    def test_a_normalized_direct_sighting_can_grow_the_registry(self):
+        rows = seed_companies.from_postings([{
+            "company": "Acme", "canonicalUrl": "https://jobs.lever.co/acme/123",
+            "sources": [], "location": {"country": "US"},
+        }])
+        self.assertEqual((rows[0]["ats"], rows[0]["token"]), ("lever", "acme"))
+
+    def test_an_aggregator_sighting_never_invents_a_tenant(self):
+        rows = seed_companies.from_postings([{
+            "company": "Acme", "canonicalUrl": "https://www.linkedin.com/jobs/view/1",
+            "sources": [], "location": {"country": "US"},
+        }])
+        self.assertEqual(rows, [])
 
     def test_a_company_careers_page_yields_a_url_but_no_token(self):
         self.assertEqual(seed_companies.ats_from_url("https://careers.withwaymo.com/jobs"),
@@ -661,6 +681,19 @@ class CompanyRegistryTests(unittest.TestCase):
         self.assertEqual(registry["actively"]["ats"], "unknown")
         self.assertEqual(registry["actively"]["careersUrl"], "")
         self.assertEqual(summary["awaitingAtsResolution"], 2)
+
+    def test_host_dependent_boards_keep_their_exact_public_origin(self):
+        roles = {
+            "w": {"company": "Example W", "region": "US",
+                  "url": "https://example.wd1.myworkdayjobs.com/en-US/External/job/1"},
+            "o": {"company": "Example O", "region": "US",
+                  "url": "https://example.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/job/1"},
+        }
+        records = {r["name"]: r for r in seed_companies.from_roles(roles)}
+        self.assertEqual(records["Example W"]["careersUrl"],
+                         "https://example.wd1.myworkdayjobs.com/External")
+        self.assertEqual(records["Example O"]["careersUrl"],
+                         "https://example.fa.us2.oraclecloud.com")
 
     def test_seeding_is_idempotent(self):
         pack = seed_companies.from_pack()

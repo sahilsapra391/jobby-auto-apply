@@ -104,6 +104,19 @@ class PipelineTests(IngestCase):
         self.assertTrue(job["score"]["total"])
         self.assertEqual(job["score"]["parts"].keys(), job["score"]["weights"].keys())
 
+    def test_a_scan_persists_new_direct_ats_tenant_evidence(self):
+        report, _ = self.run_ingest({"greenhouse": channel([posting()])})
+        companies = jobs_store.load_companies(self.root)
+        self.assertEqual((companies["northwind analytics"]["ats"],
+                          companies["northwind analytics"]["token"]),
+                         ("greenhouse", "northwind"))
+        self.assertEqual(report["companiesDiscovered"], 1)
+
+    def test_a_dry_run_reports_but_does_not_persist_new_tenants(self):
+        report, _ = self.run_ingest({"greenhouse": channel([posting()])}, dry_run=True)
+        self.assertEqual(report["companiesDiscovered"], 1)
+        self.assertEqual(jobs_store.load_companies(self.root), {})
+
     def test_the_same_job_from_three_channels_is_one_record(self):
         trio = {}
         for sighting in SYNDICATED["sightings"]:
@@ -181,6 +194,14 @@ class AccountingTests(IngestCase):
         self.assertEqual(quiet["errors"], [])
         self.assertEqual(broken["byChannel"]["greenhouse"]["status"], "error")
         self.assertTrue(broken["errors"])
+
+    def test_a_connector_outage_does_not_delete_last_known_good_jobs(self):
+        self.run_ingest({"greenhouse": channel([posting()])})
+        before = jobs_store.load_jobs(self.root)
+        report, after = self.run_ingest({
+            "greenhouse": channel([], status="error", reason="HTTP 503")})
+        self.assertEqual(after, before)
+        self.assertEqual(report["byChannel"]["greenhouse"]["status"], "error")
 
     def test_last_ingest_is_written_to_the_store(self):
         self.run_ingest({"greenhouse": channel([posting()])})

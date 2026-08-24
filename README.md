@@ -173,9 +173,11 @@ service dies, the pings stop.
 
 ## Job discovery and ATS coverage
 
-The Found lane is fed by twenty-one Tier-1 channels. Ten are direct ATS board
-connectors: Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee,
-Personio, Breezy, Rippling and Workday CXS. The rest are public feeds and keyed search APIs.
+The Found lane is fed by twenty-six Tier-1 channels. Fifteen are direct ATS
+board connectors: Greenhouse, Lever, Ashby, SmartRecruiters, Workable,
+Recruitee, Personio, Breezy, Rippling, Workday CXS, Pinpoint, Teamtailor,
+JazzHR, Oracle Recruiting Cloud and Gem. The rest are public feeds and keyed
+search APIs.
 The scan header distinguishes jobs seen from jobs newly admitted. A connector
 can be healthy and report zero new jobs when its boards are unchanged, or when
 every result was already stored, filtered, or merged.
@@ -195,6 +197,12 @@ itself fails today's search gate. Aggregator URLs never become tenant evidence.
 The fifty explicitly requested ATS families have a machine-checked accounting
 contract in `scripts/sources_registry.py`; connected, planned and blocked are
 all visible states, while absence is a test failure.
+
+Transient HTTP failures retry with exponential backoff. Once one host exhausts
+those retries, a per-sweep circuit breaker prevents every tenant on that host
+from being hammered. A 404 stays tenant-specific and does not open the circuit.
+Failures remain visible in the scan report, while earlier stored sightings stay
+in the pool.
 
 Aggregator access follows the same honesty rule. Tsenta is planned pending an
 authorized discovery-feed API. Simplify and Wellfound prohibit the collection

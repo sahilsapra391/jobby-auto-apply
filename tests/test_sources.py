@@ -29,9 +29,10 @@ FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import identity  # noqa: E402
+import sources_registry  # noqa: E402
 import sources  # noqa: E402
 from sources import adzuna, ashby, base, boards, careerjet, feeds, greenhouse  # noqa: E402
-from sources import jooble, lever, reed, themuse, usajobs  # noqa: E402
+from sources import enterprise_boards, jooble, lever, reed, themuse, usajobs, workday  # noqa: E402
 
 
 def fixture(name):
@@ -109,9 +110,14 @@ class EnvelopeTests(unittest.TestCase):
     """Every connector answers in the same shape, whatever happened."""
 
     def test_every_registered_connector_is_callable(self):
-        self.assertEqual(len(sources.ALL), 20)
+        self.assertEqual(len(sources.ALL), 26)
         for name, fn in sources.ALL.items():
             self.assertTrue(callable(fn), name)
+
+    def test_every_connected_catalog_entry_has_runtime_code(self):
+        connected = {entry["id"] for entry in sources_registry.load()["sources"]
+                     if entry["status"] == "connected"}
+        self.assertEqual(connected, set(sources.ALL))
 
     def test_the_three_envelopes_carry_the_same_keys(self):
         shapes = [base.ok("x", []), base.skipped("x", "why"), base.failed("x", "why")]
@@ -561,6 +567,121 @@ class FetcherTests(unittest.TestCase):
             (root / "source-cache.json").write_text("{not json")
             f = fetcher({"example.test": (200, "{}")}, root=root)
             self.assertEqual(f.validators, {})
+
+
+class NewDirectBoardTests(unittest.TestCase):
+    CASES = (
+        ("pinpoint", enterprise_boards.pinpoint, "pinpoint.json",
+         {"acme": {"name": "Acme", "ats": "pinpoint", "token": "workwithus"}},
+         "pinpointhq.com"),
+        ("teamtailor", enterprise_boards.teamtailor, "teamtailor.json",
+         {"acme": {"name": "Acme", "ats": "teamtailor", "token": "example"}},
+         "teamtailor.com"),
+        ("jazzhr", enterprise_boards.jazzhr, "jazzhr.html",
+         {"acme": {"name": "Acme", "ats": "jazzhr", "token": "example"}},
+         "applytojob.com"),
+        ("oracle_orc", enterprise_boards.oracle, "oracle_orc.json",
+         {"acme": {"name": "Acme", "ats": "oracle_orc", "token": "CX_1",
+                   "careersUrl": "https://example.fa.us2.oraclecloud.com"}},
+         "oraclecloud.com"),
+        ("gem", enterprise_boards.gem, "gem.json",
+         {"acme": {"name": "Acme", "ats": "gem", "token": "example"}},
+         "api.gem.com"),
+    )
+
+    def test_each_live_shape_normalises_to_the_shared_contract(self):
+        for source, connector, fixture_name, companies, host in self.CASES:
+            with self.subTest(source=source):
+                f = fetcher({host: (200, fixture(fixture_name))})
+                result = connector(f, companies=companies)
+                self.assertEqual(result["status"], "ok", result)
+                self.assertEqual(len(result["postings"]), 1)
+                job = result["postings"][0]
+                self.assertEqual(job["sources"][0]["source"], source)
+                self.assertTrue(job["title"])
+                self.assertTrue(job["canonicalUrl"].startswith("https://"))
+                self.assertIn(job["workplace"], (None, "remote", "hybrid", "onsite"))
+
+    def test_each_missing_registry_is_visible_as_skipped(self):
+        for source, connector, _fixture_name, _companies, _host in self.CASES:
+            with self.subTest(source=source):
+                result = connector(fetcher({}), companies={})
+                self.assertEqual(result["status"], "skipped")
+                self.assertIn("registry", result["reason"])
+
+    def test_each_failed_board_is_visible_as_error(self):
+        for source, connector, _fixture_name, companies, host in self.CASES:
+            with self.subTest(source=source):
+                result = connector(fetcher({host: (503, "maintenance")}),
+                                   companies=companies)
+                self.assertEqual(result["status"], "error")
+                self.assertTrue(result["errors"])
+
+    def test_workday_post_uses_verified_host_tenant_and_site(self):
+        body = json.dumps({"total": 1, "jobPostings": [{
+            "title": "Product Manager", "externalPath": "/job/PM_R1",
+            "locationsText": "New York, NY", "timeType": "Full time"}]})
+        companies = {"acme": {"name": "Acme", "ats": "workday", "token": "acme",
+                                "careersUrl": "https://acme.wd1.myworkdayjobs.com/External"}}
+        f = fetcher({"/wday/cxs/acme/External/jobs": (200, body)})
+        result = workday.fetch(f, companies=companies)
+        self.assertEqual(result["status"], "ok")
+        request = f.fake_opener.calls[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertIn("/wday/cxs/acme/External/jobs", request.full_url)
+
+    def test_workday_failure_is_not_an_empty_success(self):
+        companies = {"acme": {"name": "Acme", "ats": "workday", "token": "acme",
+                                "careersUrl": "https://acme.wd1.myworkdayjobs.com/External"}}
+        result = workday.fetch(fetcher({"myworkdayjobs.com": (503, "down")}),
+                               companies=companies)
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["errors"])
+
+    def test_workday_fetches_past_the_old_hundred_job_cutoff(self):
+        companies = {"acme": {"name": "Acme", "ats": "workday", "token": "acme",
+                                "careersUrl": "https://acme.wd1.myworkdayjobs.com/External"}}
+        def page(_request, call):
+            count = workday.PAGE_SIZE if call <= 6 else 1
+            rows = [{"title": f"Role {call}-{i}", "externalPath": f"/job/{call}-{i}"}
+                    for i in range(count)]
+            return 200, json.dumps({"total": workday.PAGE_SIZE * 6 + 1,
+                                    "jobPostings": rows})
+        f = fetcher({"myworkdayjobs.com": page})
+        result = workday.fetch(f, companies=companies)
+        self.assertEqual(len(result["postings"]), workday.PAGE_SIZE * 6 + 1)
+        self.assertEqual(result["requests"], 7)
+
+    def test_oracle_paginates_until_the_reported_total(self):
+        companies = {"acme": {"name": "Acme", "ats": "oracle_orc", "token": "CX_1",
+                                "careersUrl": "https://example.fa.oraclecloud.com"}}
+        def page(request, _call):
+            offset = enterprise_boards.ORACLE_PAGE_SIZE if "offset=200" in request.full_url else 0
+            count = 1 if offset else enterprise_boards.ORACLE_PAGE_SIZE
+            rows = [{"Id": str(offset + i), "Title": f"Role {offset + i}"}
+                    for i in range(count)]
+            return 200, json.dumps({"items": [{
+                "TotalJobsCount": enterprise_boards.ORACLE_PAGE_SIZE + 1,
+                "requisitionList": rows}]})
+        f = fetcher({"oraclecloud.com": page})
+        result = enterprise_boards.oracle(f, companies=companies)
+        self.assertEqual(len(result["postings"]), enterprise_boards.ORACLE_PAGE_SIZE + 1)
+        self.assertEqual(result["requests"], 2)
+
+    def test_transient_host_failure_opens_a_per_sweep_circuit(self):
+        f = fetcher({"example.test": (503, "down")})
+        first = f.get("https://example.test/one")
+        calls = len(f.fake_opener.calls)
+        second = f.get("https://example.test/two")
+        self.assertEqual(first.status, 503)
+        self.assertEqual(second.status, 0)
+        self.assertIn("circuit open", second.error)
+        self.assertEqual(len(f.fake_opener.calls), calls)
+
+    def test_a_404_does_not_poison_other_tenants_on_the_same_host(self):
+        f = fetcher({"/bad": (404, "missing"), "/good": (200, "{}")})
+        self.assertEqual(f.get("https://example.test/bad").status, 404)
+        self.assertEqual(f.get("https://example.test/good").status, 200)
 
 
 class NormalisationTests(unittest.TestCase):

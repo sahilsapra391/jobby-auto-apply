@@ -334,7 +334,7 @@
       "endpoint": "",
       "id": "bamboohr",
       "name": "BambooHR",
-      "notes": "Public per-company JSON.",
+      "notes": "Official ATS jobs API is per-company but requires an authenticated caller with ATS access; it is not an anonymous discovery endpoint. Verified from BambooHR's Get Job Summaries reference 2026-08-23.",
       "phase": 2,
       "regions": [
         "*"
@@ -349,19 +349,19 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}.teamtailor.com/jobs.json",
       "id": "teamtailor",
       "name": "Teamtailor",
-      "notes": "Public per-company JSON.",
+      "notes": "Verified live 2026-08-24. Anonymous JSON Feed 1.1 with full HTML description, exact publication timestamp and schema.org location data.",
       "phase": 2,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-24",
       "verifyAtBuild": false
     },
     {
@@ -385,19 +385,19 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{host}/wday/cxs/{tenant}/{site}/jobs",
       "id": "workday",
       "name": "Workday CXS",
-      "notes": "Public per-tenant JSON; fiddlier shapes.",
+      "notes": "Verified live 2026-08-24 against GEICO. Public candidate CXS JSON POST; exact host, tenant and career-site path come from a real posting URL.",
       "phase": 3,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-24",
       "verifyAtBuild": false
     },
     {
@@ -406,7 +406,7 @@
       "endpoint": "",
       "id": "icims",
       "name": "iCIMS",
-      "notes": "Public per-tenant JSON; fiddlier shapes.",
+      "notes": "The official Job Portal API requires Basic authentication. Public career pages remain a later tenant-specific parser rather than a falsely anonymous API connector.",
       "phase": 3,
       "regions": [
         "*"
@@ -439,19 +439,19 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions",
       "id": "oracle_orc",
       "name": "Oracle Recruiting Cloud",
-      "notes": "Public per-tenant JSON; fiddlier shapes.",
+      "notes": "Verified live 2026-08-24 against Oracle's CX_1 candidate site. Anonymous requisition list requires expand=requisitionList and finder-scoped site, limit and offset.",
       "phase": 3,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-24",
       "verifyAtBuild": false
     },
     {
@@ -2695,56 +2695,56 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}.pinpointhq.com/postings.json",
       "id": "pinpoint",
       "name": "Pinpoint",
-      "notes": "Per-tenant; shape unverified.",
+      "notes": "Verified live 2026-08-24 using Pinpoint's documented anonymous postings.json feed. Includes description, responsibilities, skills, workplace and employment type.",
       "phase": 2,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-24",
+      "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://api.gem.com/job_board/v0/{token}/job_posts/",
       "id": "gem",
       "name": "Gem",
-      "notes": "Per-tenant; shape unverified.",
+      "notes": "Verified live 2026-08-24 using Gem's documented anonymous Job Board API. Includes full plain description, offices, departments and first-published timestamp.",
       "phase": 2,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-24",
+      "verifyAtBuild": false
     },
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}.applytojob.com/apply/jobs",
       "id": "jazzhr",
       "name": "JazzHR",
-      "notes": "Per-tenant on applytojob.com; the RSS path redirects, shape unverified.",
+      "notes": "Verified live 2026-08-24 against FocusKPI. Public server-rendered listing table supplies direct detail URLs and locations; list records are deliberately thin rather than issuing one request per job.",
       "phase": 2,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
-      "verifyAtBuild": true
+      "verifiedAt": "2026-08-24",
+      "verifyAtBuild": false
     },
     {
       "auth": "none",
