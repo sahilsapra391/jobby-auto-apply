@@ -95,6 +95,7 @@ LEGAL_SUFFIXES = (
 # the user happened to apply to. Region is where the company is headquartered,
 # not where the roles are; the config's location filter does that job.
 SEED_PACK = [
+    ("Acronis", "workday", "acronis", "CH"),
     ("GEICO", "workday", "geico", "US"),
     ("Gem", "gem", "gem", "US"),
     ("FocusKPI", "jazzhr", "focuskpi", "US"),
@@ -603,6 +604,7 @@ SEED_PACK = [
 # Boards whose public API requires more than a tenant token. These origins and
 # site paths were verified with live responses before entering the seed pack.
 VERIFIED_CAREERS_URLS = {
+    ("workday", "acronis"): "https://acronis.wd502.myworkdayjobs.com/acronis_careers",
     ("workday", "geico"): "https://geico.wd1.myworkdayjobs.com/External",
     ("oracle_orc", "CX_1"): "https://eeho.fa.us2.oraclecloud.com",
 }
@@ -706,12 +708,15 @@ def blank_company(name, region="unknown", added_from="seed"):
 def merge_company(existing, incoming):
     """Later knowledge fills gaps; a real ATS token is never downgraded."""
     out = dict(existing)
+    incoming_is_verified = incoming.get("addedFrom") == "pack"
     for field in ("careersUrl", "industry"):
-        if incoming.get(field) and not out.get(field):
+        # A verified pack URL must replace stale learned ATS infrastructure.
+        # Vendors migrate tenants and site names, as Acronis did in 2026-08.
+        if incoming.get(field) and (not out.get(field)
+                                    or (field == "careersUrl" and incoming_is_verified)):
             out[field] = incoming[field]
     if incoming.get("ats") and incoming["ats"] != "unknown":
         existing_sources = set(str(out.get("addedFrom") or "").split("+"))
-        incoming_is_verified = incoming.get("addedFrom") == "pack"
         existing_is_verified = "pack" in existing_sources
         if (out.get("ats") in (None, "", "unknown")
                 or (incoming_is_verified and not existing_is_verified)):
