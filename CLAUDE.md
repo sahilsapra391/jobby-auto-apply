@@ -211,6 +211,15 @@ in Settings. Their connector, environment isolation, model pinning, schema,
 health, and failover paths are covered by automated tests. Do not report a live
 Claude or Gemini pass without connecting a real key and running both contracts.
 
+Production follow-up on 2026-08-24: two Versant retries produced parseable
+OpenAI JSON but failed before content validation because strict output cannot
+encode base-resume-dependent list lengths. The worker now inherits the complete
+verified base resume when an OpenAI override has an invalid dynamic shape, and
+sets letter employer and role from the trusted request. Do not remove that
+fallback or broaden it to malformed prose. ATS, layout, cover-letter, and file
+checks still fail closed. See
+`docs/handoffs/claude-application-worker-2026-08-24.md`.
+
 PR #5 is the production release for the provider health, failover, dedicated
 control service, secure API-key connectors, browser slot fix, and resume
 integrity gate. Its Vercel preview passed before merge. The Vercel function

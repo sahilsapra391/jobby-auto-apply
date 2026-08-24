@@ -46,6 +46,13 @@ resume wording for the section, renders again, and repeats the complete ATS,
 layout, and cover-letter validation. The rejected terms remain private and do
 not enter logs or queue metadata.
 
+OpenAI's strict schema cannot express list lengths that depend on the installed
+base resume. If a response supplies a wrong dynamic length, the worker discards
+all resume overrides and uses the verified base resume rather than failing the
+job. It also takes the cover letter's employer and role from the trusted job
+request. This fallback does not relax prose shape, file, ATS provenance, layout,
+or cover-letter checks.
+
 A preflight refusal also owns its state transition. It restores the session to
 its prior lane, clears the empty browser slot, and leaves a visible reason.
 Resolved `Document generation` blockers are removed before form handoff without
