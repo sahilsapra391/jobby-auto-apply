@@ -595,6 +595,22 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"],
                          ["new", "old"])
 
+    def test_newest_never_substitutes_discovery_time_for_posted_date(self):
+        jobs = [self.job("unknown", pa="", fs="2026-08-20"),
+                self.job("dated", pa="2026-07-01", fs="2026-07-01")]
+        out = self.run_script(jobs, {"jb-sort": "new"})
+        self.assertEqual(out["ids"], ["dated", "unknown"])
+        self.assertIn("Posted date unknown", out["text"])
+        self.assertNotIn("seen today", out["text"].lower())
+
+    def test_date_window_does_not_treat_recent_discovery_as_recent_posting(self):
+        jobs = [self.job("unknown", pa="", fs="2026-08-20")]
+        strict = self.run_script(jobs, {"date": "30d",
+                                        "unknowns": ["experience", "degree", "workplace"]})
+        self.assertEqual(strict["ids"], [])
+        honest_unknown = self.run_script(jobs, {"date": "30d"})
+        self.assertEqual(honest_unknown["ids"], ["unknown"])
+
     def test_the_date_window_bites(self):
         jobs = [self.job("fresh", pa="2026-08-19"), self.job("ancient", pa="2020-01-01")]
         out = self.run_script(jobs, {"date": "30d"})
@@ -1214,6 +1230,14 @@ class RealPayloadTests(ScriptHarness, unittest.TestCase):
         rows[0]["id"], rows[1]["id"] = "r", "o"
         out = self.run_script(rows, {"workplaces": ["remote"]})
         self.assertEqual(out["ids"], ["r"])
+
+    def test_real_payload_never_ships_discovery_time_as_display_age(self):
+        row = self.real_row(postedAt=None, firstSeenAt="2026-08-20")
+        self.assertNotIn("fs", row)
+        self.assertEqual(row["pa"], "")
+        out = self.run_script([row])
+        self.assertIn("Posted date unknown", out["text"])
+        self.assertNotIn("seen today", out["text"].lower())
 
     def test_the_card_still_shows_the_readable_label(self):
         # Shipping the slug must not turn the chip into "onsite".

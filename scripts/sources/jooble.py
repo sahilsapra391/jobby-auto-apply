@@ -31,7 +31,9 @@ def parse_job(entry, country=None):
         location=location,
         workplace=base.detect_workplace(entry.get("location"), entry.get("title"),
                                         entry.get("snippet")),
-        posted_at=entry.get("updated"),
+        # Jooble's public payload calls this value "updated". Do not relabel an
+        # aggregator refresh as the employer's original posting date.
+        posted_at=None,
         description=entry.get("snippet") or "",
         tags=[entry.get("type")] if entry.get("type") else [],
         salary=entry.get("salary") or None)

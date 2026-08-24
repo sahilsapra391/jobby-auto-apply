@@ -265,11 +265,14 @@ needed for a local job database, Indeed's APIs require an approved partner use,
 and Naukri blocked automated access during verification. Their reasons are in
 the source registry rather than hidden behind empty runs.
 
-Date filtering preserves exact timestamps as compact epoch seconds. The 6-hour view uses the source's
-exact posting instant where one exists. If an ATS provides only a calendar date,
-it uses Jobby's exact first-seen instant for that sub-day view. Wider windows use
-the employer's posting date. This distinction is pinned through the real compact
-payload and client filter in `tests/test_found_script.py`.
+Date labels, date filters, and newest sorting use the source's posting date only.
+`firstSeenAt` records when Jobby discovered a record, but it is internal ingestion
+provenance and never stands in for job age. A source timestamp supports the
+6-hour filter. A calendar-only date cannot honestly prove that a job was posted
+within six hours, and a source with no publish field displays `Posted date
+unknown`. Workday CXS ages such as `Posted 13 Days Ago` resolve to an Eastern
+calendar date when fetched. Tests pass the real compact payload into the client
+filter so a producer and consumer date mismatch fails visibly.
 
 ## Things it learned the hard way
 

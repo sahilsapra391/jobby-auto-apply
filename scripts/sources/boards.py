@@ -142,7 +142,8 @@ def _workable_job(entry, company):
         "workable", SOURCE_CLASS, TIER, company.get("name"), entry.get("title"),
         entry.get("url") or entry.get("shortlink") or entry.get("application_url"),
         location=location, workplace=workplace,
-        posted_at=entry.get("published_on") or entry.get("created_at"),
+        # created_at can predate publication while a requisition is prepared.
+        posted_at=entry.get("published_on"),
         description=entry.get("description") or "",
         tags=[t for t in (entry.get("department"), entry.get("function"),
                           entry.get("employment_type")) if t])
@@ -168,7 +169,8 @@ def _recruitee_job(entry, company):
         entry.get("title") or entry.get("position_title"),
         entry.get("careers_url") or entry.get("careers_apply_url"),
         location=location, workplace=workplace,
-        posted_at=entry.get("published_at") or entry.get("updated_at"),
+        # updated_at moves when the requisition changes. It is not its posted date.
+        posted_at=entry.get("published_at"),
         description=entry.get("description") or "",
         tags=[t for t in (entry.get("department"), entry.get("category_code")) if t])
 

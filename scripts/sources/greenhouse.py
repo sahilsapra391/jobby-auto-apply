@@ -59,7 +59,9 @@ def parse_job(entry, company_name, token):
         # first_published is when the posting went up; updated_at moves whenever
         # anyone edits a typo, and using it would make every edited posting look
         # brand new.
-        posted_at=entry.get("first_published") or entry.get("updated_at"),
+        # An edit is not a new posting. Unknown is more honest than making an
+        # old requisition look fresh because Greenhouse only supplied updated_at.
+        posted_at=entry.get("first_published"),
         description=entry.get("content") or "",
         lang=entry.get("language"),
     )
