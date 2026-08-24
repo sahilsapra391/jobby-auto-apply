@@ -47,6 +47,10 @@ carries tokens for SmartRecruiters (3), Workable (2), Recruitee (1) and Zoho
 (1), so the first run would add seven companies. That is the point about
 registry size, in miniature.
 
+Pinpoint, Teamtailor, JazzHR and Gem were connected and live-verified on
+2026-08-24. Workday CXS moved from its prior live prototype into the same
+isolated branch. Their tenant tokens still have to come from real career URLs.
+
 ### Group B — per-tenant enterprise JSON, fiddlier shapes. Phase 3.
 
 Public but awkward: POST bodies, session cookies, per-tenant site paths,
@@ -99,8 +103,8 @@ connector for one company. High value per company, no leverage across them.
 
 ## What was not done, and why
 
-No connector from Groups A–D was built in this session. Phase 1 is under review
-and unmerged; adding twenty connectors to it would mean the reviewed diff is not
-the merged diff. The one thing pulled forward at the user's explicit request was
-required-experience extraction, and that is recorded in `docs/reviews/phase-1.md`
-rather than left to be discovered.
+The 2026-08-24 connector batch added Workday CXS, Pinpoint, Teamtailor, JazzHR,
+Oracle Recruiting Cloud and Gem. Every connector passed fixture, missing-
+registry and outage tests, then returned normalized postings from a live public
+tenant using a temporary store. iCIMS stayed planned because its official Job
+Portal API requires Basic authentication.

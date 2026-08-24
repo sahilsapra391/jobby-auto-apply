@@ -96,6 +96,7 @@ def query_slice(items, cursor, cap=MAX_QUERIES_PER_RUN):
     return doubled[start:start + cap], start
 
 RETRY_STATUSES = (429, 500, 502, 503, 504)
+TRANSIENT_STATUSES = (0,) + RETRY_STATUSES
 
 
 class Passthrough(urllib.request.HTTPErrorProcessor):
@@ -143,6 +144,7 @@ class Fetcher:
         self.requests = 0
         self.bytes = 0
         self.validators = self._load_validators()
+        self._open_hosts = {}
 
     def _cache_path(self):
         return None if self.root is None else self.root / "source-cache.json"
@@ -179,6 +181,8 @@ class Fetcher:
     def get(self, url, headers=None, conditional=True):
         """One GET, throttled, retried on the statuses worth retrying."""
         host = urllib.parse.urlparse(url).netloc
+        if host in self._open_hosts:
+            return Response(0, error=f"circuit open after {self._open_hosts[host]}")
         stored = self.validators.get(url) if conditional else None
         request_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
         request_headers.update(headers or {})
@@ -221,6 +225,45 @@ class Fetcher:
             if etag or modified:
                 self.validators[url] = {"etag": etag, "lastModified": modified,
                                         "at": jobs_store.now_stamp()}
+        elif last.status in TRANSIENT_STATUSES:
+            # One exhausted retry sequence is enough evidence that this host
+            # is unhealthy for the current sweep. Stop hammering every tenant
+            # sharing it. A new Fetcher on the next sweep closes the circuit.
+            self._open_hosts[host] = describe(last, host)
+        return last
+
+    def post_json(self, url, payload, headers=None):
+        """JSON POST with the same throttle, retry and circuit semantics as GET."""
+        host = urllib.parse.urlparse(url).netloc
+        if host in self._open_hosts:
+            return Response(0, error=f"circuit open after {self._open_hosts[host]}")
+        request_headers = {"User-Agent": USER_AGENT, "Accept": "application/json",
+                           "Content-Type": "application/json"}
+        request_headers.update(headers or {})
+        request_headers = {k: v for k, v in request_headers.items() if v}
+        body_out = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        last = Response(0, error="never attempted")
+        for attempt in range(MAX_ATTEMPTS):
+            self._throttle(host)
+            self.requests += 1
+            try:
+                request = urllib.request.Request(url, data=body_out,
+                                                 headers=request_headers, method="POST")
+                with self.opener.open(request, timeout=TIMEOUT_SECONDS) as raw:
+                    body = raw.read(MAX_RESPONSE_BYTES)
+                    self.bytes += len(body)
+                    last = Response(raw.status, body, dict(raw.headers))
+                    if len(body) >= MAX_RESPONSE_BYTES:
+                        last.error = (f"response hit the {MAX_RESPONSE_BYTES // 1_000_000} MB "
+                                      "cap and was truncated")
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                last = Response(0, error=f"{type(exc).__name__}: {exc}"[:200])
+            if last.status not in TRANSIENT_STATUSES:
+                break
+            if attempt < MAX_ATTEMPTS - 1:
+                self._sleep(BACKOFF_SECONDS * (2 ** attempt))
+        if last.status in TRANSIENT_STATUSES:
+            self._open_hosts[host] = describe(last, host)
         return last
 
     def get_json(self, url, headers=None, conditional=True):

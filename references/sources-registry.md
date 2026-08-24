@@ -98,13 +98,13 @@ part of Phase 1.
 | We Work Remotely | `weworkremotely` | C | 1a | 1 | `connected` | REMOTE | RSS, not JSON. Title is "Company: Role" and is the only place the company name appears. |
 | Workable | `workable` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. {jobs:[...]}, country and city as separate fields, full descriptions. The richest of the six: experience extracts cleanly from its bodies. |
 | Working Nomads | `workingnomads` | C | 1a | 1 | `connected` | REMOTE | Bare array; tags is a comma-separated string rather than a list. |
-| BambooHR | `bamboohr` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
+| BambooHR | `bamboohr` | A | 1a | 2 | `planned` | * | Official ATS jobs API is per-company but requires an authenticated caller with ATS access; it is not an anonymous discovery endpoint. Verified from BambooHR's Get Job Summaries reference 2026-08-23. |
 | Factorial | `factorial` | A | 1a | 2 | `planned` | * | Per-tenant, European tech; shape unverified. **Verify at build.** |
 | Freshteam | `freshteam` | A | 1a | 2 | `planned` | * | Per-tenant, Freshworks; shape unverified. **Verify at build.** |
-| Gem | `gem` | A | 1a | 2 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
-| JazzHR | `jazzhr` | A | 1a | 2 | `planned` | * | Per-tenant on applytojob.com; the RSS path redirects, shape unverified. **Verify at build.** |
-| Pinpoint | `pinpoint` | A | 1a | 2 | `planned` | * | Per-tenant; shape unverified. **Verify at build.** |
-| Teamtailor | `teamtailor` | A | 1a | 2 | `planned` | * | Public per-company JSON. |
+| Gem | `gem` | A | 1a | 2 | `connected` | * | Verified live 2026-08-24 using Gem's documented anonymous Job Board API. Includes full plain description, offices, departments and first-published timestamp. |
+| JazzHR | `jazzhr` | A | 1a | 2 | `connected` | * | Verified live 2026-08-24 against FocusKPI. Public server-rendered listing table supplies direct detail URLs and locations; list records are deliberately thin rather than issuing one request per job. |
+| Pinpoint | `pinpoint` | A | 1a | 2 | `connected` | * | Verified live 2026-08-24 using Pinpoint's documented anonymous postings.json feed. Includes description, responsibilities, skills, workplace and employment type. |
+| Teamtailor | `teamtailor` | A | 1a | 2 | `connected` | * | Verified live 2026-08-24. Anonymous JSON Feed 1.1 with full HTML description, exact publication timestamp and schema.org location data. |
 | ADP Workforce Now | `adp` | B | 1a | 3 | `planned` | * | Per-tenant portal, North America. **Verify at build.** |
 | Akhtaboot | `akhtaboot` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | APEC | `apec` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
@@ -148,7 +148,7 @@ part of Phase 1.
 | Hirist | `hirist` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | HN Who's Hiring | `hn_whoishiring` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
 | Honeypot | `honeypot` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
-| iCIMS | `icims` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
+| iCIMS | `icims` | A | 1a | 3 | `planned` | * | The official Job Portal API requires Basic authentication. Public career pages remain a later tenant-specific parser rather than a falsely anonymous API connector. |
 | IIMJobs | `iimjobs` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | Indeed | `indeed` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | InfoJobs (Spain) | `infojobs_es` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
@@ -178,7 +178,7 @@ part of Phase 1.
 | NodeFlair | `nodeflair` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | NoFluffJobs | `nofluffjobs` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Oleeo | `oleeo` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
-| Oracle Recruiting Cloud | `oracle_orc` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
+| Oracle Recruiting Cloud | `oracle_orc` | A | 1a | 3 | `connected` | * | Verified live 2026-08-24 against Oracle's CX_1 candidate site. Anonymous requisition list requires expand=requisitionList and finder-scoped site, limit and offset. |
 | Otta | `otta` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
 | PageUp | `pageup` | B | 1a | 3 | `planned` | * | Per-tenant, dominant in Australia and APAC. **Verify at build.** |
 | Paycom | `paycom` | B | 1a | 3 | `planned` | * | Per-tenant. **Verify at build.** |
@@ -218,7 +218,7 @@ part of Phase 1.
 | Wanted | `wanted_kr` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Wantedly | `wantedly` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |
 | Wellfound | `wellfound` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack F. |
-| Workday CXS | `workday` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
+| Workday CXS | `workday` | A | 1a | 3 | `connected` | * | Verified live 2026-08-24 against GEICO. Public candidate CXS JSON POST; exact host, tenant and career-site path come from a real posting URL. |
 | Welcome to the Jungle | `wttj` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
 | Wuzzuf | `wuzzuf` | D | 2 | 3 | `rotation` | AE, SA, QA, KW, BH, OM, JO, EG | Tier-2 sweep, rotation pack E. |
 | XING Jobs | `xing` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |

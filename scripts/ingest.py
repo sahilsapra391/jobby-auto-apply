@@ -40,6 +40,7 @@ import identity  # noqa: E402
 import jobs_store  # noqa: E402
 import match_score  # noqa: E402
 import search_config  # noqa: E402
+import seed_companies  # noqa: E402
 import sources  # noqa: E402
 import toolpath  # noqa: E402
 from sources import base, greenhouse  # noqa: E402
@@ -269,6 +270,7 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     requests_before = fetcher.requests
     selected = select_channels(channels)
     bodies_fetched = 0
+    discovered_companies = []
 
     for name, connector in sorted(selected.items()):
         try:
@@ -294,6 +296,10 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
 
         found = kept = 0
         for posting in result["postings"]:
+            # Learn direct ATS tenant evidence before the search gate. A role
+            # outside today's search can still make its employer fetchable on
+            # the next sweep. Aggregator URLs do not resolve in from_postings.
+            discovered_companies.extend(seed_companies.from_postings([posting]))
             found += 1
             report["found"] += 1
 
@@ -388,8 +394,13 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     report["bodiesFetched"] = bodies_fetched
     report["durationSeconds"] = round(time.time() - started, 1)
 
+    companies_after, company_summary = seed_companies.seed(companies, discovered_companies)
+    report["companiesDiscovered"] = company_summary["added"] + company_summary["updated"]
+
     if not dry_run:
         jobs_store.save_jobs(root, jobs)
+        if companies_after != companies:
+            jobs_store.save_companies(root, companies_after)
         fetcher.save_validators()
         write_last_ingest(root, report)
         if publish:
