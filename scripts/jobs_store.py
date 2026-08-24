@@ -69,6 +69,12 @@ TRANSITIONS = {
 # an aggregator's copy of it is a summary written by someone else.
 CANONICAL_RANK = {"ats": 0, "careers": 1, "aggregator": 2, "feed": 2, "other": 3}
 
+# These connectors formerly wrote a non-publication field into postedAt. A
+# one-time production repair clears records for which that connector is still
+# canonical, then a fresh connector pass restores genuine publication dates.
+UNTRUSTED_LEGACY_DATE_SOURCES = frozenset(
+    ("greenhouse", "workable", "recruitee", "jooble"))
+
 
 class JobsStoreError(Exception):
     pass
@@ -131,6 +137,22 @@ def load_jobs(root):
 def save_jobs(root, jobs):
     store.write_private(paths(root)["jobs"], jobs)
     return jobs
+
+
+def clear_untrusted_legacy_dates(jobs):
+    """Clear dates written by former edit, draft, or refresh fallbacks.
+
+    The canonical-source guard preserves a valid ATS date on a record that also
+    has an old Jooble sighting. The caller owns persistence so dry runs and the
+    atomic store write stay explicit.
+    """
+    changed = []
+    for job_id, job in jobs.items():
+        if (job.get("postedAt") and
+                job.get("canonicalSource") in UNTRUSTED_LEGACY_DATE_SOURCES):
+            job["postedAt"] = None
+            changed.append(job_id)
+    return changed
 
 
 def load_passed(root):
