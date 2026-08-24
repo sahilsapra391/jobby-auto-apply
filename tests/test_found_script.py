@@ -242,15 +242,28 @@ const unknownNodes = ['experience', 'degree', 'workplace', 'postedAt'].map(funct
     .indexOf(u) !== -1;
   return n;
 });
-// Locations are toggle chips now: a native multi-select cannot deselect by
-// clicking, which is the thing the control is for.
+// Location countries are native checkboxes inside the hierarchical picker.
+// An old empty selection meant Worldwide, so only an explicit `none` mode
+// starts with every country clear.
 const locNodes = (CONTROLS.allLocations || CONTROLS.locations || []).map(function (v) {
-  const n = makeNode('button');
+  const n = makeNode('input');
   n.setAttribute('data-loc', v);
-  n.setAttribute('aria-pressed',
-    (CONTROLS.locations || []).indexOf(v) !== -1 ? 'true' : 'false');
+  n.setAttribute('data-country-name', v);
+  const explicit = (CONTROLS.locations || []).length > 0;
+  n.checked = CONTROLS.locationMode === 'none' ? false
+    : (explicit ? (CONTROLS.locations || []).indexOf(v) !== -1 : true);
+  n.setAttribute('aria-pressed', n.checked ? 'true' : 'false');
   return n;
 });
+// The real picker declares its complete country count. A focused test often
+// supplies only the selected country, so leave one unseen country in that
+// synthetic universe unless it explicitly asks for Worldwide.
+const locationTotal = CONTROLS.locationTotal || (
+  (CONTROLS.locations || []).length && CONTROLS.locationMode !== 'all'
+    ? Math.max(locNodes.length + 1, (CONTROLS.allLocations || []).length)
+    : locNodes.length
+);
+nodes['jb-loc'].setAttribute('data-location-total', String(locationTotal));
 // The board reads its column count off a CSS custom property, so the stub has
 // to answer for it. Without this every test ran at one column and could not
 // see a distribution bug at all.
@@ -785,13 +798,8 @@ class DisclosureTests(ScriptHarness, unittest.TestCase):
         self.assertFalse(cards["b"]["open"])
 
 
-class LocationChipTests(ScriptHarness, unittest.TestCase):
-    """Clicking a location adds it; clicking it again removes it.
-
-    A <select multiple> needs cmd-click to add a second country, and clicking a
-    selected one replaces the selection rather than clearing it, so the control
-    could not do either thing it was for.
-    """
+class LocationPickerTests(ScriptHarness, unittest.TestCase):
+    """The hierarchy still drives the same country filter contract."""
 
     def test_two_countries_can_be_selected_at_once(self):
         jobs = [self.job("us", cty="US"), self.job("in", cty="IN"),
@@ -806,11 +814,47 @@ class LocationChipTests(ScriptHarness, unittest.TestCase):
                                      "jb-direct": False})
         self.assertEqual(sorted(out["ids"]), ["in", "us"])
 
+    def test_explicit_clear_shows_no_country_bound_jobs(self):
+        jobs = [self.job("us", cty="US"), self.job("in", cty="IN")]
+        out = self.run_script(jobs, {"allLocations": ["US", "IN"], "locations": [],
+                                     "locationMode": "none", "jb-direct": False})
+        self.assertEqual(out["ids"], [])
+
     def test_a_pack_still_expands_to_its_countries(self):
         jobs = [self.job("de", cty="DE"), self.job("us", cty="US")]
         out = self.run_script(jobs, {"allLocations": ["pack:EU"],
                                      "locations": ["pack:EU"], "jb-direct": False})
         self.assertEqual(out["ids"], ["de"])
+
+    def test_picker_uses_continents_and_complete_country_names(self):
+        bar = found_lane.filter_bar([], {})
+        for continent in ("North America", "South America", "Europe", "Asia",
+                          "Africa", "Oceania"):
+            self.assertIn(f'>{continent}<', bar)
+        self.assertIn('>United States</span>', bar)
+        self.assertIn('>United Kingdom</span>', bar)
+        self.assertIn('>United Arab Emirates</span>', bar)
+        self.assertNotIn('>US</span>', bar)
+        self.assertNotIn('>GB</span>', bar)
+
+    def test_every_supported_country_has_exactly_one_continent(self):
+        grouped = [code for _, _, countries in found_lane.CONTINENT_COUNTRIES
+                   for code in countries]
+        self.assertEqual(set(grouped), set(found_lane.COUNTRY_NAMES))
+        self.assertEqual(len(grouped), len(set(grouped)))
+
+    def test_worldwide_and_only_controls_ship_in_the_compact_picker(self):
+        bar = found_lane.filter_bar([], {})
+        self.assertIn('id="jb-world" checked', bar)
+        self.assertIn('id="jb-location-clear"', bar)
+        self.assertIn('data-location-only="US"', bar)
+        self.assertIn('aria-label="Select only United States"', bar)
+
+    def test_legacy_pack_checks_its_country_children(self):
+        bar = found_lane.filter_bar([], {"locations": [{"regionPack": "EU"}]})
+        self.assertRegex(bar, r'data-loc="DE"[^>]* checked')
+        self.assertRegex(bar, r'data-loc="GB"[^>]* checked')
+        self.assertNotRegex(bar, r'data-loc="US"[^>]* checked')
 
 
 class ShippedDefaultTests(ScriptHarness, unittest.TestCase):

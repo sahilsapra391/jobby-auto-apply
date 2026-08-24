@@ -18,6 +18,14 @@ Needs you, Submitted, Watching, In flight, and Dropped dashboard. Settings
 contains provider connections. There is no left rail and no Back to
 applications button. A future Profile pill can join the centred control later.
 
+Found locations use the hierarchical picker in `scripts/found_lane.py`.
+`COUNTRY_NAMES` supplies full visible names and `CONTINENT_COUNTRIES` assigns
+each of the 199 selectable locations to exactly one display group. Continents
+select or clear all children, country rows support independent multi-select and
+`Only`, and Worldwide selects the complete set. Keep the storage contract:
+empty saved `locations` means Worldwide, while a partial selection stores
+explicit country codes. Legacy region packs expand when the page renders.
+
 OpenAI, Anthropic, and Gemini share one local provider registry in
 `~/.job-application/providers.json`. New work probes connected accounts in
 saved order and uses the first one that can invoke its pinned model. Failed
@@ -170,7 +178,7 @@ control, the active pill follows the route, and Settings shows OpenAI,
 Anthropic, and Gemini cards labelled Your Device. No left rail, Back to
 applications control, OCI worker, or Cloud Agent appears in the active UI.
 
-Current branch verification ran 1,130 Python tests. The 1,126 non-Chrome tests
+Current branch verification ran 1,137 Python tests. The 1,133 non-Chrome tests
 passed; four Chrome render cases could not create a PDF inside the Codex
 filesystem sandbox. The ten Chrome render cases pass when run at the host
 level. The installed launchd service supplied a second real render proof
@@ -178,6 +186,13 @@ through the successful IFS job. All 44 Node tests pass. Local browser
 verification measured the Home and Settings control at the exact horizontal
 centre of the top app bar and found three provider cards with no Back to
 applications control.
+
+The Found location picker was also verified in the real dashboard at desktop
+and phone widths in dark mode. It rendered 199 complete location names across
+six continents with no picker-level horizontal overflow or console errors.
+Clear all produced zero matches, selecting North America checked all 23 child
+countries, Canada's `Only` action left one country, and Worldwide restored all
+199 locations. Long names wrap instead of truncating.
 
 The exact Luna model probe and the real Luna document and form-agent paths
 passed. Anthropic and Gemini have no API keys on this Mac, so their exact live

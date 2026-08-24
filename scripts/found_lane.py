@@ -178,26 +178,104 @@ class WhyTable:
         return self._index[text]
 
 
-# Codes are for filtering; a card says the name. Only the countries the region
-# packs and the connectors can actually produce.
+# Codes are for filtering and storage. Cards and controls always show the full
+# name. The picker includes the full sovereign-country set plus Hong Kong,
+# Macau, Kosovo, Palestine, and Taiwan because job boards use those location
+# codes independently.
 COUNTRY_NAMES = {
-    "US": "United States", "GB": "United Kingdom", "IN": "India", "CA": "Canada",
-    "AU": "Australia", "NZ": "New Zealand", "IE": "Ireland", "DE": "Germany",
-    "FR": "France", "NL": "Netherlands", "ES": "Spain", "IT": "Italy",
-    "PT": "Portugal", "PL": "Poland", "AT": "Austria", "BE": "Belgium",
-    "CH": "Switzerland", "SE": "Sweden", "NO": "Norway", "DK": "Denmark",
-    "FI": "Finland", "IS": "Iceland", "CZ": "Czechia", "SK": "Slovakia",
-    "HU": "Hungary", "RO": "Romania", "BG": "Bulgaria", "GR": "Greece",
-    "HR": "Croatia", "SI": "Slovenia", "EE": "Estonia", "LV": "Latvia",
-    "LT": "Lithuania", "LU": "Luxembourg", "MT": "Malta", "CY": "Cyprus",
-    "AE": "UAE", "SA": "Saudi Arabia", "QA": "Qatar", "KW": "Kuwait",
-    "BH": "Bahrain", "OM": "Oman", "JO": "Jordan", "EG": "Egypt",
-    "IL": "Israel", "TR": "Turkey", "JP": "Japan", "KR": "South Korea",
-    "CN": "China", "HK": "Hong Kong", "TW": "Taiwan", "SG": "Singapore",
-    "MY": "Malaysia", "PH": "Philippines", "ID": "Indonesia", "TH": "Thailand",
-    "VN": "Vietnam", "BR": "Brazil", "MX": "Mexico", "AR": "Argentina",
-    "CL": "Chile", "CO": "Colombia", "ZA": "South Africa", "UA": "Ukraine",
+    "AD": "Andorra", "AE": "United Arab Emirates", "AF": "Afghanistan",
+    "AG": "Antigua and Barbuda", "AL": "Albania", "AM": "Armenia",
+    "AO": "Angola", "AR": "Argentina", "AT": "Austria", "AU": "Australia",
+    "AZ": "Azerbaijan", "BA": "Bosnia and Herzegovina", "BB": "Barbados",
+    "BD": "Bangladesh", "BE": "Belgium", "BF": "Burkina Faso", "BG": "Bulgaria",
+    "BH": "Bahrain", "BI": "Burundi", "BJ": "Benin", "BN": "Brunei",
+    "BO": "Bolivia", "BR": "Brazil", "BS": "Bahamas", "BT": "Bhutan",
+    "BW": "Botswana", "BY": "Belarus", "BZ": "Belize", "CA": "Canada",
+    "CD": "Democratic Republic of the Congo", "CF": "Central African Republic",
+    "CG": "Republic of the Congo", "CH": "Switzerland", "CI": "Côte d'Ivoire",
+    "CL": "Chile", "CM": "Cameroon", "CN": "China", "CO": "Colombia",
+    "CR": "Costa Rica", "CU": "Cuba", "CV": "Cabo Verde", "CY": "Cyprus",
+    "CZ": "Czechia", "DE": "Germany", "DJ": "Djibouti", "DK": "Denmark",
+    "DM": "Dominica", "DO": "Dominican Republic", "DZ": "Algeria", "EC": "Ecuador",
+    "EE": "Estonia", "EG": "Egypt", "ER": "Eritrea", "ES": "Spain",
+    "ET": "Ethiopia", "FI": "Finland", "FJ": "Fiji", "FM": "Micronesia",
+    "FR": "France", "GA": "Gabon", "GB": "United Kingdom", "GD": "Grenada",
+    "GE": "Georgia", "GH": "Ghana", "GM": "Gambia", "GN": "Guinea",
+    "GQ": "Equatorial Guinea", "GR": "Greece", "GT": "Guatemala",
+    "GW": "Guinea-Bissau", "GY": "Guyana", "HK": "Hong Kong", "HN": "Honduras",
+    "HR": "Croatia", "HT": "Haiti", "HU": "Hungary", "ID": "Indonesia",
+    "IE": "Ireland", "IL": "Israel", "IN": "India", "IQ": "Iraq", "IR": "Iran",
+    "IS": "Iceland", "IT": "Italy", "JM": "Jamaica", "JO": "Jordan",
+    "JP": "Japan", "KE": "Kenya", "KG": "Kyrgyzstan", "KH": "Cambodia",
+    "KI": "Kiribati", "KM": "Comoros", "KN": "Saint Kitts and Nevis",
+    "KP": "North Korea", "KR": "South Korea", "KW": "Kuwait", "KZ": "Kazakhstan",
+    "LA": "Laos", "LB": "Lebanon", "LC": "Saint Lucia", "LI": "Liechtenstein",
+    "LK": "Sri Lanka", "LR": "Liberia", "LS": "Lesotho", "LT": "Lithuania",
+    "LU": "Luxembourg", "LV": "Latvia", "LY": "Libya", "MA": "Morocco",
+    "MC": "Monaco", "MD": "Moldova", "ME": "Montenegro", "MG": "Madagascar",
+    "MH": "Marshall Islands", "MK": "North Macedonia", "ML": "Mali",
+    "MM": "Myanmar", "MN": "Mongolia", "MO": "Macau", "MR": "Mauritania",
+    "MT": "Malta", "MU": "Mauritius", "MV": "Maldives", "MW": "Malawi",
+    "MX": "Mexico", "MY": "Malaysia", "MZ": "Mozambique", "NA": "Namibia",
+    "NE": "Niger", "NG": "Nigeria", "NI": "Nicaragua", "NL": "Netherlands",
+    "NO": "Norway", "NP": "Nepal", "NR": "Nauru", "NZ": "New Zealand",
+    "OM": "Oman", "PA": "Panama", "PE": "Peru", "PG": "Papua New Guinea",
+    "PH": "Philippines", "PK": "Pakistan", "PL": "Poland", "PS": "Palestine",
+    "PT": "Portugal", "PW": "Palau", "PY": "Paraguay", "QA": "Qatar",
+    "RO": "Romania", "RS": "Serbia", "RU": "Russia", "RW": "Rwanda",
+    "SA": "Saudi Arabia", "SB": "Solomon Islands", "SC": "Seychelles",
+    "SD": "Sudan", "SE": "Sweden", "SG": "Singapore", "SI": "Slovenia",
+    "SK": "Slovakia", "SL": "Sierra Leone", "SM": "San Marino", "SN": "Senegal",
+    "SO": "Somalia", "SR": "Suriname", "SS": "South Sudan",
+    "ST": "São Tomé and Príncipe", "SV": "El Salvador", "SY": "Syria",
+    "SZ": "Eswatini", "TD": "Chad", "TG": "Togo", "TH": "Thailand",
+    "TJ": "Tajikistan", "TL": "Timor-Leste", "TM": "Turkmenistan",
+    "TN": "Tunisia", "TO": "Tonga", "TR": "Turkey", "TT": "Trinidad and Tobago",
+    "TV": "Tuvalu", "TW": "Taiwan", "TZ": "Tanzania", "UA": "Ukraine",
+    "UG": "Uganda", "US": "United States", "UY": "Uruguay", "UZ": "Uzbekistan",
+    "VA": "Vatican City", "VC": "Saint Vincent and the Grenadines", "VE": "Venezuela",
+    "VN": "Vietnam", "VU": "Vanuatu", "WS": "Samoa", "XK": "Kosovo",
+    "YE": "Yemen", "ZA": "South Africa", "ZM": "Zambia", "ZW": "Zimbabwe",
 }
+
+# A location picker needs a stable hierarchy, not a flat mixture of countries
+# and regions. These are display groups only. Saved searches continue to store
+# two-letter country codes, so changing a label or moving a transcontinental
+# country later does not change what a search means.
+CONTINENT_COUNTRIES = (
+    ("north-america", "North America", (
+        "AG", "BS", "BB", "BZ", "CA", "CR", "CU", "DM", "DO", "SV", "GD",
+        "GT", "HT", "HN", "JM", "MX", "NI", "PA", "KN", "LC", "VC", "TT", "US",
+    )),
+    ("south-america", "South America", (
+        "AR", "BO", "BR", "CL", "CO", "EC", "GY", "PY", "PE", "SR", "UY", "VE",
+    )),
+    ("europe", "Europe", (
+        "AL", "AD", "AT", "BY", "BE", "BA", "BG", "HR", "CY", "CZ", "DK",
+        "EE", "FI", "FR", "DE", "GR", "HU", "IS", "IE", "IT", "XK", "LV",
+        "LI", "LT", "LU", "MT", "MD", "MC", "ME", "NL", "MK", "NO", "PL",
+        "PT", "RO", "RU", "SM", "RS", "SK", "SI", "ES", "SE", "CH", "UA",
+        "GB", "VA",
+    )),
+    ("asia", "Asia", (
+        "AF", "AM", "AZ", "BH", "BD", "BT", "BN", "KH", "CN", "GE", "HK",
+        "IN", "ID", "IR", "IQ", "IL", "JP", "JO", "KZ", "KW", "KG", "LA",
+        "LB", "MO", "MY", "MV", "MN", "MM", "NP", "KP", "OM", "PK", "PS",
+        "PH", "QA", "SA", "SG", "KR", "LK", "SY", "TW", "TJ", "TH", "TL",
+        "TR", "TM", "AE", "UZ", "VN", "YE",
+    )),
+    ("africa", "Africa", (
+        "DZ", "AO", "BJ", "BW", "BF", "BI", "CV", "CM", "CF", "TD", "KM",
+        "CG", "CD", "CI", "DJ", "EG", "GQ", "ER", "SZ", "ET", "GA", "GM",
+        "GH", "GN", "GW", "KE", "LS", "LR", "LY", "MG", "MW", "ML", "MR",
+        "MU", "MA", "MZ", "NA", "NE", "NG", "RW", "ST", "SN", "SC", "SL",
+        "SO", "ZA", "SS", "SD", "TZ", "TG", "TN", "UG", "ZM", "ZW",
+    )),
+    ("oceania", "Oceania", (
+        "AU", "FJ", "KI", "MH", "FM", "NR", "NZ", "PW", "PG", "WS", "SB",
+        "TO", "TV", "VU",
+    )),
+)
 
 WORLDWIDE = ("anywhere in the world", "worldwide", "anywhere", "global")
 
@@ -646,22 +724,77 @@ def filter_bar(jobs, config):
     """Every filter the plan asks for, and honest labels on the ones Phase 1
     cannot yet answer."""
     config = config or {}
-    countries = _countries(jobs)
-    # Toggles, not a <select multiple>. Selecting a second country in a native
-    # multi-select needs cmd-click, and clicking a selected one replaces the
-    # selection rather than removing it, so the control could not do the two
-    # things it is for.
-    picked = {(e.get("country") or "pack:" + (e.get("regionPack") or ""))
-              for e in (config.get("locations") or [])}
-    def loc_chip(value, label):
-        on = " aria-pressed=\"true\"" if value in picked else ' aria-pressed="false"'
-        return (f'<button type="button" class="jb-loc" data-loc="{esc(value)}"'
-                f'{on}>{esc(label)}</button>')
-    country_options = "".join(loc_chip(c, c) for c in countries)
-    packs = "".join(loc_chip(f"pack:{p}", label)
-                    for p, label in (("EU", "Europe (EU/EEA/UK)"),
-                                     ("MIDDLE_EAST", "Middle East"),
-                                     ("SEA", "South-East Asia")))
+    available = set(COUNTRY_NAMES) | set(_countries(jobs))
+    locations = config.get("locations") or []
+    selected = (set(search_config.expand_locations(config)) if locations
+                else set(available))
+    available |= selected
+    assigned = {code for _, _, codes in CONTINENT_COUNTRIES for code in codes}
+    groups = [(key, label, tuple(code for code in codes if code in available))
+              for key, label, codes in CONTINENT_COUNTRIES]
+    other = tuple(sorted(available - assigned, key=lambda code: COUNTRY_NAMES.get(code, code)))
+    if other:
+        groups.append(("other", "Other locations", other))
+    groups = [(key, label, codes) for key, label, codes in groups if codes]
+
+    country_total = sum(len(codes) for _, _, codes in groups)
+    selected_total = sum(1 for _, _, codes in groups for code in codes if code in selected)
+    if selected_total == country_total:
+        summary_title = "Worldwide"
+        summary_note = f"All {country_total} countries"
+    elif selected_total == 0:
+        summary_title = "No countries selected"
+        summary_note = "Choose a continent or country"
+    elif selected_total == 1:
+        only = next(code for _, _, codes in groups for code in codes if code in selected)
+        summary_title = COUNTRY_NAMES.get(only, only)
+        summary_note = "1 country"
+    else:
+        summary_title = f"{selected_total} countries"
+        summary_note = "Multiple continents"
+
+    group_markup = []
+    for key, label, codes in groups:
+        group_selected = sum(1 for code in codes if code in selected)
+        fully_selected = group_selected == len(codes)
+        open_group = bool(group_selected and selected_total != country_total)
+        countries_markup = "".join(
+            f'<div class="jb-country-row">'
+            f'<label class="jb-country"><input type="checkbox" data-loc="{esc(code)}" '
+            f'data-continent-country="{esc(key)}" data-country-name="{esc(COUNTRY_NAMES.get(code, code))}"'
+            f'{" checked" if code in selected else ""}>'
+            f'<span>{esc(COUNTRY_NAMES.get(code, code))}</span></label>'
+            f'<button type="button" class="jb-only" data-location-only="{esc(code)}" '
+            f'aria-label="Select only {esc(COUNTRY_NAMES.get(code, code))}">Only</button>'
+            f'</div>' for code in codes
+        )
+        group_markup.append(
+            f'<details class="jb-continent" data-continent-panel="{esc(key)}"'
+            f'{" open" if open_group else ""}>'
+            f'<summary><span class="jb-continent-main">'
+            f'<input type="checkbox" data-continent="{esc(key)}" '
+            f'aria-label="Select all countries in {esc(label)}"'
+            f'{" checked" if fully_selected else ""}>'
+            f'<span>{esc(label)}</span></span>'
+            f'<span class="jb-continent-count" id="jb-continent-count-{esc(key)}">'
+            f'{group_selected} of {len(codes)}</span></summary>'
+            f'<div class="jb-country-grid">{countries_markup}</div></details>'
+        )
+    location_picker = (
+        f'<details class="jb-location-picker" id="jb-loc" data-location-total="{country_total}">'
+        f'<summary><span><span class="jb-location-title" id="jb-location-title">'
+        f'{esc(summary_title)}</span><small id="jb-location-note">{esc(summary_note)}</small></span>'
+        f'<span class="jb-location-chevron" aria-hidden="true"></span></summary>'
+        f'<div class="jb-location-menu">'
+        f'<div class="jb-location-actions">'
+        f'<label class="jb-world"><input type="checkbox" id="jb-world"'
+        f'{" checked" if selected_total == country_total else ""}>'
+        f'<span>Worldwide</span></label>'
+        f'<button type="button" class="jb-location-clear" id="jb-location-clear">'
+        f'Clear all</button></div>'
+        f'<div class="jb-continent-list">{"".join(group_markup)}</div>'
+        f'</div></details>'
+    )
     # The sort and the direct-only toggle come off the saved search too. They
     # used to be hardcoded in the markup, so every republish put them back to
     # the factory setting whatever the user had chosen.
@@ -721,8 +854,9 @@ def filter_bar(jobs, config):
                    aria-label="Company names">
           </div>
           <div class="jb-row">
-            <div class="jb-locs" id="jb-loc" role="group" aria-label="Locations">
-              {packs}{country_options}
+            <div class="jb-location-field">
+              <span class="jb-location-label">Locations</span>
+              {location_picker}
             </div>
             <div class="jb-stack">
               <label class="jb-check"><input type="checkbox" id="jb-remote" checked>
@@ -861,16 +995,71 @@ CSS = """
     margin-top:.35rem; border-top:1px solid var(--hair); }
   .jb-pills { display:flex; gap:.35rem; flex-wrap:wrap; }
 
-  /* Location toggles. Click adds, click again removes, which is what the
-     <select multiple> here could not do without a modifier key. */
-  .jb-locs { display:flex; flex-wrap:wrap; gap:.35rem; flex:1 1 22rem; }
-  .jb-loc { font:inherit; font-size:.78rem; padding:.24rem .6rem; cursor:pointer;
-    border-radius:999px; border:1px solid var(--hair); background:var(--card);
-    color:var(--ink-2); transition:background .14s, color .14s, border-color .14s; }
-  .jb-loc:hover { border-color:var(--ink-3); }
-  .jb-loc[aria-pressed="true"] { background:var(--blue); border-color:var(--blue);
-    color:#fff; font-weight:560; }
-  .jb-loc:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  /* The location selector stays one compact field until opened. Continents
+     supply the hierarchy, country checkboxes keep multi-select familiar, and
+     the popup scrolls instead of making Advanced search several screens tall. */
+  .jb-location-field { position:relative; flex:1 1 30rem; max-width:44rem;
+    display:flex; flex-direction:column; gap:.2rem; }
+  .jb-location-label { font-size:.72rem; color:var(--ink-3); padding-left:.15rem; }
+  .jb-location-picker { position:relative; }
+  .jb-location-picker > summary { list-style:none; min-height:2.7rem; cursor:pointer;
+    display:flex; align-items:center; justify-content:space-between; gap:1rem;
+    border:1px solid var(--hair); border-radius:12px; padding:.46rem .75rem;
+    background:var(--bg); color:var(--ink); }
+  .jb-location-picker > summary::-webkit-details-marker,
+  .jb-continent > summary::-webkit-details-marker { display:none; }
+  .jb-location-picker > summary:hover { border-color:var(--ink-3); }
+  .jb-location-picker > summary:focus-visible { outline:2px solid var(--blue);
+    outline-offset:2px; }
+  .jb-location-picker > summary > span:first-child { display:flex; flex-direction:column;
+    min-width:0; }
+  .jb-location-title { font-size:.88rem; font-weight:570; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .jb-location-picker > summary small { color:var(--ink-3); font-size:.7rem; }
+  .jb-location-chevron { width:.44rem; height:.44rem; flex:none;
+    border-right:1.5px solid var(--ink-3); border-bottom:1.5px solid var(--ink-3);
+    transform:rotate(45deg) translateY(-2px); transition:transform .16s; }
+  .jb-location-picker[open] .jb-location-chevron { transform:rotate(225deg) translateY(-2px); }
+  .jb-location-menu { position:absolute; z-index:30; top:calc(100% + .4rem); left:0;
+    width:min(42rem, calc(100vw - 3.5rem)); max-height:min(31rem, 68vh); overflow:auto;
+    padding:.65rem; border:1px solid var(--hair); border-radius:14px;
+    background:var(--card); box-shadow:0 18px 50px rgba(0,0,0,.2); }
+  .jb-location-actions { display:flex; align-items:center; justify-content:space-between;
+    gap:1rem; padding:.15rem .15rem .65rem; border-bottom:1px solid var(--hair); }
+  .jb-world { display:flex; align-items:center; gap:.5rem; font-size:.86rem;
+    font-weight:600; cursor:pointer; }
+  .jb-location-clear, .jb-only { font:inherit; border:0; background:none;
+    color:var(--blue); cursor:pointer; border-radius:6px; }
+  .jb-location-clear { font-size:.78rem; padding:.3rem .4rem; }
+  .jb-location-clear:hover, .jb-only:hover { background:var(--sunk); }
+  .jb-location-clear:focus-visible, .jb-only:focus-visible { outline:2px solid var(--blue);
+    outline-offset:1px; }
+  .jb-continent-list { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:.45rem; padding-top:.55rem; }
+  .jb-continent { border:1px solid var(--hair); border-radius:11px; background:var(--bg); }
+  .jb-continent > summary { list-style:none; cursor:pointer; display:flex;
+    align-items:center; justify-content:space-between; gap:.5rem; padding:.55rem .65rem;
+    min-height:2.45rem; }
+  .jb-continent > summary:focus-visible { outline:2px solid var(--blue);
+    outline-offset:1px; border-radius:10px; }
+  .jb-continent-main { display:flex; align-items:center; gap:.45rem; min-width:0;
+    font-size:.82rem; font-weight:570; }
+  .jb-continent-main input, .jb-country input, .jb-world input { accent-color:var(--blue); }
+  .jb-continent-count { color:var(--ink-3); font-size:.68rem; white-space:nowrap; }
+  .jb-country-grid { display:grid; grid-template-columns:1fr;
+    gap:.1rem; padding:.15rem .45rem .5rem; border-top:1px solid var(--hair); }
+  .jb-country-row { min-width:0; display:flex; align-items:center; gap:.2rem;
+    border-radius:7px; }
+  .jb-country-row:hover { background:var(--sunk); }
+  .jb-country { min-width:0; flex:1; display:flex; align-items:center; gap:.35rem;
+    padding:.32rem .25rem; font-size:.75rem; color:var(--ink-2); cursor:pointer; }
+  .jb-country span { white-space:normal; line-height:1.25; }
+  .jb-only { font-size:.68rem; padding:.24rem .3rem; margin-right:.1rem; }
+  @media (max-width:700px) {
+    .jb-location-field { flex-basis:100%; max-width:none; }
+    .jb-location-menu { width:calc(100vw - 3.5rem); }
+    .jb-continent-list { grid-template-columns:1fr; }
+  }
 
   /* "2 problems" with no way to see which two is a number you can only worry
      about. It opens. */
@@ -1073,7 +1262,8 @@ SCRIPT = r"""
   }
   function viewState() {
     var state = { keywords: keywords.slice(), values: {}, checks: {},
-                  workplaces: [], unknowns: [], locations: [], date: null };
+                  workplaces: [], unknowns: [], locations: [],
+                  locationMode: 'all', date: null };
     TEXT_CONTROLS.forEach(function (id) {
       var n = document.getElementById(id);
       if (n) state.values[id] = n.value;
@@ -1091,6 +1281,8 @@ SCRIPT = r"""
       if (n.checked) state.unknowns.push(n.getAttribute('data-unknown'));
     });
     state.locations = pickedLocations();
+    state.locationMode = allLocationsSelected()
+      ? 'all' : (state.locations.length ? 'some' : 'none');
     return state;
   }
 
@@ -1141,10 +1333,13 @@ SCRIPT = r"""
       });
     }
     if (Array.isArray(state.locations)) {
+      var restored = expandedLocationValues(state.locations);
+      var legacyAll = state.locationMode !== 'none' && restored.length === 0;
       Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'), function (n) {
-        n.setAttribute('aria-pressed',
-          state.locations.indexOf(n.getAttribute('data-loc')) !== -1 ? 'true' : 'false');
+        n.checked = legacyAll || restored.indexOf(n.getAttribute('data-loc')) !== -1;
+        n.setAttribute('aria-pressed', n.checked ? 'true' : 'false');
       });
+      updateLocationUI();
     }
     return true;
   }
@@ -1448,19 +1643,77 @@ SCRIPT = r"""
   // --- filtering ------------------------------------------------------------
   function value(id) { var n = document.getElementById(id); return n ? n.value : ''; }
   function checked(id) { var n = document.getElementById(id); return n ? n.checked : true; }
-  function pickedLocations() {
-    return Array.prototype.filter.call(
-      document.querySelectorAll('[data-loc]'),
-      function (n) { return n.getAttribute('aria-pressed') === 'true'; }
-    ).map(function (n) { return n.getAttribute('data-loc'); });
+  function locationNodes() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-loc]'));
   }
-  function selectedCountries() {
+  function pickedLocations() {
+    return locationNodes().filter(function (n) {
+      // aria-pressed keeps old published boards and the small unit-test DOM
+      // compatible during the rollout. New boards use native checkboxes.
+      return n.checked || n.getAttribute('aria-pressed') === 'true';
+    }).map(function (n) { return n.getAttribute('data-loc'); });
+  }
+  function expandedLocationValues(values) {
     var out = [];
-    pickedLocations().forEach(function (value) {
-      if (value.indexOf('pack:') === 0) out = out.concat(PACKS[value.slice(5)] || []);
-      else if (value) out.push(value);
+    (values || []).forEach(function (entry) {
+      if (entry.indexOf('pack:') === 0) out = out.concat(PACKS[entry.slice(5)] || []);
+      else if (entry) out.push(entry);
     });
     return out;
+  }
+  function selectedCountries() {
+    return expandedLocationValues(pickedLocations());
+  }
+  function allLocationsSelected() {
+    var nodes = locationNodes();
+    var picker = document.getElementById('jb-loc');
+    var declared = picker && parseInt(picker.getAttribute('data-location-total'), 10);
+    var total = declared > 0 ? declared : nodes.length;
+    return total === 0 || pickedLocations().length === total;
+  }
+  function setAllLocations(on) {
+    locationNodes().forEach(function (n) {
+      n.checked = !!on;
+      n.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function updateLocationUI() {
+    var nodes = locationNodes();
+    var selected = pickedLocations();
+    var total = nodes.length;
+    var world = document.getElementById('jb-world');
+    if (world) {
+      world.checked = total > 0 && selected.length === total;
+      world.indeterminate = selected.length > 0 && selected.length < total;
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-continent]'), function (box) {
+      var key = box.getAttribute('data-continent');
+      var group = Array.prototype.slice.call(
+        document.querySelectorAll('[data-continent-country="' + key + '"]')
+      );
+      var count = group.filter(function (n) { return n.checked; }).length;
+      box.checked = group.length > 0 && count === group.length;
+      box.indeterminate = count > 0 && count < group.length;
+      var label = document.getElementById('jb-continent-count-' + key);
+      if (label) label.textContent = count + ' of ' + group.length;
+    });
+    var title = document.getElementById('jb-location-title');
+    var note = document.getElementById('jb-location-note');
+    if (!title || !note) return;
+    if (selected.length === total) {
+      title.textContent = 'Worldwide';
+      note.textContent = 'All ' + total + ' countries';
+    } else if (!selected.length) {
+      title.textContent = 'No countries selected';
+      note.textContent = 'Choose a continent or country';
+    } else if (selected.length === 1) {
+      var only = nodes.filter(function (n) { return n.checked; })[0];
+      title.textContent = only ? only.getAttribute('data-country-name') : '1 country';
+      note.textContent = '1 country';
+    } else {
+      title.textContent = selected.length + ' countries';
+      note.textContent = 'Multiple continents';
+    }
   }
   function activeWorkplaces() {
     return Array.prototype.filter.call(
@@ -1508,7 +1761,8 @@ SCRIPT = r"""
       }
     }
     var countries = selectedCountries();
-    if (countries.length) {
+    if (!allLocationsSelected()) {
+      if (!countries.length) return false;
       // A job that names a country has to be in a selected one, full stop. The
       // old rule let any remote posting through any country filter, so
       // selecting India showed "Remote - Canada: select locations" — a job that
@@ -1621,7 +1875,8 @@ SCRIPT = r"""
   // no way to know 714 more were on disk.
   function poolForSelection() {
     var picked = selectedCountries();
-    if (!picked.length) return POOL_TOTAL;
+    if (allLocationsSelected()) return POOL_TOTAL;
+    if (!picked.length) return 0;
     var total = 0, counted = {};
     picked.forEach(function (code) {
       if (counted[code]) return;
@@ -1634,7 +1889,7 @@ SCRIPT = r"""
 
   function countLine(shown) {
     var pool = poolForSelection();
-    var scoped = selectedCountries().length > 0;
+    var scoped = !allLocationsSelected();
     if (!scoped && shown === JOBS.length && JOBS.length >= POOL_TOTAL) {
       return shown + ' shown';
     }
@@ -1705,13 +1960,55 @@ SCRIPT = r"""
       drawPills(); render();
     });
   }
-  Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'), function (n) {
-    n.addEventListener('click', function () {
-      var on = n.getAttribute('aria-pressed') === 'true';
-      n.setAttribute('aria-pressed', on ? 'false' : 'true');
+  locationNodes().forEach(function (n) {
+    n.addEventListener('change', function () {
+      n.setAttribute('aria-pressed', n.checked ? 'true' : 'false');
+      updateLocationUI();
       render();
     });
   });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-continent]'), function (box) {
+    box.addEventListener('click', function (event) { event.stopPropagation(); });
+    box.addEventListener('change', function () {
+      var key = box.getAttribute('data-continent');
+      Array.prototype.forEach.call(
+        document.querySelectorAll('[data-continent-country="' + key + '"]'),
+        function (n) {
+          n.checked = box.checked;
+          n.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
+        }
+      );
+      updateLocationUI();
+      render();
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-location-only]'), function (button) {
+    button.addEventListener('click', function () {
+      var wanted = button.getAttribute('data-location-only');
+      locationNodes().forEach(function (n) {
+        n.checked = n.getAttribute('data-loc') === wanted;
+        n.setAttribute('aria-pressed', n.checked ? 'true' : 'false');
+      });
+      updateLocationUI();
+      render();
+    });
+  });
+  var world = document.getElementById('jb-world');
+  if (world) {
+    world.addEventListener('change', function () {
+      setAllLocations(world.checked);
+      updateLocationUI();
+      render();
+    });
+  }
+  var locationClear = document.getElementById('jb-location-clear');
+  if (locationClear) {
+    locationClear.addEventListener('click', function () {
+      setAllLocations(false);
+      updateLocationUI();
+      render();
+    });
+  }
 
   ['jb-ex','jb-scope','jb-sort','jb-remote','jb-cmode','jb-companies',
    'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-direct'].forEach(function (id) {
@@ -1742,8 +2039,8 @@ SCRIPT = r"""
       ['jb-kw','jb-ex','jb-companies'].forEach(function (id) {
         var n = document.getElementById(id); if (n) n.value = '';
       });
-      Array.prototype.forEach.call(document.querySelectorAll('[data-loc]'),
-        function (n) { n.setAttribute('aria-pressed', 'false'); });
+      setAllLocations(true);
+      updateLocationUI();
       ['jb-exp','jb-deg','jb-role','jb-emp','jb-jt'].forEach(function (id) {
         var n = document.getElementById(id); if (n) n.value = '';
       });
@@ -1765,12 +2062,20 @@ SCRIPT = r"""
   var save = document.getElementById('jb-save');
   if (save) {
     save.addEventListener('click', function () {
+      var was = save.textContent;
       var node = document.querySelector('input[name="jb-date"]:checked');
+      var selectedLocations = pickedLocations();
+      if (!selectedLocations.length) {
+        save.textContent = 'Choose a location';
+        setTimeout(function () { save.textContent = was; }, 2500);
+        return;
+      }
       var locations = [];
-      pickedLocations().forEach(function (value) {
-        if (value.indexOf('pack:') === 0) locations.push({ regionPack: value.slice(5) });
-        else if (value) locations.push({ country: value });
-      });
+      if (!allLocationsSelected()) {
+        selectedLocations.forEach(function (value) {
+          if (value) locations.push({ country: value });
+        });
+      }
       var years = value('jb-exp');
       var config = {
         keywords: keywords.slice(),
@@ -1796,7 +2101,6 @@ SCRIPT = r"""
         }
       };
       save.disabled = true;
-      var was = save.textContent;
       save.textContent = 'Saving\u2026';
       post('/api/search-config', config).then(function (res) {
         var ok = res && res.ok;
@@ -1891,6 +2195,7 @@ SCRIPT = r"""
   // Before the first draw, so the board opens on what the user last had rather
   // than flashing the published defaults and then correcting itself.
   restoreView();
+  updateLocationUI();
   drawPills();
   render();
 })();
