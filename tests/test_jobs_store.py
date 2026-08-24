@@ -370,6 +370,25 @@ class PruneTests(unittest.TestCase):
         self.assertGreater(jobs_store.keep_priority(dated),
                            jobs_store.keep_priority(unknown))
 
+    def test_legacy_date_repair_is_narrow_and_preserves_other_sources(self):
+        jobs = {
+            "g": job("g", postedAt="2026-08-24T00:00:00Z",
+                     canonicalSource="greenhouse"),
+            "j": job("j", postedAt="2026-08-24T00:00:00Z",
+                     canonicalSource="jooble"),
+            "a": job("a", postedAt="2026-08-01T00:00:00Z",
+                     canonicalSource="ashby",
+                     sources=[{"source": "ashby", "sourceClass": "ats", "url": "https://a"},
+                              {"source": "jooble", "sourceClass": "aggregator", "url": "https://j"}]),
+            "u": job("u", postedAt=None, canonicalSource="workable"),
+        }
+        changed = jobs_store.clear_untrusted_legacy_dates(jobs)
+        self.assertEqual(set(changed), {"g", "j"})
+        self.assertIsNone(jobs["g"]["postedAt"])
+        self.assertIsNone(jobs["j"]["postedAt"])
+        self.assertEqual(jobs["a"]["postedAt"], "2026-08-01T00:00:00Z")
+        self.assertIsNone(jobs["u"]["postedAt"])
+
     def test_a_careers_page_is_kept_like_an_ats_listing(self):
         jobs = {"agg": job("agg", score={"total": 99}, lastSeenAt=self.stamp(1),
                            sources=[{"source": "adzuna", "sourceClass": "aggregator",

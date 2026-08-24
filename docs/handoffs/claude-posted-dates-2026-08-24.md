@@ -42,3 +42,10 @@ publish path. Existing records merge by identity and gain the newly normalized
 `postedAt` value. Do not edit `jobs.json` directly. Confirm the production pool
 has Workday posted dates, publish the board, and verify that no `seen today` or
 `seen yesterday` job-age chip remains.
+
+Records written before this contract may retain a Greenhouse `updated_at`, a
+Recruitee `updated_at`, a Workable `created_at`, or a Jooble `updated` value.
+Run `scripts/repair_posted_dates.py` first. It is dry by default and clears only
+records where one of those connectors remains canonical. `--apply` persists
+through the atomic private-store writer. Fresh connector runs then restore real
+publication dates where the source offers one.
