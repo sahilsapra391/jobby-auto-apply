@@ -121,7 +121,7 @@ Provider and browser security tests live in
 by
 `ProviderSettingsTests::test_home_and_settings_are_centered_above_the_hero_not_in_a_left_rail`.
 
-## Workspace state on 2026-08-23
+## Workspace state on 2026-08-24
 
 All three launchd services are installed and running with
 `/opt/anaconda3/bin/python3`. The installer now retains that interpreter. The
@@ -152,10 +152,17 @@ duplicate source points found in the CAMP and Spechawk roles were replaced with
 distinct statements supported by their existing role ledes.
 
 The real IFS application `bc839847c93d9e46` passed the complete OpenAI path on
-2026-08-23: provider output parsed, content validated, four artifacts rendered,
+2026-08-24: provider output parsed, content validated, four artifacts rendered,
 ATS and geometry checks passed, the one-page cover letter passed, the encrypted
 result was installed, and the local job reached `ready`. Safe worker logs now
-record fixed validation stages without retaining document text.
+record fixed validation stages without retaining document text. Both retained
+IFS resume HTML variants have zero duplicate or near-duplicate points.
+
+A real `gpt-5.6-luna` form-agent run also passed through the browser MCP
+firewall against the local practice form. It filled the expected first name,
+last name, and email, returned `VERIFICATION_OK`, and left both submission and
+attestation false. The trusted browser controller now forwards `--slot` on
+focus and login, which keeps each application in its isolated Chrome profile.
 
 Local browser verification passed for `/` and `/settings`: the Home and
 Settings pills are centered in the top app bar between the logo and theme
@@ -163,20 +170,27 @@ control, the active pill follows the route, and Settings shows OpenAI,
 Anthropic, and Gemini cards labelled Your Device. No left rail, Back to
 applications control, OCI worker, or Cloud Agent appears in the active UI.
 
-Current branch verification ran 1,117 Python tests. The 1,113 non-Chrome tests
+Current branch verification ran 1,130 Python tests. The 1,126 non-Chrome tests
 passed; four Chrome render cases could not create a PDF inside the Codex
-filesystem sandbox. The installed launchd service supplied the real render
-proof immediately afterward through the successful IFS job. All 44 Node tests
-pass. Local browser verification measured the Home and Settings control at the
-exact horizontal centre of the top app bar and found three provider cards with
-no Back to applications control.
+filesystem sandbox. The ten Chrome render cases pass when run at the host
+level. The installed launchd service supplied a second real render proof
+through the successful IFS job. All 44 Node tests pass. Local browser
+verification measured the Home and Settings control at the exact horizontal
+centre of the top app bar and found three provider cards with no Back to
+applications control.
 
-PR #4 was merged and the Vercel Git integration deployed it to `jobby-board`.
-The provider health, failover, dedicated control-service, and diagnostic work
-after that merge lives on `codex/provider-health-failover` until its own PR is
-created. Merging that PR into `main` is the production release action. The Vercel function calls
-Cloudflare KV through its REST API. There is no separately deployed Cloudflare
-Worker in this request path.
+The exact Luna model probe and the real Luna document and form-agent paths
+passed. Anthropic and Gemini have no API keys on this Mac, so their exact live
+model calls remain intentionally unverified until the user connects each key
+in Settings. Their connector, environment isolation, model pinning, schema,
+health, and failover paths are covered by automated tests. Do not report a live
+Claude or Gemini pass without connecting a real key and running both contracts.
+
+PR #5 is the production release for the provider health, failover, dedicated
+control service, secure API-key connectors, browser slot fix, and resume
+integrity gate. Its Vercel preview passed before merge. The Vercel function
+calls Cloudflare KV through its REST API. There is no separately deployed
+Cloudflare Worker in this request path.
 
 Do not run `python3 scripts/publish.py --deploy` as a substitute for merging
 the PR. That command first uploads the live board and application documents to
