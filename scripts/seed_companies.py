@@ -48,7 +48,9 @@ ATS_URL_PATTERNS = [
     ("lever", re.compile(r"^jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_.-]+)")),
     ("ashby", re.compile(r"^jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)")),
     ("smartrecruiters", re.compile(r"^jobs\.smartrecruiters\.com/([A-Za-z0-9_.-]+)")),
-    ("workable", re.compile(r"^apply\.workable\.com/([A-Za-z0-9_.-]+)")),
+    # A direct posting is /j/<job-id> and does not carry the tenant. Treating
+    # "j" as a tenant poisons the registry and makes every Workable fetch fail.
+    ("workable", re.compile(r"^apply\.workable\.com/(?!j(?:/|$))([A-Za-z0-9_.-]+)")),
     ("recruitee", re.compile(r"^([A-Za-z0-9-]+)\.recruitee\.com")),
     ("zoho", re.compile(r"^([A-Za-z0-9-]+)\.zohorecruit\.(?:com|in|eu)")),
     ("personio", re.compile(r"^([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)")),
@@ -93,6 +95,12 @@ LEGAL_SUFFIXES = (
 # the user happened to apply to. Region is where the company is headquartered,
 # not where the roles are; the config's location filter does that job.
 SEED_PACK = [
+    ("GEICO", "workday", "geico", "US"),
+    ("Gem", "gem", "gem", "US"),
+    ("FocusKPI", "jazzhr", "focuskpi", "US"),
+    ("Oracle", "oracle_orc", "CX_1", "US"),
+    ("Pinpoint", "pinpoint", "workwithus", "GB"),
+    ("Teamtailor", "teamtailor", "career", "SE"),
     ("Careem", "greenhouse", "careem", "AE"),
     ("Tamara", "greenhouse", "tamara", "AE"),
     ("Storyblok", "greenhouse", "storyblok", "AT"),
@@ -592,6 +600,13 @@ SEED_PACK = [
     ("Weezy", "smartrecruiters", "weezy", "unknown"),
 ]
 
+# Boards whose public API requires more than a tenant token. These origins and
+# site paths were verified with live responses before entering the seed pack.
+VERIFIED_CAREERS_URLS = {
+    ("workday", "geico"): "https://geico.wd1.myworkdayjobs.com/External",
+    ("oracle_orc", "CX_1"): "https://eeho.fa.us2.oraclecloud.com",
+}
+
 # roles.json records region as free text, because a human wrote it. Map what is
 # recognisable and leave the rest unknown rather than guessing a country.
 REGION_ALIASES = {
@@ -637,6 +652,13 @@ def aliases_for(name, token=None):
     if token:
         out.add(str(token).lower())
     return sorted(x for x in out if x)
+
+
+def valid_board_token(ats, token):
+    """Whether a discovered token can identify a tenant on that platform."""
+    if not token:
+        return False
+    return not (ats == "workable" and str(token).lower() == "j")
 
 
 def ats_from_url(url):
@@ -688,7 +710,11 @@ def merge_company(existing, incoming):
         if incoming.get(field) and not out.get(field):
             out[field] = incoming[field]
     if incoming.get("ats") and incoming["ats"] != "unknown":
-        if out.get("ats") in (None, "", "unknown") or incoming.get("token"):
+        existing_sources = set(str(out.get("addedFrom") or "").split("+"))
+        incoming_is_verified = incoming.get("addedFrom") == "pack"
+        existing_is_verified = "pack" in existing_sources
+        if (out.get("ats") in (None, "", "unknown")
+                or (incoming_is_verified and not existing_is_verified)):
             out["ats"] = incoming["ats"]
             out["token"] = incoming.get("token") or out.get("token")
     if out.get("region") in (None, "", "unknown") and incoming.get("region") not in (None, "", "unknown"):
@@ -754,6 +780,7 @@ def from_pack():
         record = blank_company(name, region, "pack")
         record["ats"] = ats
         record["token"] = token
+        record["careersUrl"] = VERIFIED_CAREERS_URLS.get((ats, token), "")
         record["aliases"] = aliases_for(name, token)
         out.append(record)
     return out
@@ -761,7 +788,17 @@ def from_pack():
 
 def seed(existing, incoming):
     """Fold candidate entries into the registry. Returns (registry, summary)."""
-    registry = dict(existing or {})
+    registry = {}
+    invalid_tokens_dropped = 0
+    for key, company in (existing or {}).items():
+        record = dict(company)
+        if record.get("ats") not in (None, "", "unknown") and not valid_board_token(
+                record.get("ats"), record.get("token")):
+            record["ats"] = "unknown"
+            record["token"] = None
+            record["lastStatus"] = "unresolved (invalid tenant token discarded)"
+            invalid_tokens_dropped += 1
+        registry[key] = record
     added, updated = 0, 0
     for record in incoming:
         key = company_key(record["name"])
@@ -779,6 +816,7 @@ def seed(existing, incoming):
                     if c.get("ats") in TIER1_PLATFORMS and c.get("token"))
     return registry, {
         "companies": len(registry), "added": added, "updated": updated,
+        "invalidTokensDropped": invalid_tokens_dropped,
         "tier1Fetchable": fetchable,
         "awaitingAtsResolution": sum(1 for c in registry.values() if c.get("ats") == "unknown"),
     }

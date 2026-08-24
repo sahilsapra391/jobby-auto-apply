@@ -50,3 +50,26 @@ suite passed 1,112 tests with one pre-existing environment skip.
 
 Do not convert iCIMS to connected without credentials or a separately verified
 public career-page contract. Its official Job Portal API requires Basic auth.
+
+## Production registry repair
+
+The first production scan after the connector merge skipped Workday, Pinpoint,
+Teamtailor, JazzHR, Oracle Recruiting Cloud and Gem because connector code alone
+does not create tenant records. Workable failed all five records because tenant
+discovery had mistaken the literal `j` in `apply.workable.com/j/<job-id>` for a
+company board slug.
+
+Branch `codex/connector-registry-repair` fixes the producer contract in
+`scripts/seed_companies.py`. Workable `/j/` URLs no longer yield a tenant,
+existing invalid tokens are removed with an explicit unresolved status, and
+live-verified pack records outrank learned records. The pack now includes one
+exercised tenant for each formerly skipped connector. GEICO Workday and Oracle
+CX_1 include the exact public origins required by those APIs.
+
+The production-shaped live smoke used an isolated store copy and a cap of three
+postings per connector. Workable, Workday, Pinpoint, Teamtailor, JazzHR, Oracle
+and Gem each returned `ok`: 19 postings, seven requests, no skips, no errors.
+Three matched search version 17; sixteen were visibly gated by age, keywords or
+country. Regression coverage is in `CompanyRegistryTests`, including the exact
+Workable poisoning path and seed repair. Do not replace this with a broader
+guessing rule. A job URL that lacks a tenant remains unresolved.

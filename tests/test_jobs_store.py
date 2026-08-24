@@ -598,7 +598,7 @@ class CompanyRegistryTests(unittest.TestCase):
             ("https://jobs.lever.co/airslate/5e6dec30", "lever", "airslate"),
             ("https://jobs.ashbyhq.com/applied/84cd980d/application", "ashby", "applied"),
             ("https://jobs.smartrecruiters.com/IFS1/744000140278967", "smartrecruiters", "IFS1"),
-            ("https://apply.workable.com/innovaccer-analytics/j/A9A35765A4", "workable", "innovaccer-analytics"),
+            ("https://apply.workable.com/innovaccer-analytics/", "workable", "innovaccer-analytics"),
             ("https://consultdss.recruitee.com/o/ai-product-owner", "recruitee", "consultdss"),
             ("https://wfglobal.zohorecruit.com/jobs/Careers/574752000028891183", "zoho", "wfglobal"),
             ("https://geico.wd1.myworkdayjobs.com/External", "workday", "geico"),
@@ -621,6 +621,36 @@ class CompanyRegistryTests(unittest.TestCase):
                     "https://www.instahyre.com/job-402799-senior-product-manager",
                     "https://www.indeed.com/viewjob?jk=abc"):
             self.assertEqual(seed_companies.ats_from_url(url), (None, None), url)
+
+    def test_a_workable_job_url_never_becomes_the_j_tenant(self):
+        self.assertEqual(
+            seed_companies.ats_from_url("https://apply.workable.com/j/A9A35765A4"),
+            (None, None))
+
+    def test_verified_pack_repairs_a_bad_learned_workable_token(self):
+        learned = seed_companies.blank_company("Kahoot", "NO", "postings")
+        learned.update({"ats": "workable", "token": "j"})
+        registry, _summary = seed_companies.seed(
+            {"kahoot": learned}, seed_companies.from_pack())
+        self.assertEqual((registry["kahoot"]["ats"], registry["kahoot"]["token"]),
+                         ("workable", "kahoot"))
+
+    def test_unresolvable_workable_j_token_is_removed_visibly(self):
+        learned = seed_companies.blank_company("Unknown Tenant", "US", "postings")
+        learned.update({"ats": "workable", "token": "j"})
+        registry, summary = seed_companies.seed({"unknown tenant": learned}, [])
+        self.assertEqual((registry["unknown tenant"]["ats"],
+                          registry["unknown tenant"]["token"]), ("unknown", None))
+        self.assertIn("invalid tenant", registry["unknown tenant"]["lastStatus"])
+        self.assertEqual(summary["invalidTokensDropped"], 1)
+
+    def test_learned_evidence_cannot_replace_a_verified_tenant(self):
+        verified = seed_companies.blank_company("Kahoot", "NO", "pack")
+        verified.update({"ats": "workable", "token": "kahoot"})
+        learned = seed_companies.blank_company("Kahoot", "NO", "postings")
+        learned.update({"ats": "workable", "token": "j"})
+        merged = seed_companies.merge_company(verified, learned)
+        self.assertEqual((merged["ats"], merged["token"]), ("workable", "kahoot"))
 
     def test_a_normalized_direct_sighting_can_grow_the_registry(self):
         rows = seed_companies.from_postings([{
@@ -694,6 +724,30 @@ class CompanyRegistryTests(unittest.TestCase):
                          "https://example.wd1.myworkdayjobs.com/External")
         self.assertEqual(records["Example O"]["careersUrl"],
                          "https://example.fa.us2.oraclecloud.com")
+
+    def test_verified_host_dependent_seeds_keep_their_public_origins(self):
+        records = {r["name"]: r for r in seed_companies.from_pack()}
+        self.assertEqual(records["GEICO"]["careersUrl"],
+                         "https://geico.wd1.myworkdayjobs.com/External")
+        self.assertEqual(records["Oracle"]["careersUrl"],
+                         "https://eeho.fa.us2.oraclecloud.com")
+
+    def test_the_new_direct_connectors_each_have_a_fetchable_seed(self):
+        records = seed_companies.from_pack()
+        for ats in ("workday", "pinpoint", "teamtailor", "jazzhr",
+                    "oracle_orc", "gem"):
+            candidates = [r for r in records if r["ats"] == ats and r["token"]]
+            self.assertTrue(candidates, ats)
+            if ats in ("workday", "oracle_orc"):
+                self.assertTrue(any(r["careersUrl"] for r in candidates), ats)
+
+    def test_verified_seed_repairs_a_token_only_workday_record(self):
+        existing = seed_companies.blank_company("GEICO", "US", "postings")
+        existing.update({"ats": "workday", "token": "geico", "careersUrl": ""})
+        registry, _summary = seed_companies.seed(
+            {"geico": existing}, seed_companies.from_pack())
+        self.assertEqual(registry["geico"]["careersUrl"],
+                         "https://geico.wd1.myworkdayjobs.com/External")
 
     def test_seeding_is_idempotent(self):
         pack = seed_companies.from_pack()
