@@ -1,6 +1,7 @@
 """Provider configs expose one browser and one application-scoped state API."""
 
 import hashlib
+import io
 import json
 import pathlib
 import tempfile
@@ -58,6 +59,15 @@ class BrowserMcpSecurityTests(unittest.TestCase):
         gemini = json.loads(browser.write_gemini_settings("apply-2").read_text())
         self.assertEqual(set(claude["mcpServers"]), {"browser"})
         self.assertEqual(set(gemini["mcpServers"]), {"browser"})
+
+    def test_focus_cli_keeps_the_requested_browser_slot(self):
+        with mock.patch.object(
+            sys, "argv", ["browser.py", "--focus", "https://example.test/job", "--slot", "apply-5"]
+        ), mock.patch.object(
+            browser, "focus", return_value={"focused": True, "slot": "apply-5"}
+        ) as focus, mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(browser.main(), 0)
+        focus.assert_called_once_with("https://example.test/job", slot="apply-5")
 
     def test_claude_and_codex_data_include_the_bound_jobby_server(self):
         codex_data = browser.server_configs("apply-3", self.context)

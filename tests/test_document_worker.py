@@ -488,6 +488,28 @@ class NoToolsInvocationTests(unittest.TestCase):
         )
         self.assertIn("--ignore-user-config", secured.argv)
         self.assertIn("--ignore-rules", secured.argv)
+        schema_path = pathlib.Path(
+            secured.argv[secured.argv.index("--output-schema") + 1]
+        )
+        schema = json.loads(schema_path.read_text())
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(
+            set(schema["required"]), {"resumeOverrides", "coverLetter"}
+        )
+        resume_schema = schema["properties"]["resumeOverrides"]
+        letter_schema = schema["properties"]["coverLetter"]
+        self.assertEqual(
+            set(resume_schema["required"]), set(resume_schema["properties"])
+        )
+        self.assertEqual(
+            set(letter_schema["required"]), set(letter_schema["properties"])
+        )
+        role_schema = resume_schema["properties"]["roles"]["anyOf"][1][
+            "items"
+        ]["anyOf"][1]
+        self.assertEqual(
+            set(role_schema["required"]), set(role_schema["properties"])
+        )
 
     def test_gemini_uses_json_without_yolo_approval(self):
         invocation = self.invocation(
@@ -966,6 +988,38 @@ class ProviderResponseTests(unittest.TestCase):
             with self.assertRaises(worker.ResultInvalid):
                 worker.parse_provider_response("{" + "x" * 20 + "}")
 
+    def test_openai_null_inheritance_fields_normalize_to_shared_contract(self):
+        raw = {
+            "resumeOverrides": {
+                "banner": None,
+                "summary": "Tailored summary",
+                "areasOfExpertise": None,
+                "technical": None,
+                "roles": [
+                    None,
+                    {"lede": None, "bullets": ["Tailored bullet"]},
+                    {"lede": None, "bullets": None},
+                ],
+            },
+            "coverLetter": {
+                **provider_payload()["coverLetter"],
+                "date": None,
+            },
+        }
+        clean = worker._normalize_openai_content(raw)
+        self.assertEqual(
+            clean["resumeOverrides"],
+            {
+                "summary": "Tailored summary",
+                "roles": [
+                    None,
+                    {"bullets": ["Tailored bullet"]},
+                    None,
+                ],
+            },
+        )
+        self.assertNotIn("date", clean["coverLetter"])
+
 
 class TrustedRendererTests(unittest.TestCase):
     def test_trusted_python_owns_all_four_artifact_writes(self):
@@ -1028,6 +1082,74 @@ class TrustedRendererTests(unittest.TestCase):
                 output / runtime["outputs"]["resumeHtml"]
             ).read_text()
             self.assertIn("PRIVATE CANDIDATE", resume_html)
+
+    def test_local_macos_render_does_not_use_linux_low_memory_chrome(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            output = root / "output"
+            store = root / "store"
+            output.mkdir()
+            store.mkdir()
+            profile = {
+                "firstName": "Private",
+                "lastName": "Candidate",
+                "email": "private@example.test",
+                "links": {},
+                "resumes": [{
+                    "default": True,
+                    "appliesTo": ["US"],
+                    "identity": {
+                        "location": "Boston, MA",
+                        "phone": "6175550100",
+                    },
+                }],
+            }
+            (store / "profile.json").write_text(json.dumps(profile))
+            runtime = {
+                "taskRoot": str(root),
+                "outputRoot": str(output),
+                "storeRoot": str(store),
+                "region": "US",
+                "company": "Private Company",
+                "role": "Private Role",
+                "outputs": document_bundle()["outputs"],
+            }
+            generated = worker.validate_provider_content(provider_payload(), runtime)
+            observed = []
+
+            def resume_pdf_render(args):
+                observed.append(os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY"))
+                pathlib.Path(args.out).write_bytes(b"%PDF-1.4\nresume")
+
+            def cover_pdf_render(_html, out):
+                observed.append(os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY"))
+                pathlib.Path(out).write_bytes(b"%PDF-1.4\ncover")
+
+            with (
+                mock.patch.object(worker.sys, "platform", "darwin"),
+                mock.patch.dict(
+                    os.environ, {"JOBBY_CHROMIUM_LOW_MEMORY": "1"}, clear=False
+                ),
+                mock.patch.object(
+                    worker.resume_build,
+                    "identity_block",
+                    return_value=(
+                        "PRIVATE CANDIDATE", "Boston | private@example.test"
+                    ),
+                ),
+                mock.patch.object(
+                    worker.resume_pdf, "cmd_render", side_effect=resume_pdf_render
+                ),
+                mock.patch.object(
+                    worker.cover_letter,
+                    "render_pdf",
+                    side_effect=cover_pdf_render,
+                ),
+            ):
+                worker.render_provider_content(runtime, generated)
+
+            self.assertEqual(observed, [None, None])
+            self.assertEqual(os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY"), None)
 
 
 class PromptAndStatusTests(unittest.TestCase):
@@ -1227,6 +1349,34 @@ class ArtifactValidationTests(unittest.TestCase):
         with self.assertRaises(worker.ResultInvalid):
             worker.validate_artifacts(self.runtime)
 
+    def test_cover_overflow_sets_only_a_fixed_safe_diagnostic(self):
+        patches = self.patches()
+        overflow = {
+            "ok": False,
+            "pageCount": 2,
+            "readable": True,
+            "requiredFields": {
+                "candidateName": True,
+                "candidateEmail": True,
+                "employer": True,
+                "role": True,
+            },
+            "streetAddressOmitted": True,
+            "contentComplete": False,
+            "overflowSignals": {"detected": True},
+        }
+        with (
+            patches[0], patches[1], patches[2], patches[3],
+            mock.patch.object(
+                worker.cover_letter, "verify_pdf", return_value=overflow
+            ),
+            self.assertRaises(worker.ResultInvalid),
+        ):
+            worker.validate_artifacts(self.runtime)
+        self.assertEqual(
+            self.runtime["artifactValidationDetail"], "cover_overflow"
+        )
+
 
 class DurabilityTests(unittest.TestCase):
     def test_singleton_lock_rejects_a_second_worker(self):
@@ -1315,6 +1465,30 @@ class DurabilityTests(unittest.TestCase):
 
         self.assertEqual(controls.claim_calls, 2)
         self.assertGreater(documents.claim_calls, controls.claim_calls)
+
+    def test_loop_does_not_refresh_every_provider_before_claiming_documents(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stop = threading.Event()
+            registry = FakeRegistry()
+            documents = FakeTransport()
+
+            def sleep(_seconds):
+                stop.set()
+
+            instance = worker.DocumentWorker(
+                state_dir=pathlib.Path(temp),
+                transport=documents,
+                control_transport=FakeControlTransport(),
+                registry=registry,
+                publisher=FakePublisher(),
+                sleeper=sleep,
+                stop_event=stop,
+                poll_seconds=2,
+            )
+            instance.run_loop()
+
+        self.assertEqual(documents.claim_calls, 1)
+        self.assertEqual(registry.refresh_calls, [])
 
 
 if __name__ == "__main__":

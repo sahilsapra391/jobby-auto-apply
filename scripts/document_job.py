@@ -8,7 +8,7 @@ repeat without creating a second job.
 
 Plaintext request data is written to an owner-only temporary file for the
 fixed Node bridge. It never appears in command arguments or Cloudflare KV
-metadata. Provider credentials stay in each provider CLI's native store.
+metadata. Provider credentials stay in Codex or owner-only provider key files.
 """
 
 import argparse

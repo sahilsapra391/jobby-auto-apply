@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -52,20 +53,17 @@ class RegistryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_subscription_login_commands_use_each_native_browser_flow(self):
+    def test_openai_uses_the_supported_native_browser_flow(self):
         resolver = lambda provider, required: f"/agents/{provider}"
         self.assertEqual(
             providers.login_invocation("openai", binary_resolver=resolver),
             ["/agents/openai", "login"],
         )
-        self.assertEqual(
-            providers.login_invocation("anthropic", binary_resolver=resolver),
-            ["/agents/anthropic", "auth", "login", "--claudeai"],
-        )
-        self.assertEqual(
-            providers.login_invocation("gemini", binary_resolver=resolver),
-            ["/agents/gemini"],
-        )
+        for provider in ("anthropic", "gemini"):
+            with self.subTest(provider=provider), self.assertRaises(
+                providers.ProviderError
+            ):
+                providers.login_invocation(provider, binary_resolver=resolver)
 
     def test_first_successful_connection_stays_active(self):
         self.health["openai"] = True
@@ -77,6 +75,73 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(rows["openai"]["connectionOrder"], 1)
         self.assertEqual(rows["gemini"]["connectionOrder"], 2)
 
+    def test_begin_connect_opens_login_without_running_a_probe(self):
+        calls = []
+        registry = providers.ProviderRegistry(
+            pathlib.Path(self.tmp.name) / "fast" / "providers.json",
+            probe_fn=lambda provider: calls.append(provider) or probe(provider, True),
+            binary_resolver=lambda _provider, _required: "/usr/local/bin/agent",
+            clock=lambda: NOW,
+        )
+        status = registry.begin_connect("anthropic")
+        self.assertEqual(calls, [])
+        row = next(item for item in status["providers"] if item["id"] == "anthropic")
+        self.assertEqual(row["status"], "unknown")
+        self.assertEqual(row["detail"], "Waiting for local API key")
+
+    def test_reconnect_returns_an_existing_connection_to_checking(self):
+        self.health["openai"] = True
+        self.registry.connect("openai")
+        status = self.registry.begin_connect("openai")
+        row = next(item for item in status["providers"] if item["id"] == "openai")
+        self.assertEqual(status["activeProvider"], None)
+        self.assertEqual(row["status"], "unknown")
+        self.assertEqual(row["detail"], "Waiting for browser sign-in")
+
+    def test_live_selection_checks_connections_in_order_and_stops_on_success(self):
+        self.health.update(openai=True, anthropic=True, gemini=True)
+        self.registry.connect("openai")
+        self.registry.connect("anthropic")
+        self.registry.connect("gemini")
+        self.health["openai"] = False
+        checked = []
+        self.registry.probe_fn = lambda provider: (
+            checked.append(("auth", provider)) or probe(provider, self.health[provider])
+        )
+        self.registry.model_probe_fn = lambda provider: (
+            checked.append(("model", provider)) or probe(provider, self.health[provider])
+        )
+        status = self.registry.select_for_work()
+        self.assertEqual(status["activeProvider"], "anthropic")
+        self.assertEqual(
+            checked,
+            [("auth", "openai"), ("auth", "anthropic"), ("model", "anthropic")],
+        )
+
+    def test_claude_exit_zero_without_saved_login_is_not_healthy(self):
+        result = providers.probe_provider(
+            "anthropic",
+            binary_resolver=lambda _provider, _required: "/usr/bin/claude",
+            runner=lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], 0, '{"loggedIn":false,"authMethod":"none"}', ""
+            ),
+            clock=lambda: NOW,
+        )
+        self.assertEqual(result.health, "authentication_required")
+        self.assertIn("did not save", result.message)
+
+    def test_retired_gemini_consumer_cli_returns_actionable_detail(self):
+        result = providers.probe_provider(
+            "gemini",
+            binary_resolver=lambda _provider, _required: "/usr/bin/gemini",
+            runner=lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], 1, "", "IneligibleTierError: UNSUPPORTED_CLIENT"
+            ),
+            clock=lambda: NOW,
+        )
+        self.assertEqual(result.health, "authentication_required")
+        self.assertIn("Gemini API key", result.message)
+
     def test_existing_native_login_is_not_silently_connected(self):
         self.health["anthropic"] = True
         status = self.registry.public_status()
@@ -84,15 +149,15 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(status["ready"])
         self.assertFalse(any(row["connected"] for row in status["providers"]))
 
-    def test_a_health_failure_does_not_silently_switch_provider(self):
+    def test_a_health_failure_selects_the_next_healthy_provider(self):
         self.health["openai"] = True
         self.registry.connect("openai")
         self.health["gemini"] = True
         self.registry.connect("gemini")
         self.health["openai"] = False
         status = self.registry.refresh("openai")
-        self.assertEqual(status["activeProvider"], "openai")
-        self.assertFalse(status["ready"])
+        self.assertEqual(status["activeProvider"], "gemini")
+        self.assertTrue(status["ready"])
 
     def test_a_real_child_auth_failure_is_persisted_without_a_probe(self):
         self.health["openai"] = True
@@ -128,7 +193,7 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(row["healthy"])
         self.assertEqual(row["status"], "authentication_required")
         self.assertEqual(row["connectionOrder"], 1)
-        self.assertEqual(status["activeProvider"], "gemini")
+        self.assertIsNone(status["activeProvider"])
         self.assertFalse(status["ready"])
 
         self.health["openai"] = True
@@ -136,7 +201,7 @@ class RegistryTests(unittest.TestCase):
         rows = {item["id"]: item for item in status["providers"]}
         self.assertEqual(rows["gemini"]["connectionOrder"], 1)
         self.assertEqual(rows["openai"]["connectionOrder"], 2)
-        self.assertEqual(status["activeProvider"], "gemini")
+        self.assertEqual(status["activeProvider"], "openai")
 
         self.health["gemini"] = True
         status = self.registry.refresh("gemini")
@@ -270,6 +335,21 @@ class ProbeTests(unittest.TestCase):
             "AWS_SECRET_ACCESS_KEY", "DATABASE_URL", "GH_TOKEN", "SSH_AUTH_SOCK",
         ):
             self.assertNotIn(key, env)
+
+    def test_selected_provider_receives_only_its_stored_key(self):
+        with mock.patch.object(
+            providers.provider_secrets, "load", return_value="selected-secret"
+        ):
+            anthropic = providers.provider_cli_env(
+                "anthropic", {"PATH": "/usr/bin", "GEMINI_API_KEY": "wrong"}
+            )
+            gemini = providers.provider_cli_env(
+                "gemini", {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "wrong"}
+            )
+        self.assertEqual(anthropic["ANTHROPIC_API_KEY"], "selected-secret")
+        self.assertNotIn("GEMINI_API_KEY", anthropic)
+        self.assertEqual(gemini["GEMINI_API_KEY"], "selected-secret")
+        self.assertNotIn("ANTHROPIC_API_KEY", gemini)
 
     def test_authentication_marker_becomes_needs_login(self):
         result = providers.probe_provider(

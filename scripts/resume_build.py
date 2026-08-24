@@ -33,9 +33,12 @@ Standard library only.
 """
 
 import argparse
+import difflib
+import html
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -52,6 +55,114 @@ ITEM = re.compile(r'<li>(.*?)</li>', re.S)
 # means it literally; the template's own text says &amp; and means the same
 # thing, and re-escaping that would turn it into &amp;amp; on the page.
 BARE_AMP = re.compile(r"&(?!#?\w+;)")
+WORD = re.compile(r"[a-z0-9]+(?:[.+#/-][a-z0-9]+)*", re.I)
+FACT = re.compile(
+    r"(?<![A-Za-z0-9])(?:[$]\s*)?(?:~\s*)?\d+(?:[.,]\d+)*(?:\s*%|\+)?"
+    r"|\bV\d+(?:/V\d+)*\b",
+    re.I,
+)
+STOPWORDS = {
+    "a", "an", "and", "as", "at", "by", "for", "from", "in", "into",
+    "of", "on", "or", "the", "to", "through", "using", "with",
+}
+
+
+class ResumeIntegrityError(ValueError):
+    """Tailored wording changed the resume's facts or structural meaning."""
+
+
+def _plain(value):
+    return html.unescape(str(value or "")).replace("&ndash;", "-")
+
+
+def _normalized(value):
+    return " ".join(WORD.findall(_plain(value).lower()))
+
+
+def _content_tokens(value):
+    return [token for token in WORD.findall(_plain(value).lower())
+            if token not in STOPWORDS]
+
+
+def _duplicate_bullets(content):
+    bullets = [
+        (role_index, bullet_index, str(bullet))
+        for role_index, role in enumerate(content.get("roles") or [])
+        for bullet_index, bullet in enumerate((role or {}).get("bullets") or [])
+    ]
+    for left_index, left in enumerate(bullets):
+        left_text = _normalized(left[2])
+        left_words = set(_content_tokens(left[2]))
+        for right in bullets[left_index + 1:]:
+            right_text = _normalized(right[2])
+            right_words = set(_content_tokens(right[2]))
+            if not left_text or not right_text:
+                continue
+            sequence = difflib.SequenceMatcher(None, left_text, right_text).ratio()
+            union = left_words | right_words
+            overlap = len(left_words & right_words) / len(union) if union else 0.0
+            if left_text == right_text or (sequence >= 0.80 and overlap >= 0.70):
+                yield left[:2], right[:2]
+
+
+def assert_integrity(base, tailored):
+    """Reject structural drift, duplicate points, and unsupported rewrites.
+
+    A changed bullet must retain its source facts and most of its meaningful
+    vocabulary. That leaves room to weave in posting terms, while preventing a
+    model from replacing the accomplishment with a different story.
+    """
+    base_roles = base.get("roles") or []
+    roles = tailored.get("roles") or []
+    if len(roles) != len(base_roles):
+        raise ResumeIntegrityError("experience entry count changed")
+
+    for role_index, (source_role, result_role) in enumerate(zip(base_roles, roles)):
+        source_bullets = (source_role or {}).get("bullets") or []
+        result_bullets = (result_role or {}).get("bullets") or []
+        if len(result_bullets) != len(source_bullets):
+            raise ResumeIntegrityError(
+                f"experience entry {role_index + 1} changed bullet count"
+            )
+        for bullet_index, (source, result) in enumerate(
+            zip(source_bullets, result_bullets)
+        ):
+            if _normalized(source) == _normalized(result):
+                continue
+            source_facts = Counter(match.group(0).replace(" ", "").lower()
+                                   for match in FACT.finditer(_plain(source)))
+            result_facts = Counter(match.group(0).replace(" ", "").lower()
+                                   for match in FACT.finditer(_plain(result)))
+            if source_facts != result_facts:
+                raise ResumeIntegrityError(
+                    f"experience entry {role_index + 1}, bullet {bullet_index + 1} "
+                    "changed a number, version, or metric"
+                )
+            source_tokens = set(_content_tokens(source))
+            result_tokens = set(_content_tokens(result))
+            retained = (
+                len(source_tokens & result_tokens) / len(source_tokens)
+                if source_tokens else 1.0
+            )
+            if retained < 0.50:
+                raise ResumeIntegrityError(
+                    f"experience entry {role_index + 1}, bullet {bullet_index + 1} "
+                    "changed too much of the source accomplishment"
+                )
+            if len(_plain(result)) > max(len(_plain(source)) + 24,
+                                         int(len(_plain(source)) * 1.10)):
+                raise ResumeIntegrityError(
+                    f"experience entry {role_index + 1}, bullet {bullet_index + 1} "
+                    "grew beyond a keyword-level rewrite"
+                )
+
+    duplicate = next(_duplicate_bullets(tailored), None)
+    if duplicate:
+        left, right = duplicate
+        raise ResumeIntegrityError(
+            "duplicate resume points at experience entries "
+            f"{left[0] + 1}.{left[1] + 1} and {right[0] + 1}.{right[1] + 1}"
+        )
 
 
 def safe(text):
@@ -379,6 +490,7 @@ def main():
     if args.base_content:
         base = json.loads(Path(args.base_content).expanduser().read_text())
         content = merge(base, content)
+        assert_integrity(base, content)
     out = render(Path(args.template).expanduser().read_text(), content)
     Path(args.out).expanduser().parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).expanduser().write_text(out)

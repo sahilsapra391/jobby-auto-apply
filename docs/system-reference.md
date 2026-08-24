@@ -30,7 +30,7 @@ It has three cooperating parts:
    ATS behaves, and how to tailor a resume without lying. OpenAI Codex,
    Anthropic Claude Code, and Gemini CLI run the same bounded task contracts.
 2. **A Mac control and form worker.** A launchd process watches the control
-   queue, chooses the sticky active provider, coordinates document work, and
+   queue, chooses the first live healthy provider in saved order, coordinates document work, and
    starts a local provider CLI only for browser form filling and submission.
 3. **A serial local document worker and the board.** A second launchd service
    handles encrypted resume and cover-letter jobs without an application
@@ -74,7 +74,7 @@ What happens between a click and a submitted application.
   MAC WATCHER  (launchd, scripts/watch.py)
     ├─ single_watcher()              only one watcher may tick
     ├─ claim_one("apply/")           claiming happens only here
-    ├─ providers.active_provider()   first connected, not first healthy
+    ├─ providers.select_for_work()   first live healthy connection in saved order
     ├─ agent.authenticated(provider) local native CLI must be ready
     └─ document_job.ensure()         save provider and opaque job id first
         │
@@ -95,7 +95,7 @@ What happens between a click and a submitted application.
   MAC DOCUMENT CLIENT  (scripts/document_job.py)
     ├─ authenticate and validate the complete result
     ├─ install each file atomically
-    └─ start detached form runner with the saved provider
+    └─ start detached form runner with the current healthy provider
         │
         ▼
   LOCAL FORM RUNNER  (scripts/run_apply.py --id <app> --provider <p> --slot apply-N)
@@ -139,24 +139,29 @@ login. The boundaries around each process are where the fixed safety checks
 live.
 
 **Provider choice must be predictable.** `providers.py` records OpenAI,
-Anthropic, and Gemini connections in order. The first connected provider stays
-active even when its health check fails, because silently changing accounts or
-models in the middle of an application is worse than stopping. Disconnecting it
-promotes the next connection. A document job saves its provider and the later
-Mac form run uses that same provider. There is no automatic failover.
+Anthropic, and Gemini connections in order. Before new work, it probes in that
+order and stops at the first account that can invoke the pinned model. A failed
+login, usage check, or model check remains connected but is skipped. A document
+process already running keeps its saved provider. The later form stage and a
+retry may use the new healthy provider.
 
 Credentials and health are device-local. One Settings action updates the shared
 provider registry used by both local workers. The chosen provider must be
 installed and authenticated under the operating-system user that runs the
-services. Credentials remain in each vendor CLI's native account store and
-never enter Jobby's queue.
+services. OpenAI credentials remain in Codex. Anthropic and Gemini API keys
+live in owner-only local files and enter only their matching child process.
+Credentials never enter Jobby's queue, Vercel, or Cloudflare.
 
-Connect launches the native CLI's browser authentication. OpenAI runs `codex
-login` with the ChatGPT account flow. Anthropic runs `claude auth login
---claudeai` so the account uses its Claude subscription rather than Console API
-billing. Gemini starts its interactive Sign in with Google flow. Jobby stores no
-OAuth credential. Agent work consumes the selected account's subscription
-limits or usage quota.
+Connect is handled by the dedicated `ai.jobby.providers` launchd service. It
+polls its isolated control key every two seconds, records a pending connection,
+publishes status, and launches native browser authentication without waiting
+for a model probe. The Settings page shows pending state before the POST returns
+and reconciles once per second. OpenAI runs `codex login` with the supported
+local ChatGPT account flow. Anthropic opens the Console API key page. Gemini
+opens Google AI Studio. Both API connectors collect the key in a private local
+terminal, save it mode 0600, and validate the exact pinned model before they
+report Connected. Disconnect removes that key. Agent work consumes the
+selected account's API usage quota.
 
 The command builder pins a model for every document, form, and scan task:
 OpenAI `gpt-5.6-luna`, Anthropic `claude-sonnet-5`, and Gemini
@@ -184,8 +189,8 @@ runtime.
 |---|---|---|
 | `watch.py` | 1070 | Mac daemon. Polls and claims the control queue, coordinates encrypted document jobs, reserves browser slots, spawns form runners, publishes, reports health. |
 | `store.py` | 586 | All persistence. Profile, answers, history, sessions, role index, meta. Atomic writes, topic-matched answer lookup. |
-| `providers.py` | 700 | Host-local registry for OpenAI, Anthropic, and Gemini. Owns connection order, sticky active selection, health, fixed models, and native CLI commands. |
-| `provider_login.py` | 90 | Runs one native CLI login on the current host, then records that provider as connected to Jobby. |
+| `providers.py` | 700 | Host-local registry for OpenAI, Anthropic, and Gemini. Owns connection order, live health selection, fixed models, and native CLI commands. |
+| `provider_login.py` | 90 | Runs the OpenAI login or private Anthropic and Gemini API-key prompt, then validates and records the connection. |
 | `document_job.py` | 595 | Mac client. Saves the provider and opaque job id, sends and retrieves encrypted document work, validates and installs complete results. |
 | `document_contract.py` | 326 | Minimal plaintext boundary at the two trusted hosts. Excludes street address and form answers, validates bundles and returned files. |
 | `document_worker.py` | 977 | Local launchd service. Claims one encrypted job at a time, runs the requested CLI without a browser, applies fixed gates, and scrubs plaintext. |
@@ -205,7 +210,7 @@ runtime.
 | `sources_registry.py` | 150 | The source catalog and the accounting that keeps "every source" honest. |
 | `promote.py` | 130 | 👁 and Pass: a Found job becoming a Watching session, or a tombstone. |
 | `sources/` | 1,500 | Twenty-one Tier-1 connectors and the polite-fetching base they share, including Workday CXS JSON POST support. |
-| `run_apply.py` | 545 | Mac form-only runner. Requires and fingerprints the prepared PDFs, then spawns the saved provider with the local browser. Never claims or creates documents. |
+| `run_apply.py` | 545 | Mac form-only runner. Requires and fingerprints the prepared PDFs, then spawns the healthy provider selected for that stage with the local browser. Never claims or creates documents. |
 | `drop.py` | 187 | The user deciding against a role. Kills the runner if it is mid-flight. |
 | `run_scan.py` | 149 | Runs one sourcing sweep by spawning an agent. |
 | `file_docs.py` | 148 | Files documents into `applications/<Company>/`, role-qualified when a company has several. |
@@ -216,7 +221,7 @@ runtime.
 | `finish.py` | 226 | The two ends of a submission, one call each, every check kept. |
 | `experience.py` | 200 | Lifts one role's content out of that posting's tailored resume. |
 | `apply_marks.py` | 128 | Applies "Mark submitted" clicks. |
-| `agent.py` | 153 | Compatibility facade that resolves and preflights the selected native provider. It never chooses a healthy fallback. |
+| `agent.py` | 153 | Compatibility facade that resolves and preflights one selected native provider. Work-level failover belongs to `providers.py` and `watch.py`. |
 | `sync_board.py` | 94 | Retires submitted roles out of Watching, republishes. |
 | `phase.py` | 91 | Live phase on an in-flight application; remembers the lane it came from. |
 | `brand.py` | 182 | Logo, favicon, mascot, lifted from the vendored brand pack. |
@@ -282,7 +287,8 @@ Everything lives in `~/.job-application/`, mode 700.
 | `search-config.json` | object | The saved search, versioned. Its absence is meaningful — the hourly scan stays disarmed until it exists. |
 | `source-cache.json` | url → validator | `ETag` / `Last-Modified` per endpoint, so an unchanged board costs a request and no payload. |
 | `meta.json` | object | `dashboardUrl`, `blocked` (the banner), scan timestamps, `nextTier1ScanAt`, and `lastIngest` — the full account of the last sourcing pass. |
-| `providers.json` | object | Device-local provider connection order and health. Mode 600. The first connection is active regardless of health; credentials remain in the vendor CLI store. Both local services share this file. |
+| `providers.json` | object | Device-local provider connection order and health. Mode 600. The first healthy connection is active; credentials are stored separately and never enter this file. All three local services share it. |
+| `provider-secrets/anthropic`, `provider-secrets/gemini` | text | Owner-only API keys, mode 600. Each key enters only its matching local CLI child and is removed on Disconnect. |
 | `config.env` | env | Machine-local settings, notably `HEALTHCHECKS_URL` and `JOBBY_WORKER_KEY`. Separate from `deploy/.env.local` because `vercel env pull` regenerates that one and discards hand edits. |
 | `locks/` | one file per lock | `apply-1` through `apply-5`, `scan`, `watcher`. Each holds a pid. |
 | `browser-profile*/` | Chrome profiles | One per slot. Persist logins. |
@@ -428,10 +434,17 @@ The shared command builder pins `gpt-5.6-luna`, `claude-sonnet-5`, or
 `gemini-3.7-flash`, so a vendor CLI default cannot change the task later.
 
 The provider receives inline task data in an empty read-only sandbox and returns
-bounded prose overrides and cover-letter content as structured JSON. Trusted
-Python renders the files only after the provider exits. The fixed resume template keeps identity, education,
+bounded prose overrides and cover-letter content as structured JSON. Claude
+uses its JSON schema flag. Codex uses `--output-schema`, including the required
+nullable inheritance fields OpenAI strict schemas need. Trusted Python removes
+those null sentinels and renders files only after shared validation. Low-memory
+Chromium is restricted to Linux so macOS keeps the proven headless Chrome path.
+The fixed resume template keeps identity, education,
 certifications, employers, employment titles, and dates outside the editable
-fields. `ats_match.py --suggest` splits the posting vocabulary into two groups:
+fields. After overrides merge, `resume_build.assert_integrity()` rejects exact
+and semantic near-duplicate bullets, changed numeric facts or versions, low
+source-accomplishment retention, bullet-count drift, and text growth beyond a
+keyword-level edit. `ats_match.py --suggest` splits the posting vocabulary into two groups:
 
 - `rewritable`: the posting's word for something the base resume or story bank
   already supports, with the evidence attached (`experimentation` from
@@ -450,6 +463,8 @@ as regular bounded files, rejects unresolved tokens and extra output, and then
 runs independent gates:
 
 - `unsourcedTerms` must be zero against the base and confirmed story facts.
+- Resume bullets must pass the structural, factual, meaning-retention, length,
+  and duplicate-point integrity gate.
 - `resume_pdf.py verify` must match page geometry, margins, colours, font sizes,
   and the contact-block layout against the selected base.
 - `cover_letter.py` must accept the fixed content schema and find the expected
@@ -646,9 +661,9 @@ application").
 | PDF rendering | Local **headless Chrome `--print-to-pdf`** with a private temporary profile | WeasyPrint does not match the layout |
 | PDF inspection | **pymupdf** | Geometric verification |
 | Vector tracing | **potrace** | Favicon: 40KB raster → 263-byte vector |
-| Agent runtime | Native **OpenAI Codex**, **Anthropic Claude Code**, and **Gemini CLI** | Registry-selected local login, no automatic failover |
+| Agent runtime | Native **OpenAI Codex**, **Anthropic Claude Code**, and Google agent CLI | Ordered health selection and stage-boundary failover |
 | Fixed models | OpenAI `gpt-5.6-luna`; Anthropic `claude-sonnet-5`; Gemini `gemini-3.7-flash` | Every task names its model instead of inheriting a CLI default |
-| Scheduling | Two Mac **launchd** services | Five-second orchestration poll plus a serial document loop |
+| Scheduling | Three Mac **launchd** services | Five-second orchestration, serial documents, two-second provider controls |
 | Monitoring | **healthchecks.io** dead-man's switch | |
 | Store | **JSON + JSONL on disk**, stdlib only | |
 | CI/CD | **GitHub → Vercel Git integration**, root directory `deploy/` | Merging to main deploys |

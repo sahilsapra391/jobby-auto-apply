@@ -56,7 +56,7 @@
         "Directed QA resource planning and the automated testing strategy that raised test coverage from 62% to 81%, trading breadth of coverage against confidence in each individual result while holding enterprise-grade release stability and regression quality assurance.",
         "Owned the product side of an infrastructure migration from a legacy monolithic aviation platform to a domain-driven microservices architecture using Java, Spring Boot, TypeScript, and Angular, implementing reusable RESTful APIs, caching, and lazy loading to reduce data retrieval latency by 68% and eliminate enterprise system timeouts.",
         "Directed a feature parity program for TFBO Next-Gen through influence without authority over engineering, translating workflow gaps into prioritized requirements, acceptance criteria and migration sequencing so 75 enterprise customers moved with zero operational downtime.",
-        "Executed enterprise customer migration strategy, onboarded 75 customers from competing FBO platforms to TFBO Next-Gen, and sustained 104% YoY ARR growth over two consecutive years.",
+        "Validated end-to-end TFBO Next-Gen use cases against legacy workflows to surface feature gaps, then aligned engineering, QA, and go-to-market stakeholders on delivery priorities and release monitoring.",
         "Removed a two-week onboarding bottleneck by automating the data injection ETL rather than asking for headcount, taking capacity from over two weeks per customer to three customers per day and making the 75-customer program feasible.",
         "Optimized engineering delivery velocity through AI-driven workflow integration to accelerate the redesign and release of the Invoicing module by five months and reduce customer churn significantly."
       ]
@@ -86,7 +86,7 @@
       "lede": "Directed development of an AI-powered, deploy-aware no-code agentic QA platform for SaaS applications, where the agent discovers and maps staging environments, generates test cases, orchestrates execution, validates Jira tickets, and returns screenshot evidence. Engineered end-to-end QA workflow automation and improved deployment confidence by integrating environment discovery, test orchestration, and defect validation within a unified product system.",
       "bullets": [
         "Executed a six-month product roadmap, delivered MVP (V1), and advanced V2/V3 builds featuring Security Hub for dependency risk analysis, GitHub integration, a developer CLI, and a credit-based pricing architecture to enable scalable SaaS monetization.",
-        "Executed a six-month product roadmap, delivered MVP (V1), and advanced V2/V3 builds featuring Security Hub for dependency risk analysis, GitHub integration, developer CLI, and a credit-based pricing architecture to enable scalable SaaS monetization.",
+        "Built the deploy-aware QA workflow that discovered staging environments, generated and orchestrated test cases, validated Jira tickets, and returned screenshot evidence to improve deployment confidence.",
         "Raised early pre-seed capital to support MVP development, customer discovery, and product validation."
       ]
     },

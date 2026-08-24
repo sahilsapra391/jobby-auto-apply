@@ -5,10 +5,9 @@ Provider credentials belong to each vendor's CLI. This module records only
 which CLIs the user connected to Jobby, the order of those connections, and a
 small health result. It never reads or copies OAuth tokens.
 
-Connection order is deliberate state. A temporary network or authentication
-failure marks a provider unhealthy but does not silently switch a run to a
-different account. Disconnecting is local to Jobby. Reconnecting assigns the
-provider a new position at the end of the connected list.
+Connection order is deliberate state. New work uses the first connected account
+that passes a live health and exact-model check. An in-flight provider process
+keeps its provider, while the next stage or retry can use the next healthy one.
 """
 
 from __future__ import annotations
@@ -29,6 +28,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import toolpath  # noqa: E402
+import provider_secrets  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -68,14 +68,14 @@ PROVIDER_INFO = {
     "anthropic": {
         "name": "Anthropic",
         "cli": "claude",
-        "authHint": "Run `claude auth login --claudeai` on Your Device and finish the Claude sign-in in your browser.",
-        "installHint": "Install Claude Code, then run `claude auth login --claudeai`.",
+        "authHint": "Create an Anthropic Console API key, then paste it into the private terminal prompt on Your Device.",
+        "installHint": "Install Claude Code, then connect an Anthropic Console API key.",
     },
     "gemini": {
         "name": "Gemini",
         "cli": "gemini",
-        "authHint": "Run `gemini` on Your Device, choose Sign in with Google, then exit the CLI.",
-        "installHint": "Install Gemini CLI, then run `gemini` and sign in with Google.",
+        "authHint": "Create a Gemini API key in Google AI Studio, then paste it into the private terminal prompt on Your Device.",
+        "installHint": "Install Gemini CLI, then connect a Google AI Studio API key.",
     },
 }
 
@@ -250,6 +250,33 @@ def native_cli_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def provider_cli_env(
+    provider_id: str, base: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Give a child only its selected provider's locally stored credential."""
+    provider_id = _require_provider(provider_id)
+    env = native_cli_env(base)
+    key_names = {"anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
+    if provider_id not in key_names:
+        return env
+    try:
+        secret = provider_secrets.load(provider_id)
+    except provider_secrets.ProviderSecretError as exc:
+        raise ProviderStateError("the local provider key is unsafe") from exc
+    if secret:
+        env[key_names[provider_id]] = secret
+    return env
+
+
+def has_provider_secret(provider_id: str) -> bool:
+    if provider_id not in provider_secrets.PROVIDERS:
+        return False
+    try:
+        return provider_secrets.load(provider_id) is not None
+    except provider_secrets.ProviderSecretError:
+        return False
+
+
 def gemini_hardened_settings(task_kind: str) -> dict[str, Any]:
     """Highest-precedence Gemini settings shared by every task surface."""
     task_kind = _require_task(task_kind)
@@ -378,12 +405,9 @@ def login_invocation(
     binary = resolver(provider_id, True)
     if not binary:
         raise ProviderError(f"{PROVIDER_INFO[provider_id]['cli']} is not installed")
-    suffixes = {
-        "openai": ["login"],
-        "anthropic": ["auth", "login", "--claudeai"],
-        "gemini": [],
-    }
-    return [str(binary), *suffixes[provider_id]]
+    if provider_id != "openai":
+        raise ProviderError("Anthropic and Gemini connect with a local API key")
+    return [str(binary), "login"]
 
 
 def _probe_argv(provider_id: str, binary: str) -> list[str]:
@@ -447,7 +471,7 @@ def probe_model_access(
     run = runner or subprocess.run
     try:
         with tempfile.TemporaryDirectory(prefix="jobby-model-check-") as directory:
-            child_env = native_cli_env()
+            child_env = provider_cli_env(provider_id)
             if provider_id == "gemini":
                 child_env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(
                     _gemini_system_settings(Path(directory), "documents")
@@ -486,6 +510,15 @@ def probe_model_access(
                 )
         return ProbeResult(provider_id, True, True, "healthy", checked_at, "")
     output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    if provider_id == "gemini" and "unsupported_client" in output:
+        return ProbeResult(
+            provider_id,
+            True,
+            False,
+            "authentication_required",
+            checked_at,
+            "Google consumer sign-in is unavailable. Connect a Gemini API key.",
+        )
     health = (
         "authentication_required"
         if any(marker in output for marker in AUTH_MARKERS)
@@ -517,16 +550,24 @@ def probe_provider(
     run = runner or subprocess.run
     try:
         with tempfile.TemporaryDirectory(prefix="jobby-provider-check-") as directory:
-            child_env = native_cli_env()
+            child_env = provider_cli_env(provider_id)
             if provider_id == "gemini":
                 child_env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(
                     _gemini_system_settings(Path(directory), "documents")
                 )
                 child_env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
+            model_checked = (
+                provider_id == "anthropic" and has_provider_secret(provider_id)
+            )
+            command = (
+                _model_probe_argv(provider_id, str(binary))
+                if model_checked else _probe_argv(provider_id, str(binary))
+            )
             result = run(
-                _probe_argv(provider_id, str(binary)),
+                command,
                 cwd=directory,
                 env=child_env,
+                input="Reply with exactly: OK" if model_checked else None,
                 capture_output=True,
                 text=True,
                 timeout=PROBE_TIMEOUT_SECONDS,
@@ -542,6 +583,20 @@ def probe_provider(
         )
 
     if result.returncode == 0:
+        if provider_id == "anthropic" and not model_checked:
+            try:
+                auth = json.loads(result.stdout or "{}")
+            except json.JSONDecodeError:
+                auth = {}
+            if auth.get("loggedIn") is not True:
+                return ProbeResult(
+                    provider_id,
+                    True,
+                    False,
+                    "authentication_required",
+                    checked_at,
+                    "Claude reported login success but did not save the session",
+                )
         if provider_id == "gemini":
             try:
                 verify_gemini_served_model(result.stdout or "", stream=False)
@@ -557,6 +612,15 @@ def probe_provider(
         return ProbeResult(provider_id, True, True, "healthy", checked_at, "")
 
     output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    if provider_id == "gemini" and "unsupported_client" in output:
+        return ProbeResult(
+            provider_id,
+            True,
+            False,
+            "authentication_required",
+            checked_at,
+            "Google consumer sign-in is unavailable. Connect a Gemini API key.",
+        )
     if provider_id in ("openai", "anthropic") or any(
         marker in output for marker in AUTH_MARKERS
     ):
@@ -682,7 +746,7 @@ def build_run_invocation(
     # workspaces or add-dir mounts.
     _ = state, writable_dirs
 
-    env = native_cli_env(base_env)
+    env = provider_cli_env(provider_id, base_env)
     browser_api = browser_adapter
     if task_kind == "apply" and browser_api is None:
         browser_api = _default_browser_adapter()
@@ -829,6 +893,7 @@ def _normalize_state(raw: Any) -> dict[str, Any]:
             "health": health,
             "lastCheckedAt": _safe_timestamp(record.get("lastCheckedAt")),
             "modelVerifiedAt": _safe_timestamp(record.get("modelVerifiedAt")),
+            "detail": str(record.get("detail") or "")[:300],
         }
         clean["connections"][provider_id] = clean_record
         max_order = max(max_order, order)
@@ -952,11 +1017,9 @@ class ProviderRegistry:
         return state
 
     @staticmethod
-    def _active_from_state(state: Mapping[str, Any]) -> str | None:
+    def _ordered_from_state(state: Mapping[str, Any]) -> list[str]:
         connections = state.get("connections") or {}
-        if not connections:
-            return None
-        return min(
+        return sorted(
             connections,
             key=lambda provider_id: (
                 connections[provider_id].get("connectionKey")
@@ -965,6 +1028,18 @@ class ProviderRegistry:
                 ),
                 provider_id,
             ),
+        )
+
+    @classmethod
+    def _active_from_state(cls, state: Mapping[str, Any]) -> str | None:
+        connections = state.get("connections") or {}
+        return next(
+            (
+                provider_id
+                for provider_id in cls._ordered_from_state(state)
+                if connections[provider_id].get("health") == "healthy"
+            ),
+            None,
         )
 
     def _public_status_locked(self, state: Mapping[str, Any]) -> dict[str, Any]:
@@ -993,6 +1068,7 @@ class ProviderRegistry:
                     "lastCheckedAt": record.get("lastCheckedAt") if record else None,
                     "authHint": info["authHint"],
                     "installHint": info["installHint"],
+                    "detail": record.get("detail", "") if record else "",
                 }
             )
         active_row = next((row for row in rows if row["active"]), None)
@@ -1025,12 +1101,15 @@ class ProviderRegistry:
         with self._locked():
             state = self._load_locked()
             result = self._safe_probe(provider_id)
-            if result.authenticated and provider_id != "gemini":
+            if result.authenticated and provider_id != "gemini" and not (
+                provider_id == "anthropic" and has_provider_secret(provider_id)
+            ):
                 result = self._safe_model_probe(provider_id)
             record = state["connections"].get(provider_id)
             if record is not None:
                 record["health"] = result.health
                 record["lastCheckedAt"] = result.checked_at
+                record["detail"] = result.message
                 if (
                     requested_key is not None
                     and str(record.get("connectionKey") or "").startswith("0-")
@@ -1059,18 +1138,97 @@ class ProviderRegistry:
                 "health": result.health,
                 "lastCheckedAt": result.checked_at,
                 "modelVerifiedAt": result.checked_at if result.authenticated else None,
+                "detail": result.message,
             }
             state["nextConnectionOrder"] = order + 1
             self._write_locked(state)
             return self._public_status_locked(state)
 
-    def disconnect(self, provider_id: str) -> dict[str, Any]:
+    def begin_connect(
+        self, provider_id: str, *, connection_key: str | None = None
+    ) -> dict[str, Any]:
+        """Record a Settings click without putting login behind a live probe."""
+        provider_id = _require_provider(provider_id)
+        requested_key = (
+            _validated_connection_key(connection_key)
+            if connection_key is not None
+            else None
+        )
+        with self._locked():
+            state = self._load_locked()
+            record = state["connections"].get(provider_id)
+            checked_at = _iso_now(self.clock)
+            if record is None:
+                order = state["nextConnectionOrder"]
+                state["connections"][provider_id] = {
+                    "connected": True,
+                    "connectionOrder": order,
+                    "connectionKey": requested_key or _legacy_connection_key(order),
+                    "connectedAt": checked_at,
+                    "health": "unknown",
+                    "lastCheckedAt": checked_at,
+                    "modelVerifiedAt": None,
+                    "detail": (
+                        "Waiting for browser sign-in" if provider_id == "openai"
+                        else "Waiting for local API key"
+                    ),
+                }
+                state["nextConnectionOrder"] = order + 1
+            else:
+                if (
+                    requested_key is not None
+                    and str(record.get("connectionKey") or "").startswith("0-")
+                ):
+                    record["connectionKey"] = requested_key
+                record["health"] = "unknown"
+                record["lastCheckedAt"] = checked_at
+                record["modelVerifiedAt"] = None
+                record["detail"] = (
+                    "Waiting for browser sign-in" if provider_id == "openai"
+                    else "Waiting for local API key"
+                )
+            self._write_locked(state)
+            return self._public_status_locked(state)
+
+    def select_for_work(self) -> dict[str, Any]:
+        """Probe connections in order and return the first account that can work."""
+        with self._locked():
+            state = self._load_locked()
+            changed = False
+            for provider_id in self._ordered_from_state(state):
+                result = self._safe_probe(provider_id)
+                if result.authenticated and provider_id != "gemini" and not (
+                    provider_id == "anthropic" and has_provider_secret(provider_id)
+                ):
+                    result = self._safe_model_probe(provider_id)
+                record = state["connections"][provider_id]
+                record["health"] = result.health
+                record["lastCheckedAt"] = result.checked_at
+                record["detail"] = result.message
+                record["modelVerifiedAt"] = (
+                    result.checked_at if result.authenticated else None
+                )
+                changed = True
+                if result.authenticated:
+                    break
+            if changed:
+                self._write_locked(state)
+            return self._public_status_locked(state)
+
+    def disconnect(
+        self, provider_id: str, *, forget_secret: bool = False
+    ) -> dict[str, Any]:
         provider_id = _require_provider(provider_id)
         with self._locked():
             state = self._load_locked()
             if provider_id in state["connections"]:
                 del state["connections"][provider_id]
                 self._write_locked(state)
+            if forget_secret and provider_id in provider_secrets.PROVIDERS:
+                try:
+                    provider_secrets.delete(provider_id)
+                except provider_secrets.ProviderSecretError as exc:
+                    raise ProviderStateError("the local provider key is unsafe") from exc
             return self._public_status_locked(state)
 
     def refresh(self, provider_id: str | None = None) -> dict[str, Any]:
@@ -1100,7 +1258,9 @@ class ProviderRegistry:
                         verification_due = True
                 model_verified = False
                 if result.authenticated:
-                    if target == "gemini":
+                    if target == "gemini" or (
+                        target == "anthropic" and has_provider_secret(target)
+                    ):
                         # Gemini's health probe invokes the pinned model because
                         # its CLI has no account-status command.
                         model_verified = True
@@ -1109,6 +1269,7 @@ class ProviderRegistry:
                         model_verified = result.authenticated
                 record["health"] = result.health
                 record["lastCheckedAt"] = result.checked_at
+                record["detail"] = result.message
                 if model_verified:
                     record["modelVerifiedAt"] = result.checked_at
                 elif not result.authenticated:
@@ -1135,6 +1296,11 @@ class ProviderRegistry:
                 record["health"] = health
                 record["lastCheckedAt"] = _iso_now(self.clock)
                 record["modelVerifiedAt"] = None
+                record["detail"] = (
+                    "The provider rejected the saved login"
+                    if health == "authentication_required"
+                    else "The provider could not complete the request"
+                )
                 self._write_locked(state)
             return self._public_status_locked(state)
 
@@ -1157,12 +1323,22 @@ def connect(
     return _registry().connect(provider_id, connection_key=connection_key)
 
 
+def begin_connect(
+    provider_id: str, *, connection_key: str | None = None
+) -> dict[str, Any]:
+    return _registry().begin_connect(provider_id, connection_key=connection_key)
+
+
 def disconnect(provider_id: str) -> dict[str, Any]:
-    return _registry().disconnect(provider_id)
+    return _registry().disconnect(provider_id, forget_secret=True)
 
 
 def refresh(provider_id: str | None = None) -> dict[str, Any]:
     return _registry().refresh(provider_id)
+
+
+def select_for_work() -> dict[str, Any]:
+    return _registry().select_for_work()
 
 
 def mark_unhealthy(

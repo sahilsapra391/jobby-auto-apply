@@ -66,23 +66,26 @@ python3 scripts/publish.py --deploy --preview   # also deploy code to a throwawa
 
 A page hosted on Vercel cannot start a process on the user's device. Nothing about a published page grants it that. So no button runs anything directly. Each one **queues a request**, and the local watcher claims it.
 
-The Apply path uses two launchd services on one device:
+The Apply and Settings paths use three launchd services on one device:
 
 1. The button POSTs to `/api/apply`, behind the same password as the board. The function appends the application id to the control queue stored under one Cloudflare Workers KV key.
 2. `scripts/watch.py`, running as a launchd agent on the Mac, polls the control queue every three seconds and claims the request. Marks are still applied inline, and Scan starts its own detached runner.
-3. The watcher selects the first connected provider, saves that choice with the application, and submits an encrypted resume-and-cover-letter job. Cloudflare receives AES-256-GCM ciphertext plus an opaque job id, timestamps, state, and a fixed error code.
+3. The watcher live-checks connections in saved order, selects the first provider that can invoke its pinned model, saves that choice with the document job, and submits the encrypted resume-and-cover-letter request. Cloudflare receives AES-256-GCM ciphertext plus an opaque job id, timestamps, state, and a fixed error code.
 4. `scripts/document_worker.py --loop --local` claims one document job at a time on the same device. It runs the requested provider CLI with no browser, then accepts output only after the fixed content, provenance, layout, PDF, and cover-letter checks pass.
-5. The document client authenticates the verified result, validates the complete set before installing any file, and replaces each file atomically. It then starts `run_apply.py` with the same provider and the exact resume and cover letter. This second provider process attaches to the local browser, fills the form, and records a terminal outcome.
+5. The document client authenticates the verified result, validates the complete set before installing any file, and replaces each file atomically. It then starts `run_apply.py` with the currently healthy provider and the exact resume and cover letter. This stage boundary is where failover may hand work to another connected account.
+6. `ai.jobby.providers` independently polls the Settings control lane every two seconds. It opens login before any model probe and publishes Disconnect immediately, so application work cannot hold a connection click for minutes.
 
 A control click still reaches the watcher within a few seconds. Document generation is a separate serial local stage.
 
-### Provider selection is explicit and sticky
+### Provider selection is ordered and health-aware
 
-Jobby supports the native OpenAI Codex, Anthropic Claude Code, and Gemini CLIs. One `/settings` Connect click queues the provider for **Your Device**. Both local services share the provider registry and the vendor's native account store.
+Jobby supports the native OpenAI Codex, Anthropic Claude Code, and Gemini CLIs. One `/settings` Connect click queues the provider for **Your Device**. Both local services share the provider registry.
 
-Connect opens the provider's official browser authentication through its native CLI. OpenAI runs `codex login` for a ChatGPT account, Anthropic runs `claude auth login --claudeai` for a Claude subscription, and Gemini starts its Sign in with Google flow. The provider CLI owns the credential. Jobby records only connection order and health, and agent work counts against that account's subscription limits or usage quota.
+OpenAI Connect runs `codex login` for supported local ChatGPT subscription access. Anthropic Connect opens the Anthropic Console key page. Gemini Connect opens Google AI Studio. The API connectors collect the key in a private terminal, save it mode 0600 on Your Device, and validate the exact model before reporting Connected. Disconnect deletes that key. The keys never enter the board, queue, Vercel, or Cloudflare.
 
-The first provider connected remains active until it is disconnected. A health, authentication, or exact-model failure blocks new work and appears on the board. Jobby does not switch to another connected provider automatically. An existing document job also keeps the provider saved when it was created.
+The first healthy provider in connection order handles new work. A health, authentication, usage, or exact-model failure moves new work to the next healthy connection. If none work, the board shows the blocked banner. An existing document process keeps the provider saved when it was created, while the form stage and a retry may hand off.
+
+A consumer Gemini membership is not Gemini API authorization. Jobby therefore uses the official Google AI Studio API-key path for the Gemini CLI and its pinned model check.
 
 Every spawned task names a fixed model in its command: OpenAI uses `gpt-5.6-luna`, Anthropic uses `claude-sonnet-5`, and Gemini uses `gemini-3.7-flash`. Document, form, and scan tasks never inherit a CLI default.
 
@@ -235,7 +238,7 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin python3 scripts/toolpath.
 
 **Claiming a whole queue to process one item.** `queue.mjs claim` deletes every pending request. `run_apply` read the queue, ran the first item, then called it, destroying fourteen Apply clicks that had never been touched. Use `claim-one`. A worker that processes one item deletes one item.
 
-**A runner that cannot authenticate still eats the request.** This first happened when an expired `claude` OAuth token made every spawn exit instantly with a 401. Because the request was claimed first, one user click vanished per cycle. Runners now preflight the selected native CLI before claiming, the watcher will not spawn while its active provider is broken, and the reason appears as a banner on the board rather than in a log nobody opens. Another connected provider is not treated as a fallback.
+**A runner that cannot authenticate still eats the request.** This first happened when an expired `claude` OAuth token made every spawn exit instantly with a 401. Because the request was claimed first, one user click vanished per cycle. Runners now live-check connections in saved order before claiming and select the first one that can invoke its pinned model. If none work, the reason appears as a banner on the board rather than consuming the request.
 
 ```bash
 python3 scripts/agent.py --check

@@ -58,10 +58,12 @@ DEPLOY = REPO / "deploy"
 STORE = REPO / "scripts" / "store.py"
 LABEL = "ai.jobby.watch"
 DOCUMENT_LABEL = "ai.jobby.documents"
+PROVIDER_LABEL = "ai.jobby.providers"
 PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 DOCUMENT_PLIST = (
     Path.home() / "Library" / "LaunchAgents" / f"{DOCUMENT_LABEL}.plist"
 )
+PROVIDER_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{PROVIDER_LABEL}.plist"
 STATE_DIR = Path.home() / ".job-application"
 LOG_DIR = STATE_DIR / "logs"
 LOCK_DIR = STATE_DIR / "locks"
@@ -75,6 +77,12 @@ _last_provider_control_poll = 0.0
 # Refresh it every ten minutes even when no settings request is waiting.
 LOCAL_STATUS_HEARTBEAT_SECONDS = 10 * 60
 _last_local_status_publish = 0.0
+_local_status_dirty = False
+PROVIDER_SERVICE_INTERVAL_SECONDS = 2
+PROVIDER_SELECTION_RETRY_SECONDS = 30
+_provider_selection_key = None
+_provider_selection_status = None
+_provider_selection_retry_at = 0.0
 DOCUMENT_STATUS_INTERVAL_SECONDS = 30
 DOCUMENT_STATUS_STALE_SECONDS = 15 * 60
 _last_document_status_poll = 0.0
@@ -556,6 +564,7 @@ end run"""
 def process_local_provider_controls(q, now=None):
     """Apply settings requests addressed to this Mac and publish safe status."""
     global _last_provider_control_poll, _last_local_status_publish
+    global _local_status_dirty
     checked_at = time.monotonic() if now is None else float(now)
     forced = bool(q.get("providerLocal"))
     if not forced and checked_at - _last_provider_control_poll < PROVIDER_CONTROL_INTERVAL_SECONDS:
@@ -564,10 +573,14 @@ def process_local_provider_controls(q, now=None):
     claimed = claim_all("providerLocal/")
     q["providerLocal"] = []
     if not claimed:
-        if checked_at - _last_local_status_publish >= LOCAL_STATUS_HEARTBEAT_SECONDS:
+        if (
+            _local_status_dirty
+            or checked_at - _last_local_status_publish >= LOCAL_STATUS_HEARTBEAT_SECONDS
+        ):
             registry = providers.ProviderRegistry()
             if provider_login.publish_status(registry.public_status()):
                 _last_local_status_publish = checked_at
+                _local_status_dirty = False
         return {}
     registry = providers.ProviderRegistry()
     events = []
@@ -583,9 +596,9 @@ def process_local_provider_controls(q, now=None):
             if action == "connect":
                 connection_key = item.get("connectionKey")
                 status = (
-                    registry.connect(provider_id, connection_key=connection_key)
+                    registry.begin_connect(provider_id, connection_key=connection_key)
                     if connection_key is not None
-                    else registry.connect(provider_id)
+                    else registry.begin_connect(provider_id)
                 )
                 row = next(
                     entry for entry in status.get("providers", [])
@@ -597,7 +610,7 @@ def process_local_provider_controls(q, now=None):
                 events.append({"provider": provider_id, "action": action,
                                "loginOpened": opened})
             elif action == "disconnect":
-                status = registry.disconnect(provider_id)
+                status = registry.disconnect(provider_id, forget_secret=True)
                 events.append({"provider": provider_id, "action": action})
             else:
                 status = registry.refresh(provider_id)
@@ -609,10 +622,42 @@ def process_local_provider_controls(q, now=None):
     published = provider_login.publish_status(status)
     if published:
         _last_local_status_publish = checked_at
+        _local_status_dirty = False
+    else:
+        _local_status_dirty = True
     result = {"requests": events, "statusPublished": published}
     if rejected:
         result["rejected"] = rejected
     return {"providerLocal": result}
+
+
+def select_provider_for_work(apply_head=None, scan_requested=False, now=None):
+    """Run one ordered live selection per new work item, with bounded retries."""
+    global _provider_selection_key, _provider_selection_status
+    global _provider_selection_retry_at
+    checked_at = time.monotonic() if now is None else float(now)
+    application_id = (
+        apply_head.get("applicationId") if isinstance(apply_head, dict) else None
+    )
+    key = (application_id, bool(scan_requested))
+    has_work = bool(application_id or scan_requested)
+    should_probe = has_work and (
+        key != _provider_selection_key
+        or _provider_selection_status is None
+        or (
+            not _provider_selection_status.get("ready")
+            and checked_at >= _provider_selection_retry_at
+        )
+    )
+    if should_probe:
+        _provider_selection_status = providers.select_for_work()
+        _provider_selection_key = key
+        _provider_selection_retry_at = checked_at + PROVIDER_SELECTION_RETRY_SECONDS
+        provider_login.publish_status(_provider_selection_status)
+    elif not has_work:
+        _provider_selection_key = key
+        _provider_selection_status = providers.public_status()
+    return _provider_selection_status or providers.public_status()
 
 
 def document_provider_ready(provider_id, now=None):
@@ -660,8 +705,6 @@ def document_provider_ready(provider_id, now=None):
     )
     if not row or row.get("connected") is not True or row.get("status") != "connected":
         return False, f"{provider_id} is not connected for local document work"
-    if status.get("activeProvider") != provider_id:
-        return False, f"{provider_id} is not the local document worker default"
     return True, ""
 
 
@@ -1176,7 +1219,6 @@ def tick(force_publish=False):
     slot_changes = reconcile_browser_slots()
     if slot_changes["parked"] or slot_changes["released"]:
         changed["browserSlots"] = slot_changes
-    changed.update(process_local_provider_controls(q))
 
     # Drops first, and before anything is spawned. A drop can be the user
     # stopping a run that is happening right now, so acting on it late means the
@@ -1285,7 +1327,8 @@ def tick(force_publish=False):
         if aid and set_phase_if_changed(aid, "Queued", "Waiting for an earlier application"):
             changed.setdefault("queued", []).append(aid)
 
-    selected_provider = providers.active_provider()
+    provider_status = select_provider_for_work(apply_head, bool(q.get("scan")))
+    selected_provider = provider_status.get("activeProvider")
     document_state = None
     document_provider = None
     auth_block = None
@@ -1319,7 +1362,7 @@ def tick(force_publish=False):
             detail = "Connect an agent account for this Mac in Settings"
             if set_phase_if_changed(head_id, "Waiting for provider", detail):
                 changed.setdefault("queued", []).append(head_id)
-            auth_block = agent.blocked_reason("no agent provider is connected")
+            auth_block = agent.blocked_reason("no connected agent provider is healthy")
             changed["waitingOnProvider"] = head_id
         else:
             try:
@@ -1329,8 +1372,6 @@ def tick(force_publish=False):
             selected_provider_ready, local_why = agent.authenticated(
                 force=not bool(existing_document), provider=selected_provider
             )
-            if not existing_document:
-                provider_login.publish_status(providers.public_status())
             if not selected_provider_ready:
                 auth_block = agent.blocked_reason(local_why, selected_provider)
                 detail = "Reconnect the default provider on this Mac in Settings"
@@ -1371,23 +1412,23 @@ def tick(force_publish=False):
                                 "provider": document_provider,
                             }
 
-    # Scans use the first connected provider on this device. A document-ready
-    # application uses the provider saved with its job, even if Settings changed
-    # while the local worker was generating it. That prevents a silent switch.
+    # New work uses the first healthy connection. A document job keeps its saved
+    # provider while it is being generated, then the form stage can hand off to
+    # the currently healthy provider.
     scan_ok = False
     scan_provider = selected_provider
     if q.get("scan"):
         if scan_provider:
             scan_ok, why = agent.authenticated(provider=scan_provider)
         else:
-            scan_ok, why = False, "no agent provider is connected"
+            scan_ok, why = False, "no connected agent provider is healthy"
         if not scan_ok:
             auth_block = agent.blocked_reason(why, scan_provider)
             changed["waitingOnAuth"] = auth_block
 
     apply_ok = False
     if apply_head and document_job.is_ready(document_state):
-        apply_ok, why = agent.authenticated(provider=document_provider)
+        apply_ok, why = agent.authenticated(provider=selected_provider)
         if not apply_ok:
             auth_block = agent.blocked_reason(why, document_provider)
             changed["waitingOnAuth"] = auth_block
@@ -1447,7 +1488,7 @@ def tick(force_publish=False):
                     slot,
                     [sys.executable, str(REPO / "scripts" / "run_apply.py"),
                      "--id", head_id, "--slot", slot,
-                     "--provider", document_provider],
+                     "--provider", selected_provider],
                     f"{slot}.log",
                     note=head_id,
                 )
@@ -1461,7 +1502,7 @@ def tick(force_publish=False):
                 "slot": slot,
                 "pid": pid,
                 "applicationId": head_id,
-                "provider": document_provider,
+                "provider": selected_provider,
             })
 
     rescued = sweep_stuck({x.get("applicationId") for x in (q.get("apply") or [])})
@@ -1594,13 +1635,38 @@ def install(interval=DEFAULT_INTERVAL, python_executable=None):
             "NODE_OPTIONS": "--max-old-space-size=512",
         },
     }
+    provider_plist = {
+        "Label": PROVIDER_LABEL,
+        "ProgramArguments": [
+            service_python,
+            str(REPO / "scripts" / "watch.py"),
+            "--provider-controls",
+            "--interval",
+            str(PROVIDER_SERVICE_INTERVAL_SECONDS),
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "WorkingDirectory": str(REPO),
+        "StandardOutPath": str(LOG_DIR / "providers.log"),
+        "StandardErrorPath": str(LOG_DIR / "providers.err"),
+        "ProcessType": "Interactive",
+        "EnvironmentVariables": {
+            "PATH": toolpath.search_path(),
+            "HOME": str(Path.home()),
+        },
+    }
     PLIST.write_bytes(plistlib.dumps(watcher_plist))
     DOCUMENT_PLIST.write_bytes(plistlib.dumps(document_plist))
-    for path in (PLIST, DOCUMENT_PLIST):
+    PROVIDER_PLIST.write_bytes(plistlib.dumps(provider_plist))
+    for path in (PLIST, DOCUMENT_PLIST, PROVIDER_PLIST):
         run(["launchctl", "unload", str(path)])
     watcher_loaded = run(["launchctl", "load", str(PLIST)])
     documents_loaded = run(["launchctl", "load", str(DOCUMENT_PLIST)])
-    ok = watcher_loaded.returncode == 0 and documents_loaded.returncode == 0
+    providers_loaded = run(["launchctl", "load", str(PROVIDER_PLIST)])
+    ok = all(
+        result.returncode == 0
+        for result in (watcher_loaded, documents_loaded, providers_loaded)
+    )
     print(json.dumps({
         "installed": ok,
         "services": {
@@ -1609,11 +1675,21 @@ def install(interval=DEFAULT_INTERVAL, python_executable=None):
                 "label": DOCUMENT_LABEL,
                 "plist": str(DOCUMENT_PLIST),
             },
+            "providers": {
+                "label": PROVIDER_LABEL,
+                "plist": str(PROVIDER_PLIST),
+                "intervalSeconds": PROVIDER_SERVICE_INTERVAL_SECONDS,
+            },
         },
         "intervalSeconds": interval,
         "log": str(LOG_DIR / "watch.log"),
         "error": (
-            (watcher_loaded.stderr or documents_loaded.stderr or "").strip()[:200]
+            (
+                watcher_loaded.stderr
+                or documents_loaded.stderr
+                or providers_loaded.stderr
+                or ""
+            ).strip()[:200]
             or None
         ),
     }, indent=2))
@@ -1621,7 +1697,7 @@ def install(interval=DEFAULT_INTERVAL, python_executable=None):
 
 
 def uninstall():
-    for path in (PLIST, DOCUMENT_PLIST):
+    for path in (PLIST, DOCUMENT_PLIST, PROVIDER_PLIST):
         run(["launchctl", "unload", str(path)])
         if path.exists():
             path.unlink()
@@ -1636,6 +1712,7 @@ def main():
     ap.add_argument("--interval", type=int, default=0)
     ap.add_argument("--install", action="store_true")
     ap.add_argument("--uninstall", action="store_true")
+    ap.add_argument("--provider-controls", action="store_true")
     ap.add_argument(
         "--service-python",
         help="absolute Python executable for launchd; later installs retain it",
@@ -1649,6 +1726,34 @@ def main():
     if args.status:
         print(json.dumps(status(), indent=2, sort_keys=True))
         return 0
+
+    if args.provider_controls:
+        interval = args.interval or PROVIDER_SERVICE_INTERVAL_SECONDS
+        failures = 0
+        while True:
+            try:
+                result = process_local_provider_controls(
+                    {"providerLocal": ["poll"]}
+                )
+                if result:
+                    print(f"{now_stamp()} {json.dumps(result, sort_keys=True)}", flush=True)
+                failures = 0
+            except (TickError, subprocess.TimeoutExpired) as exc:
+                failures += 1
+                if failures <= 3 or failures % 30 == 0:
+                    print(
+                        f"{now_stamp()} provider control error: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception as exc:
+                failures += 1
+                print(
+                    f"{now_stamp()} provider control error: {exc!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            time.sleep(interval)
 
     if args.once or not args.interval:
         ok, holder = single_watcher()

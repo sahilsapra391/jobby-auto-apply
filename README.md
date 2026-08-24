@@ -120,17 +120,39 @@ Use `python3 scripts/worker_key.py set-healthchecks https://hc-ping.com/<uuid>`
 to replace the ping URL atomically without printing it or changing the worker
 key.
 
-Open `/settings` on the board and connect one or more providers. The first connected provider
-stays active until you disconnect it. Resume tailoring, cover-letter creation, scans, and form
-filling all use that provider on Your Device. Credentials remain in the provider CLI's native
-account store. Connect opens the provider CLI's official browser login. OpenAI uses the ChatGPT
-account flow, Anthropic explicitly uses the Claude subscription flow, and Gemini uses Sign in
-with Google. Work counts against that account's subscription limits or usage quota. Jobby stores
-only connection order, health, and exact-model verification time.
+Open `/settings` on the board and connect one or more providers. Before new work starts, Jobby
+checks connections in their saved order and selects the first account that can invoke its exact
+pinned model. A failed login, exhausted account, or unavailable model hands new work to the next
+healthy connection. A document process already running keeps its provider, while the later form
+stage and retries may use the newly selected provider. OpenAI uses the local Codex ChatGPT login.
+Anthropic and Gemini use API keys saved in owner-only files on Your Device. The keys never enter
+the dashboard, Vercel, or Cloudflare, and Disconnect removes the matching local key. Jobby's
+shared registry stores only connection order, health, a safe diagnostic, and exact-model
+verification time.
 Every run uses a fixed model: `gpt-5.6-luna` for OpenAI, `claude-sonnet-5` for Anthropic, and
 `gemini-3.7-flash` for Gemini. Jobby never inherits a provider CLI's changing default model.
-If the requested model is unavailable or Gemini reports a different served model, the connection
-fails closed. Jobby does not silently switch to another connected provider.
+If no connection can invoke its requested model, the connection set fails closed and the board
+shows a red blocked banner.
+
+`scripts/watch.py --install` installs three local services. `ai.jobby.providers` owns the Settings
+control lane and checks it every two seconds, so Connect and Disconnect never wait behind resume,
+scan, or application probes. The Settings page paints the pending state immediately and polls once
+per second until the local status confirms the change. `ai.jobby.watch` owns orchestration, and
+`ai.jobby.documents` owns serial resume and cover-letter generation.
+
+Codex document jobs use `--output-schema`, with OpenAI's required-property rules represented by
+nullable inheritance fields that trusted Python removes before validation. Resume rewrites are
+length-bounded against the original layout. The integrity gate also rejects exact or near-duplicate
+bullets, changed numeric facts and versions, lost source meaning, bullet-count drift, and rewrites
+that grow beyond a keyword-level edit. Luna cover-letter paragraphs are capped for the verified
+one-page template. On macOS, PDF rendering uses the original headless Chrome profile path;
+the constrained low-memory private profile is Linux-only. Every accepted result still passes the
+same ATS provenance, resume geometry, PDF, cover-letter completeness, and street-address gates.
+
+OpenAI Connect runs the supported `codex login` browser flow for local subscription access.
+Anthropic Connect opens the Anthropic Console key page, and Gemini Connect opens Google AI Studio.
+Each also opens a private terminal prompt for the key and validates the exact pinned model before
+the card becomes Connected. A consumer Claude or Gemini membership is not treated as API access.
 
 Home and Settings appear as two centred pills in the top app bar, between the Jobby logo and the
 theme control. Home is the full application dashboard. Settings owns the three provider
