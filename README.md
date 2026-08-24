@@ -216,6 +216,11 @@ connector groups are tracked in
 The registry grows during every ingest. Any normalized sighting that contains a
 real ATS URL can add or complete that employer's tenant record even when the job
 itself fails today's search gate. Aggregator URLs never become tenant evidence.
+Workable direct-posting URLs are also excluded from tenant discovery because
+`apply.workable.com/j/<job-id>` does not contain the employer's board slug.
+Curated, live-verified tenants outrank learned records, and invalid learned
+tokens are discarded with an explicit registry status rather than retried on
+every sweep.
 The fifty explicitly requested ATS families have a machine-checked accounting
 contract in `scripts/sources_registry.py`; connected, planned and blocked are
 all visible states, while absence is a test failure.
@@ -225,6 +230,12 @@ those retries, a per-sweep circuit breaker prevents every tenant on that host
 from being hammered. A 404 stays tenant-specific and does not open the circuit.
 Failures remain visible in the scan report, while earlier stored sightings stay
 in the pool.
+
+The production-registry repair on 2026-08-24 exercised Workable, Workday,
+Pinpoint, Teamtailor, JazzHR, Oracle Recruiting Cloud and Gem from an isolated
+copy of the store. Seven requests returned 19 bounded postings with no skipped
+channel and no connector error. The current search admitted three and visibly
+gated the other sixteen by age, keywords or country.
 
 Aggregator access follows the same honesty rule. Tsenta is planned pending an
 authorized discovery-feed API. Simplify and Wellfound prohibit the collection

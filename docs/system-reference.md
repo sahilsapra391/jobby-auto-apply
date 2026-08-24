@@ -550,6 +550,16 @@ Every ingest also learns verified ATS tenants from normalized source URLs before
 search gating. An irrelevant posting can therefore expand future whole-board
 coverage. Aggregator URLs never become guessed tenant tokens.
 
+A direct Workable posting is a special case: the public path
+`apply.workable.com/j/<job-id>` contains no tenant slug. An earlier parser read
+the literal path segment `j` as the tenant and caused every Workable board to
+fail. Tenant discovery now rejects that path, drops existing invalid `j` tokens
+with a visible unresolved status, and lets the live-verified seed pack repair
+known boards. Verified seed evidence also outranks later learned evidence, so a
+weak sighting cannot replace a working tenant. Workday and Oracle seeds carry
+their verified public origin and career-site path because their tokens alone
+are insufficient.
+
 ### One job description, one record
 
 A single posting is routinely syndicated to Greenhouse, Adzuna and LinkedIn
