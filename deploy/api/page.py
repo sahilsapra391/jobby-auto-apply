@@ -138,15 +138,22 @@ class handler(BaseHTTPRequestHandler):
             return
         try:
             state, generated_at = _state()
-            page = dashboard.build(state, _display_time(generated_at)).encode("utf-8")
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 message = b"No board state has been published yet.\n"
                 self._send(503, message, "text/plain; charset=utf-8")
                 return
+            print(json.dumps({"event": "board_state_read_failed", "errorType": type(error).__name__}))
             self._send(502, b"The board state could not be read.\n", "text/plain; charset=utf-8")
             return
-        except (OSError, ValueError, json.JSONDecodeError, binascii.Error, zlib.error):
+        except (OSError, ValueError, json.JSONDecodeError, binascii.Error, zlib.error) as error:
+            print(json.dumps({"event": "board_state_read_failed", "errorType": type(error).__name__}))
+            self._send(502, b"The board state could not be read.\n", "text/plain; charset=utf-8")
+            return
+        try:
+            page = dashboard.build(state, _display_time(generated_at)).encode("utf-8")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(json.dumps({"event": "board_render_failed", "errorType": type(error).__name__}))
             self._send(502, b"The board state could not be rendered.\n", "text/plain; charset=utf-8")
             return
         self._send(
