@@ -602,6 +602,11 @@ def remove_unsupported_overrides(
         tokens = ats_match.tokens(text)
         if any(ats_match.contains(tokens, term) for term in terms):
             overrides.pop(key, None)
+    # A matched phrase can span two rendered sections. In that rare case no
+    # single group contains the whole phrase, so fall back to the complete base
+    # resume rather than returning the same invalid draft to the validator.
+    if overrides == generated.get("resumeOverrides") and overrides:
+        clean["resumeOverrides"] = {}
     return clean
 
 
