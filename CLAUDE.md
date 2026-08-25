@@ -162,6 +162,36 @@ SSO (`all_except_custom_domains`), so only `jobby.fyi` answers a scripted
 request. `vercel logs <deployment-url>` returns the function's own stdout,
 which is where `board_render_failed` names the exception type.
 
+## Keeping the renderer and the published state together
+
+`.github/workflows/checks.yml` runs on every pull request (opened, synchronized,
+reopened) and on every push to main. It builds on Python 3.12, the version
+Vercel uses, and it fails the PR when `scripts/sync_vercel_renderer.py` produces
+any change under `deploy/renderer/` or `deploy/assets/`. That is the check that
+would have caught both of the outages: the three commits of UI work that never
+reached the board, and the favicon the bundle read but did not carry. It is
+scoped to those two generated directories on purpose, because the rest of
+`deploy/` is hand-written and failing a PR for editing `api/page.py` would only
+teach everyone to ignore the check.
+
+The Python step runs every test module except `test_resume_pdf` and
+`test_resume_build`, which render the real base resume out of
+`~/.job-application` and need a local Chrome. Exclusions are listed rather than
+inclusions, so a new test file is covered the moment it is added.
+
+A renderer fingerprint cannot be made to agree everywhere. There is one
+`jobby:board-state` and many live deployments, and every open PR gets a preview
+whose renderer hashes differently from main's, while the laptop can only stamp
+the branch it is standing on. So `deploy/api/page.py` measures drift before the
+render and acts on it only after a render actually failed: a working preview
+serves the board and reports both hashes in `X-Jobby-Renderer-Fingerprint` and
+`X-Jobby-State-Fingerprint`, and a failed render under drift returns the 503
+saying which half is behind instead of the bare "could not be rendered". Do not
+restore the pre-emptive gate; it 503s every preview permanently, which is the
+one thing previews exist to prevent. `rendererSchemaVersion` is what guards the
+shape of the state itself, and it is the thing to increment when that shape
+changes.
+
 ## Health monitoring
 
 The private `HEALTHCHECKS_URL` belongs in
