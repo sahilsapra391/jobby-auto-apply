@@ -549,6 +549,117 @@ def refresh_locations(jobs):
     return jobs, filled
 
 
+# A board that legitimately empties would look identical to a board that
+# failed, so a single employer is never allowed to close more than this share
+# of what we hold for it in one sweep. Above it, the sweep says so and changes
+# nothing. Chosen high because a real hiring freeze does happen; the point is
+# to catch the fetch that returned two jobs instead of two hundred.
+MAX_CLOSED_SHARE = 0.7
+
+# How long a closed job stays in the pool as a tombstone. It is not kept to be
+# shown; Found is `new` only. It is kept so a board that drops a posting for one
+# sweep and relists it the next brings the same record back rather than minting
+# a fresh one with today's firstSeenAt. A week is longer than any flicker and
+# far shorter than the cap horizon.
+CLOSED_TOMBSTONE_DAYS = 7
+
+# Only these listings are complete enough for absence to mean anything. An
+# employer's own board is the full set of roles it has open, so a posting
+# missing from it is a posting that was taken down. An aggregator page is a
+# search result: partial by design, paginated, and ranked. A job missing from
+# one has most likely just fallen off the page we asked for.
+CLOSEABLE_CLASSES = frozenset(("ats", "careers"))
+MIN_BOARD_FOR_SHARE_CHECK = 5
+
+
+def close_missing(jobs, seen, at=None, norm=None):
+    """Expire jobs their own board has stopped listing. Returns (jobs, report).
+
+    `seen` maps (source, normalised company) to the set of job ids that board
+    returned this sweep, keyed with the same `norm` passed here. A stored job under a key that WAS fetched, and whose id is not
+    in what came back, is closed: the employer took it down.
+
+    Absence from the listing is the signal, not the posting URL's status code.
+    Greenhouse answers a closed posting with HTTP 200 and the board index —
+    title "Jobs at Vercel" — so a liveness check on the link calls a dead job
+    alive. The board listing is the only thing that actually knows.
+
+    Three brakes, because the failure mode here is mass deletion:
+
+    A key absent from `seen` is untouched. A board that 304'd, errored, or was
+    not fetched this run contributes nothing, and silence must never read as
+    "everything closed".
+
+    `applied` and `passed` are terminal and are never reopened by this. What
+    the user did with a job outlives the employer taking it down; it stays in
+    Submitted, In flight and Needs you exactly as it was.
+
+    Only jobs whose best sighting is an employer board are eligible at all. An
+    aggregator result page is partial by construction and absence from it is
+    not evidence of anything.
+
+    And no single board may close more than MAX_CLOSED_SHARE of what we hold
+    for it. A truncated fetch looks exactly like a mass closure, and the
+    difference matters more than the handful of stale cards it might leave.
+    """
+    at = at or datetime.now(timezone.utc)
+    stamp = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    closed, refused = [], []
+
+    # The company half of the key has to be normalised the same way the sweep
+    # normalised it, or nothing matches and this closes nothing forever. The
+    # sweep's normaliser carries its alias map and lives in `identity`, which
+    # imports this module, so it is passed in rather than imported.
+    norm = norm or (lambda name: (name or "").strip().casefold())
+
+    held = {}
+    for job_id, job in jobs.items():
+        if job.get("state") not in ("new", "watched"):
+            continue
+        if _class_of(job) not in CLOSEABLE_CLASSES:
+            continue
+        key = (job.get("canonicalSource"), norm(job.get("company")))
+        if key in seen:
+            held.setdefault(key, []).append(job_id)
+
+    for key, ids in held.items():
+        missing = [job_id for job_id in ids if job_id not in seen[key]]
+        if not missing:
+            continue
+        share = len(missing) / len(ids)
+        if len(ids) >= MIN_BOARD_FOR_SHARE_CHECK and share > MAX_CLOSED_SHARE:
+            refused.append({"source": key[0], "company": key[1],
+                            "held": len(ids), "wouldClose": len(missing),
+                            "why": "more than %d%% of one board at once; treating "
+                                   "this as a bad fetch rather than a mass closure"
+                                   % int(MAX_CLOSED_SHARE * 100)})
+            continue
+        for job_id in missing:
+            job = jobs[job_id]
+            was = job.get("state")
+            jobs[job_id] = transition(job, "expired")
+            jobs[job_id]["closedAt"] = stamp
+            closed.append({"id": job_id, "company": job.get("company"),
+                           "title": job.get("title"), "wasState": was})
+
+    return jobs, {"closed": closed, "refused": refused}
+
+
+def reopen(job):
+    """A closed job the board is listing again. Returns (job, reopened).
+
+    Only from `expired`, and only ever back to `new`. A job that closed while
+    watched had its watch session deleted when it closed, so restoring
+    `watched` would leave a record the Watching tab cannot show. Found is where
+    a live posting with no session belongs, and the user can watch it again.
+    """
+    if job.get("state") != "expired":
+        return job, False
+    job = transition(job, "new")
+    job.pop("closedAt", None)
+    return job, True
+
+
 def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None,
           posted_ceiling_days=None):
     """Drop unacted-on jobs that are stale or over the cap. Returns (jobs, dropped).
@@ -586,6 +697,19 @@ def prune(jobs, cap=STORED_CAP, max_age_days=NEW_MAX_AGE_DAYS, at=None,
                 del jobs[job_id]
                 dropped.append({"id": job_id,
                                 "why": f"posted over {posted_ceiling_days:g} days ago"})
+
+    # Closed jobs are reaped on their own clock. They have to be: the cap below
+    # measures the whole pool but may only evict `new` records, so tombstones
+    # left to accumulate would push live postings out of the board instead.
+    closed_cutoff = at - timedelta(days=CLOSED_TOMBSTONE_DAYS)
+    for job_id, job in list(jobs.items()):
+        if job.get("state") != "expired":
+            continue
+        closed_at = parse_stamp(job.get("closedAt")) or parse_stamp(job.get("lastSeenAt"))
+        if closed_at is None or closed_at < closed_cutoff:
+            del jobs[job_id]
+            dropped.append({"id": job_id,
+                            "why": f"closed over {CLOSED_TOMBSTONE_DAYS} days ago"})
 
     if cap is not None:
         newish = [(job_id, job) for job_id, job in jobs.items() if job.get("state") == "new"]

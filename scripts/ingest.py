@@ -269,8 +269,16 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         settings=None, publish=False):
     started = time.time()
     now = now or datetime.now(timezone.utc)
+    # (source, company) -> ids that board returned this sweep. Feeds
+    # close_missing once every channel has run.
+    seen_by_board = {}
+
+    def _norm_company(name):
+        return identity.norm_company(name, index.alias_map)
+
     report = {
         "at": jobs_store.now_stamp(), "tier": "1", "found": 0, "kept": 0,
+        "reopened": 0,
         "deduped": 0, "gatedOut": 0, "byChannel": {}, "channelsSkipped": [],
         "errors": [], "gatedOutBy": {}, "requests": 0, "pruned": 0,
         "datesRefreshed": 0,
@@ -398,6 +406,16 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
                 kept += 1
                 report["kept"] += 1
             index.add(match_id, jobs[match_id])
+            # What this board still lists, so anything we hold for it that did
+            # not come back can be recognised as taken down. Keyed on the
+            # posting's own source rather than the channel, because a board
+            # reached through two channels must not look half-empty in either.
+            jobs[match_id], reopened = jobs_store.reopen(jobs[match_id])
+            if reopened:
+                report["reopened"] += 1
+            seen_by_board.setdefault(
+                (posting.get("canonicalSource"), _norm_company(posting.get("company"))),
+                set()).add(match_id)
 
         report["byChannel"][name] = {"status": "ok", "found": found, "kept": kept,
                                      "why": result.get("reason") or ""}
@@ -417,6 +435,20 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # board has not changed since they were stored.
     jobs, backfilled = jobs_store.refresh_locations(jobs)
     report["locationsBackfilled"] = backfilled
+
+    # Jobs whose own board has stopped listing them. Only on a complete sweep:
+    # `limit` truncates every channel, so under it the postings that did not
+    # arrive are the ones we chose not to ask for, and treating them as closed
+    # would empty the board. Same for a dry run, which must change nothing.
+    if limit is None and not dry_run:
+        jobs, closure = jobs_store.close_missing(jobs, seen_by_board, at=now,
+                                                 norm=_norm_company)
+        report["closed"] = len(closure["closed"])
+        report["closedFrom"] = _closed_by_state(closure["closed"])
+        if closure["refused"]:
+            report["closureRefused"] = closure["refused"]
+    else:
+        report["closed"] = 0
 
     max_age = search_config.posted_within_days(config) or jobs_store.NEW_MAX_AGE_DAYS
     jobs, dropped = jobs_store.prune(jobs, cap=config.get("storedCap"),
@@ -497,6 +529,20 @@ def add_postings(root, postings, now=None):
     jobs_store.save_jobs(root, jobs)
     report["storedTotal"] = len(jobs)
     return report
+
+
+def _closed_by_state(closed):
+    """How many left Found and how many left Watching, named separately.
+
+    They are different losses. A card leaving Found is noise going away; a card
+    leaving Watching is something the user chose that has been taken from them,
+    and the board should be able to say which happened.
+    """
+    out = {}
+    for row in closed:
+        was = row.get("wasState") or "new"
+        out[was] = out.get(was, 0) + 1
+    return out
 
 
 def tombstone_index(passed):
