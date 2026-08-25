@@ -132,6 +132,11 @@ def publishable_state(state):
     stays identical between local and deployed renders.
     """
     roles = state.get("roles") or {}
+    meta = dict(state.get("meta") or {})
+    jobs, pool_total, pool_census = publishable_jobs(
+        state.get("jobs") or {}, state.get("searchConfig"))
+    meta["poolTotal"] = pool_total
+    meta["poolCensus"] = pool_census
     return {
         "profile": {"firstName": (state.get("profile") or {}).get("firstName")},
         "sessions": _public_records(state.get("sessions") or [], SESSION_PUBLIC_FIELDS),
@@ -142,11 +147,50 @@ def publishable_state(state):
             for key, record in roles.items()
             if isinstance(record, dict)
         },
-        "meta": state.get("meta") or {},
-        "jobs": state.get("jobs") or {},
+        "meta": meta,
+        "jobs": jobs,
         "searchConfig": state.get("searchConfig"),
         "providers": settings_panel.public_payload(state.get("providers") or {}),
     }
+
+
+def publishable_jobs(jobs, config):
+    """(jobs, total, census) — the slice the board can draw, and the pool behind it.
+
+    The store holds tens of thousands of postings and KV will not: the envelope
+    has to decompress under MAX_STATE_BYTES, and Cloudflare refuses a value
+    over 25 MB. found_lane embeds at most EMBED_CAP of them in the page in any
+    case, so publishing the whole pool meant shipping tens of megabytes to be
+    discarded at render. At 2.8 KB a record a fifty-thousand-job store is about
+    134 MB of state, which is not a tuning problem, it is four times the
+    ceiling.
+
+    So the selection the renderer would have made runs here instead, and the
+    true total and per-country census travel beside it. panel() and payload()
+    already take those as separate arguments, because the footer has always
+    been meant to say how much of the pool you are looking at rather than
+    quoting the size of the slice back at you.
+
+    Records the user acted on ride along whatever their state. There are a
+    couple of hundred, they never age out, and they are where Watching and
+    Submitted find their company marks, so dropping them would blank a logo.
+    """
+    selected, total = found_lane.select(jobs, config)
+    census = found_lane.pool_census(jobs)
+    keep = {str(job.get("id") or "") for job in selected}
+    # Filtered in the pool's own order rather than rebuilt selection-first.
+    # build() reads company marks by walking jobs and taking the first record
+    # it sees for each employer, so the iteration order decides which posting
+    # supplies each logo. Reordering here silently moved Datadog's mark from
+    # careers.datadoghq.com to learn.datadoghq.com and Duolingo's to a blog
+    # subdomain: the same board, drawn with different marks, for no reason a
+    # reader could see.
+    out = {}
+    for job_id, job in (jobs or {}).items():
+        key = str(job_id)
+        if (job.get("state") or "new") != "new" or key in keep:
+            out[key] = job
+    return out, total, census
 
 
 def esc(v):
@@ -243,6 +287,17 @@ def build(state, generated):
     search_config_saved = state.get("searchConfig")
     found, found_total = found_lane.select(state.get("jobs") or {}, search_config_saved)
     found_census = found_lane.pool_census(state.get("jobs") or {})
+    # A published state carries the slice the board can draw plus the size of
+    # the pool behind it, because the whole pool no longer fits in KV. Prefer
+    # the carried numbers: the Found count and the location picker are counting
+    # the pool, and recomputing them from the slice would quote the slice back.
+    # Larger-only, so a stale or truncated field can never shrink a real count.
+    carried_total = (state.get("meta") or {}).get("poolTotal")
+    if isinstance(carried_total, int) and carried_total > found_total:
+        found_total = carried_total
+    carried_census = (state.get("meta") or {}).get("poolCensus")
+    if isinstance(carried_census, dict) and carried_census:
+        found_census = carried_census
 
     blocked = [s for s in sessions if s.get("status") in ("active", "review")]
     blocked.sort(key=lambda s: len(s.get("pendingFields", [])))

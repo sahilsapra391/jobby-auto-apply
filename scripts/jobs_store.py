@@ -41,7 +41,18 @@ import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 # aggregator APIs raise volume by an order of magnitude over agent sweeps, and
 # an unbounded jobs.json eventually makes every ingest read slower than the
 # fetch that fed it.
-STORED_CAP = 3000
+#
+# Raised from 3000 on 2026-08-25, on Sahil's call, after the store was found
+# pinned exactly at the old cap: 3000 held, 316 companies represented against
+# 546 known. A ring buffer at its ceiling is not a pool, it is a window, and
+# every sweep was evicting to make room. The ingest cost is real and was
+# accepted: jobs.json is read and rewritten whole, so at 2.8 KB a record this
+# is a ~140 MB file at the ceiling rather than ~8 MB.
+#
+# The board does not carry this. dashboard.publishable_jobs publishes the
+# EMBED_CAP slice plus the true totals, because KV tops out long before this
+# number does.
+STORED_CAP = 50000
 # A `new` job nobody has acted on is stale well before it is dead, and the
 # posting behind it usually is too.
 NEW_MAX_AGE_DAYS = 30
