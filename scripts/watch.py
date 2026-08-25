@@ -37,6 +37,7 @@ import json
 import os
 import plistlib
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -122,9 +123,59 @@ def now_stamp():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def run(args, **kw):
-    return subprocess.run(args, capture_output=True, text=True,
-                          env=toolpath.enriched_env(), **kw)
+# The tick is single-threaded and runs every few seconds, so no synchronous
+# helper it shells out to has any business taking minutes. One that does is
+# hung, and it takes the queue, Apply and document polling down with it. The
+# queue.mjs calls in this file have carried timeout=60 for exactly this reason;
+# `run` was the one that never got it, which is how publishing froze the whole
+# watcher for nineteen minutes on 2026-08-25 while an Apply sat waiting.
+SUBPROCESS_TIMEOUT_SECONDS = 300
+# Publishing is the one that actually hung. sync_board reaches Cloudflare KV and
+# Vercel, so it is slower than anything local and still nowhere near this.
+PUBLISH_TIMEOUT_SECONDS = 120
+# 124 is what `timeout(1)` returns, and it cannot collide with a real exit code
+# from any helper here.
+TIMED_OUT = 124
+
+
+def _kill_group(proc):
+    """Kill the helper and everything it started."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+
+
+def run(args, timeout=SUBPROCESS_TIMEOUT_SECONDS, **kw):
+    """Run a helper to completion, but never forever.
+
+    `subprocess.run(timeout=...)` kills the direct child and leaves that child's
+    own children running, which is the wrong shape here: what hung was the node
+    process `sync_board.py` spawns, not `sync_board.py` itself. Killing only the
+    parent leaves the hung connection open and lets the next tick stack a second
+    one on top of it. So the helper gets its own process group and the whole
+    group goes.
+
+    A timeout comes back as a failed result rather than an exception. Every
+    caller already handles a non-zero return code, none of them expects to catch
+    anything from here, and a raise would turn one slow publish into a crashed
+    tick.
+    """
+    text_input = kw.pop("input", None)
+    kw.setdefault("env", toolpath.enriched_env())
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if text_input is not None else None,
+        text=True, start_new_session=True, **kw)
+    try:
+        out, err = proc.communicate(text_input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        out, err = proc.communicate()
+        return subprocess.CompletedProcess(
+            args, TIMED_OUT, out or "",
+            f"gave no result within {timeout:g}s and was killed")
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
 
 
 def store(args):
@@ -932,7 +983,8 @@ def publish():
         if since < MIN_DEPLOY_GAP_SECONDS:
             return {"published": False, "deferredForSeconds": int(MIN_DEPLOY_GAP_SECONDS - since),
                     "why": "too soon after the last deployment; it will go out on a later tick"}
-    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py")])
+    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
+            timeout=PUBLISH_TIMEOUT_SECONDS)
     try:
         out = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:
