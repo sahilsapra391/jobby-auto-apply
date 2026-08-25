@@ -850,6 +850,24 @@ def _prompt_sources(runtime: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def prompt_composition(sources: Mapping[str, Any]) -> dict[str, int]:
+    """Characters each section contributes to the document prompt.
+
+    Recorded, not acted on. One Gemini document generation measured 117,955
+    input tokens, which says prompt size is where the cost lever will be when
+    optimisation matters. Knowing which section carries it is what makes that
+    a decision rather than a guess later, and nothing here trims anything.
+    """
+    sizes = {}
+    for key, value in (sources or {}).items():
+        if isinstance(value, str):
+            sizes[key] = len(value)
+        else:
+            sizes[key] = len(
+                json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    return dict(sorted(sizes.items(), key=lambda item: -item[1]))
+
+
 def document_prompt(runtime: Mapping[str, Any]) -> str:
     """Build a complete inline data-to-JSON task with no file references."""
     sources = _prompt_sources(runtime)

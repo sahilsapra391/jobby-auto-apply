@@ -16,37 +16,56 @@
     "cache in the first place.",
     "",
     "To update: change the rates, change asOf, change ratesExpireOn, and record",
-    "where the number came from in source."
+    "where the number came from in source.",
+    "Keys are exact model ids as pinned in providers.MODEL_IDS, never family prefixes. The table carried gemini-3.7-flash while the pin was gemini-3.7-flash-medium, so every Gemini row costed as null and nothing said so. provider_usage now records unpricedModel on a miss and runstats names it."
   ],
   "asOf": "2026-08-25",
   "currency": "USD",
   "unit": "per million tokens",
   "models": {
     "gpt-5.6-luna": {
-      "inputPerMTok": 0.20,
+      "inputPerMTok": 0.2,
       "cachedInputPerMTok": 0.02,
-      "cacheWritePerMTok": 0.20,
-      "outputPerMTok": 1.20,
+      "cacheWritePerMTok": 0.2,
+      "outputPerMTok": 1.2,
       "ratesExpireOn": "2026-11-30",
       "source": "OpenAI GPT-5.6 pricing, post 2026-07-30 reduction. Cached input bills at 10% of standard. Long-context requests bill higher ($0.40/$1.80) and are NOT modelled here, so a very large context run is under-estimated.",
       "note": "No announced expiry; ratesExpireOn is a review date, not a vendor deadline."
     },
     "claude-sonnet-5": {
-      "inputPerMTok": 2.00,
-      "cachedInputPerMTok": 0.20,
-      "cacheWritePerMTok": 2.50,
-      "outputPerMTok": 10.00,
+      "inputPerMTok": 2.0,
+      "cachedInputPerMTok": 0.2,
+      "cacheWritePerMTok": 2.5,
+      "outputPerMTok": 10.0,
       "ratesExpireOn": "2026-08-31",
       "source": "Anthropic published rates. Introductory pricing of $2.00/$10.00 runs through 2026-08-31; standard rates are $3.00/$15.00.",
       "note": "EXPIRES 2026-08-31. From 2026-09-01 set inputPerMTok 3.00, cachedInputPerMTok 0.30, cacheWritePerMTok 3.75, outputPerMTok 15.00. Cache multipliers are Anthropic's standard 0.1x read and 1.25x write applied to the base input rate; verify against the pricing page when updating."
     },
-    "gemini-3.7-flash": {
+    "gemini-3.7-flash-low": {
       "inputPerMTok": 0.75,
       "cachedInputPerMTok": 0.075,
       "cacheWritePerMTok": 0.75,
       "outputPerMTok": 3.75,
       "ratesExpireOn": "2026-12-31",
-      "source": "Google introductory pricing through 2026-12-31; standard rates from 2027-01-01 are $1.50/$7.50 with cached input at $0.15.",
+      "source": "Google introductory pricing through 2026-12-31; standard rates from 2027-01-01 are $1.50/$7.50 with cached input at $0.15. Named per effort tier: providers.MODEL_IDS pins gemini-3.7-flash-low and a family key does not match it.",
+      "note": "EXPIRES 2026-12-31. From 2027-01-01 double every rate here."
+    },
+    "gemini-3.7-flash-medium": {
+      "inputPerMTok": 0.75,
+      "cachedInputPerMTok": 0.075,
+      "cacheWritePerMTok": 0.75,
+      "outputPerMTok": 3.75,
+      "ratesExpireOn": "2026-12-31",
+      "source": "Google introductory pricing through 2026-12-31; standard rates from 2027-01-01 are $1.50/$7.50 with cached input at $0.15. Named per effort tier: providers.MODEL_IDS pins gemini-3.7-flash-medium and a family key does not match it.",
+      "note": "EXPIRES 2026-12-31. From 2027-01-01 double every rate here."
+    },
+    "gemini-3.7-flash-high": {
+      "inputPerMTok": 0.75,
+      "cachedInputPerMTok": 0.075,
+      "cacheWritePerMTok": 0.75,
+      "outputPerMTok": 3.75,
+      "ratesExpireOn": "2026-12-31",
+      "source": "Google introductory pricing through 2026-12-31; standard rates from 2027-01-01 are $1.50/$7.50 with cached input at $0.15. Named per effort tier: providers.MODEL_IDS pins gemini-3.7-flash-high and a family key does not match it.",
       "note": "EXPIRES 2026-12-31. From 2027-01-01 double every rate here."
     }
   }
