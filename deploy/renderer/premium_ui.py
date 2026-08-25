@@ -155,6 +155,8 @@ CSS = r"""
   .ui-separator::before { content:": "; }
 
   .jb-wide { width:auto; margin-left:0; margin-right:0; }
+  .jb-banner,.jb-ingest,.jb-probs,.jb-filters,.jb-addlink {
+    width:100%; max-width:1360px; margin-left:auto; margin-right:auto; }
   .jb-grid { --cols:1; gap:.8rem; }
   .jb-col { gap:.8rem; }
   .jb-banner,.jb-filters,.jb-addlink { border-radius:var(--radius); background:var(--card); }
