@@ -256,7 +256,55 @@ user's overlay row.
 ## 5. Corpus retention, which does not exist today
 
 This is the consequence of §3 that is easiest to miss and most likely to be
-found in production.
+found in production. It has already been found in production. What follows was
+predicted by this section in its first draft and then measured, and the
+measurement is worse than the prediction.
+
+### It is already happening, single-tenant
+
+Verified against the live store on 2026-08-25, sweep `2026-08-25T10:50:07Z`,
+cross-checked with a peer session that found it independently:
+
+| | |
+|---|---|
+| found | 22,324 |
+| gated out | 20,245 |
+| kept | 1,156 |
+| **pruned** | **1,156** |
+| stored total | 3,000 |
+
+Kept equals pruned exactly, and the total is pinned at `STORED_CAP`. **The job
+pool is a saturated ring buffer.** Every job admitted evicts one already there.
+
+It is worse than that number suggests, because `prune()` only drops records in
+state `new`, correctly, since a cap is not allowed to eat the user's decisions.
+Of the 3,000 stored, 2,856 are `new`, 74 `watched`, 64 `applied`, 6 `passed`. So
+all 1,156 evictions come out of the 2,856 jobs nobody has looked at yet: **about
+forty percent of the unseen pool is destroyed on every sweep.** A job found on
+Monday and not opened is gone before the user gets to it.
+
+Two other numbers from the same sweep matter. 18,457 of the 20,245 rejections
+(91.2%) were "posted more than 7 days ago", against a `postedWithin` of `7d` in
+`search-config.json`, which is a user-editable field and not a constant. Only 4
+records in 22,324 were rejected by `minScoreToKeep`. So the age window is doing
+essentially all of the filtering and the score threshold is doing none.
+
+For the record, the pool is 3,000 jobs across 546 companies today. The north
+star's "14,292 in the pool, 4,442 companies" appears to be a cumulative
+discovery count rather than what is stored, and that table should be corrected.
+
+### What this means
+
+The cheapest experiment available is a config change, not code: raise
+`postedWithin` and `storedCap`, re-run, re-measure. Both are already fields.
+Nobody should build connectors to pour more supply into a full bucket behind a
+91% age gate, and nobody should tune a score threshold that rejected four
+records out of twenty-two thousand.
+
+For the multi-tenant split the implication is sharper. The union-scope corpus in
+§3 is strictly larger than one user's, and the current cap is already destroying
+40% of the unseen pool per sweep at one user. Sizing the corpus cap is not a
+tuning exercise to do later; it is a precondition.
 
 The gate currently does double duty. It is a relevance filter, and it is the
 volume control on the stored pool. `jobs_store.STORED_CAP = 3000` and
@@ -827,7 +875,10 @@ a decision that is otherwise being made on vibes.
 6. **What deletion means for a submitted application.** §8. Documents and
    answers go; whether the tombstone stays is a policy choice that belongs in
    the privacy policy before it is code.
-7. **Size the corpus cap.** §5. Requires measuring union-scope volume, which
-   nobody has done.
+7. **Raise `postedWithin` and `storedCap`, then re-measure.** §5. The pool is a
+   saturated ring buffer destroying ~40% of the unseen jobs every sweep, and the
+   7-day window is doing 91% of all filtering. Both are config fields. This is
+   the cheapest experiment available and it blocks any judgement about whether
+   sourcing needs more connectors.
 8. **argon2 at m=19MiB in a Worker, or Skeptic's parameters in a Container.**
    §9. Stated with numbers there rather than as a preference.
