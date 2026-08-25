@@ -1138,8 +1138,20 @@ def validate_provider_content(
         letter = cover_letter.validate_content(letter_raw)
     except cover_letter.CoverLetterError as exc:
         raise ResultInvalid("coverLetter has an invalid shape") from exc
-    if letter["employer"] != company or letter["role"] != role:
-        raise ResultInvalid("coverLetter employer or role does not match the job")
+    # Against the request as validate_content would render it, not against the
+    # raw request. Both fields are assigned from the request two lines up, so
+    # the model's own values are already gone by the time this runs and no
+    # amount of drift can reach it. What it compared instead was the store's
+    # spacing against normalised spacing, and clean_line collapses runs of
+    # whitespace. Robinhood's title carries a double space, so the check could
+    # never pass for it: four runs across both providers died here. 68 of the
+    # 6,389 postings in the pool have a title or employer that normalises to
+    # something different, so this was 1.1% of every future promotion.
+    expected_employer = cover_letter.clean_line(company, "employer", 2, 160)
+    expected_role = cover_letter.clean_line(role, "role", 2, 180)
+    if letter["employer"] != expected_employer or letter["role"] != expected_role:
+        raise ResultInvalid(
+            "coverLetter employer or role does not match the job")
     return {"resumeOverrides": overrides, "coverLetter": letter}
 
 
