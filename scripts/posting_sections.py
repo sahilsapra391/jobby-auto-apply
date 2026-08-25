@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Split a posting body into the two sections a reader actually wants.
+
+Every applicant tracking system lets the employer write its own headings, so
+there is no schema to read. What there is, reliably, is a heading line followed
+by bullets, and a small vocabulary that employers draw those headings from.
+This finds the headings, decides which of the two buckets each belongs to, and
+returns the lines underneath.
+
+Two buckets, deliberately, because that is what the card shows:
+
+- `responsibilities`: what the job is. "Key Responsibilities", "What you'll do",
+  "The role", "Your impact", "Day to day".
+- `requirements`: what the candidate needs. "Skills & Qualifications", "What you
+  bring", "Minimum qualifications", "Requirements", "About you".
+
+Nothing is invented. A posting with no recognisable heading returns empty
+buckets rather than a guess, because a wrong "requirement" on a job board is
+worse than no requirement, and `extract.years_required` reads this to decide
+what a posting asks for.
+
+Standard library only.
+"""
+
+import argparse
+import json
+import re
+import sys
+
+# Headings are matched on their words, not on punctuation or case, because
+# employers write "Skills & Qualifications-", "SKILLS AND QUALIFICATIONS:" and
+# "Skills / Qualifications" for the same thing.
+RESPONSIBILITY_HEADINGS = (
+    "key responsibilities", "responsibilities", "what you will do",
+    "what you'll do", "what youll do", "what you will be doing",
+    "the role", "your role", "role overview", "about the role",
+    "your impact", "the impact you will have", "what you will own",
+    "what you'll own", "day to day", "day-to-day", "in this role",
+    "core responsibilities", "duties", "key duties", "what the job involves",
+    "how you will contribute", "what you will contribute", "the opportunity",
+    "job description", "position summary", "scope of the role",
+)
+REQUIREMENT_HEADINGS = (
+    "skills and qualifications", "skills & qualifications", "qualifications",
+    "minimum qualifications", "basic qualifications", "preferred qualifications",
+    "minimum requirements", "requirements", "what you bring",
+    "what you will bring", "what you'll bring", "what we are looking for",
+    "what we're looking for", "who you are", "about you", "your experience",
+    "experience required", "required experience", "required skills",
+    "desired skills", "skills required", "you have", "must have",
+    "what you need", "what you need to succeed", "ideal candidate",
+    "the ideal candidate", "we are looking for", "our requirements",
+    "candidate profile", "eligibility",
+)
+# Headings that end a section without starting one worth showing.
+CLOSING_HEADINGS = (
+    "why join us", "benefits", "perks", "compensation", "salary",
+    "what we offer", "our offer", "equal opportunity", "eeo",
+    "diversity", "how to apply", "about us", "about the company",
+    "our values", "next steps", "interview process", "location",
+    "nice to have", "bonus points",
+)
+
+MAX_HEADING_WORDS = 8
+# A heading line is short. A sentence that happens to start with "requirements"
+# is not a heading, and this is what tells them apart.
+MAX_HEADING_CHARS = 70
+
+
+def _words(line):
+    """A heading reduced to its words, so punctuation and case cannot matter.
+
+    Both sides go through this. Comparing a raw heading against a written-out
+    constant is how "Skills & Qualifications-" failed to match
+    "skills & qualifications": the ampersand becomes a space on one side only.
+    """
+    text = str(line or "").lower().replace("\u2019", "'").replace("\u2018", "'")
+    return " ".join(re.sub(r"[^a-z0-9']+", " ", text).split())
+
+
+def _normalise_all(headings):
+    return tuple(dict.fromkeys(_words(h) for h in headings if _words(h)))
+
+
+RESPONSIBILITY_HEADINGS = _normalise_all(RESPONSIBILITY_HEADINGS)
+REQUIREMENT_HEADINGS = _normalise_all(REQUIREMENT_HEADINGS)
+CLOSING_HEADINGS = _normalise_all(CLOSING_HEADINGS)
+
+
+def _looks_like_heading(line):
+    stripped = line.strip()
+    if not stripped or len(stripped) > MAX_HEADING_CHARS:
+        return False
+    if len(stripped.split()) > MAX_HEADING_WORDS:
+        return False
+    # A bullet is content, never a heading, even a short one.
+    return not re.match(r"^[-*•·●▪\d]+[.)\s]", stripped)
+
+
+def _classify(line):
+    """`responsibilities`, `requirements`, `closing`, or None."""
+    words = _words(line)
+    if not words:
+        return None
+    for name, headings in (("requirements", REQUIREMENT_HEADINGS),
+                           ("responsibilities", RESPONSIBILITY_HEADINGS),
+                           ("closing", CLOSING_HEADINGS)):
+        for heading in headings:
+            # Anchored at the start so "experience with requirements gathering"
+            # is not a requirements heading.
+            if words == heading or words.startswith(heading + " ") \
+                    or words.startswith(heading):
+                if len(words) <= len(heading) + 12:
+                    return name
+    return None
+
+
+def _clean(line):
+    text = line.strip()
+    text = re.sub(r"^[-*•·●▪]+\s*", "", text)
+    text = re.sub(r"^\d+[.)]\s*", "", text)
+    return " ".join(text.split())
+
+
+def split_sections(body):
+    """{"responsibilities": [str], "requirements": [str]} from a posting body."""
+    lines = str(body or "").replace("\r", "").split("\n")
+    buckets = {"responsibilities": [], "requirements": []}
+    current = None
+    for line in lines:
+        if _looks_like_heading(line):
+            kind = _classify(line)
+            if kind == "closing":
+                current = None
+                continue
+            if kind:
+                current = kind
+                continue
+            # An unrecognised heading ends the section it follows, rather than
+            # letting a "Why join us" written as "Life at Acme" leak into it.
+            if current and _words(line):
+                current = None
+                continue
+        if current:
+            text = _clean(line)
+            if text:
+                buckets[current].append(text)
+    return buckets
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Split a posting into sections.")
+    ap.add_argument("--text", required=True, help="the body, or - for stdin")
+    args = ap.parse_args()
+    body = sys.stdin.read() if args.text == "-" else args.text
+    print(json.dumps(split_sections(body), indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -246,34 +246,64 @@ async function handleCompanyLogo(request, requestUrl) {
     return text('Method not allowed.\n', 405, { allow: 'GET, HEAD' });
   }
   const source = trustedLogoSource(requestUrl.searchParams.get('src') || '');
-  const domain = String(requestUrl.searchParams.get('domain') || '').toLowerCase();
-  const safeDomain = /^[a-z0-9.-]{3,253}$/.test(domain)
-    && domain.includes('.')
-    && !domain.startsWith('.')
-    && !domain.endsWith('.')
-    && !domain.includes('..');
-  const target = source || (safeDomain
-    ? new URL(`https://www.google.com/s2/favicons?domain_url=https://${domain}&sz=128`)
-    : null);
-  if (!target) return text('No company logo.\n', 404);
-  try {
-    const upstream = await fetch(target, { redirect: 'follow' });
-    if (source && !trustedLogoSource(upstream.url)) return text('No company logo.\n', 404);
-    const type = (upstream.headers.get('content-type') || '').split(';')[0].toLowerCase();
-    if (!upstream.ok || !type.startsWith('image/')) return text('No company logo.\n', 404);
-    const bytes = await upstream.arrayBuffer();
-    if (!bytes.byteLength || bytes.byteLength > 750000) return text('No company logo.\n', 404);
-    return new Response(request.method === 'HEAD' ? null : bytes, {
-      status: 200,
-      headers: {
-        ...BASE_HEADERS,
-        'cache-control': 'private, max-age=86400',
-        'content-type': type,
-      },
-    });
-  } catch {
-    return text('No company logo.\n', 404);
+  const isSafeDomain = (d) => /^[a-z0-9.-]{3,253}$/.test(d)
+    && d.includes('.')
+    && !d.startsWith('.')
+    && !d.endsWith('.')
+    && !d.includes('..');
+
+  // company_logos.py sends one domain. A real employer domain off a direct
+  // posting URL arrives on its own; a name we derived arrives with alt=1,
+  // meaning try the other TLDs of the same label too. The list lives here
+  // rather than in the URL because it is a constant, and spelling it out per
+  // job put the Found payload over its page-weight cap.
+  const CANDIDATE_TLDS = ['.com', '.io', '.ai', '.co'];
+  const primary = String(requestUrl.searchParams.get('domain') || '').trim().toLowerCase();
+  const expand = requestUrl.searchParams.get('alt') === '1';
+  const domains = [];
+  if (isSafeDomain(primary)) {
+    domains.push(primary);
+    if (expand) {
+      const dot = primary.lastIndexOf('.');
+      const label = dot > 0 ? primary.slice(0, dot) : primary;
+      for (const tld of CANDIDATE_TLDS) {
+        const next = label + tld;
+        if (next !== primary && isSafeDomain(next)) domains.push(next);
+      }
+    }
   }
+
+  const targets = source
+    ? [source]
+    : domains.map((d) => new URL(
+        `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON` +
+        `&fallback_opts=TYPE,SIZE&url=https://${d}&size=128`));
+  if (!targets.length) return text('No company logo.\n', 404);
+
+  for (const target of targets) {
+    try {
+      const upstream = await fetch(target, { redirect: 'follow' });
+      if (source && !trustedLogoSource(upstream.url)) return text('No company logo.\n', 404);
+      const type = (upstream.headers.get('content-type') || '').split(';')[0].toLowerCase();
+      if (!upstream.ok || !type.startsWith('image/')) continue;
+      const bytes = await upstream.arrayBuffer();
+      // A favicon endpoint answers 404 for a domain it does not know, so a
+      // wrong guess costs a miss rather than showing a stranger's mark. The
+      // floor catches the handful of near-empty replies that are not an icon.
+      if (bytes.byteLength < 100 || bytes.byteLength > 750000) continue;
+      return new Response(request.method === 'HEAD' ? null : bytes, {
+        status: 200,
+        headers: {
+          ...BASE_HEADERS,
+          'cache-control': 'private, max-age=86400',
+          'content-type': type,
+        },
+      });
+    } catch {
+      // Try the next candidate rather than giving up on the company.
+    }
+  }
+  return text('No company logo.\n', 404);
 }
 
 export default {
@@ -334,6 +364,27 @@ export default {
 
     if (pathname === '/api/provider') {
       return handleProviderAction(request);
+    }
+
+    // What the posting listed under its own headings, for one expanded card.
+    // On demand rather than in the page, because the embedded payload is capped
+    // at 4MB and sections average about 265 bytes a record; the published state
+    // is capped at 20MB and sits at 9.4, so it can afford to carry them.
+    if (pathname === '/api/posting' && request.method === 'GET') {
+      const id = String(requestUrl.searchParams.get('id') || '');
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false }, 400);
+      const state = await getBoardState(process.env).catch(() => null);
+      const job = state && state.jobs ? state.jobs[id] : null;
+      const sections = (job && job.sections) || {};
+      const trim = (lines) => (Array.isArray(lines) ? lines : [])
+        .map((line) => String(line || '').slice(0, 400))
+        .filter(Boolean)
+        .slice(0, 12);
+      return json({
+        ok: true,
+        responsibilities: trim(sections.responsibilities),
+        requirements: trim(sections.requirements),
+      }, 200);
     }
 
     if (pathname === '/api/providers' && request.method === 'GET') {

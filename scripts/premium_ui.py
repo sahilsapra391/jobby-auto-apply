@@ -22,7 +22,7 @@ CSS = r"""
     --t-p:rgba(81,80,169,.09); --t-red:rgba(166,64,61,.09);
     --sh:0 1px 2px rgba(34,29,45,.04),0 14px 38px rgba(34,29,45,.055);
     --sh-hover:0 4px 8px rgba(34,29,45,.055),0 22px 54px rgba(34,29,45,.10);
-    --radius:15px; --ease:cubic-bezier(.22,1,.36,1);
+    --radius:15px; --ease:cubic-bezier(.22,1,.36,1); --shell:1800px;
   }
   @media (prefers-color-scheme:dark) {
     :root:not([data-theme="light"]) {
@@ -60,7 +60,7 @@ CSS = r"""
     letter-spacing:-.016em; transition:background-color .38s var(--ease),color .3s var(--ease); }
   body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:-1;
     background:radial-gradient(circle at 82% 3%,var(--t-p),transparent 30rem); opacity:.55; }
-  .appbar { width:100%; max-width:1360px; min-height:5.4rem; margin:0 auto;
+  .appbar { width:100%; max-width:var(--shell); min-height:5.4rem; margin:0 auto;
     padding:1rem clamp(1rem,3vw,2.5rem); border-bottom:1px solid var(--hair);
     position:relative; view-transition-name:jobby-header; }
   .lockup { height:1.85rem; }
@@ -78,7 +78,12 @@ CSS = r"""
   .themebtn:not(.on):hover { background:var(--hover-wash); color:var(--ink); }
   .themebtn svg { width:.92rem; height:.92rem; }
 
-  .wrap { max-width:1360px; padding:clamp(2rem,4vw,3.5rem) clamp(1rem,3vw,2.5rem) 7rem; }
+  .wrap { max-width:var(--shell); padding:clamp(2rem,4vw,3.5rem) clamp(1rem,3vw,2.5rem) 7rem; }
+  /* The table lanes used to break out of a narrower wrap with negative margins.
+     The wrap is that width now, so the break-out has nothing left to do and
+     would only pull the sheets back in by the difference. */
+  .panel .sheet,.panel .filters.wide { width:auto; max-width:none;
+    margin-left:0; margin-right:0; }
   .top { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
     gap:1.25rem; text-align:left; margin-bottom:2.4rem; }
   .hero-copy { min-width:0; }
@@ -90,7 +95,8 @@ CSS = r"""
   .jb-morph { width:139px; height:153px; margin:0; }
   .jb-mascot2 { height:111px; }
 
-  .segwrap { position:sticky; top:.7rem; margin-bottom:1.6rem; z-index:20; }
+  .segwrap { position:sticky; top:.7rem; margin:0 auto 1.6rem; z-index:20;
+    width:100%; max-width:1360px; }
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
     padding:0; gap:0; overflow:visible; border:1px solid var(--hair);
     border-radius:var(--radius); background:var(--card); box-shadow:var(--sh); }
@@ -127,6 +133,8 @@ CSS = r"""
   .card.ready { border-top:3px solid var(--green); }
   .card.ref,.card.flight { border-top:3px solid var(--purple); }
   .grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+  .act { flex-wrap:wrap; gap:.45rem; }
+  .act .btn { flex:0 0 auto; white-space:nowrap; padding:.52rem .7rem; }
   .sheet { border-radius:var(--radius); }
   tr { transition:background-color .2s ease; }
   tbody tr:hover { background:var(--t-p); }
@@ -149,17 +157,19 @@ CSS = r"""
   .jb-grid { --cols:1; gap:.8rem; }
   .jb-col { gap:.8rem; }
   .jb-banner,.jb-filters,.jb-addlink { border-radius:var(--radius); background:var(--card); }
-  .jb-card { display:grid; grid-template-columns:minmax(15rem,1.25fr) minmax(18rem,1.8fr) minmax(15rem,auto);
-    grid-template-rows:auto auto auto; align-items:center; gap:.7rem 1.25rem;
+  .jb-card { display:grid; grid-template-columns:minmax(16rem,1fr) minmax(20rem,1.7fr) minmax(17rem,1.1fr) minmax(13rem,auto);
+    grid-template-rows:auto auto auto; align-items:center; gap:.7rem 1.4rem;
     border:1px solid var(--hair); border-radius:var(--radius); padding:1rem 1.1rem;
     box-shadow:var(--sh); transition:border-color .24s var(--ease),background-color .3s; }
   .jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }
   .jb-head { grid-column:1; grid-row:1 / span 2; align-items:center; justify-content:space-between; }
+  .jb-facts { grid-column:3; grid-row:1 / span 2; display:flex; flex-wrap:wrap;
+    align-content:center; gap:.3rem; }
   .jb-identity { display:flex; align-items:center; gap:.72rem; min-width:0; }
   .jb-identity > div { min-width:0; }
-  .jb-sum { grid-column:2; grid-row:1; -webkit-line-clamp:2; }
+  .jb-sum { grid-column:2; grid-row:1; -webkit-line-clamp:3; }
   .jb-chips { grid-column:2; grid-row:2; }
-  .jb-acts { grid-column:3; grid-row:1 / span 2; justify-content:flex-end;
+  .jb-acts { grid-column:4; grid-row:1 / span 2; justify-content:flex-end;
     border-top:0; padding-top:0; }
   .jb-det { grid-column:1; grid-row:3; }
   .jb-slot { grid-column:1 / -1; grid-row:4; }
@@ -171,8 +181,9 @@ CSS = r"""
     display:grid; place-items:center; overflow:hidden; position:relative;
     background:var(--sunk); border:1px solid var(--hair); color:var(--ink-2);
     font-size:.75rem; font-weight:750; letter-spacing:.02em; }
-  .company-mark img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
-    padding:.32rem; background:var(--card); opacity:0; transition:opacity .3s ease; }
+  .company-mark img { position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; padding:0; background:transparent;
+    opacity:0; transition:opacity .3s ease; }
   .company-mark img.loaded { opacity:1; }
   .company-title,.company-cell { display:flex; align-items:center; gap:.72rem; min-width:0; }
   .company-title > div,.company-cell > span { min-width:0; }
@@ -290,14 +301,23 @@ CSS = r"""
     .jb-select[data-open="true"] .jb-select-menu { animation:none; }
   }
 
+  @media (max-width:1200px) {
+    .jb-card { grid-template-columns:minmax(15rem,1.15fr) minmax(18rem,1.8fr) minmax(15rem,auto); }
+    .jb-facts { grid-column:2; grid-row:3; }
+    .jb-acts { grid-column:3; }
+    .jb-det { grid-row:4; }
+    .jb-slot { grid-row:5; }
+    .act { flex-wrap:wrap; }
+  }
   @media (max-width:1100px) {
     .jb-card { grid-template-columns:minmax(14rem,1fr) minmax(18rem,1.5fr); }
     .jb-head { grid-column:1; }
-    .jb-sum,.jb-chips { grid-column:2; }
-    .jb-acts { grid-column:1 / -1; grid-row:3; justify-content:flex-start; padding-top:.75rem;
+    .jb-sum,.jb-chips,.jb-facts { grid-column:2; }
+    .jb-facts { grid-row:3; }
+    .jb-acts { grid-column:1 / -1; grid-row:4; justify-content:flex-start; padding-top:.75rem;
       border-top:1px solid var(--hair); }
-    .jb-det { grid-row:4; }
-    .jb-slot { grid-row:5; }
+    .jb-det { grid-row:5; }
+    .jb-slot { grid-row:6; }
     .grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   }
   @media (max-width:760px) {

@@ -119,19 +119,56 @@ def _context(text, start, end):
     return text[max(0, start - WINDOW):end + WINDOW].lower()
 
 
-def _qualifies(text, start, end):
-    """Is this figure a requirement of the candidate, or scenery?"""
-    around = _context(text, start, end)
-    if any(bad in around for bad in DISQUALIFIERS):
+def _line_around(text, start, end):
+    """The one line the figure sits on, lowercased.
+
+    Postings arrive one bullet per line after `strip_html`, and a disqualifier
+    in a neighbouring bullet says nothing about this figure. Paytm's "at least
+    2 years owning device/IoT/fintech hardware products" was refused because the
+    next bullet said "roadmap ownership skills", which the window reached.
+    """
+    left = text.rfind("\n", 0, start) + 1
+    right = text.find("\n", end)
+    if right == -1:
+        right = len(text)
+    left = max(left, start - WINDOW)
+    right = min(right, end + WINDOW)
+    for stop in (". ", "! ", "? ", "; "):
+        cut = text.rfind(stop, left, start)
+        if cut != -1:
+            left = max(left, cut + len(stop))
+        cut = text.find(stop, end, right)
+        if cut != -1:
+            right = min(right, cut)
+    return text[left:right].lower()
+
+
+def _qualifies(text, start, end, assume_requirement=False):
+    """Is this figure a requirement of the candidate, or scenery?
+
+    The two halves get different reach on purpose. A disqualifier only counts
+    on the figure's own line, because that is the only place it can be talking
+    about this number. A requirement word may come from a nearby line, because
+    "Minimum qualifications:" is a heading above the bullet it governs.
+
+    `assume_requirement` is for text that is already known to be a requirements
+    bullet, where the section heading has done the qualifying. Plenty of real
+    requirements never say "experience": "7+ years in growth", "3+ years
+    supporting executives". Disqualifiers still apply, because a bullet can
+    still mention a roadmap.
+    """
+    if any(bad in _line_around(text, start, end) for bad in DISQUALIFIERS):
         return False
-    return any(word in around for word in REQUIREMENT_WORDS)
+    if assume_requirement:
+        return True
+    return any(word in _context(text, start, end) for word in REQUIREMENT_WORDS)
 
 
 def _plausible(*values):
     return all(v is not None and 0 <= v <= IMPLAUSIBLE_YEARS for v in values)
 
 
-def years_required(text):
+def years_required(text, assume_requirement=False):
     """{"yearsMin", "yearsMax", "yearsText"} or None.
 
     The first qualifying figure wins. Requirements are stated near the top of a
@@ -147,7 +184,7 @@ def years_required(text):
     spoiled = []
     for match in RANGE.finditer(body):
         low, high = int(match.group(1)), int(match.group(2))
-        if low <= high and _plausible(low, high) and _qualifies(body, match.start(), match.end()):
+        if low <= high and _plausible(low, high) and _qualifies(body, match.start(), match.end(), assume_requirement):
             return {"yearsMin": low, "yearsMax": high,
                     "yearsText": f"{low}–{high} years"}
         spoiled.append((match.start(), match.end()))
@@ -157,7 +194,7 @@ def years_required(text):
             value = int(match.group(1))
             if _within(match, spoiled):
                 continue
-            if _plausible(value) and _qualifies(body, match.start(), match.end()):
+            if _plausible(value) and _qualifies(body, match.start(), match.end(), assume_requirement):
                 return {"yearsMin": value, "yearsMax": value,
                         "yearsText": f"{value}+ {_plural(value)}"}
 
@@ -165,7 +202,7 @@ def years_required(text):
         value = NUMBER_WORDS[match.group(1).lower()]
         if _within(match, spoiled):
             continue
-        if _plausible(value) and _qualifies(body, match.start(), match.end()):
+        if _plausible(value) and _qualifies(body, match.start(), match.end(), assume_requirement):
             return {"yearsMin": value, "yearsMax": value,
                     "yearsText": f"{value}+ {_plural(value)}"}
 
@@ -173,7 +210,7 @@ def years_required(text):
         value = int(match.group(1))
         if _within(match, spoiled):
             continue
-        if not _plausible(value) or not _qualifies(body, match.start(), match.end()):
+        if not _plausible(value) or not _qualifies(body, match.start(), match.end(), assume_requirement):
             continue
         # A bare "3 years of experience" is a floor in every posting that says
         # it, but it is the weakest shape, so it is checked last.
@@ -182,10 +219,26 @@ def years_required(text):
     return None
 
 
-def extract(text):
+def years_from_sections(sections, text=""):
+    """The floor a posting asks for, reading its requirements section first.
+
+    A requirements bullet is where the answer lives, and reading it on its own
+    removes every figure in the responsibilities and the company blurb from
+    contention. The whole body stays as the fallback, because plenty of
+    postings have no heading this can find.
+    """
+    lines = (sections or {}).get("requirements") or []
+    if lines:
+        found = years_required("\n".join(lines), assume_requirement=True)
+        if found:
+            return found
+    return years_required(text)
+
+
+def extract(text, sections=None):
     """Everything this module can pull from a description. Absent stays None."""
     found = {"yearsMin": None, "yearsMax": None, "yearsText": None}
-    years = years_required(text)
+    years = years_from_sections(sections, text) if sections else years_required(text)
     if years:
         found.update(years)
     return found

@@ -243,6 +243,8 @@ def blank_job(job_id, company, title, **fields):
         "lang": None,
         "descriptionExcerpt": "",
         "descFingerprint": None,
+        # What the posting listed under its own headings, for the expanded card.
+        "sections": {"responsibilities": [], "requirements": []},
         "tags": [],
         "salary": None,
         "extracted": {"yearsMax": None, "degree": None,
@@ -352,6 +354,13 @@ def merge_records(existing, incoming):
     # truncated at 200 characters must not overwrite the full ATS description.
     if len(incoming.get("descriptionExcerpt") or "") > len(merged.get("descriptionExcerpt") or ""):
         merged["descriptionExcerpt"] = incoming["descriptionExcerpt"]
+    # The fuller pair wins, the same way the longer excerpt does: one board may
+    # carry the headings this can read while another posts the same job as prose.
+    def _weight(value):
+        value = value or {}
+        return len(value.get("responsibilities") or []) + len(value.get("requirements") or [])
+    if _weight(incoming.get("sections")) > _weight(merged.get("sections")):
+        merged["sections"] = incoming["sections"]
         merged["descFingerprint"] = incoming.get("descFingerprint")
     elif not merged.get("descFingerprint"):
         merged["descFingerprint"] = incoming.get("descFingerprint")
