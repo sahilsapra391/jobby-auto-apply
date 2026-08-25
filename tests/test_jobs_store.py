@@ -1040,5 +1040,69 @@ class LocationBackfillTests(unittest.TestCase):
         self.assertLess(source.index("refresh_locations"), source.index("jobs_store.prune"))
 
 
+class PostedDateRefreshTests(unittest.TestCase):
+    """A stored date is only replaced by genuinely earlier evidence.
+
+    The comparison was `str(held) <= str(found)`, which is wrong the moment two
+    connectors spell a stamp differently. "2026-08-19T00:00:00Z" and
+    "2026-08-19" are the same instant, but the bare date sorts first, so every
+    run rewrote the record to the less precise form and counted a phantom
+    refresh. This runs against every posting on every scan, so it was churning
+    the store for nothing.
+    """
+
+    def test_the_same_instant_spelled_differently_is_not_a_refresh(self):
+        held = {"postedAt": "2026-08-19T00:00:00Z"}
+        self.assertFalse(jobs_store.refresh_posted_date(held, {"postedAt": "2026-08-19"}))
+        self.assertEqual(held["postedAt"], "2026-08-19T00:00:00Z")
+
+    def test_genuinely_earlier_evidence_wins(self):
+        held = {"postedAt": "2026-08-19T00:00:00Z"}
+        self.assertTrue(jobs_store.refresh_posted_date(held, {"postedAt": "2026-08-10T00:00:00Z"}))
+        self.assertEqual(held["postedAt"], "2026-08-10T00:00:00Z")
+
+    def test_offsets_are_read_as_instants_not_truncated(self):
+        # parse_stamp used to slice to twenty characters and try "...Z". An
+        # offset stamp failed that, fell through to the date-only form, and was
+        # read as midnight UTC — silently up to a day out. Latent while every
+        # connector emitted Z, and a trap for the next one that does not.
+        ist = jobs_store.parse_stamp("2026-08-20T01:00:00+05:30")
+        self.assertEqual(ist.utcoffset().total_seconds(), 5.5 * 3600)
+        self.assertLess(ist, jobs_store.parse_stamp("2026-08-19T20:00:00Z"))
+
+    def test_offsets_are_compared_as_instants_not_as_text(self):
+        # 01:00+05:30 is 19:30Z the previous day, so it is EARLIER than 20:00Z
+        # and must survive, even though it sorts later as a string.
+        held = {"postedAt": "2026-08-20T01:00:00+05:30"}
+        self.assertFalse(jobs_store.refresh_posted_date(
+            held, {"postedAt": "2026-08-19T20:00:00Z"}))
+        self.assertEqual(held["postedAt"], "2026-08-20T01:00:00+05:30")
+
+    def test_the_formats_already_in_the_store_still_parse(self):
+        for text, expected in (("2026-08-19T20:00:00Z", "2026-08-19 20:00:00+00:00"),
+                               ("2026-08-19", "2026-08-19 00:00:00+00:00")):
+            with self.subTest(text=text):
+                self.assertEqual(str(jobs_store.parse_stamp(text)), expected)
+        for junk in ("garbage", "", None, "2026-13-45"):
+            with self.subTest(junk=junk):
+                self.assertIsNone(jobs_store.parse_stamp(junk))
+
+    def test_an_unknown_date_learns_one(self):
+        held = {}
+        self.assertTrue(jobs_store.refresh_posted_date(held, {"postedAt": "2026-08-19"}))
+
+    def test_unparseable_incoming_evidence_is_ignored(self):
+        held = {"postedAt": "2026-08-19"}
+        self.assertFalse(jobs_store.refresh_posted_date(held, {"postedAt": "soon"}))
+        self.assertEqual(held["postedAt"], "2026-08-19")
+
+    def test_a_second_pass_over_the_same_evidence_changes_nothing(self):
+        # The churn test: running a scan twice must not rewrite the record.
+        held = {"postedAt": "2026-08-19T00:00:00Z"}
+        incoming = {"postedAt": "2026-08-19"}
+        jobs_store.refresh_posted_date(held, incoming)
+        self.assertFalse(jobs_store.refresh_posted_date(held, incoming))
+
+
 if __name__ == "__main__":
     unittest.main()

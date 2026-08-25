@@ -17,6 +17,15 @@
 #     JOBBY_ADD="scripts/thing.py tests/test_thing.py" git commit -m "..."
 #     JOBBY_ADD=all git commit -m "..."      # escape hatch, still explicit
 
+# A merge brings in whatever the other branch added, and those are not this
+# session's accidental staging. Gating them meant a routine merge could not be
+# committed without declaring another author's new files, which is both wrong
+# and the fastest way to get someone to pass --no-verify out of habit. The
+# image and scratch-data rules below still apply, because those must never
+# arrive by any route.
+merging=0
+[ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && merging=1
+
 added=$(git diff --cached --name-only --diff-filter=A)
 [ -z "$added" ] && exit 0
 
@@ -39,7 +48,7 @@ for f in $added; do
   esac
 done
 
-if [ "$JOBBY_ADD" = "all" ]; then
+if [ "$merging" = "1" ] || [ "$JOBBY_ADD" = "all" ]; then
   [ "$fail" = "1" ] && exit 1
   exit 0
 fi

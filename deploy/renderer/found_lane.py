@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import company_logos  # noqa: E402
 import match_score  # noqa: E402
+import clock
 import search_config  # noqa: E402
 
 # How many jobs travel to the browser.
@@ -78,7 +79,10 @@ MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 # "Any time" is gone rather than relabelled. Nothing older than two months is
 # ingested or kept, so "all" and "60d" name the same window, and two chips for
 # one window is a choice the user cannot get right.
-SORT_OPTIONS = [("new", "Newest"), ("direct", "Direct first"), ("score", "Match %")]
+SCOPE_OPTIONS = [("title", "Title only"),
+                 ("title+description", "Title and description")]
+
+SORT_OPTIONS = [("new", "Newest"), ("score", "Match %")]
 
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
                 ("14d", "14 days"), ("30d", "30 days"), ("60d", "2 months")]
@@ -164,6 +168,23 @@ def compact(job, why_table):
     }
 
 
+DAY_WORDS = ((" 0 days ago", " today"), (" 1 days ago", " yesterday"))
+
+
+def tidy_days(text):
+    """`posted 1 days ago` is not English, and it is already in the store.
+
+    The rubric writes these when a job is scored, so they are persisted strings
+    rather than something recomputed at render. Fixing the writer only helps
+    jobs scored after the fix; fixing it here reaches the fourteen thousand
+    already on disk without a migration and without touching a single score.
+    """
+    for wrong, right in DAY_WORDS:
+        if wrong in text:
+            text = text.replace(wrong, right)
+    return text
+
+
 class WhyTable:
     """Interns the rubric's explanations, which repeat across thousands of jobs."""
 
@@ -172,7 +193,7 @@ class WhyTable:
         self._index = {}
 
     def intern(self, text):
-        text = str(text or "")
+        text = tidy_days(str(text or ""))
         if text not in self._index:
             self._index[text] = len(self.strings)
             self.strings.append(text)
@@ -620,8 +641,8 @@ def last_ingest_line(meta):
     if not report:
         return ('<p class="jb-ingest none">No scan has run yet. '
                 'Save a search below, or press Scan now.</p>')
-    when = esc((report.get("at") or "")[11:16])
-    bits = [f"Last scan {when} UTC",
+    when = esc(clock.time_label(report.get("at")))
+    bits = [f"Last scan {when}" if when else "Last scan",
             f"{report.get('found', 0)} seen",
             f"{report.get('kept', 0)} new",
             f"{report.get('deduped', 0)} merged",
@@ -710,7 +731,8 @@ def banner(config, meta):
                 '<span class="jb-savestate" id="jb-savestate"></span></div>'
                 '<button class="jb-btn primary" id="jb-scan">Scan now</button></div>')
     nxt = (meta or {}).get("nextTier1ScanAt")
-    when = f"next run {esc(nxt[11:16])} UTC" if nxt else "next run shortly"
+    nxt_label = clock.time_label(nxt)
+    when = f"next run {esc(nxt_label)}" if nxt_label else "next run shortly"
     every = config.get("tier1IntervalMinutes") or search_config.DEFAULTS[
         "tier1IntervalMinutes"]
     return (f'<div class="jb-banner" data-version="{esc(version)}">'
@@ -798,6 +820,13 @@ def filter_bar(jobs, config):
     # The sort and the direct-only toggle come off the saved search too. They
     # used to be hardcoded in the markup, so every republish put them back to
     # the factory setting whatever the user had chosen.
+    saved_scope = config.get("searchScope")
+    if saved_scope not in dict(SCOPE_OPTIONS):
+        saved_scope = search_config.DEFAULTS["searchScope"]
+    scope_options = "".join(
+        f'<option value="{esc(v)}"{" selected" if v == saved_scope else ""}>'
+        f'{esc(label)}</option>' for v, label in SCOPE_OPTIONS)
+
     saved_sort = config.get("sort")
     if saved_sort not in dict(SORT_OPTIONS):
         saved_sort = search_config.DEFAULTS["sort"]
@@ -841,10 +870,7 @@ def filter_bar(jobs, config):
           <div class="jb-row">
             <input type="search" id="jb-ex" placeholder="Hide jobs mentioning&hellip;"
                    aria-label="Hide jobs mentioning">
-            <select id="jb-scope" aria-label="Where to search">
-              <option value="title+description">Title and description</option>
-              <option value="title">Title only</option>
-            </select>
+            <select id="jb-scope" aria-label="Where to search">{scope_options}</select>
             <select id="jb-cmode" aria-label="Companies">
               <option value="all">All companies</option>
               <option value="only">Only these companies</option>
@@ -1184,6 +1210,7 @@ CSS = """
     line-height:1; opacity:.7; }
   .jb-sight a:hover .jb-out { opacity:1; }
   .jb-excerpt { margin:0; line-height:1.45; }
+  .jb-decidefail { color:var(--red-ink); }
   .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0;
     line-height:1.55; }
   .jb-more { text-align:center; color:var(--ink-3); font-size:.85rem;
@@ -1239,6 +1266,9 @@ SCRIPT = r"""
   // chip that says two months while applying no limit lies.
   var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30,
                '60d': 60, all: 60 };
+  // The sorts that have a branch below. Kept beside them on purpose: an
+  // option with no arm is the bug this list exists to make impossible.
+  var SORTS = ['new', 'score'];
   var WATCH_KEY = 'jobby.watching', PASS_KEY = 'jobby.passed';
   // The filters the user last set, in this browser. The board is a published
   // snapshot rendered with whatever the saved search was at publish time, so
@@ -1259,6 +1289,13 @@ SCRIPT = r"""
   function remember(k, id) {
     var ids = readIds(k);
     if (ids.indexOf(id) === -1) { ids.push(id); writeIds(k, ids); }
+  }
+  // Undo a remembered click. Without this a decision that never reached the
+  // queue would be replayed on every load for ever, which is the bug the
+  // ten-minute expiry on the Apply memory exists to bound.
+  function forget(k, id) {
+    var ids = readIds(k), at = ids.indexOf(id);
+    if (at !== -1) { ids.splice(at, 1); writeIds(k, ids); }
   }
   function viewState() {
     var state = { keywords: keywords.slice(), values: {}, checks: {},
@@ -1365,10 +1402,28 @@ SCRIPT = r"""
   }
   function chip(text, cls) { return el('span', 'jb-chip' + (cls ? ' ' + cls : ''), text); }
 
+    // Today's date in Eastern, as YYYY-MM-DD. en-CA is the locale that formats
+  // that way without any string surgery.
+  function easternToday() {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
+
   function ago(job) {
     var when = job.pa;
     if (!when) return null;
-    var days = Math.round((Date.now() - Date.parse(when + 'T00:00:00Z')) / 86400000);
+    // Calendar days between two dates, both read as UTC midnight, so the
+    // subtraction cannot be bent by a daylight-saving change. Comparing against
+    // Date.now() meant that after 20:00 Eastern — when the UTC date has already
+    // rolled over — a job posted this morning said "yesterday".
+    var days = Math.round((Date.parse(easternToday() + 'T00:00:00Z')
+                           - Date.parse(when + 'T00:00:00Z')) / 86400000);
     if (isNaN(days)) return null;
     var label = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
     return 'posted ' + label;
@@ -1603,31 +1658,67 @@ SCRIPT = r"""
     return article;
   }
 
+  // The board is a published snapshot, so a decision does not show up anywhere
+  // until the next republish — and publishing is throttled behind a deploy gap.
+  // Without moving the counts here, pressing Apply looks exactly like pressing
+  // nothing: the card goes, and no lane admits to having gained anything.
+  function bump(tab, by) {
+    // Dropped is not a tab any more: it is a dock button with its own count,
+    // so looking only for .tab silently did nothing when someone pressed Pass.
+    var node = document.querySelector('.tab[data-tab="' + tab + '"] .n')
+      || document.querySelector('.' + tab + '-count');
+    if (!node) return;
+    var n = parseInt(node.textContent, 10);
+    if (!isNaN(n)) node.textContent = Math.max(0, n + by);
+  }
+
+  // A request that did not land must say so. These used to swallow every
+  // failure, which meant a dead network and a successful queue looked
+  // identical from the sofa.
+  function decide(path, job, article, onFail) {
+    return post(path, { applicationId: job.id }).then(function (res) {
+      if (res && res.ok === false) throw new Error(res.error || 'refused');
+      return res;
+    }).catch(function (err) {
+      hidden[job.id] = false;
+      forget(WATCH_KEY, job.id);
+      forget(PASS_KEY, job.id);
+      bump('found', 1);
+      if (onFail) onFail(err);
+      note(article, 'That did not reach the queue. It is still here; try again.');
+      throw err;
+    });
+  }
+
+  function note(article, message) {
+    var box = document.getElementById('jb-decision-note');
+    if (!box) {
+      box = el('p', 'jb-footer jb-decidefail');
+      box.id = 'jb-decision-note';
+      var grid = document.getElementById('jb-grid');
+      if (grid && grid.parentNode) grid.parentNode.insertBefore(box, grid);
+    }
+    box.textContent = message;
+  }
+
   function leave(article, message) {
     article.remove();
-    var el2 = document.querySelector('.tab[data-tab="found"] .n');
-    if (el2) {
-      var n = parseInt(el2.textContent, 10);
-      if (!isNaN(n)) el2.textContent = Math.max(0, n - 1);
-    }
+    bump('found', -1);
     render();
   }
   function doWatch(job, article, btn) {
     btn.classList.add('on');
     remember(WATCH_KEY, job.id);
     hidden[job.id] = true;
-    post('/api/watch', { applicationId: job.id }).catch(function () {});
-    var tab = document.querySelector('.tab[data-tab="watch"] .n');
-    if (tab) {
-      var n = parseInt(tab.textContent, 10);
-      if (!isNaN(n)) tab.textContent = n + 1;
-    }
+    bump('watch', 1);
+    decide('/api/watch', job, article, function () { bump('watch', -1); });
     leave(article);
   }
   function doPass(job, article) {
     remember(PASS_KEY, job.id);
     hidden[job.id] = true;
-    post('/api/pass', { applicationId: job.id }).catch(function () {});
+    bump('dropped', 1);
+    decide('/api/pass', job, article, function () { bump('dropped', -1); });
     leave(article);
   }
   function doApply(job, article, btn) {
@@ -1636,8 +1727,11 @@ SCRIPT = r"""
     if (label) label.textContent = 'Queueing\u2026';
     remember(WATCH_KEY, job.id);
     hidden[job.id] = true;
+    // In flight, not Watching: an Apply goes straight past the watch list.
+    bump('flight', 1);
     post('/api/watch', { applicationId: job.id })
-      .then(function () { return post('/api/apply', { applicationId: job.id }); })
+      .then(function () { return decide('/api/apply', job, article,
+                                        function () { bump('flight', -1); }); })
       .catch(function () {});
     leave(article);
   }
@@ -1928,19 +2022,21 @@ SCRIPT = r"""
     // Falls back to what the page ships with, not to a third answer. These
     // disagreed once already, and a default that only appears when a
     // control is missing is the hardest kind to notice.
-    var how = value('jb-sort') || 'new';
+    // Normalised to something with a branch. "Match %" once had no arm here
+    // and fell straight through, which left the rows in payload order and made
+    // the control look broken because it did nothing. An unknown value now
+    // lands on the default instead of on no sort at all.
+    var how = value('jb-sort');
+    if (SORTS.indexOf(how) === -1) how = SORTS[0];
     if (how === 'new') {
       rows = rows.slice().sort(function (a, b) {
         return String(b.pa || '').localeCompare(String(a.pa || ''));
       });
-    } else if (how === 'direct') {
-      // Direct listings first, best match within each group. Applying through
-      // the employer's own ATS beats applying through somebody's redirect, so
-      // a 70% Greenhouse posting outranks a 70% aggregator copy of it.
-      rows = rows.slice().sort(function (a, b) {
-        var grouped = (a.rank > 1 ? 1 : 0) - (b.rank > 1 ? 1 : 0);
-        return grouped || (b.sc || 0) - (a.sc || 0);
-      });
+    } else if (how === 'score') {
+      // This branch did not exist. Choosing "Match %" fell through every arm
+      // and left the rows in payload order, so the control looked broken
+      // because it was: it did nothing at all.
+      rows = rows.slice().sort(function (a, b) { return (b.sc || 0) - (a.sc || 0); });
     }
     rememberView();
     makeColumns(columnCount());

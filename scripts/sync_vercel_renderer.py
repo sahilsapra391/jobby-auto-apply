@@ -11,6 +11,9 @@ TARGET = REPO / "deploy" / "renderer"
 FILES = (
     "ats_match.py",
     "brand.py",
+    # dashboard.py and found_lane.py both import this; without it the deployed
+    # function fails at import and every request 502s.
+    "clock.py",
     "company_logos.py",
     "dashboard.py",
     "found_lane.py",

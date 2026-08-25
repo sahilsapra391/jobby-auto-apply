@@ -253,8 +253,24 @@ def score_freshness(job, now):
         value = 1.0 - (age - FRESH_FULL_DAYS) / (FRESH_ZERO_DAYS - FRESH_FULL_DAYS)
     if from_sighting:
         # Evidence about when the scan noticed it, not about when it went up.
-        return value * SEEN_INSTEAD_OF_POSTED, f"first seen {age:.0f} days ago; no posted date", True
-    return value, f"posted {age:.0f} days ago", False
+        return (value * SEEN_INSTEAD_OF_POSTED,
+                f"first seen {when_words(age)}; no posted date", True)
+    return value, f"posted {when_words(age)}", False
+
+
+def when_words(age):
+    """`today`, `yesterday`, `8 days ago`. Never `1 days ago`.
+
+    Wording only. The number this reads from is the same number the freshness
+    score is computed on, and that arithmetic is deliberately untouched: it went
+    through the gate, and rounding a day differently would move scores.
+    """
+    days = round(age)
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    return f"{days} days ago"
 
 
 def gates(job, flags=None):

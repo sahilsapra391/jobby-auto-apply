@@ -554,7 +554,7 @@ class ScanRunnerTests(unittest.TestCase):
         self.assertEqual(len(checked["invalid"]), 3)
         self.assertNotIn("pendingFields", checked["candidates"][0])
 
-    def test_trusted_pipeline_dedupes_and_saves_watch_sessions(self):
+    def test_trusted_pipeline_dedupes_and_fills_found(self):
         with tempfile.TemporaryDirectory() as directory:
             state = pathlib.Path(directory, "state")
             run_scan.store.cmd_init(argparse.Namespace(root=str(state)))
@@ -578,13 +578,22 @@ class ScanRunnerTests(unittest.TestCase):
             )
             self.assertEqual(report["alreadyKnown"], 1)
             self.assertEqual(len(report["saved"]), 1)
-            saved = json.loads(
-                (state / "sessions" / f"{report['saved'][0]}.json").read_text()
-            )
-            self.assertEqual(saved["company"], "Beta")
-            self.assertEqual(saved["status"], "watch")
-            self.assertEqual(saved["extraction"]["verifiedLiveOn"], self.SCAN_DATE)
-            self.assertNotIn("pendingFields", saved)
+
+            # Found, not Watching. A scan may only offer; the eye is the only
+            # route onto the user's shelf, and a sweep that writes watch
+            # entries puts roles in front of them they never chose.
+            jobs = run_scan.jobs_store.load_jobs(state)
+            self.assertEqual(len(jobs), 1)
+            stored = list(jobs.values())[0]
+            self.assertEqual(stored["company"], "Beta")
+            self.assertEqual(stored["state"], "new")
+
+            # And it went through the shared door, so it carries a real score.
+            self.assertIn("total", stored.get("score") or {})
+
+            # The only session present is the pre-existing one the fixture made.
+            sessions = sorted(p.name for p in (state / "sessions").glob("*.json"))
+            self.assertEqual(sessions, ["existing-acme.json"])
 
     def test_model_values_are_stdin_data_not_process_arguments(self):
         candidate = self.candidate(
