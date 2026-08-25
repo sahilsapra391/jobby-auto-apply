@@ -83,12 +83,19 @@ class RegistryTests(unittest.TestCase):
             providers.login_invocation(
                 "anthropic", binary_resolver=lambda provider, required: None)
 
-    def test_first_successful_connection_stays_active(self):
+    def test_the_newest_successful_connection_becomes_active(self):
+        """Connecting an account is how you say which one to use.
+
+        This used to assert the opposite: the first connection stayed active
+        and a second one changed nothing until the first broke, which reads as
+        the new connection having failed. The connection ORDER below is
+        unchanged; what flipped is which end of it gets picked.
+        """
         self.health["openai"] = True
         self.registry.connect("openai")
         self.health["gemini"] = True
         status = self.registry.connect("gemini")
-        self.assertEqual(status["activeProvider"], "openai")
+        self.assertEqual(status["activeProvider"], "gemini")
         rows = {item["id"]: item for item in status["providers"]}
         self.assertEqual(rows["openai"]["connectionOrder"], 1)
         self.assertEqual(rows["gemini"]["connectionOrder"], 2)
@@ -130,11 +137,13 @@ class RegistryTests(unittest.TestCase):
             checked.append(("model", provider)) or probe(provider, self.health[provider])
         )
         status = self.registry.select_for_work()
-        self.assertEqual(status["activeProvider"], "anthropic")
-        self.assertEqual(
-            checked,
-            [("auth", "openai"), ("auth", "anthropic"), ("model", "anthropic")],
-        )
+        # openai is unhealthy, so the next newest connection takes the work.
+        self.assertEqual(status["activeProvider"], "gemini")
+        # Newest first, and it stops as soon as one answers. gemini was the
+        # last connected and is healthy, so openai and anthropic are never
+        # probed at all: under the old oldest-first order this walked openai,
+        # found it broken, and then checked anthropic.
+        self.assertEqual(checked, [("auth", "gemini")])
 
     def test_claude_exit_zero_without_saved_login_is_not_healthy(self):
         result = providers.probe_provider(
@@ -192,7 +201,7 @@ class RegistryTests(unittest.TestCase):
         status = self.registry.disconnect("openai")
         self.assertEqual(status["activeProvider"], "anthropic")
 
-    def test_reconnecting_moves_provider_to_the_end(self):
+    def test_reconnecting_moves_provider_to_the_end_and_makes_it_active(self):
         self.health.update(openai=True, anthropic=True)
         self.registry.connect("openai")
         self.registry.connect("anthropic")
@@ -202,7 +211,10 @@ class RegistryTests(unittest.TestCase):
         self.assertGreater(
             rows["openai"]["connectionOrder"], rows["anthropic"]["connectionOrder"]
         )
-        self.assertEqual(status["activeProvider"], "anthropic")
+        # Reconnecting still moves you to the end of the order. The end is now
+        # the front of the queue, which is the point: reconnecting a provider
+        # is how you choose it.
+        self.assertEqual(status["activeProvider"], "openai")
 
     def test_pending_login_keeps_the_first_connection_order(self):
         status = self.registry.connect("gemini")
@@ -223,7 +235,9 @@ class RegistryTests(unittest.TestCase):
 
         self.health["gemini"] = True
         status = self.registry.refresh("gemini")
-        self.assertEqual(status["activeProvider"], "gemini")
+        # gemini becoming healthy does not take the work back: openai was
+        # connected more recently. Reconnecting gemini would.
+        self.assertEqual(status["activeProvider"], "openai")
         self.assertTrue(status["ready"])
 
     def test_shared_connection_keys_converge_across_opposite_queue_order(self):
@@ -252,8 +266,10 @@ class RegistryTests(unittest.TestCase):
         documents.connect("gemini", connection_key=second_key)
         documents.connect("openai", connection_key=first_key)
 
-        self.assertEqual(local.active_provider(), "openai")
-        self.assertEqual(documents.active_provider(), "openai")
+        # The point is convergence: both agree regardless of the order they
+        # saw the connections in. The winner is the later key, gemini.
+        self.assertEqual(local.active_provider(), "gemini")
+        self.assertEqual(documents.active_provider(), "gemini")
 
     def test_settings_key_replaces_only_a_legacy_local_order_key(self):
         self.health.update(openai=True, gemini=True)
@@ -268,7 +284,7 @@ class RegistryTests(unittest.TestCase):
                 "1-1787497201000-00000000-0000-4000-8000-000000000002"
             ),
         )
-        self.assertEqual(self.registry.active_provider(), "gemini")
+        self.assertEqual(self.registry.active_provider(), "openai")
 
     def test_frequent_auth_refreshes_do_not_postpone_exact_model_check(self):
         current = [NOW]
@@ -715,6 +731,55 @@ class PreferredProviderTests(unittest.TestCase):
                "nextConnectionOrder": 1}
         self.assertIsNone(
             providers._normalize_state(raw).get("preferredProvider"))
+
+
+
+
+class NewestConnectionWinsTests(unittest.TestCase):
+    """The provider you connected most recently is the one that gets the work.
+
+    Connecting an account is how you say which one to use. Ordering ran oldest
+    first, so connecting a second provider changed nothing until the first went
+    unhealthy — which reads as the new connection having failed.
+
+    It is a preference, not a restriction: an unhealthy newest is skipped and
+    the next connected one takes over, and a single connection still behaves
+    the obvious way.
+    """
+
+    def state(self, **health):
+        order = {"openai": 6, "anthropic": 14, "gemini": 9}
+        return {"connections": {
+            name: {"health": health[name], "connectionOrder": order[name]}
+            for name in health}}
+
+    def test_the_newest_connection_is_tried_first(self):
+        state = self.state(openai="healthy", anthropic="healthy", gemini="healthy")
+        self.assertEqual(
+            providers.ProviderRegistry._ordered_from_state(state)[0], "anthropic")
+        self.assertEqual(
+            providers.ProviderRegistry._active_from_state(state), "anthropic")
+
+    def test_an_unhealthy_newest_hands_over_to_the_next(self):
+        state = self.state(openai="healthy", anthropic="authentication_required",
+                           gemini="healthy")
+        self.assertEqual(
+            providers.ProviderRegistry._active_from_state(state), "gemini")
+
+    def test_it_falls_all_the_way_back(self):
+        state = self.state(openai="healthy", anthropic="unavailable",
+                           gemini="unavailable")
+        self.assertEqual(
+            providers.ProviderRegistry._active_from_state(state), "openai")
+
+    def test_one_connection_is_simply_used(self):
+        state = self.state(openai="healthy")
+        self.assertEqual(
+            providers.ProviderRegistry._active_from_state(state), "openai")
+
+    def test_nothing_healthy_selects_nothing(self):
+        state = self.state(openai="unavailable", anthropic="unavailable")
+        self.assertIsNone(providers.ProviderRegistry._active_from_state(state))
 
 
 if __name__ == "__main__":

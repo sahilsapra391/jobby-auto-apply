@@ -1063,6 +1063,16 @@ class ProviderRegistry:
 
     @staticmethod
     def _ordered_from_state(state: Mapping[str, Any]) -> list[str]:
+        """Providers newest connection first, then back through the older ones.
+
+        Connecting an account is how you say which one to use. It used to run
+        oldest first, so connecting a second provider changed nothing until the
+        first became unhealthy, which reads as the new connection having failed.
+
+        Order is a preference, not a restriction: an unhealthy provider is
+        skipped and the next connected one takes the work, so a single
+        connection still behaves the obvious way.
+        """
         connections = state.get("connections") or {}
         return sorted(
             connections,
@@ -1073,6 +1083,7 @@ class ProviderRegistry:
                 ),
                 provider_id,
             ),
+            reverse=True,
         )
 
     @classmethod

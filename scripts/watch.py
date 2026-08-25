@@ -179,6 +179,18 @@ def ping_health(state="", detail=""):
 # --- locks ------------------------------------------------------------------
 
 def pid_alive(pid):
+    """Is this pid a live process?
+
+    Non-positive pids are not processes and must be rejected before os.kill
+    sees them. In POSIX, kill(0, sig) signals the caller's whole process group
+    and kill(-n, sig) signals group n, so os.kill(0, 0) always succeeds and
+    pid_alive(0) answered True. A slot lock written with pid 0 was therefore
+    immortal: lock_holder never saw it as stale, never cleared it, and the slot
+    was gone until someone deleted the file by hand. Two of five apply slots
+    were held that way for over a day.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
