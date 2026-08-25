@@ -554,20 +554,17 @@ class InvocationTests(unittest.TestCase):
         )
 
     def test_gemini_uses_an_isolated_system_settings_file(self):
-        invocation = self.invocation("gemini")
+        invocation = self.invocation("gemini", "documents")
+        # Written into the run's own workspace, never a shared location. It
+        # binds nothing on the Antigravity CLI (see the note in
+        # build_run_invocation) and is kept because run_scan still reads it;
+        # what this pins is that it stays scoped to the run.
+        settings = pathlib.Path(invocation.env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"])
+        self.assertTrue(
+            settings.is_relative_to(self.workspace.resolve()), settings)
         self.assertEqual(
-            invocation.env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"],
-            "/tmp/gemini-settings.json",
-        )
-        self.assertIn("--allowed-mcp-server-names", invocation.argv)
-        self.assertEqual(
-            invocation.argv[
-                invocation.argv.index("--allowed-mcp-server-names") + 1
-            ],
-            "browser,jobby",
-        )
-        self.assertEqual(
-            invocation.argv[invocation.argv.index("--model") + 1], "gemini-3.7-flash-medium"
+            invocation.argv[invocation.argv.index("--model") + 1],
+            "gemini-3.7-flash-medium",
         )
         self.assertNotIn("GEMINI_SANDBOX", invocation.env)
 
@@ -605,8 +602,16 @@ class InvocationTests(unittest.TestCase):
                     binary_resolver=lambda name, _required: f"/agents/{name}",
                     base_env={"PATH": "/usr/bin"},
                 )
-                self.assertEqual(invocation.stdin_payload, private_prompt)
+                # The rule is where the prompt goes, not what it is wrapped
+                # in. agy takes its turn as one NDJSON line on stdin, so the
+                # payload carries the prompt rather than equalling it; what
+                # must never change is that argv does not see it, because argv
+                # is readable by every local process.
+                self.assertIn(private_prompt, invocation.stdin_payload or "")
                 self.assertNotIn(private_prompt, invocation.argv)
+                self.assertFalse(
+                    [a for a in invocation.argv if private_prompt in a],
+                    "the prompt reached argv")
 
     def test_codex_web_search_is_scan_only(self):
         self.assertNotIn("--search", self.invocation("openai", "apply").argv)
@@ -616,6 +621,10 @@ class InvocationTests(unittest.TestCase):
         for provider, expected in providers.MODEL_IDS.items():
             for task in providers.TASK_KINDS:
                 with self.subTest(provider=provider, task=task):
+                    if provider == "gemini" and task in ("apply", "scan"):
+                        # Refused outright, so there is no argv to pin. The
+                        # refusal itself is asserted in GeminiAntigravityTests.
+                        continue
                     invocation = self.invocation(provider, task)
                     self.assertEqual(invocation.argv.count("--model"), 1)
                     self.assertEqual(
@@ -645,7 +654,12 @@ class InvocationTests(unittest.TestCase):
         invocations = {
             provider: self.invocation(provider, "apply")
             for provider in providers.PROVIDER_IDS
+            if provider != "gemini"
         }
+        # gemini has no application invocation to inspect: it is refused before
+        # one is built, which is the strongest form of this assertion.
+        with self.assertRaises(providers.ProviderError):
+            self.invocation("gemini", "apply")
 
         anthropic = invocations["anthropic"]
         self.assertEqual(
@@ -675,17 +689,10 @@ class InvocationTests(unittest.TestCase):
         ):
             self.assertIn(feature, disabled)
 
-        gemini = invocations["gemini"]
-        self.assertEqual(
-            gemini.argv[
-                gemini.argv.index("--allowed-mcp-server-names") + 1
-            ],
-            "browser,jobby",
-        )
-        self.assertEqual(
-            gemini.argv[gemini.argv.index("--extensions") + 1], "none"
-        )
-        self.assertNotIn("GEMINI_SANDBOX", gemini.env)
+        # gemini is covered by the refusal above rather than by argv, because
+        # there is no argv it could be given that would satisfy this test: the
+        # Antigravity CLI has no allowlist and advertises run_command,
+        # write_to_file and execute_browser_javascript on every invocation.
 
         for provider, invocation in invocations.items():
             with self.subTest(provider=provider):
@@ -780,6 +787,70 @@ class NewestConnectionWinsTests(unittest.TestCase):
     def test_nothing_healthy_selects_nothing(self):
         state = self.state(openai="unavailable", anthropic="unavailable")
         self.assertIsNone(providers.ProviderRegistry._active_from_state(state))
+
+
+class GeminiAntigravityTests(unittest.TestCase):
+    """The flags agy actually has, and the three tasks it may and may not run.
+
+    Every Gemini run died on `flags provided but not defined: -approval-mode`
+    before doing anything, because the binary moved from the Gemini CLI to the
+    Antigravity CLI and the arguments did not move with it. Measured against
+    agy 1.1.20 on 2026-08-25.
+    """
+
+    def setUp(self):
+        self.workspace = pathlib.Path(tempfile.mkdtemp())
+
+    def build(self, task):
+        return providers.build_run_invocation(
+            "gemini",
+            task,
+            "a bounded private prompt",
+            workspace=self.workspace,
+            binary_resolver=lambda name, _required: f"/agents/{name}",
+            base_env={"PATH": "/usr/bin"},
+        )
+
+    def test_no_flag_the_antigravity_cli_rejects_survives(self):
+        argv = self.build("documents").argv
+        for gone in ("--approval-mode", "--extensions",
+                     "--allowed-mcp-server-names", "--allowed-tools", "--policy"):
+            self.assertNotIn(gone, argv, f"{gone} does not exist on agy")
+
+    def test_it_uses_the_flags_agy_does_have(self):
+        argv = self.build("documents").argv
+        self.assertIn("--dangerously-skip-permissions", argv)
+        self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
+        self.assertEqual(argv[argv.index("--input-format") + 1], "stream-json")
+
+    def test_the_print_timeout_outlasts_the_callers_own_bound(self):
+        # agy defaults to five minutes and kills its own turn. run_apply bounds
+        # a form run at 45 minutes, so the default would end every long run
+        # early and blame the model.
+        argv = self.build("documents").argv
+        self.assertIn("--print-timeout", argv)
+        value = argv[argv.index("--print-timeout") + 1]
+        self.assertTrue(value.endswith("m"), value)
+        self.assertGreaterEqual(int(value[:-1]), 60)
+
+    def test_the_prompt_travels_on_stdin_as_one_ndjson_turn(self):
+        invocation = self.build("documents")
+        self.assertNotIn("-p", invocation.argv)
+        self.assertNotIn("a bounded private prompt", invocation.argv)
+        message = json.loads(invocation.stdin_payload)
+        self.assertEqual(message["event"], "user")
+        self.assertEqual(
+            message["message"]["content"][0]["text"], "a bounded private prompt")
+
+    def test_apply_and_scan_are_refused_and_documents_is_not(self):
+        for task in ("apply", "scan"):
+            with self.subTest(task=task):
+                with self.assertRaises(providers.ProviderError) as caught:
+                    self.build(task)
+                self.assertIn("57 unrestricted built-in tools",
+                              str(caught.exception))
+        self.assertTrue(self.build("documents").argv)
+
 
 
 if __name__ == "__main__":

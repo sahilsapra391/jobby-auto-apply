@@ -44,6 +44,20 @@ MODEL_IDS = {
 }
 STATE_VERSION = 1
 PROBE_TIMEOUT_SECONDS = 30
+# Above every caller's own bound, so agy never self-kills a turn the runner
+# still considers live. agy's own default is five minutes.
+GEMINI_PRINT_TIMEOUT = "180m"
+
+
+def _gemini_stream_prompt(prompt: str) -> str:
+    """One NDJSON turn for agy's stream-json input, so the prompt stays off argv."""
+    return json.dumps({
+        "event": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": prompt}],
+        },
+    }) + "\n"
 MODEL_PROBE_TIMEOUT_SECONDS = 120
 CONNECTION_KEY_PATTERN = re.compile(
     r"^(?:0-[0-9]{20}|1-[0-9]{13}-[0-9a-f]{8}-[0-9a-f]{4}-"
@@ -825,48 +839,97 @@ def build_run_invocation(
         ])
         return RunInvocation(provider_id, task_kind, argv, env, work, prompt)
 
+    # The Antigravity CLI, `agy`, replaced the Gemini CLI for individual
+    # accounts. The binary moved and the arguments did not, so every Gemini run
+    # died before it started:
+    #
+    #   flags provided but not defined: -approval-mode
+    #
+    # agy rejects --approval-mode, --extensions and --allowed-mcp-server-names
+    # outright. Measured against agy 1.1.20.
+    #
+    # The prompt stays on stdin. `-p` demands its value in argv, which would
+    # put the resume, the identity block and the posting into the process list
+    # for every local process to read. --input-format stream-json takes it as
+    # one NDJSON line instead, and the shape is exact: the event field is
+    # required, and message must be an object with content parts. A bare
+    # string is refused with "cannot unmarshal string", and {"text": ...} with
+    # "user message has no content".
+    #
+    # --print-timeout defaults to five minutes and self-kills the turn. The
+    # caller already bounds the process, so this is set above that bound and
+    # the caller stays the one authority on how long a run may take.
     argv = [
         str(binary),
         "--model",
         MODEL_IDS[provider_id],
         "--output-format",
         "stream-json",
-        "--approval-mode",
-        "yolo",
-        "--extensions",
-        "none",
+        "--input-format",
+        "stream-json",
+        "--dangerously-skip-permissions",
+        "--disable-slash-commands",
+        "--print-timeout",
+        GEMINI_PRINT_TIMEOUT,
     ]
-    if task_kind == "apply":
-        settings_path = _with_application_context(
-            browser_api.write_gemini_settings,
-            browser_slot,
-            context=application_context,
+    if task_kind in ("apply", "scan"):
+        # MEASURED REFUSAL, not a placeholder. Three things have to hold for an
+        # agent loose on a browser or the open web, and none of them can be
+        # made to hold on agy 1.1.20:
+        #
+        # Its tool surface cannot be narrowed. It advertises 57 built-in tools
+        # including run_command, write_to_file, replace_file_content, sed_file
+        # and execute_browser_javascript. There is no allowlist flag, and
+        # neither --sandbox nor --mode plan removes one of them: all three
+        # invocations report the same 57.
+        #
+        # Its only permission control is all or nothing.
+        # --dangerously-skip-permissions auto-approves every one of those 57;
+        # without it a print-mode turn returns an empty response having used no
+        # tools at all, so there is no middle setting that fills a form.
+        #
+        # Its MCP servers are global and cannot be scoped to a run. There is no
+        # --mcp-config; `agy mcp add` writes one shared config. Redirecting HOME
+        # does relocate that config, but agy keeps its credentials in the macOS
+        # Keychain rather than under HOME, so an isolated home authenticates as
+        # nobody. Five slots cannot each get their own browser endpoint, and
+        # without per-slot scoping one application's agent can drive another's
+        # browser.
+        #
+        # scan is refused for the same reason and one of its own. Its fence is
+        # --allowed-tools plus a --policy file plus a core-tools check on the
+        # system settings, and agy has neither flag and does not read that
+        # file. The check still passes, so the restriction reads as enforced
+        # and enforces nothing.
+        #
+        # The firewall in browser_mcp_proxy.py is what makes a form agent safe
+        # to point at a real application under the user's name. Refusing here
+        # is cheap: the runner walks to the next connected account and says so.
+        # Fixing the flags without saying this would have quietly handed an
+        # agent a shell on the user's Mac.
+        raise ProviderError(
+            f"gemini cannot run {task_kind} work: the Antigravity CLI exposes "
+            "57 unrestricted built-in tools, has no per-run MCP scoping, and "
+            "offers no allowlist to narrow them"
         )
-        argv.extend(["--allowed-mcp-server-names", "browser,jobby"])
-    else:
-        settings_path = _gemini_system_settings(work, task_kind)
-    # KNOWN GAP, read this before using Gemini for agent runs.
+
+    settings_path = _gemini_system_settings(work, task_kind)
+    # KNOWN GAP, still true and now measured. These two variables fenced what
+    # the old Gemini CLI could do. agy does not read them: the string
+    # GEMINI_CLI_SYSTEM_SETTINGS_PATH occurs zero times in the binary. The file
+    # is still written because run_scan checks it, and it binds nothing.
     #
-    # These two variables fenced everything Gemini was allowed to do: core
-    # tools cut to google_web_search and web_fetch, a policy file denying the
-    # rest, and run_scan refusing to start unless the settings file said so.
-    # The Antigravity CLI does not read them. Not "reads them differently":
-    # the string GEMINI_CLI_SYSTEM_SETTINGS_PATH does not occur once in the agy
-    # binary, and agy's init record advertises about fifty tools including
-    # run_command, execute_browser_javascript and write_to_file. Its only
-    # permission control is --dangerously-skip-permissions.
-    #
-    # So the file is still written, run_scan still checks it and still passes,
-    # and none of it binds anything. That is worse than no guard, because it
-    # reads as one. Connecting and health checks are unaffected and are safe;
-    # what is not established is running an agent through agy with the tool set
-    # actually restricted. Do not enable Gemini for scans or applications until
-    # that has an agy equivalent that can be verified.
+    # It does not gate this path. `documents` is a bounded prompt-to-JSON task
+    # whose output is schema-checked, claim-checked and rendered by trusted
+    # Python before anything reaches a file, so the worker never depends on the
+    # model having been fenced. `apply` is refused above, and `scan` still has
+    # its own allowlist and policy file in run_scan.
     env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
     env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
     env.pop("GEMINI_SANDBOX", None)
 
-    return RunInvocation(provider_id, task_kind, argv, env, work, prompt)
+    return RunInvocation(
+        provider_id, task_kind, argv, env, work, _gemini_stream_prompt(prompt))
 
 
 def _empty_state() -> dict[str, Any]:
