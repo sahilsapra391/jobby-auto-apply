@@ -33,6 +33,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 import store  # noqa: E402
 import document_contract  # noqa: E402
+import posting_body  # noqa: E402
 
 def applications_dir():
     """Where tailored documents live.
@@ -207,6 +208,14 @@ def build(aid):
     # company overwrite each other's posting, and the loser tailors a resume
     # against the wrong job and sends it.
     jd_path = folder / f"jd-{aid}.txt"
+    # A job promoted from the Found board has no extraction, because promote.py
+    # builds the session before anything has read the posting. Read it here, at
+    # the one moment the text is actually needed, and let the file below be the
+    # cache so a second brief for the same application stays offline. Without
+    # this every promoted application died in document_contract as
+    # "the application has no job description".
+    if not jd_text.strip() and not jd_path.exists():
+        jd_text = posting_body.resolve(aid)
     # Never overwrite a posting body with nothing. On a retry the extraction can
     # be absent while the file written by the first attempt is still the only
     # copy of the posting anywhere.
