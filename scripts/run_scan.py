@@ -640,12 +640,15 @@ decision = "allow"
 priority = 999
 """
         _write_private(policy_path, policy)
-        approval_index = argv.index("--approval-mode")
-        argv[approval_index + 1] = "default"
-        argv.extend([
-            "--allowed-tools", ",".join(GEMINI_SCAN_TOOLS),
-            "--policy", str(policy_path),
-        ])
+        # Unreachable while build_run_invocation refuses gemini for scan, and
+        # kept as the second half of the same refusal so the two cannot drift.
+        # --allowed-tools and --policy do not exist on the Antigravity CLI, so
+        # this fence stopped binding the moment the binary changed underneath
+        # it, while the core-tools check above went on passing.
+        raise providers.ProviderError(
+            "gemini cannot run scan work: the Antigravity CLI has no "
+            "--allowed-tools or --policy and ignores the system settings file"
+        )
 
     return providers.RunInvocation(
         invocation.provider_id,

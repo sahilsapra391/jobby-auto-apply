@@ -118,19 +118,12 @@ class ProviderInvocationTests(unittest.TestCase):
         self.assertIn("mcp_servers.browser.required=true", command)
         self.assertIn("exec", invocation.argv)
 
-    def test_gemini_receives_scoped_system_settings(self):
-        invocation = self.build("gemini")
-        self.assertEqual(
-            invocation.env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"],
-            "/private/tmp/gemini-settings.json",
-        )
-        self.assertIn("--allowed-mcp-server-names", invocation.argv)
-        self.assertEqual(
-            invocation.argv[
-                invocation.argv.index("--allowed-mcp-server-names") + 1
-            ],
-            "browser,jobby",
-        )
+    def test_gemini_is_refused_for_application_work(self):
+        # The Antigravity CLI cannot be narrowed to the browser firewall, so
+        # there is no scoped invocation to build. Refusing is the scope.
+        with self.assertRaises(providers.ProviderError) as caught:
+            self.build("gemini")
+        self.assertIn("gemini cannot run apply work", str(caught.exception))
 
 
 class ApplyFixtureMixin:
@@ -430,7 +423,19 @@ class ScanRunnerTests(unittest.TestCase):
                     binary_resolver=lambda selected, required: f"/agents/{selected}",
                 )
                 for provider in providers.PROVIDER_IDS
+                if provider != "gemini"
             }
+            # gemini is refused for scan rather than confined. Its fence was
+            # --allowed-tools plus a --policy file, and the Antigravity CLI
+            # that replaced the Gemini CLI has neither, so nothing could be
+            # asserted here that would actually bind the agent.
+            with self.assertRaises(providers.ProviderError):
+                run_scan.provider_invocation(
+                    "gemini",
+                    "research and return JSON",
+                    root / "gemini",
+                    binary_resolver=lambda selected, required: f"/agents/{selected}",
+                )
 
             anthropic = invocations["anthropic"]
             self.assertEqual(anthropic.cwd, (root / "anthropic").resolve())
@@ -464,28 +469,6 @@ class ScanRunnerTests(unittest.TestCase):
                 self.assertIn(feature, disabled)
             self.assertIn("--ignore-user-config", openai.argv)
             self.assertIn("--output-schema", openai.argv)
-
-            gemini = invocations["gemini"]
-            self.assertEqual(
-                gemini.argv[gemini.argv.index("--approval-mode") + 1], "default"
-            )
-            settings = json.loads(
-                pathlib.Path(gemini.env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"]).read_text()
-            )
-            self.assertEqual(
-                settings["tools"]["core"], ["google_web_search", "web_fetch"]
-            )
-            self.assertEqual(settings["mcp"]["allowed"], [])
-            self.assertFalse(settings["skills"]["enabled"])
-            self.assertFalse(settings["hooksConfig"]["enabled"])
-            self.assertFalse(settings["experimental"]["enableAgents"])
-            self.assertTrue(settings["admin"]["secureModeEnabled"])
-            self.assertEqual(settings["context"]["fileName"], [])
-            policy = pathlib.Path(
-                gemini.argv[gemini.argv.index("--policy") + 1]
-            ).read_text()
-            self.assertIn('toolName = "*"', policy)
-            self.assertIn('toolName = ["google_web_search", "web_fetch"]', policy)
 
             for invocation in invocations.values():
                 self.assertNotEqual(invocation.cwd, run_scan.REPO)
