@@ -922,5 +922,48 @@ class TaskCapabilityTests(unittest.TestCase):
 
 
 
+class FormUsageReportingTests(unittest.TestCase):
+    """A form run must ask for output the usage parser can read.
+
+    820 form rows had been written and not one carried a token count. A
+    text-mode print run reports no usage at all, so provider_usage.parse had
+    nothing to find and every row recorded an empty dict. The telemetry existed
+    and measured nothing, which is the same shape as a fence that binds nothing.
+    """
+
+    @staticmethod
+    def stub():
+        class Stub(BrowserStub):
+            def config_path(self, _slot, application_context=None):
+                return pathlib.Path("/tmp/browser.json")
+        return Stub()
+
+    def invocation(self, task):
+        context = {
+            "applicationId": "acme-pm", "resume": "/tmp/r.pdf",
+            "cover": "/tmp/c.pdf", "uploadResume": "/tmp/r.pdf",
+            "uploadCover": "/tmp/c.pdf",
+        } if task == "apply" else None
+        return providers.build_run_invocation(
+            "anthropic", task, "x", workspace=tempfile.mkdtemp(),
+            browser_slot="apply-1", browser_adapter=self.stub(),
+            application_context=context,
+            binary_resolver=lambda name, _r: f"/agents/{name}",
+            base_env={"PATH": "/usr/bin"},
+        )
+
+    def test_the_form_run_asks_for_machine_readable_output(self):
+        argv = self.invocation("apply").argv
+        self.assertEqual(argv[argv.index("--output-format") + 1], "json")
+
+    def test_documents_and_scan_do_not(self):
+        # Both read their own payload back out of stdout, and the json wrapper
+        # breaks that parse. Verified against the real CLI, not assumed.
+        for task in ("documents", "scan"):
+            with self.subTest(task=task):
+                self.assertNotIn("--output-format", self.invocation(task).argv)
+
+
+
 if __name__ == "__main__":
     unittest.main()
