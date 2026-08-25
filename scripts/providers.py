@@ -927,6 +927,16 @@ def build_run_invocation(
             CLAUDE_ALLOWED_TOOLS[task_kind],
         ]
         if task_kind == "apply":
+            # Machine-readable output, for the usage block and nothing else.
+            # 820 form rows had been written and not one carried a token count,
+            # because a text-mode print run reports no usage and
+            # provider_usage.parse had nothing to find. The telemetry existed
+            # and measured nothing.
+            #
+            # apply only. A form run never parses its own stdout: the outcome
+            # comes from the store and the artifacts. documents and scan both
+            # read the payload back out, and this wrapper breaks that parse.
+            argv.extend(["--output-format", "json"])
             argv.extend([
                 "--mcp-config",
                 str(_with_application_context(
