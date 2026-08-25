@@ -271,6 +271,29 @@ class DocumentJobTest(DocumentJobStore, unittest.TestCase):
         self.assertEqual("invalid_request", state["errorCode"])
         self.assertNotIn("private details", json.dumps(self.session()))
 
+    def test_a_missing_posting_gets_its_own_code_not_the_catch_all(self):
+        # Six applications in a row failed as "invalid_request", which reads
+        # like a bug in Jobby. The cause was always a posting nobody could
+        # read, which is something the user can act on.
+        with mock.patch.object(document_job, "_brief", return_value={"documentsReady": False}), \
+                mock.patch.object(
+                    document_job.document_contract, "build_bundle",
+                    side_effect=document_job.document_contract.MissingJobDescription(
+                        "the posting is no longer listed on its job board")):
+            state = document_job.ensure(
+                self.application_id,
+                "openai",
+                self.root,
+                mock.Mock(),
+            )
+        self.assertEqual("failed", state["state"])
+        self.assertEqual("job_description_missing", state["errorCode"])
+        # The code stays fixed and public. The contract's own sentence travels
+        # beside it, bounded and scrubbed, because it is the only thing that
+        # says which fact is missing.
+        self.assertEqual("the posting is no longer listed on its job board",
+                         state["errorDetail"])
+
     def test_existing_documents_return_ready_without_creating_a_job(self):
         with mock.patch.object(document_job, "_brief", return_value={"documentsReady": True}):
             state = document_job.ensure(

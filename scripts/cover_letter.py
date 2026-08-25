@@ -301,8 +301,17 @@ def render_html(template, content, candidate):
     return output
 
 
+# A hyphenated word broken across two rendered lines comes back out of the PDF
+# as "feature- parity", and the authored text says "feature-parity", so the
+# substring check missed a paragraph that was on the page in full and rejected
+# the whole job. Applied to both sides, so a letter that really was written
+# with a space after the hyphen still matches itself.
+WRAPPED_HYPHEN = re.compile(r"(?<=\w)-\s+(?=\w)")
+
+
 def normalized(value):
-    return WHITESPACE.sub(" ", html.unescape(str(value))).strip().casefold()
+    collapsed = WHITESPACE.sub(" ", html.unescape(str(value))).strip().casefold()
+    return WRAPPED_HYPHEN.sub("-", collapsed)
 
 
 def expected_text(content, candidate):

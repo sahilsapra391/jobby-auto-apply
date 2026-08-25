@@ -32,55 +32,17 @@ Standard library only.
 """
 
 import sys
-import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
+import job_description  # noqa: E402
 import jobs_store  # noqa: E402
-from sources import base, greenhouse  # noqa: E402
 
 
 class PostingBodyError(Exception):
     """The posting could not be read. Never fatal: callers fall back."""
-
-
-def _greenhouse_parts(url):
-    """Board token and job id out of either Greenhouse posting URL shape.
-
-    Both `job-boards.greenhouse.io/<token>/jobs/<id>` and the older
-    `boards.greenhouse.io/<token>/jobs/<id>` are in the pool, and the older one
-    arrives carrying `?gh_jid=...`. Splitting the raw URL on "/" leaves that
-    query string welded to the job id and the API answers 404, so the query and
-    fragment come off first.
-    """
-    parsed = urllib.parse.urlparse(url)
-    if not parsed.netloc.endswith("greenhouse.io"):
-        return None
-    parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 3 or parts[-2] != "jobs":
-        return None
-    token, job_id = parts[-3], parts[-1]
-    if not token or not job_id.isdigit():
-        return None
-    return token, job_id
-
-
-def _greenhouse_body(fetcher, url):
-    parts = _greenhouse_parts(url)
-    if parts is None:
-        raise PostingBodyError("the posting URL is not a Greenhouse job")
-    body, error = greenhouse.fetch_body(fetcher, url, parts[0], parts[1])
-    if error:
-        raise PostingBodyError(error)
-    return base.strip_html(body)
-
-
-# Sources whose full posting body this module knows how to read. A source that
-# is absent here is not a failure, it just means the stored excerpt is the best
-# text available for that job.
-FETCHERS = {"greenhouse": _greenhouse_body}
 
 
 def stored_excerpt(job):
@@ -92,37 +54,55 @@ def stored_excerpt(job):
 def full_body(job, fetcher=None):
     """Fetch the complete posting for one job record, or raise.
 
-    Raises rather than returning empty, so `resolve` can tell "this ATS has no
-    fetcher" apart from "the fetch went out and came back with nothing".
+    Raises rather than returning empty, so `resolve` can tell a board it could
+    not read apart from a fetch that went out and came back with nothing.
+
+    The per-board routing lives in `job_description`, which reads Greenhouse,
+    Lever, Ashby, SmartRecruiters and Workday through their own JSON endpoints
+    and falls back to the posting page. Greenhouse alone was not enough: the
+    pool spans every one of those, and Workday's page is an empty app shell
+    that is readable no other way.
     """
-    source = (job or {}).get("canonicalSource")
     url = (job or {}).get("canonicalUrl") or ""
-    read = FETCHERS.get(source)
-    if read is None or not url:
-        raise PostingBodyError("no body fetcher for this posting")
-    text = read(fetcher if fetcher is not None else base.Fetcher(), url).strip()
+    if not url:
+        raise PostingBodyError("the job record has no posting address")
+    try:
+        text = job_description.fetch(url, fetcher=fetcher).strip()
+    except job_description.Unfetchable as exc:
+        raise PostingBodyError(str(exc)) from exc
     if not text:
         raise PostingBodyError("the posting body came back empty")
     return text
 
 
-def resolve(application_id, root=None, fetcher=None, allow_network=True):
-    """The best posting text available for one application, or "".
+def resolve_detail(application_id, root=None, fetcher=None, allow_network=True):
+    """(text, source, why) for one application. Never raises.
 
-    Never raises for a missing job, an unsupported ATS, or a failed fetch. The
-    caller has a session in hand either way and an empty result is a fact about
-    the posting, not an error in reading it.
+    `source` is "posting" for the full body, "excerpt" for the 1,500-character
+    copy the sweep stored, or "" for nothing. The caller records which one it
+    got, because a resume tailored against an excerpt is a worse application
+    that still goes out under the user's name, and that should be visible on
+    the card rather than inferred later from the length of a file.
     """
     try:
         jobs = jobs_store.load_jobs(jobs_store.root_dir(root))
     except (jobs_store.JobsStoreError, OSError):
-        return ""
+        return "", "", "the job pool could not be read"
     job = jobs.get(application_id)
     if not isinstance(job, dict):
-        return ""
+        return "", "", "this application is no longer in the job pool"
+    why = ""
     if allow_network:
         try:
-            return full_body(job, fetcher)
-        except (PostingBodyError, OSError, ValueError):
-            pass
-    return stored_excerpt(job)
+            return full_body(job, fetcher), "posting", ""
+        except (PostingBodyError, OSError, ValueError) as exc:
+            why = str(exc)[:200]
+    excerpt = stored_excerpt(job)
+    if excerpt:
+        return excerpt, "excerpt", why
+    return "", "", why or "the job record holds no posting text"
+
+
+def resolve(application_id, root=None, fetcher=None, allow_network=True):
+    """The best posting text available for one application, or ""."""
+    return resolve_detail(application_id, root, fetcher, allow_network)[0]

@@ -880,11 +880,35 @@ def _wrapper_candidates(value: Any) -> list[Mapping[str, Any]]:
     return candidates
 
 
+def _unfence(output: str) -> str:
+    """Unwrap a response that is exactly one Markdown code fence.
+
+    The prompt already says not to use fences. Claude fences anyway, every time,
+    and the parser called the result "non-JSON output" — so every Anthropic
+    document job died one step after the model had already done the work
+    correctly. Gemini is the same shape of client and sits ahead of it in the
+    connection order.
+
+    Only an output that is nothing but one fence is unwrapped. A response with
+    commentary around the fence, or with a second block in it, is still the
+    ambiguity this parser exists to refuse.
+    """
+    if not output.startswith("```") or not output.endswith("```"):
+        return output
+    body = output[3:-3]
+    if "```" in body:
+        return output
+    first, _, rest = body.partition("\n")
+    # ```json and friends. A language tag is a word; anything else is content
+    # that happens to sit on the first line, and must not be thrown away.
+    return rest if first.strip().isalnum() or not first.strip() else body
+
+
 def parse_provider_response(output: str) -> Mapping[str, Any]:
     """Parse raw JSON or known CLI wrappers, rejecting ambiguity and prose."""
-    output = _bounded_text(
+    output = _unfence(_bounded_text(
         output, "provider response", MAX_MODEL_RESPONSE_BYTES
-    ).strip()
+    ).strip()).strip()
     if not output:
         raise ResultInvalid("provider response is empty")
 
@@ -1097,11 +1121,19 @@ def validate_provider_content(
         # sink the whole job. Inherit the verified base wording instead.
         overrides = {}
     letter_raw = dict(raw["coverLetter"])
-    if openai:
-        # These are trusted request fields, not model claims. Correcting them is
-        # safer than accepting a model spelling drift or rejecting every file.
-        letter_raw["employer"] = company
-        letter_raw["role"] = role
+    # Trusted request fields, not model claims. Correcting them is safer than
+    # accepting a model spelling drift or rejecting every file.
+    #
+    # This was scoped to OpenAI, and nothing about it was OpenAI-specific: the
+    # employer and the role come from the request for every provider. Claude
+    # read the fuller title off the posting itself and wrote "Product Manager,
+    # Super Network" where the stored role said "Product Manager", which is a
+    # better answer than the store had, and the exact-match check below threw
+    # the whole job away for it. The resumeOverrides fallback above stays
+    # OpenAI-only, because that one rests on the strict schema guaranteeing the
+    # outer shape and there is no equivalent guarantee here.
+    letter_raw["employer"] = company
+    letter_raw["role"] = role
     try:
         letter = cover_letter.validate_content(letter_raw)
     except cover_letter.CoverLetterError as exc:
