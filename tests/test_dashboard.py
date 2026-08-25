@@ -1265,6 +1265,16 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertIn("select.dispatchEvent(new Event('change', { bubbles: true }));", page)
         self.assertIn("Object.defineProperty(select, 'value'", page)
 
+    def test_watching_row_controls_sit_on_one_line(self):
+        # align-items:center centres margin boxes, so a top margin on Apply and
+        # none on the drop control left the two 3px apart. The spacing that
+        # margin was providing belongs to the column's gap.
+        page = build()
+        apply_rule = page[page.index(".btn.apply {"):]
+        apply_rule = apply_rule[:apply_rule.index("}")]
+        self.assertNotIn("margin", apply_rule)
+        self.assertIn("gap:.85rem; white-space:nowrap", page)
+
     def test_the_mark_replays_on_click_without_a_composited_blur(self):
         # A CSS clip-path or opacity animation promotes the pack to its own
         # layer, which Chrome rasterizes coarse until the animation ends.

@@ -979,8 +979,7 @@ def build(state, generated):
   .step.on {{ background:var(--purple); }}
   .phase {{ margin:0; font-size:.92rem; font-weight:550; letter-spacing:-.014em; }}
   .btn.apply {{ background:var(--btn-g); color:var(--btn-g-ink);
-    font-size:.8rem; padding:.35rem .8rem;
-    margin-top:.4rem; display:block; }}
+    font-size:.8rem; padding:.35rem .8rem; }}
   .btn.apply[disabled] {{ opacity:.5; cursor:default; }}
   .applymsg {{ display:block; font-size:.74rem; color:var(--ink-3); margin-top:.3rem;
     max-width:16ch; line-height:1.3; }}
@@ -1044,7 +1043,7 @@ def build(state, generated):
      control floating past the arrow instead of sitting under it. Shrink-wrapped
      to the link, the row is exactly as wide as "View posting" and its arrow. */
   .rowacts {{ display:inline-flex; flex-direction:column; align-items:stretch;
-    gap:.45rem; white-space:nowrap; margin-left:1.4rem; }}
+    gap:.85rem; white-space:nowrap; margin-left:1.4rem; }}
   .rowacts-btns {{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; }}
   /* Posting and Restore sat flush against each other. */
   .rowacts-inline {{ display:flex; align-items:center; gap:.85rem; }}
