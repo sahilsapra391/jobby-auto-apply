@@ -505,6 +505,19 @@ class BrowserStub:
         return pathlib.Path("/tmp/gemini-settings.json")
 
 
+def all_tasks_cleared():
+    """Pin invocation SHAPE for a provider the live matrix currently gates.
+
+    openai is documents-only until its fence probe returns bound, but the shape
+    of its apply and scan invocations is a security assertion worth keeping:
+    read-only sandbox, no shell, no general filesystem. This says "when it is
+    cleared, this is what it must look like" without clearing it in production.
+    """
+    return mock.patch.object(
+        providers, "TASK_CAPABILITIES",
+        {p: frozenset(providers.TASK_KINDS) for p in providers.PROVIDER_IDS},
+    )
+
 class InvocationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -529,7 +542,8 @@ class InvocationTests(unittest.TestCase):
         )
 
     def test_openai_uses_ephemeral_read_only_and_browser_mcp(self):
-        invocation = self.invocation("openai")
+        with all_tasks_cleared():
+            invocation = self.invocation("openai")
         joined = " ".join(invocation.argv)
         self.assertIn("exec", invocation.argv)
         self.assertIn("--ephemeral", invocation.argv)
@@ -614,8 +628,9 @@ class InvocationTests(unittest.TestCase):
                     "the prompt reached argv")
 
     def test_codex_web_search_is_scan_only(self):
-        self.assertNotIn("--search", self.invocation("openai", "apply").argv)
-        self.assertIn("--search", self.invocation("openai", "scan").argv)
+        with all_tasks_cleared():
+            self.assertNotIn("--search", self.invocation("openai", "apply").argv)
+            self.assertIn("--search", self.invocation("openai", "scan").argv)
 
     def test_every_provider_has_one_exact_model_pin(self):
         for provider, expected in providers.MODEL_IDS.items():
@@ -625,7 +640,8 @@ class InvocationTests(unittest.TestCase):
                         # Refused outright, so there is no argv to pin. The
                         # refusal itself is asserted in GeminiAntigravityTests.
                         continue
-                    invocation = self.invocation(provider, task)
+                    with all_tasks_cleared():
+                        invocation = self.invocation(provider, task)
                     self.assertEqual(invocation.argv.count("--model"), 1)
                     self.assertEqual(
                         invocation.argv[invocation.argv.index("--model") + 1],
@@ -651,11 +667,12 @@ class InvocationTests(unittest.TestCase):
                 self.assertEqual(invocation.cwd, self.workspace.resolve())
 
     def test_application_invocations_have_no_shell_or_general_filesystem(self):
-        invocations = {
-            provider: self.invocation(provider, "apply")
-            for provider in providers.PROVIDER_IDS
-            if provider != "gemini"
-        }
+        with all_tasks_cleared():
+            invocations = {
+                provider: self.invocation(provider, "apply")
+                for provider in providers.PROVIDER_IDS
+                if provider != "gemini"
+            }
         # gemini has no application invocation to inspect: it is refused before
         # one is built, which is the strongest form of this assertion.
         with self.assertRaises(providers.ProviderError):
