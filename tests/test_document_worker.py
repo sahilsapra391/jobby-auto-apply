@@ -1577,5 +1577,50 @@ class DurabilityTests(unittest.TestCase):
         self.assertEqual(registry.refresh_calls, [])
 
 
+class TrustedFieldNormalisationTests(unittest.TestCase):
+    """The employer/role gate must compare like with like.
+
+    Both fields are assigned from the trusted request immediately before
+    validate_content runs, so the model's own values are gone and the check
+    cannot catch drift. Comparing its normalised output against the raw request
+    left it able to fail only on formatting, which is a false positive by
+    construction.
+
+    Robinhood's stored title is the real one: "Staff Product Manager-  " with a
+    double space. Four document jobs died on it, two on Anthropic and one on
+    OpenAI with its strict schema, all at this gate. 68 of the 6,389 postings in
+    the pool normalise to something different from what is stored.
+    """
+
+    DOUBLE_SPACED = "Staff Product Manager-  Integrations & Advisor Platform"
+
+    def test_a_double_spaced_role_is_accepted_and_normalised(self):
+        runtime = {"company": "Robinhood", "role": self.DOUBLE_SPACED}
+        clean = worker.validate_provider_content(provider_payload(), runtime)
+        self.assertEqual(
+            clean["coverLetter"]["role"],
+            "Staff Product Manager- Integrations & Advisor Platform")
+
+    def test_an_employer_whose_spacing_normalises_is_accepted(self):
+        runtime = {"company": "Acme  Corporation", "role": "Private Role"}
+        clean = worker.validate_provider_content(provider_payload(), runtime)
+        self.assertEqual(clean["coverLetter"]["employer"], "Acme Corporation")
+
+    def test_a_non_breaking_space_in_the_title_is_accepted(self):
+        # 'Voice Product Analytics\xa0- Associate' is in the pool verbatim.
+        runtime = {"company": "Private Company",
+                   "role": "Voice Product Analytics\xa0- Associate"}
+        clean = worker.validate_provider_content(provider_payload(), runtime)
+        self.assertEqual(clean["coverLetter"]["role"],
+                         "Voice Product Analytics - Associate")
+
+    def test_an_ordinary_role_still_passes_unchanged(self):
+        runtime = {"company": "Private Company", "role": "Private Role"}
+        clean = worker.validate_provider_content(provider_payload(), runtime)
+        self.assertEqual(clean["coverLetter"]["role"], "Private Role")
+        self.assertEqual(clean["coverLetter"]["employer"], "Private Company")
+
+
+
 if __name__ == "__main__":
     unittest.main()

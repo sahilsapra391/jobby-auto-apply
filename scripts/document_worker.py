@@ -96,10 +96,44 @@ PROVIDER_PACKAGE_NAMES = {
     "gemini": "@google/gemini-cli",
 }
 
+# The sentence beside the code, on its way to the per-job log. Same character
+# class and same bound as document_job._safe_detail, deliberately: the client
+# scrubs whatever it reads back, and a value that survives both is one the two
+# halves agree about.
+MAX_FAILURE_REASON = 140
+_REASON_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
+
+
+def failure_reason(value: object) -> str:
+    """One bounded, scrubbed line, or nothing.
+
+    A fixed code alone has now cost three diagnoses in one day. "coverLetter
+    employer or role does not match the job" named the right gate and still
+    took hours, because it says neither which field nor what the two values
+    were. "generated artifacts failed validation" is worse.
+
+    Every message this reads is a literal written in this file. The scrub is
+    belt and braces against a future one that starts interpolating a path, a
+    posting or a provider body, and the client scrubs it again on the way in.
+    """
+    if not isinstance(value, str):
+        return ""
+    return " ".join(_REASON_DISALLOWED.sub(" ", value).split())[:MAX_FAILURE_REASON]
+
+
 class WorkerError(RuntimeError):
-    """A worker failure represented by one fixed public code."""
+    """A worker failure represented by one fixed public code.
+
+    `reason()` is what may be written to the local per-job log beside that
+    code. It never crosses the transport: `NodeTransport.fail` sends only a
+    member of FAILURE_CODES, because KV takes ciphertext and fixed status
+    metadata and nothing else.
+    """
 
     code = "worker_failed"
+
+    def reason(self) -> str:
+        return failure_reason(str(self))
 
 
 class InvalidRequest(WorkerError):
@@ -120,6 +154,18 @@ class UnsupportedTerms(ResultInvalid):
     def __init__(self, terms: list[str]):
         self.terms = list(terms)
         super().__init__("the tailored resume contains unsupported terms")
+
+    def reason(self) -> str:
+        """The count, never the terms.
+
+        The terms are job-description keywords rather than document text, but
+        this class exists to keep them inside the worker and that is not mine
+        to relax. The count alone still separates the two cases that matter:
+        a handful of stray words, or a posting whose core vocabulary the
+        candidate has no evidence for. The second is the gate working.
+        """
+        return failure_reason(
+            f"{len(self.terms)} unsupported term(s) the base resume cannot source")
 
 
 class TransportError(RuntimeError):
@@ -276,10 +322,14 @@ class JobLog:
             stream.flush()
             os.fsync(stream.fileno())
 
-    def record(self, event: str, code: str | None = None) -> None:
+    def record(self, event: str, code: str | None = None,
+               reason: str = "") -> None:
         if event not in self.EVENTS:
             event = "failure published"
         suffix = f" [{code}]" if code in FAILURE_CODES else ""
+        detail = failure_reason(reason)
+        if detail:
+            suffix += f" {detail}"
         self._append(f"- {iso_now()} {event}{suffix}\n")
 
 
@@ -1137,9 +1187,25 @@ def validate_provider_content(
     try:
         letter = cover_letter.validate_content(letter_raw)
     except cover_letter.CoverLetterError as exc:
-        raise ResultInvalid("coverLetter has an invalid shape") from exc
-    if letter["employer"] != company or letter["role"] != role:
-        raise ResultInvalid("coverLetter employer or role does not match the job")
+        # The underlying error names the exact key and the exact length
+        # problem; the fixed code alone names neither. Same fixed-literal
+        # source as everything else that travels this way.
+        raise ResultInvalid(
+            f"coverLetter has an invalid shape: {exc}") from exc
+    # Against the request as validate_content would render it, not against the
+    # raw request. Both fields are assigned from the request two lines up, so
+    # the model's own values are already gone by the time this runs and no
+    # amount of drift can reach it. What it compared instead was the store's
+    # spacing against normalised spacing, and clean_line collapses runs of
+    # whitespace. Robinhood's title carries a double space, so the check could
+    # never pass for it: four runs across both providers died here. 68 of the
+    # 6,389 postings in the pool have a title or employer that normalises to
+    # something different, so this was 1.1% of every future promotion.
+    expected_employer = cover_letter.clean_line(company, "employer", 2, 160)
+    expected_role = cover_letter.clean_line(role, "role", 2, 180)
+    if letter["employer"] != expected_employer or letter["role"] != expected_role:
+        raise ResultInvalid(
+            "coverLetter employer or role does not match the job")
     return {"resumeOverrides": overrides, "coverLetter": letter}
 
 
@@ -2195,16 +2261,20 @@ class DocumentWorker:
                     delay = min(delay * 2, 15.0)
         raise last or TransportError("transport retry failed")
 
-    def _fail_job(self, job_id: str, claim_token: str, code: str, log: JobLog) -> None:
+    def _fail_job(self, job_id: str, claim_token: str, code: str, log: JobLog,
+                  reason: str = "") -> None:
         safe_code = code if code in FAILURE_CODES else "worker_failed"
         try:
+            # Only the code crosses the transport. The sentence stays on this
+            # machine, in the log this worker already writes, because KV takes
+            # ciphertext and fixed status metadata and nothing else.
             self._retry(
                 lambda: self.transport.fail(job_id, claim_token, safe_code),
                 attempts=3,
             )
-            log.record("failure published", safe_code)
+            log.record("failure published", safe_code, reason)
         except TransportError:
-            log.record("failure publish deferred", safe_code)
+            log.record("failure publish deferred", safe_code, reason)
 
     def process_claim(self, claim: Mapping[str, Any]) -> bool:
         job_id, claim_token = _safe_identifiers(claim)
@@ -2213,6 +2283,7 @@ class DocumentWorker:
         task_root: Path | None = None
         completed = False
         error_code = "worker_failed"
+        error_reason = ""
         try:
             bundle = _safe_bundle(claim, job_id)
             try:
@@ -2295,11 +2366,12 @@ class DocumentWorker:
             return True
         except WorkerError as exc:
             error_code = exc.code
+            error_reason = exc.reason()
         except Exception:
             error_code = "worker_failed"
         finally:
             if not completed:
-                self._fail_job(job_id, claim_token, error_code, log)
+                self._fail_job(job_id, claim_token, error_code, log, error_reason)
             if task_root is not None:
                 scrub_task_directory(task_root, self.task_dir)
             log.record("plaintext scrubbed")
