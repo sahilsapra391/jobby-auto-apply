@@ -897,6 +897,17 @@ def _wrapper_candidates(value: Any) -> list[Mapping[str, Any]]:
         if candidate is not None:
             candidates.append(candidate)
 
+    # The Antigravity CLI closes its stream with
+    #   {"event":"result","result":{"response":"<the JSON>", ...}}
+    # so the payload is one level further down than any other wrapper puts it.
+    # Narrow on purpose: only the terminal result event of a stream, only its
+    # response field. Anything looser would start finding second candidates in
+    # the conversational events above it, which is the ambiguity this refuses.
+    if value.get("event") == "result" and isinstance(value.get("result"), dict):
+        candidate = _json_candidate(value["result"].get("response"))
+        if candidate is not None:
+            candidates.append(candidate)
+
     message = value.get("message")
     if isinstance(message, dict) and message.get("role") in (None, "assistant"):
         content = message.get("content")
@@ -1690,13 +1701,14 @@ def no_tools_document_invocation(
         prompt_index = len(argv) - 1 if argv and argv[-1] == "-" else len(argv)
         argv[prompt_index:prompt_index] = ["--output-schema", str(schema_path)]
     elif invocation.provider_id == "gemini":
-        try:
-            output_index = argv.index("--output-format")
-            argv[output_index + 1] = "json"
-            approval_index = argv.index("--approval-mode")
-            argv[approval_index + 1] = "default"
-        except (ValueError, IndexError) as exc:
-            raise GenerationFailed("Gemini document command is invalid") from exc
+        # Left as built. The Antigravity CLI has no --approval-mode, and this
+        # looked for one and failed every Gemini document job before the
+        # provider was even started. --output-format is not forced to json
+        # either: agy requires stream-json output whenever the prompt arrives
+        # as stream-json input, and the prompt goes in on stdin precisely so
+        # the resume and the posting stay out of argv.
+        if "--approval-mode" in argv:
+            raise GenerationFailed("Gemini document command is invalid")
     else:
         raise GenerationFailed("unknown document provider")
     return providers.RunInvocation(
@@ -2024,7 +2036,7 @@ class ProviderRunner:
                 raise GenerationFailed("provider response is not UTF-8") from exc
             if invocation.provider_id == "gemini":
                 try:
-                    providers.verify_gemini_served_model(decoded, stream=False)
+                    providers.verify_gemini_served_model(decoded, stream=True)
                 except providers.GeminiModelMismatch as exc:
                     raise GenerationFailed(
                         "Gemini did not use the pinned model"
