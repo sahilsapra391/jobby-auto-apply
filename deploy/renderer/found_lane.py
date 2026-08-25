@@ -669,6 +669,12 @@ def last_ingest_line(meta):
             f"{report.get('kept', 0)} new",
             f"{report.get('deduped', 0)} merged",
             f"{report.get('gatedOut', 0)} filtered out"]
+    # Only when it happened. A card vanishing between visits is the one board
+    # change nothing else explains, so the scan line says when it was a closure
+    # rather than leaving the user to wonder what they lost.
+    closed = report.get("closed") or 0
+    if closed:
+        bits.append(f"{closed} closed by the employer")
     line = " &middot; ".join(esc(b) for b in bits)
 
     extras = []

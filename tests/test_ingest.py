@@ -821,5 +821,98 @@ class SavedSearchMergeTests(unittest.TestCase):
                     self.assertEqual(after[key], saved[key])
 
 
+class StalenessSweepTests(IngestCase):
+    """The closure pass, driven through the real run() rather than in isolation.
+
+    close_missing has its own tests. What these cover is the wiring: that a
+    sweep actually records what each board returned, that it only acts when the
+    run was complete, and that a job which comes back comes back.
+    """
+
+    def _two_postings(self):
+        """Two requisitions the matcher will keep apart.
+
+        Same company and a near-identical body is exactly what identity
+        resolution is built to fold together, so these differ in title and
+        description as two real requisitions would.
+        """
+        a = posting(url="https://job-boards.greenhouse.io/northwind/jobs/1")
+        b = posting(url="https://job-boards.greenhouse.io/northwind/jobs/2",
+                    title="Senior Program Manager, Supply Chain Platform",
+                    description="Own the supply chain platform roadmap. Partner "
+                                "with warehouse operations, carrier integrations "
+                                "and demand planning. Eight years of logistics "
+                                "software experience required.")
+        return a, b
+
+    def test_a_posting_the_board_stops_listing_is_closed(self):
+        a, b = self._two_postings()
+        _, jobs = self.run_ingest({"greenhouse": channel([a, b])})
+        self.assertEqual(len(jobs), 2)
+
+        report, jobs = self.run_ingest({"greenhouse": channel([a])})
+        self.assertEqual(report["closed"], 1)
+        states = sorted(job["state"] for job in jobs.values())
+        self.assertEqual(states, ["expired", "new"])
+
+    def test_the_report_names_which_lane_lost_the_job(self):
+        a, b = self._two_postings()
+        _, jobs = self.run_ingest({"greenhouse": channel([a, b])})
+        gone = [jid for jid, job in jobs.items() if "jobs/2" in job["canonicalUrl"]][0]
+        jobs[gone]["state"] = "watched"
+        jobs_store.save_jobs(self.root, jobs)
+
+        report, jobs = self.run_ingest({"greenhouse": channel([a])})
+        self.assertEqual(report["closedFrom"], {"watched": 1})
+
+    def test_a_channel_that_failed_closes_nothing(self):
+        """The outage case. A failed connector must not empty its own board."""
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": channel([a, b])})
+        report, jobs = self.run_ingest(
+            {"greenhouse": channel([], status="failed", reason="503 from the board")})
+        self.assertEqual(report["closed"], 0)
+        self.assertTrue(all(job["state"] == "new" for job in jobs.values()))
+
+    def test_a_limited_run_closes_nothing(self):
+        """`limit` truncates every channel, so everything below it looks gone."""
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": channel([a, b])})
+        report, jobs = self.run_ingest({"greenhouse": channel([a])}, limit=1)
+        self.assertEqual(report["closed"], 0)
+        self.assertTrue(all(job["state"] == "new" for job in jobs.values()))
+
+    def test_a_dry_run_closes_nothing(self):
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": channel([a, b])})
+        report, _ = self.run_ingest({"greenhouse": channel([a])}, dry_run=True)
+        self.assertEqual(report["closed"], 0)
+        stored = jobs_store.load_jobs(self.root)
+        self.assertTrue(all(job["state"] == "new" for job in stored.values()))
+
+    def test_a_relisted_posting_comes_back_to_found(self):
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": channel([a, b])})
+        self.run_ingest({"greenhouse": channel([a])})
+        report, jobs = self.run_ingest({"greenhouse": channel([a, b])})
+        self.assertEqual(report["reopened"], 1)
+        self.assertEqual(report["closed"], 0)
+        self.assertTrue(all(job["state"] == "new" for job in jobs.values()))
+        self.assertTrue(all("closedAt" not in job for job in jobs.values()))
+
+    def test_a_closed_posting_leaves_the_found_lane(self):
+        """What the user actually sees. Found is `new` only, so this is the end
+        of the chain the screen recording was about."""
+        import found_lane
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": channel([a, b])})
+        _, jobs = self.run_ingest({"greenhouse": channel([a])})
+        shown, total = found_lane.select(jobs)
+        urls = [job.get("canonicalUrl") or "" for job in shown]
+        self.assertEqual(total, 1)
+        self.assertTrue(any("jobs/1" in u for u in urls))
+        self.assertFalse(any("jobs/2" in u for u in urls))
+
+
 if __name__ == "__main__":
     unittest.main()

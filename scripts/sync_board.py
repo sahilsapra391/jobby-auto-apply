@@ -19,6 +19,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
+sys.path.insert(0, str(REPO / "scripts"))
+import jobs_store  # noqa: E402  (needs the path above)
+
 
 def run(args):
     return subprocess.run([sys.executable, str(STORE)] + args,
@@ -60,7 +63,24 @@ def main():
             latest[e["applicationId"]] = e
     submitted = {a for a, e in latest.items() if e.get("event") == "completed"}
 
-    retired = []
+    # Jobs the employer has taken down. A session's applicationId is the job
+    # id, so the pool is the authority on whether the posting still exists.
+    #
+    # Watching only, and deliberately. Submitted, In flight and Needs you are
+    # things the user did; a closed posting does not undo them and they keep
+    # their cards. Watching is a shelf of roles still open to apply to, and a
+    # role that cannot be applied to any more does not belong on it.
+    closed = set()
+    try:
+        pool = jobs_store.load_jobs(jobs_store.root_dir())
+        closed = {job_id for job_id, job in pool.items()
+                  if job.get("state") == "expired"}
+    except (OSError, ValueError, jobs_store.JobsStoreError):
+        # An unreadable pool means we do not know what is closed. Retiring
+        # nothing is the safe answer; retiring everything is not.
+        closed = set()
+
+    retired, dropped_closed = [], []
     for s in sessions:
         aid = s["applicationId"]
         if aid in submitted:
@@ -68,8 +88,13 @@ def main():
             # can still link to the posting after the session is gone.
             if run(["session-delete", "--id", aid]).returncode == 0:
                 retired.append(aid)
+        elif s.get("status") == "watch" and aid in closed:
+            if run(["session-delete", "--id", aid]).returncode == 0:
+                dropped_closed.append(aid)
 
-    result = {"retiredFromWatching": retired, "watchingNow": len(sessions) - len(retired),
+    result = {"retiredFromWatching": retired,
+              "closedAndRetired": dropped_closed,
+              "watchingNow": len(sessions) - len(retired) - len(dropped_closed),
               "submitted": len(submitted)}
 
     if not args.no_publish:
