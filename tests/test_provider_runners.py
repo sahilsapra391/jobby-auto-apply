@@ -645,5 +645,139 @@ class ScanRunnerTests(unittest.TestCase):
         self.assertNotEqual(one, two)
 
 
+class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
+    """Every connected account gets a turn, and a touched form gets only one.
+
+    One provider used to get the only turn. If its CLI hung for the full
+    45-minute bound, overflowed its output limit, or answered on the wrong
+    model, the application parked with two other healthy accounts connected and
+    idle.
+
+    The stop condition is the safety property. `terminal` means something
+    durable happened to the form (completed, parked, cancelled, abandoned,
+    submission_unverified), and a second agent must never go over it: that is
+    how one application is submitted twice under a real name.
+    """
+
+    def drive(self, results, outcomes, order=("gemini", "anthropic", "openai"),
+              authenticated=None):
+        seen = []
+        if authenticated is None:
+            def authenticated(force=False, provider=None):
+                return (True, "")
+
+        def run_bounded(argv, **kwargs):
+            seen.append(kwargs.get("env", {}).get("JOBBY_PROVIDER") or argv[0])
+            return results.pop(0)
+
+        def build_invocation(provider, task, prompt, **kwargs):
+            seen.append(provider)
+            return providers.RunInvocation(
+                provider, task, [f"/agents/{provider}"], {"PATH": "/usr/bin"},
+                pathlib.Path(kwargs["workspace"]), prompt,
+            )
+
+        log_dir = self.resume.parent / "logs"
+        with mock.patch.object(
+                sys, "argv", ["run_apply.py", "--id", "acme-pm",
+                              "--provider", "gemini", "--slot", "apply-2"]), \
+                mock.patch.object(run_apply, "load_brief", return_value=self.summary), \
+                mock.patch.object(run_apply, "_refuse_duplicate", return_value=False), \
+                mock.patch.object(
+                    run_apply.agent, "resolve_provider", return_value="gemini"), \
+                mock.patch.object(
+                    run_apply.agent, "authenticated", side_effect=authenticated), \
+                mock.patch.object(
+                    run_apply.providers, "work_order", return_value=list(order)), \
+                mock.patch.object(run_apply.browser, "serve", return_value={}), \
+                mock.patch.object(
+                    run_apply.browser, "open_application",
+                    return_value={"opened": True, "url": self.summary["url"]}), \
+                mock.patch.object(
+                    run_apply.browser, "stage_application_uploads",
+                    return_value=run_apply.artifact_snapshot(self.summary)), \
+                mock.patch.object(
+                    run_apply.providers, "build_run_invocation",
+                    side_effect=build_invocation), \
+                mock.patch.object(
+                    run_apply.providers, "verify_gemini_served_model",
+                    return_value=None), \
+                mock.patch.object(run_apply, "_set_phase", return_value=completed()), \
+                mock.patch.object(run_apply, "LOG_DIR", log_dir), \
+                mock.patch.object(
+                    run_apply.provider_process, "run_bounded",
+                    side_effect=run_bounded), \
+                mock.patch.object(run_apply.provider_login, "publish_status"), \
+                mock.patch.object(run_apply.providers, "mark_unhealthy"), \
+                mock.patch.object(run_apply.agent, "invalidate"), \
+                mock.patch.object(run_apply, "store", return_value=completed()), \
+                mock.patch.object(
+                    run_apply, "verify_terminal_outcome",
+                    side_effect=outcomes), \
+                mock.patch("builtins.print"):
+            code = run_apply.main()
+        return code, [x for x in seen if x in order]
+
+    @staticmethod
+    def result(code=0, stdout="done", stderr=""):
+        return run_apply.provider_process.BoundedProcessResult(code, stdout, stderr)
+
+    def test_a_provider_that_achieves_nothing_hands_over_to_the_next(self):
+        code, tried = self.drive(
+            results=[self.result(1, "", "boom"), self.result(0)],
+            outcomes=[{"ok": False, "terminal": None},
+                      {"ok": True, "terminal": "completed"}],
+        )
+        self.assertEqual(tried, ["gemini", "anthropic"])
+        self.assertEqual(code, 0)
+
+    def test_it_walks_all_the_way_down_the_connection_order(self):
+        code, tried = self.drive(
+            results=[self.result(1), self.result(1), self.result(0)],
+            outcomes=[{"ok": False, "terminal": None},
+                      {"ok": False, "terminal": None},
+                      {"ok": True, "terminal": "completed"}],
+        )
+        self.assertEqual(tried, ["gemini", "anthropic", "openai"])
+        self.assertEqual(code, 0)
+
+    def test_a_parked_form_is_never_handed_to_a_second_provider(self):
+        # The user has to do something. Another agent re-opening that form is
+        # not a retry, it is a second pass over work already on the record.
+        code, tried = self.drive(
+            results=[self.result(3)],
+            outcomes=[{"ok": False, "terminal": "parked"}],
+        )
+        self.assertEqual(tried, ["gemini"])
+
+    def test_a_submitted_form_is_never_handed_to_a_second_provider(self):
+        code, tried = self.drive(
+            results=[self.result(1)],
+            outcomes=[{"ok": False, "terminal": "submission_unverified"}],
+        )
+        self.assertEqual(tried, ["gemini"])
+
+    def test_the_first_success_stops_the_walk(self):
+        code, tried = self.drive(
+            results=[self.result(0)],
+            outcomes=[{"ok": True, "terminal": "completed"}],
+        )
+        self.assertEqual(tried, ["gemini"])
+        self.assertEqual(code, 0)
+
+    def test_an_unauthenticated_account_is_skipped_without_being_run(self):
+        def authenticated(force=False, provider=None):
+            return (provider != "anthropic", "not connected")
+
+        code, tried = self.drive(
+            results=[self.result(1), self.result(0)],
+            outcomes=[{"ok": False, "terminal": None},
+                      {"ok": True, "terminal": "completed"}],
+            authenticated=authenticated,
+        )
+        self.assertEqual(tried, ["gemini", "openai"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,11 +59,49 @@ class ParkedReservationTests(unittest.TestCase):
         self.assertTrue(holder["parked"])
         self.assertEqual(holder["note"], "acme-pm")
 
-    def test_affinity_never_falls_through_to_a_different_free_slot(self):
+    def test_a_crossed_affinity_falls_through_to_a_free_slot(self):
+        """Affinity protects form state, and a crossed affinity protects none.
+
+        This asserted [] until 2026-08-25, which is not "wait for your slot",
+        it is "never run". apply-4's Chrome profile belongs to whoever parked
+        it, so there is nothing of acme-pm's in it to go back to, and holding
+        out for it costs everything queued behind acme-pm: only the head of the
+        Apply queue is ever started. It wedged the real queue for four and a
+        half hours with a free slot unused, and no Retry could clear it,
+        because pressing Retry re-queued behind the same stuck head.
+
+        What affinity is actually for is still pinned, one test above: an
+        application reclaims a slot it parked itself.
+        """
         watch.park_slot("apply-4", "different-application")
         with mock.patch.object(
                 watch, "browser_slot_for_application", return_value="apply-4"):
+            self.assertEqual(
+                watch.candidate_apply_slots("acme-pm"), watch.free_apply_slots())
+            self.assertIn("apply-1", watch.candidate_apply_slots("acme-pm"))
+
+    def test_a_crossed_affinity_with_nothing_free_still_waits(self):
+        for slot in watch.APPLY_LOCKS:
+            watch.park_slot(slot, "different-application")
+        with mock.patch.object(
+                watch, "browser_slot_for_application", return_value="apply-4"):
             self.assertEqual(watch.candidate_apply_slots("acme-pm"), [])
+
+    def test_a_live_runner_on_the_affinity_slot_also_falls_through(self):
+        # Held by another application's live runner rather than parked. Same
+        # conclusion: that profile is not ours and never will be.
+        watch.take_lock("apply-4", os.getpid(), note="different-application")
+        with mock.patch.object(
+                watch, "browser_slot_for_application", return_value="apply-4"):
+            self.assertIn("apply-1", watch.candidate_apply_slots("acme-pm"))
+
+    def test_a_slot_this_application_parked_is_not_stale(self):
+        watch.park_slot("apply-4", "acme-pm")
+        self.assertFalse(watch.slot_affinity_is_stale("acme-pm", "apply-4"))
+        self.assertTrue(watch.slot_affinity_is_stale("someone-else", "apply-4"))
+
+    def test_a_free_affinity_slot_is_not_stale(self):
+        self.assertFalse(watch.slot_affinity_is_stale("acme-pm", "apply-4"))
 
 
 class SlotReconciliationTests(unittest.TestCase):
