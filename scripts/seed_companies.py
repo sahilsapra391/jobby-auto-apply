@@ -110,6 +110,75 @@ TEAMTAILOR_SEEDS = [
     ("Funnel", "teamtailor", "funnel", "SE"),
 ]
 
+# Tenants discovered by probing each platform's own public board endpoint and
+# keeping only those that answered 200 with at least one live posting, on
+# 2026-08-25. scripts/probe_tenants.py is the harness; the comment after each
+# row is the job count that verified it.
+#
+# The registry's unit of coverage is the company, not the platform. Fifteen
+# connectors were wired and five had a single board each, which is the whole
+# reason they returned nothing — pinpoint went from one board to nine here
+# without a line of connector code changing.
+PROBED_SEEDS = [
+    ("Clickhouse", "ashby", "clickhouse", "unknown"),  # 182
+    ("Deliveroo", "ashby", "deliveroo", "unknown"),  # 181
+    ("Lunar", "ashby", "lunar", "unknown"),  # 14
+    ("Neon", "ashby", "neon", "unknown"),  # 6
+    ("Notion", "ashby", "notion", "unknown"),  # 132
+    ("Plaid", "ashby", "plaid", "unknown"),  # 103
+    ("Pleo", "ashby", "pleo", "unknown"),  # 40
+    ("Render", "ashby", "render", "unknown"),  # 32
+    ("Supabase", "ashby", "supabase", "unknown"),  # 59
+    ("Temporal", "ashby", "temporal", "unknown"),  # 55
+    ("Whoop", "ashby", "whoop", "unknown"),  # 166
+    ("Census", "breezy", "census", "unknown"),  # 9
+    ("Glance", "breezy", "glance", "unknown"),  # 1
+    ("Bluestone", "greenhouse", "bluestone", "IN"),  # 29
+    ("Calendly", "greenhouse", "calendly", "unknown"),  # 14
+    ("Cockroachlabs", "greenhouse", "cockroachlabs", "unknown"),  # 27
+    ("Contentstack", "greenhouse", "contentstack", "unknown"),  # 5
+    ("Druva", "greenhouse", "druva", "IN"),  # 36
+    ("India", "greenhouse", "india", "unknown"),  # 8
+    ("Remote", "greenhouse", "remote", "unknown"),  # 2
+    ("Route", "greenhouse", "route", "unknown"),  # 4
+    ("Webflow", "greenhouse", "webflow", "unknown"),  # 28
+    ("Paytm", "lever", "paytm", "IN"),  # 223
+    ("Spotify", "lever", "spotify", "unknown"),  # 90
+    ("Toptal", "lever", "toptal", "unknown"),  # 20
+    ("Vogo", "lever", "vogo", "unknown"),  # 4
+    ("Deel", "pinpoint", "deel", "unknown"),  # 1
+    ("Innovaccer", "pinpoint", "innovaccer", "IN"),  # 2
+    ("M2P", "pinpoint", "m2p", "unknown"),  # 4
+    ("Moengage", "pinpoint", "moengage", "IN"),  # 4
+    ("Razorpay", "pinpoint", "razorpay", "IN"),  # 4
+    ("Spotdraft", "pinpoint", "spotdraft", "unknown"),  # 4
+    ("Superops", "pinpoint", "superops", "unknown"),  # 5
+    ("Turing", "pinpoint", "turing", "IN"),  # 5
+    ("Navi", "recruitee", "navi", "unknown"),  # 1
+    ("Personio", "recruitee", "personio", "unknown"),  # 1
+    ("Freshworks", "rippling", "freshworks", "IN"),  # 1
+    ("Infra", "rippling", "infra", "unknown"),  # 5
+    ("Porter", "rippling", "porter", "IN"),  # 2
+    ("Bluestone", "smartrecruiters", "bluestone", "IN"),  # 100
+    ("Canva", "smartrecruiters", "canva", "unknown"),  # 100
+    ("Facets", "smartrecruiters", "facets", "unknown"),  # 1
+    ("Freshworks", "smartrecruiters", "freshworks", "IN"),  # 100
+    ("Gousto", "smartrecruiters", "gousto", "unknown"),  # 7
+    ("Lendingkart", "smartrecruiters", "lendingkart", "unknown"),  # 1
+    ("Mindtickle", "smartrecruiters", "mindtickle", "IN"),  # 11
+    ("Netradyne", "smartrecruiters", "netradyne", "unknown"),  # 1
+    ("Newtonschool", "smartrecruiters", "newtonschool", "unknown"),  # 1
+    ("Turtlemint", "smartrecruiters", "turtlemint", "unknown"),  # 1
+    ("Whatfix", "smartrecruiters", "whatfix", "IN"),  # 1
+    ("Wise", "smartrecruiters", "wise", "unknown"),  # 100
+    ("Lead", "teamtailor", "lead", "unknown"),  # 4
+    ("Lunar", "teamtailor", "lunar", "unknown"),  # 9
+    ("Mobile", "teamtailor", "mobile", "unknown"),  # 100
+    ("Oddbox", "teamtailor", "oddbox", "unknown"),  # 1
+    ("Apna", "workable", "apna", "IN"),  # 158
+    ("Deepsource", "workable", "deepsource", "IN"),  # 120
+]
+
 SEED_PACK = [
     ("Acronis", "workday", "acronis", "CH"),
     ("GEICO", "workday", "geico", "US"),
@@ -802,7 +871,7 @@ def from_postings(postings):
 
 def from_pack():
     out = []
-    for name, ats, token, region in SEED_PACK + TEAMTAILOR_SEEDS:
+    for name, ats, token, region in SEED_PACK + TEAMTAILOR_SEEDS + PROBED_SEEDS:
         record = blank_company(name, region, "pack")
         record["ats"] = ats
         record["token"] = token
