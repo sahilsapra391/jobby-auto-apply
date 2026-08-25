@@ -2126,6 +2126,21 @@ SCRIPT = r"""
       render();
     });
   }
+  var locationPicker = document.getElementById('jb-loc');
+  if (locationPicker && document.addEventListener) {
+    document.addEventListener('click', function (event) {
+      if (locationPicker.open && !locationPicker.contains(event.target)) {
+        locationPicker.open = false;
+      }
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && locationPicker.open) {
+        locationPicker.open = false;
+        var summary = locationPicker.querySelector('summary');
+        if (summary) summary.focus();
+      }
+    });
+  }
 
   ['jb-ex','jb-scope','jb-sort','jb-remote','jb-cmode','jb-companies',
    'jb-exp','jb-deg','jb-role','jb-emp','jb-jt','jb-direct'].forEach(function (id) {

@@ -807,27 +807,36 @@ def build(state, generated):
      ink and read as a ghost. Dark themes therefore set it on a cream oval and
      ink it dark: --mark-plate and --mark-ink carry that pair, and in light
      themes the plate is transparent because the page is already cream. */
-  .jb-morph {{ position:relative; width:132px; height:146px; margin:0 auto 1.15rem;
-    display:grid; place-items:center; }}
+  .jb-morph {{ position:relative; top:-10px; width:139px; height:153px;
+    margin:0 auto 1.15rem; display:grid; place-items:center; cursor:pointer;
+    -webkit-tap-highlight-color:transparent; }}
+  .jb-morph:focus-visible {{ outline:3px solid var(--blue); outline-offset:6px;
+    border-radius:50%; }}
   .jb-plate {{ position:absolute; left:50%; top:50%; width:100%; height:100%;
     transform:translate(-50%,-50%); border-radius:50%; background:var(--mark-plate);
     transition:background-color .38s cubic-bezier(.22,1,.36,1); }}
-  .jb-mascot2 {{ position:relative; height:106px; width:auto; display:block;
+  .jb-mascot2 {{ position:relative; height:111px; width:auto; display:block;
     color:var(--mark-ink); pointer-events:none;
     transition:color .38s cubic-bezier(.22,1,.36,1); }}
-  /* The draw-on beats stay, but they play once on first paint rather than on
-     hover: the contour runs its dashoffset to zero, then the interior ink wipes
-     down. Resting state is the finished drawing, so anything that re-renders the
-     hero later gets the mark whole instead of replaying the reveal. */
+  /* The draw-on beats play once on first paint, and again whenever the mark is
+     clicked: the contour runs its dashoffset to zero, then the interior ink
+     wipes down. Resting state is the finished drawing, so anything that
+     re-renders the hero gets the mark whole rather than replaying the reveal.
+
+     Both beats animate a property the compositor cannot take: stroke-dashoffset
+     on the contour, and the height of the clip rect inside the SVG. The wipe
+     used to be a CSS clip-path with an opacity fade, and both of those promote
+     the pack to its own layer, which Chrome rasterizes coarse for the length of
+     the animation and re-rasterizes sharp at the end. On linework this fine
+     that reads as half a second of blur. */
   .jb-mascot2 .jm2-contour {{ stroke-dasharray:1; stroke-dashoffset:0; }}
-  .jb-mascot2 .jm2-ink {{ clip-path:inset(0 0 0 0); opacity:1; }}
+  .jb-mascot2 .jm2-wipe-rect {{ height:1628px; }}
   .jb-intro .jm2-contour {{ animation:jm2-draw .75s ease .1s backwards; }}
-  .jb-intro .jm2-ink {{ animation:jm2-wipe .8s ease .5s backwards; }}
+  .jb-intro .jm2-wipe-rect {{ animation:jm2-wipe .8s ease .5s backwards; }}
   @keyframes jm2-draw {{ from {{ stroke-dashoffset:1; }} to {{ stroke-dashoffset:0; }} }}
-  @keyframes jm2-wipe {{ from {{ clip-path:inset(0 0 100% 0); opacity:0; }}
-    to {{ clip-path:inset(0 0 0 0); opacity:1; }} }}
+  @keyframes jm2-wipe {{ from {{ height:0px; }} to {{ height:1628px; }} }}
   @media (prefers-reduced-motion:reduce) {{
-    .jb-intro .jm2-contour, .jb-intro .jm2-ink {{ animation:none; }} }}
+    .jb-intro .jm2-contour, .jb-intro .jm2-wipe-rect {{ animation:none; }} }}
 
   .themeseg {{ display:inline-flex; background:var(--seg); border-radius:100px;
     padding:3px; gap:2px; flex:none; justify-self:end; }}
@@ -846,8 +855,8 @@ def build(state, generated):
     .primary-nav {{ padding:.18rem; gap:.1rem; }}
     .primary-nav a {{ min-height:1.9rem; padding:.34rem .62rem; font-size:.8rem; }}
     .themebtn {{ width:1.75rem; }}
-    .jb-morph {{ width:104px; height:115px; }}
-    .jb-mascot2 {{ height:84px; }} }}
+    .jb-morph {{ width:109px; height:121px; top:-6px; }}
+    .jb-mascot2 {{ height:88px; }} }}
 
   .top {{ text-align:center; margin-bottom:2rem; }}
   h1 {{ font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
@@ -1054,7 +1063,7 @@ def build(state, generated):
 {blocked_banner}
 
 <header class="appbar">
-  <div class="brand">{brand.lockup()}</div>
+  <a class="brand" href="/" data-home-found aria-label="Jobby home">{brand.lockup()}</a>
   <nav class="primary-nav" aria-label="Primary">
     <a href="/" data-primary-view="home">Home</a>
     <a href="/settings" data-primary-view="settings">Settings</a>
@@ -1073,7 +1082,7 @@ def build(state, generated):
       <p class="lede">{f"{len(blocked)} waiting on you" if blocked else "Nothing blocked"}{f" &middot; {len(inflight)} in flight" if inflight else ""}</p>
       <p class="stamp">{esc(name)} &middot; Updated {esc(generated)}</p>
     </div>
-    <div class="jb-morph" role="img" aria-label="Jobby">
+    <div class="jb-morph" role="button" tabindex="0" aria-label="Replay the Jobby mark">
       <span class="jb-plate" aria-hidden="true"></span>
       {brand.mascot()}
     </div>
@@ -1185,10 +1194,37 @@ def build(state, generated):
   document.querySelectorAll('[data-company-logo]').forEach(prepareCompanyLogo);
   window.jobbyPrepareCompanyLogo = prepareCompanyLogo;
 
-  var heroInk = document.querySelector('.jb-mascot2 .jm2-ink');
+  var heroMark = document.querySelector('.jb-morph');
+  var heroWipe = document.querySelector('.jb-mascot2 .jm2-wipe-rect');
+  var introTimer = null;
   function endIntro() {{ document.documentElement.classList.remove('jb-intro'); }}
-  if (heroInk) heroInk.addEventListener('animationend', endIntro);
-  setTimeout(endIntro, 2600);
+  function playIntro() {{
+    var root = document.documentElement;
+    root.classList.remove('jb-intro');
+    void root.offsetWidth;
+    root.classList.add('jb-intro');
+    clearTimeout(introTimer);
+    introTimer = setTimeout(endIntro, 2600);
+  }}
+  if (heroWipe) heroWipe.addEventListener('animationend', endIntro);
+  introTimer = setTimeout(endIntro, 2600);
+  if (heroMark) {{
+    heroMark.addEventListener('click', playIntro);
+    heroMark.addEventListener('keydown', function (event) {{
+      if (event.key === 'Enter' || event.key === ' ') {{ event.preventDefault(); playIntro(); }}
+    }});
+  }}
+
+  // The logo is the way back to the board from anywhere, and "the board" means
+  // Found, not whichever tab was last open.
+  var brandLink = document.querySelector('[data-home-found]');
+  if (brandLink) brandLink.addEventListener('click', function (event) {{
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    var found = document.querySelector('.tab[data-tab="found"]');
+    if (window.jobbyGoHome) window.jobbyGoHome();
+    if (found) activateTab(found);
+  }});
 
   var tabs = document.querySelectorAll('.tab');
   function activateTab(t) {{
@@ -1762,6 +1798,7 @@ def build(state, generated):
 
 {found_lane.SCRIPT}
 {settings_panel.SCRIPT}
+{premium_ui.SCRIPT}
   document.querySelectorAll('.copy').forEach(function (b) {{
     b.addEventListener('click', function () {{
       navigator.clipboard.writeText(b.dataset.msg).then(function () {{

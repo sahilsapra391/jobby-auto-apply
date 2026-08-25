@@ -13,6 +13,7 @@ CSS = r"""
     --bg:#f7f3ed; --card:#fffdf9; --sunk:#f0ebe3; --seg:#ece7df;
     --ink:#202131; --ink-2:#65636b; --ink-3:#8b8790;
     --hair:rgba(47,43,55,.12); --hair-strong:rgba(47,43,55,.34);
+    --hover-wash:rgba(255,253,249,.85); --hover-wash-strong:#fffdf9;
     --mark-plate:transparent; --mark-ink:#202131;
     --blue:#37388f; --purple:#5150a9;
     --green:#347157; --green-bg:#e5f1e8; --orange:#a65a32;
@@ -28,6 +29,7 @@ CSS = r"""
       --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
       --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
       --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+      --hover-wash:rgba(255,255,255,.07); --hover-wash-strong:rgba(255,255,255,.11);
       --mark-plate:#f4efe3; --mark-ink:#1d1e27;
       --blue:#a6a7ff; --purple:#b9a8ff;
       --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
@@ -42,6 +44,7 @@ CSS = r"""
     --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
     --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
     --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+    --hover-wash:rgba(255,255,255,.07); --hover-wash-strong:rgba(255,255,255,.11);
     --mark-plate:#f4efe3; --mark-ink:#1d1e27;
     --blue:#a6a7ff; --purple:#b9a8ff;
     --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
@@ -64,7 +67,7 @@ CSS = r"""
   .primary-nav { padding:.28rem; border-radius:13px; background:var(--seg); gap:.15rem; }
   .primary-nav a { min-height:2.45rem; border-radius:10px; padding:.48rem 1.2rem;
     font-weight:620; transition:background-color .28s var(--ease),color .24s,transform .24s var(--ease); }
-  .primary-nav a:hover { transform:translateY(-1px); }
+  .primary-nav a:not([aria-current="page"]):hover { background:var(--hover-wash); color:var(--ink); }
   .primary-nav a[aria-current="page"] { box-shadow:0 1px 3px rgba(30,26,38,.11); }
 
   .themeseg { padding:3px; border:1px solid var(--hair); border-radius:13px;
@@ -72,7 +75,7 @@ CSS = r"""
   .themebtn { width:2.15rem; min-width:2.15rem; height:2rem; padding:0;
     border-radius:9px; font-size:.72rem; font-weight:620;
     transition:background-color .3s var(--ease),color .24s,transform .2s var(--ease); }
-  .themebtn:hover { transform:translateY(-1px); }
+  .themebtn:not(.on):hover { background:var(--hover-wash); color:var(--ink); }
   .themebtn svg { width:.92rem; height:.92rem; }
 
   .wrap { max-width:1360px; padding:clamp(2rem,4vw,3.5rem) clamp(1rem,3vw,2.5rem) 7rem; }
@@ -84,8 +87,8 @@ CSS = r"""
     letter-spacing:-.045em; }
   .lede { font-size:1rem; }
   .stamp { margin:.35rem 0 0; }
-  .jb-morph { width:132px; height:146px; margin:0; }
-  .jb-mascot2 { height:106px; }
+  .jb-morph { width:139px; height:153px; margin:0; }
+  .jb-mascot2 { height:111px; }
 
   .segwrap { position:sticky; top:.7rem; margin-bottom:1.6rem; z-index:20; }
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
@@ -96,6 +99,9 @@ CSS = r"""
   .tab:first-child { border-radius:calc(var(--radius) - 1px) 0 0 calc(var(--radius) - 1px); }
   .tab:last-child { border-radius:0 calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0; }
   .tab + .tab { border-left:1px solid var(--hair); }
+  .tab:not(.on):hover { background:color-mix(in srgb,var(--t-p) 55%,transparent);
+    color:color-mix(in srgb,var(--blue) 62%,var(--ink-2)); }
+  .tab:not(.on):hover .n { background:color-mix(in srgb,var(--t-p) 60%,var(--sunk)); }
   .tab.on { color:var(--blue); background:var(--t-p); box-shadow:none; }
   .tab.on::after { content:""; position:absolute; left:1rem; right:1rem; bottom:0;
     height:3px; border-radius:3px 3px 0 0; background:var(--blue); }
@@ -179,9 +185,8 @@ CSS = r"""
   .split-note { background:var(--card); padding:1.15rem 1.25rem; }
   .provider-grid { gap:1rem; }
   .provider-card { border-radius:var(--radius); padding:1.15rem;
-    transition:transform .34s var(--ease),box-shadow .34s var(--ease),border-color .25s; }
-  .provider-card:hover { transform:translateY(-4px); box-shadow:var(--sh-hover);
-    border-color:color-mix(in srgb,var(--blue) 22%,var(--hair)); }
+    transition:border-color .24s var(--ease),background-color .3s; }
+  .provider-card:hover { border-color:var(--hair-strong); }
 
   .dropped-dock { position:fixed; left:1rem; bottom:1rem; z-index:45; height:2.8rem;
     max-width:3rem; padding:0 .76rem; border:1px solid var(--hair); border-radius:12px;
@@ -220,6 +225,71 @@ CSS = r"""
   .dropped-dialog .rowacts-inline a,
   .dropped-dialog .rowacts-inline button { white-space:nowrap; }
 
+
+  /* Checkboxes were the other control the operating system was drawing. The
+     continent rows go indeterminate when a continent is partly chosen, so that
+     state needs a mark of its own rather than reading as unchecked. */
+  input[type="checkbox"] { appearance:none; -webkit-appearance:none; position:relative;
+    width:1.05rem; height:1.05rem; flex:none; margin:0; border:1.5px solid var(--hair-strong);
+    border-radius:5px; background:var(--card); cursor:pointer;
+    transition:background-color .16s,border-color .16s; }
+  input[type="checkbox"]:hover { border-color:var(--blue); }
+  input[type="checkbox"]:checked,input[type="checkbox"]:indeterminate {
+    background:var(--btn-g); border-color:var(--btn-g); }
+  input[type="checkbox"]:checked::after { content:""; position:absolute; left:50%; top:46%;
+    width:.26rem; height:.54rem; transform:translate(-50%,-50%) rotate(45deg);
+    border:solid var(--btn-g-ink); border-width:0 2px 2px 0; }
+  input[type="checkbox"]:indeterminate::after { content:""; position:absolute; left:50%; top:50%;
+    width:.52rem; height:2px; border-radius:2px; transform:translate(-50%,-50%);
+    background:var(--btn-g-ink); }
+  input[type="checkbox"]:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+
+  /* A native select popup is drawn by the operating system, so the controls
+     people touch most were the only ones on the board that could not follow the
+     design system. The native element stays in the DOM and keeps owning value
+     and events; everything below is only its face. */
+  .jb-select { position:relative; display:inline-flex; vertical-align:middle; }
+  .jb-select > select { position:absolute; inset:0; width:100%; height:100%;
+    opacity:0; pointer-events:none; }
+  .jb-select-btn { display:inline-flex; align-items:center; gap:.55rem; width:100%;
+    min-height:2.7rem; padding:.42rem .8rem; border:1px solid var(--hair);
+    border-radius:11px; background:var(--card); color:var(--ink); font:inherit;
+    font-size:.88rem; font-weight:540; letter-spacing:-.014em; cursor:pointer;
+    white-space:nowrap; text-align:left;
+    transition:border-color .2s,background-color .2s,box-shadow .2s; }
+  .jb-select-btn:hover { border-color:var(--hair-strong);
+    background:var(--hover-wash-strong); }
+  .jb-select-btn:focus-visible,.jb-select[data-open="true"] .jb-select-btn {
+    outline:none; border-color:var(--blue); box-shadow:0 0 0 3px var(--t-p); }
+  .jb-select-value { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+  .jb-select-chevron { width:.4rem; height:.4rem; flex:none;
+    border-right:2px solid var(--ink-3); border-bottom:2px solid var(--ink-3);
+    transform:rotate(45deg) translateY(-2px); transition:transform .22s var(--ease); }
+  .jb-select[data-open="true"] .jb-select-chevron {
+    transform:rotate(225deg) translateY(-1px); }
+  .jb-select-menu { position:absolute; z-index:60; top:calc(100% + .35rem); left:0;
+    min-width:100%; max-height:17rem; overflow-y:auto; padding:.3rem; display:none;
+    border:1px solid var(--hair); border-radius:var(--radius);
+    background:var(--card); box-shadow:var(--sh-hover); }
+  .jb-select[data-open="true"] .jb-select-menu { display:block;
+    animation:jb-select-in .18s var(--ease); }
+  .jb-select.drop-up .jb-select-menu { top:auto; bottom:calc(100% + .35rem); }
+  @keyframes jb-select-in { from { opacity:0; transform:translateY(-4px); } }
+  .jb-select-opt { display:block; width:100%; padding:.46rem .6rem; border:0;
+    border-radius:8px; background:none; color:var(--ink-2); font:inherit;
+    font-size:.86rem; text-align:left; white-space:nowrap; cursor:pointer;
+    transition:background-color .14s,color .14s; }
+  /* The wash tokens are keyed to the segment, which is darker than a card in
+     light themes and lighter in dark ones. On a card the option needs --sunk,
+     which moves the right way in both. */
+  .jb-select-opt:hover,.jb-select-opt:focus-visible { background:var(--sunk);
+    color:var(--ink); outline:none; }
+  .jb-select-opt[aria-selected="true"] { background:var(--t-p); color:var(--blue);
+    font-weight:600; }
+  @media (prefers-reduced-motion:reduce) {
+    .jb-select[data-open="true"] .jb-select-menu { animation:none; }
+  }
+
   @media (max-width:1100px) {
     .jb-card { grid-template-columns:minmax(14rem,1fr) minmax(18rem,1.5fr); }
     .jb-head { grid-column:1; }
@@ -253,11 +323,160 @@ CSS = r"""
     .primary-nav a { flex:1; }
     .themeseg { grid-column:2; grid-row:1; }
     .wrap { padding-top:1.6rem; }
-    .jb-morph { width:104px; height:115px; }
-    .jb-mascot2 { height:84px; }
+    .jb-morph { width:109px; height:121px; }
+    .jb-mascot2 { height:88px; }
   }
   @media (prefers-reduced-motion:reduce) {
     ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) { animation:none !important; }
     .dropped-dialog[open],.dropped-dialog::backdrop,.panel { animation:none; }
   }
+"""
+
+
+# Behaviour for the styled select. It lives beside the CSS because the two are
+# one control, and dashboard.py emits it last so every native select on the page
+# already has its listeners attached before any of them is wrapped.
+SCRIPT = r"""
+(function () {
+  var nativeValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  var openWrap = null;
+
+  function closeOpen() {
+    if (!openWrap) return;
+    openWrap.setAttribute('data-open', 'false');
+    openWrap.querySelector('.jb-select-btn').setAttribute('aria-expanded', 'false');
+    openWrap = null;
+  }
+
+  function enhance(select) {
+    if (select.multiple || select.dataset.jbSelect) return;
+    select.dataset.jbSelect = 'on';
+
+    var wrap = document.createElement('div');
+    wrap.className = 'jb-select';
+    wrap.setAttribute('data-open', 'false');
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(select);
+    select.setAttribute('tabindex', '-1');
+    select.setAttribute('aria-hidden', 'true');
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'jb-select-btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    var described = select.getAttribute('aria-label');
+    if (described) btn.setAttribute('aria-label', described);
+
+    var valueText = document.createElement('span');
+    valueText.className = 'jb-select-value';
+    var chevron = document.createElement('span');
+    chevron.className = 'jb-select-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    btn.appendChild(valueText);
+    btn.appendChild(chevron);
+
+    var menu = document.createElement('div');
+    menu.className = 'jb-select-menu';
+    menu.setAttribute('role', 'listbox');
+
+    var buttons = [];
+    Array.prototype.forEach.call(select.options, function (option, index) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'jb-select-opt';
+      item.setAttribute('role', 'option');
+      item.textContent = option.textContent;
+      item.addEventListener('click', function () { choose(index); });
+      menu.appendChild(item);
+      buttons.push(item);
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(menu);
+
+    function sync() {
+      var current = select.options[select.selectedIndex];
+      valueText.textContent = current ? current.textContent : '';
+      buttons.forEach(function (item, index) {
+        item.setAttribute('aria-selected', index === select.selectedIndex ? 'true' : 'false');
+      });
+    }
+
+    function choose(index) {
+      if (select.selectedIndex !== index) {
+        select.selectedIndex = index;
+        sync();
+        select.dispatchEvent(new Event('input', { bubbles: true }));
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      closeOpen();
+      btn.focus();
+    }
+
+    function open() {
+      if (openWrap === wrap) { closeOpen(); return; }
+      closeOpen();
+      openWrap = wrap;
+      wrap.setAttribute('data-open', 'true');
+      btn.setAttribute('aria-expanded', 'true');
+      // Flipped upward when the menu would run off the bottom, which is most of
+      // the time for the sort control inside the Dropped dialog.
+      var room = window.innerHeight - btn.getBoundingClientRect().bottom;
+      wrap.classList.toggle('drop-up', room < Math.min(menu.scrollHeight + 16, 288));
+      var active = buttons[select.selectedIndex] || buttons[0];
+      if (active) active.focus();
+    }
+
+    function step(delta) {
+      var here = buttons.indexOf(document.activeElement);
+      var next = here < 0 ? select.selectedIndex : here + delta;
+      if (next < 0) next = buttons.length - 1;
+      if (next >= buttons.length) next = 0;
+      if (buttons[next]) buttons[next].focus();
+    }
+
+    btn.addEventListener('click', open);
+    btn.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); open(); }
+    });
+    menu.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowDown') { event.preventDefault(); step(1); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); step(-1); }
+      else if (event.key === 'Escape') { event.preventDefault(); closeOpen(); btn.focus(); }
+      else if (event.key === 'Tab') closeOpen();
+    });
+
+    // An implicit label forwards its clicks to the control it wraps, and the
+    // control it wraps is now invisible. Send them to the button instead.
+    var label = select.closest ? select.closest('label') : null;
+    if (label) label.addEventListener('click', function (event) {
+      if (btn.contains(event.target) || menu.contains(event.target)) return;
+      event.preventDefault();
+      btn.focus();
+    });
+
+    // Saved searches and Clear both assign to .value directly and dispatch
+    // nothing, so a listener alone would let the face drift out of step with
+    // the control it is meant to be showing.
+    Object.defineProperty(select, 'value', {
+      configurable: true,
+      get: function () { return nativeValue.get.call(this); },
+      set: function (next) { nativeValue.set.call(this, next); sync(); }
+    });
+    select.addEventListener('change', sync);
+    sync();
+  }
+
+  document.addEventListener('click', function (event) {
+    if (openWrap && !openWrap.contains(event.target)) closeOpen();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') closeOpen();
+  });
+  document.querySelectorAll('select').forEach(enhance);
+  window.jobbyEnhanceSelects = function (root) {
+    (root || document).querySelectorAll('select').forEach(enhance);
+  };
+})();
 """

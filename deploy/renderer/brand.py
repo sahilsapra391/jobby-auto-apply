@@ -124,17 +124,51 @@ def icon(cls="icon", label="Jobby"):
     )
 
 
-def mascot(cls="jb-mascot2"):
-    """The line-art mascot, for the hover morph on the hero mark.
+MASCOT_VIEW_HEIGHT = 1628
+WIPE_CLIP_ID = "jm2-wipe-clip"
 
-    Two layers, and the hover animation depends on both. `jm2-contour` is a
-    single silhouette path with pathLength="1" that draws itself by running
+
+def mascot(cls="jb-mascot2"):
+    """The line-art mascot, the hero mark's resting state.
+
+    Two layers, and the reveal depends on both. `jm2-contour` is a single
+    silhouette path with pathLength="1" that draws itself by running
     stroke-dashoffset from 1 to 0. `jm2-ink` is the filled linework underneath,
-    revealed a beat later by a clip-path wipe. Drawn on a 1260x1628 canvas, so
-    keep it around 176px tall or the linework stops being crisp.
+    revealed a beat later by a wipe. Drawn on a 1260x1628 canvas, so keep it
+    around 176px tall or the linework stops being crisp.
+
+    The wipe is an SVG clipPath whose rect grows in the drawing's own
+    coordinate space, not a CSS clip-path on the element. CSS clip-path and
+    opacity are both compositor-driven in Chrome, so the pack rasterized onto
+    its own layer for the length of the animation and came back sharp only when
+    the animation ended. That is a visible half second of blur on a mark whose
+    whole point is fine linework. A geometry property on an SVG rect cannot be
+    composited, so the drawing repaints at full resolution every frame.
     """
     svg = _read("06-mascot/jobby-mascot-lineart.svg")
-    return svg.replace('class="jb-mascot2"', f'class="{cls}"', 1)
+    svg = svg.replace('class="jb-mascot2"', f'class="{cls}"', 1)
+
+    ink = '<g class="jm2-ink"'
+    if ink not in svg:
+        raise BrandError("mascot has no jm2-ink group; the wipe has nothing to reveal")
+    # The clip wraps the ink group rather than sitting on it, because a
+    # clip-path on an element with its own transform resolves in the space that
+    # transform establishes. The ink group carries a flip, so clipping it
+    # directly would wipe bottom to top.
+    svg = svg.replace(
+        ink,
+        f'<g clip-path="url(#{WIPE_CLIP_ID})"><g class="jm2-ink"',
+        1,
+    )
+    svg = svg.replace("</svg>", "</g></svg>", 1)
+
+    defs = (
+        f'<defs><clipPath id="{WIPE_CLIP_ID}">'
+        f'<rect class="jm2-wipe-rect" x="0" y="0" width="1260" height="{MASCOT_VIEW_HEIGHT}"/>'
+        "</clipPath></defs>"
+    )
+    head = svg.index(">") + 1
+    return svg[:head] + defs + svg[head:]
 
 
 # The pack ships favicon.svg with a dark-chrome flip built in. Jobby shows one
