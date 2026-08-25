@@ -214,6 +214,25 @@ Two pieces already sit on the correct side of the line and come for free:
 `seed_companies.from_postings` and `jobs_store.refresh_posted_date` both run
 before the gate today.
 
+### Why the reordering is not optional, in one number
+
+The experiment in §5 moved the binding filter. Recency used to reject 91.2% of
+everything found; at a 60-day window the largest single rejection reason is
+**"matches none of the search terms" at 46.9%**, ahead of the date window at
+42.9%. The pool is keyword-limited.
+
+That is the whole argument for gate-after-storage, compressed. A date window is
+at least a shared property of a posting: two accounts can disagree about how old
+is too old, but they are filtering on the same fact. A keyword list is not. It
+is four strings a specific person typed, and applying it before storage means
+the corpus on disk is literally the intersection of one user's vocabulary with
+the world. A second account with different words does not get a smaller share of
+that corpus; it gets a corpus that was never fetched for it.
+
+So the reordering is not a tidiness exercise. **A per-user keyword filter
+applied before storage is precisely the thing that makes a corpus
+unshareable**, and it is now the dominant filter rather than a marginal one.
+
 ### The eye-only rule, enforced structurally
 
 Sahil's rule is that a scan may only add to Found, and the eye is the only route
@@ -314,18 +333,28 @@ preferentially discards *direct employer inventory*, which is the inventory
 `keep_priority` exists to protect. The two mechanisms are working against each
 other.
 
-And `keep_priority` has already won the fight it was built for. Rolling each
-job up to the best class across its sightings, the store is **2,968 direct of
-3,000, or 98.9%**, against 31 aggregator and 1 feed. Across individual source
-entries it is 3,414 `ats`, 47 `aggregator`, 10 `feed`. The rollup matters: a job
-seen on both an ATS and an aggregator counts as direct, which is how
-`keep_priority` and `identity.py:343` already treat it.
+Measured at the cap, the store was 2,968 direct of 3,000, or 98.9%, against 31
+aggregator and 1 feed. **Do not read that as a property of the pool.** The
+experiment below shows it was manufactured by the cap itself, and the honest
+figure for what sourcing actually admits is 73.4%. The number is kept here only
+because two documents quoted it as a quality signal and it needs correcting
+where it was claimed rather than only where it was disproved.
 
-That number retires a plan. Any proposal premised on closing a direct-listing
-gap by adding employers' own boards is aiming at a gap that does not exist. Note
-also that `sourceClass` is nested inside each entry of the job's `sources` array
-and is `None` at the top level, which cost two sessions a wrong measurement each
-before it was pinned down.
+The measurement is awkward to take, which is why it was wrong twice before it
+was right. `sourceClass` is nested inside each entry of the job's `sources`
+array and reads `None` at the top level, so a straight field read reports
+nothing across every record. The rollup also matters: a job seen on both an ATS
+and an aggregator counts as direct, which is how `keep_priority` and
+`identity.py:343` already treat it.
+
+What survives is the conclusion rather than the number. Any proposal premised on
+closing a direct-listing gap in India is aiming at the wrong country: India
+measures 97.0% direct overall and 99.4% over records admitted by the sweep
+below, against the US at 83.0% and GB at 63.9%. The erosion is American and
+British. The originating 20.4% figure for India was withdrawn by the session
+that produced it, in commit `9a7dc02`, and attributed to a connector landing
+between measurements plus the keyword gate rejecting truncated aggregator
+bodies.
 
 For the record, the store today holds 3,000 jobs, 318 distinct companies
 represented, against a registry of 547. The north star's "14,292 in the pool,
