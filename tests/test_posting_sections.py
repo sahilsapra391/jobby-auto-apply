@@ -52,6 +52,25 @@ class SectionTests(unittest.TestCase):
             out = posting_sections.split_sections(heading + "\n- 5 years of Python.\n")
             self.assertEqual(out["requirements"], ["5 years of Python."], heading)
 
+    def test_the_headings_employers_actually_use_are_recognised(self):
+        # Every posting names these differently. The wording below is what the
+        # store's own postings use; a heading missing from the vocabulary is a
+        # card that shows nothing at all.
+        responsibility = ("In your role, you'll", "What you'll be doing",
+                          "Your responsibilities", "Key Accountabilities",
+                          "A day in the life", "What success looks like",
+                          "Primary Responsibilities", "Essential Duties")
+        requirement = ("About you", "Qualifications", "Who you are",
+                       "What you bring", "Your background", "Skills",
+                       "Essential Criteria", "You should have",
+                       "Who we're looking for", "Experience and skills")
+        for heading in responsibility:
+            out = posting_sections.split_sections(heading + "\n- Ship the thing.\n")
+            self.assertEqual(out["responsibilities"], ["Ship the thing."], heading)
+        for heading in requirement:
+            out = posting_sections.split_sections(heading + "\n- 5 years of Python.\n")
+            self.assertEqual(out["requirements"], ["5 years of Python."], heading)
+
     def test_a_posting_with_no_recognisable_heading_returns_nothing(self):
         out = posting_sections.split_sections("We are hiring.\nCome and work here.\n")
         self.assertEqual(out, {"responsibilities": [], "requirements": []})

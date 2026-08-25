@@ -15,6 +15,7 @@ touching the file, which is the right default for a store a daemon is using.
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
@@ -25,8 +26,12 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
 import extract  # noqa: E402
+import posting_body  # noqa: E402
 import posting_sections  # noqa: E402
 import store  # noqa: E402
+
+# Boards whose full posting `posting_body` knows how to read.
+FETCHABLE = ("greenhouse.io", "lever.co", "ashbyhq.com")
 
 
 def backfill(jobs, force=False):
@@ -57,11 +62,68 @@ def backfill(jobs, force=False):
     return counts
 
 
+def _has(sections):
+    sections = sections or {}
+    return bool(sections.get("responsibilities") or sections.get("requirements"))
+
+
+def fetch_missing(jobs, workers=8, limit=None, progress=None):
+    """Read the full posting for records the excerpt could not answer.
+
+    The excerpt stops at 1,500 characters and a requirements block is usually
+    below that, which is why a third of the board had nothing to show. Measured
+    on 2026-08-25 over 60 sampled records: fetching recovered sections for 39 of
+    them, 65%, and a year figure for 29.
+
+    Only records that still have nothing are fetched, so a second run is cheap.
+    """
+    targets = [
+        job for job in jobs.values()
+        if not _has(job.get("sections"))
+        and any(host in (job.get("canonicalUrl") or "") for host in FETCHABLE)
+    ]
+    if limit:
+        targets = targets[:limit]
+    counts = {"considered": len(targets), "fetched": 0, "failed": 0,
+              "sectionsAdded": 0, "yearsAdded": 0}
+
+    def work(job):
+        try:
+            return job, posting_body.full_body(job), None
+        except Exception as err:                      # noqa: BLE001 - never fatal
+            return job, None, err
+
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for job, body, err in pool.map(work, targets):
+            done += 1
+            if progress and done % 100 == 0:
+                progress(done, len(targets))
+            if err or not body:
+                counts["failed"] += 1
+                continue
+            counts["fetched"] += 1
+            sections = posting_sections.split_sections(body)
+            if _has(sections):
+                job["sections"] = sections
+                counts["sectionsAdded"] += 1
+            found = extract.years_from_sections(sections, body)
+            current = job.get("extracted") or {}
+            if found and current.get("yearsMin") is None:
+                job["extracted"] = {**current, **found}
+                counts["yearsAdded"] += 1
+    return counts
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", help="store directory")
     ap.add_argument("--dry-run", action="store_true", help="report without writing")
     ap.add_argument("--force", action="store_true", help="recompute existing sections")
+    ap.add_argument("--fetch", action="store_true",
+                    help="read the full posting for records the excerpt cannot answer")
+    ap.add_argument("--limit", type=int, help="cap how many postings --fetch reads")
+    ap.add_argument("--workers", type=int, default=8, help="parallel fetches (default 8)")
     args = ap.parse_args()
 
     root = store.root_dir(args.root)
@@ -71,8 +133,16 @@ def main():
         return 2
     jobs = json.loads(path.read_text())
     counts = backfill(jobs, force=args.force)
+    if args.fetch:
+        def progress(done, total):
+            print(f"  fetched {done}/{total}", file=sys.stderr, flush=True)
+        counts["fetch"] = fetch_missing(jobs, workers=args.workers,
+                                        limit=args.limit, progress=progress)
     counts["wrote"] = False
-    if not args.dry_run and (counts["sectionsAdded"] or counts["yearsAdded"]):
+    changed = (counts["sectionsAdded"] or counts["yearsAdded"]
+               or (counts.get("fetch") or {}).get("sectionsAdded")
+               or (counts.get("fetch") or {}).get("yearsAdded"))
+    if not args.dry_run and changed:
         handle, tmp = tempfile.mkstemp(dir=str(root), suffix=".tmp")
         with os.fdopen(handle, "w", encoding="utf-8") as fh:
             json.dump(jobs, fh, separators=(",", ":"))
