@@ -401,7 +401,7 @@ class ProbeTests(unittest.TestCase):
         )
         self.assertEqual(
             observed["command"][observed["command"].index("--model") + 1],
-            "gemini-3.7-flash",
+            "gemini-3.7-flash-medium",
         )
 
     def test_gemini_probe_rejects_a_silently_remapped_model(self):
@@ -423,22 +423,46 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.health, "unavailable")
         self.assertFalse(result.authenticated)
 
-    def test_gemini_stream_requires_one_final_exact_model_result(self):
+    def test_gemini_stream_requires_the_pinned_model_and_a_successful_end(self):
+        """Antigravity announces the model once, in the init record.
+
+        This is weaker than what it replaced, and the weakening is worth
+        stating. The old Gemini CLI put a model label in its init record too,
+        and this test used to feed it "untrusted-request-label" on purpose,
+        because verification came from the terminal stats.models instead. The
+        agy terminal record carries a status and a token count and no model at
+        all, so the init record is the only model signal there is.
+
+        What still holds: a different model, a run that did not finish
+        successfully, a missing record at either end, and a run with no tokens
+        are all refused.
+        """
         exact = providers.MODEL_IDS["gemini"]
         output = "\n".join([
-            json.dumps({"type": "init", "model": "untrusted-request-label"}),
-            json.dumps({
-                "type": "result",
-                "status": "success",
-                "stats": {"models": {exact: {"total_tokens": 12}}},
-            }),
+            json.dumps({"event": "init", "init": {"model": exact}}),
+            json.dumps({"event": "result", "result": {
+                "status": "SUCCESS", "usage": {"total_tokens": 12}}}),
         ])
         self.assertEqual(
             providers.verify_gemini_served_model(output, stream=True), exact
         )
-        remapped = output.replace(exact, "gemini-3.5-flash")
+
+        remapped = output.replace(exact, "gemini-3.5-flash-low", 1)
         with self.assertRaises(providers.GeminiModelMismatch):
             providers.verify_gemini_served_model(remapped, stream=True)
+
+        failed = output.replace('"SUCCESS"', '"FAILURE"')
+        with self.assertRaises(providers.GeminiModelMismatch):
+            providers.verify_gemini_served_model(failed, stream=True)
+
+        no_init = json.dumps({"event": "result", "result": {
+            "status": "SUCCESS", "usage": {"total_tokens": 12}}})
+        with self.assertRaises(providers.GeminiModelMismatch):
+            providers.verify_gemini_served_model(no_init, stream=True)
+
+        for empty in ("", "   ", "not json at all"):
+            with self.assertRaises(providers.GeminiModelMismatch):
+                providers.verify_gemini_served_model(empty, stream=True)
 
     def test_gemini_settings_pin_every_core_model_call(self):
         settings = providers.gemini_hardened_settings("scan")
@@ -527,7 +551,7 @@ class InvocationTests(unittest.TestCase):
             "browser,jobby",
         )
         self.assertEqual(
-            invocation.argv[invocation.argv.index("--model") + 1], "gemini-3.7-flash"
+            invocation.argv[invocation.argv.index("--model") + 1], "gemini-3.7-flash-medium"
         )
         self.assertNotIn("GEMINI_SANDBOX", invocation.env)
 
