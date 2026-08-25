@@ -603,8 +603,12 @@ class ApplySlotTests(unittest.TestCase):
         self.assertIn("--id is required", (r.stderr or "") + (r.stdout or ""))
 
 
-class ProviderNeutralApplyTests(unittest.TestCase):
-    """Document generation stays remote while application filling stays local."""
+class TickHarnessMixin:
+    """Shared tick scaffolding. Not a TestCase.
+
+    Subclassing a TestCase to borrow its setUp re-runs every test it holds, and
+    test_suite_integrity refuses that.
+    """
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -638,7 +642,11 @@ class ProviderNeutralApplyTests(unittest.TestCase):
 
     @contextmanager
     def tick_harness(self, provider, document_state, *, item=None,
-                     patch_document_helper=True, remote_ready=(True, "")):
+                     patch_document_helper=True, remote_ready=(True, ""),
+                     order=None, readiness_by_provider=None):
+        # Only this provider is connected unless a test says otherwise, so the
+        # walk below has nothing else to consider and these stay unchanged.
+        order = [provider] if order is None else list(order)
         item = item or {"applicationId": "acme-pm"}
         queue = {"apply": [dict(item)]}
         registry = mock.Mock()
@@ -684,8 +692,16 @@ class ProviderNeutralApplyTests(unittest.TestCase):
                     "ready": bool(provider),
                     "providers": [],
                 }))
-            document_readiness = stack.enter_context(mock.patch.object(
-                watch, "document_provider_ready", return_value=remote_ready))
+            stack.enter_context(mock.patch.object(
+                watch.providers, "work_order",
+                return_value=[x for x in order if x]))
+            if readiness_by_provider is None:
+                document_readiness = stack.enter_context(mock.patch.object(
+                    watch, "document_provider_ready", return_value=remote_ready))
+            else:
+                document_readiness = stack.enter_context(mock.patch.object(
+                    watch, "document_provider_ready",
+                    side_effect=lambda pid: readiness_by_provider[pid]))
             prepare = None
             if patch_document_helper:
                 prepare = stack.enter_context(mock.patch.object(
@@ -700,6 +716,9 @@ class ProviderNeutralApplyTests(unittest.TestCase):
                 "prepare": prepare,
                 "documentReadiness": document_readiness,
             }
+
+class ProviderNeutralApplyTests(TickHarnessMixin, unittest.TestCase):
+    """Document generation stays remote while application filling stays local."""
 
     def test_no_active_provider_leaves_the_apply_request_unclaimed(self):
         with self.tick_harness(None, None) as calls:
@@ -1322,6 +1341,62 @@ class SearchConfigRepublishTests(unittest.TestCase):
         fp = source[source.index("def fingerprint"):]
         fp = fp[:fp.index("def render_version")]
         self.assertIn("search_config_version()", fp)
+
+
+class DocumentProviderWalkTests(TickHarnessMixin, unittest.TestCase):
+    """activeProvider is a preference, and a preference has to hand over.
+
+    The tick stopped at the newest connection. gemini is connected and locally
+    healthy but is not connected for local document work, so the Apply head sat
+    on "Waiting for provider" and the tick never reached the spawn at all,
+    while openai and anthropic were both ready and idle. Measured on the real
+    registry on 2026-08-25: gemini not ready, the other two ready, ten
+    applications queued and nothing running.
+    """
+
+    READY = (True, "")
+
+    def test_it_hands_over_when_the_newest_cannot_do_document_work(self):
+        with self.tick_harness(
+                "gemini", {"state": "ready", "provider": "openai"},
+                order=["gemini", "openai", "anthropic"],
+                readiness_by_provider={
+                    "gemini": (False, "gemini is not connected for local document work"),
+                    "openai": self.READY,
+                    "anthropic": self.READY,
+                }) as calls:
+            changed = watch.tick()
+        calls["prepare"].assert_called_once_with({"applicationId": "acme-pm"}, "openai")
+        calls["spawn"].assert_called_once()
+        self.assertNotIn("waitingOnDocumentProvider", changed)
+
+    def test_it_walks_past_two_and_uses_the_third(self):
+        with self.tick_harness(
+                "gemini", {"state": "ready", "provider": "anthropic"},
+                order=["gemini", "openai", "anthropic"],
+                readiness_by_provider={
+                    "gemini": (False, "gemini is not connected for local document work"),
+                    "openai": (False, "openai is not connected for local document work"),
+                    "anthropic": self.READY,
+                }) as calls:
+            watch.tick()
+        calls["prepare"].assert_called_once_with(
+            {"applicationId": "acme-pm"}, "anthropic")
+
+    def test_nothing_ready_still_waits_and_names_what_it_tried(self):
+        with self.tick_harness(
+                "gemini", {"state": "ready", "provider": "gemini"},
+                order=["gemini", "openai"],
+                readiness_by_provider={
+                    "gemini": (False, "gemini is not connected for local document work"),
+                    "openai": (False, "openai is not connected for local document work"),
+                }) as calls:
+            changed = watch.tick()
+        calls["prepare"].assert_not_called()
+        calls["spawn"].assert_not_called()
+        self.assertEqual(
+            changed["waitingOnDocumentProvider"]["considered"], ["gemini", "openai"])
+
 
 
 if __name__ == "__main__":
