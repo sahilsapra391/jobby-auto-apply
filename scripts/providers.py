@@ -40,7 +40,7 @@ TASK_KINDS = ("documents", "apply", "scan")
 MODEL_IDS = {
     "openai": "gpt-5.6-luna",
     "anthropic": "claude-sonnet-5",
-    "gemini": "gemini-3.7-flash",
+    "gemini": "gemini-3.7-flash-medium",
 }
 STATE_VERSION = 1
 PROBE_TIMEOUT_SECONDS = 30
@@ -351,41 +351,44 @@ def gemini_hardened_settings(task_kind: str) -> dict[str, Any]:
 
 
 def verify_gemini_served_model(output: str, *, stream: bool) -> str:
-    """Require terminal Gemini telemetry for exactly the pinned model."""
+    """Require Antigravity telemetry for exactly the pinned model.
+
+    The shape changed with the CLI. The old Gemini CLI reported a stats.models
+    map; agy announces the model once in an init event and closes with a result
+    event, so both have to be present and agree. Still fails closed: no
+    telemetry, a different model, or a run that did not finish successfully all
+    raise rather than pass quietly, because the whole point is to catch a
+    silent remap onto a model nobody chose.
+    """
     if not isinstance(output, str) or not output.strip():
         raise GeminiModelMismatch("Gemini output has no model telemetry")
+    expected = MODEL_IDS["gemini"]
     try:
-        if stream:
-            values = [json.loads(line) for line in output.splitlines() if line.strip()]
-            if not values or not all(isinstance(value, dict) for value in values):
-                raise GeminiModelMismatch("Gemini stream is invalid")
-            terminal = [value for value in values if value.get("type") == "result"]
-            if len(terminal) != 1 or values[-1] is not terminal[0]:
-                raise GeminiModelMismatch("Gemini stream has no unique terminal result")
-            value = terminal[0]
-            if value.get("status") != "success":
-                raise GeminiModelMismatch("Gemini stream did not finish successfully")
-        else:
-            value = json.loads(output)
-            if not isinstance(value, dict) or value.get("error") is not None:
-                raise GeminiModelMismatch("Gemini JSON result is invalid")
+        values = [json.loads(line) for line in output.splitlines() if line.strip()]
     except (json.JSONDecodeError, RecursionError) as exc:
         raise GeminiModelMismatch("Gemini model telemetry is not valid JSON") from exc
+    if not values or not all(isinstance(value, dict) for value in values):
+        raise GeminiModelMismatch("Gemini stream is invalid")
 
-    stats = value.get("stats")
-    models = stats.get("models") if isinstance(stats, dict) else None
-    expected = MODEL_IDS["gemini"]
-    if not isinstance(models, dict) or set(models) != {expected}:
-        raise GeminiModelMismatch("Gemini CLI served a different model")
-    metrics = models.get(expected)
-    if not isinstance(metrics, dict):
-        raise GeminiModelMismatch("Gemini model telemetry is incomplete")
-    if stream:
-        requests = metrics.get("total_tokens")
-    else:
-        api = metrics.get("api")
-        requests = api.get("totalRequests") if isinstance(api, dict) else None
-    if isinstance(requests, bool) or not isinstance(requests, int) or requests < 1:
+    # The model is announced once, at the top, and only in the stream format.
+    inits = [v for v in values if v.get("event") == "init"]
+    if len(inits) != 1:
+        raise GeminiModelMismatch("Gemini stream has no unique init record")
+    served = (inits[0].get("init") or {}).get("model")
+    if served != expected:
+        raise GeminiModelMismatch(
+            f"Gemini served {served!r}, not the pinned {expected!r}")
+
+    terminal = [v for v in values if v.get("event") == "result"]
+    if len(terminal) != 1 or values[-1] is not terminal[0]:
+        raise GeminiModelMismatch("Gemini stream has no unique terminal result")
+    outcome = terminal[0].get("result")
+    if not isinstance(outcome, dict) or outcome.get("status") != "SUCCESS":
+        raise GeminiModelMismatch("Gemini stream did not finish successfully")
+
+    usage = outcome.get("usage")
+    total = usage.get("total_tokens") if isinstance(usage, dict) else None
+    if isinstance(total, bool) or not isinstance(total, int) or total < 1:
         raise GeminiModelMismatch("Gemini model telemetry has no completed request")
     return expected
 
@@ -425,12 +428,15 @@ def _probe_argv(provider_id: str, binary: str) -> list[str]:
     commands = {
         "openai": [binary, "login", "status"],
         "anthropic": [binary, "auth", "status"],
-        # Gemini CLI has no status subcommand. A minimal noninteractive request
-        # proves that its cached Google login can reach the service.
+        # Antigravity has no status subcommand either. A minimal noninteractive
+        # request proves the cached Google login reaches the service, and
+        # stream-json is what carries the served model: its plain json output
+        # reports the answer and the token usage but never says which model
+        # produced them, so the pin could not be checked from it.
         "gemini": [
             binary, "-p", "Reply with exactly: OK",
             "--model", MODEL_IDS["gemini"],
-            "--output-format", "json",
+            "--output-format", "stream-json",
         ],
     }
     return commands[provider_id]
@@ -509,7 +515,7 @@ def probe_model_access(
     if result.returncode == 0:
         if provider_id == "gemini":
             try:
-                verify_gemini_served_model(result.stdout or "", stream=False)
+                verify_gemini_served_model(result.stdout or "", stream=True)
             except GeminiModelMismatch:
                 return ProbeResult(
                     provider_id,
@@ -610,7 +616,7 @@ def probe_provider(
                 )
         if provider_id == "gemini":
             try:
-                verify_gemini_served_model(result.stdout or "", stream=False)
+                verify_gemini_served_model(result.stdout or "", stream=True)
             except GeminiModelMismatch:
                 return ProbeResult(
                     provider_id,
@@ -839,9 +845,27 @@ def build_run_invocation(
         argv.extend(["--allowed-mcp-server-names", "browser,jobby"])
     else:
         settings_path = _gemini_system_settings(work, task_kind)
+    # KNOWN GAP, read this before using Gemini for agent runs.
+    #
+    # These two variables fenced everything Gemini was allowed to do: core
+    # tools cut to google_web_search and web_fetch, a policy file denying the
+    # rest, and run_scan refusing to start unless the settings file said so.
+    # The Antigravity CLI does not read them. Not "reads them differently":
+    # the string GEMINI_CLI_SYSTEM_SETTINGS_PATH does not occur once in the agy
+    # binary, and agy's init record advertises about fifty tools including
+    # run_command, execute_browser_javascript and write_to_file. Its only
+    # permission control is --dangerously-skip-permissions.
+    #
+    # So the file is still written, run_scan still checks it and still passes,
+    # and none of it binds anything. That is worse than no guard, because it
+    # reads as one. Connecting and health checks are unaffected and are safe;
+    # what is not established is running an agent through agy with the tool set
+    # actually restricted. Do not enable Gemini for scans or applications until
+    # that has an agy equivalent that can be verified.
     env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
     env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
     env.pop("GEMINI_SANDBOX", None)
+
     return RunInvocation(provider_id, task_kind, argv, env, work, prompt)
 
 

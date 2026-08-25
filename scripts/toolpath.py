@@ -85,7 +85,15 @@ def codex(required=True):
 
 
 def gemini(required=True):
-    return find("gemini", required)
+    """The Antigravity CLI, which replaced the Gemini CLI for individuals.
+
+    Google stopped serving Gemini CLI requests for individual accounts on
+    2026-06-18 — free, AI Pro and AI Ultra alike. Only Code Assist Standard,
+    Enterprise and Google Cloud licences still work through it. Signing in
+    succeeds and then every request comes back UNSUPPORTED_CLIENT, so the old
+    binary is not a fallback; it is a guaranteed failure with a valid token.
+    """
+    return find("agy", required)
 
 
 def agent_binary(provider, required=True):
