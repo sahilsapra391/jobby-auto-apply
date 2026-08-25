@@ -61,11 +61,17 @@ export async function getBoardState(env) {
   }
 }
 
-export async function putBoardState(env, serializedState, generatedAt) {
+export async function putBoardState(env, serializedState, generatedAt,
+                                    rendererFingerprint = '') {
   const payload = gzipSync(Buffer.from(serializedState, 'utf8')).toString('base64');
   return kvPut(env, BOARD_STATE_KEY, JSON.stringify({
     schemaVersion: 1,
     rendererSchemaVersion: 1,
+    // A hash of the modules that rendered this state. rendererSchemaVersion is
+    // the literal 1 here, in the reader below and in the Vercel function, and
+    // has never been incremented, so it can only ever agree with itself. This
+    // is the field that can actually disagree.
+    rendererFingerprint,
     encoding: 'gzip+base64',
     generatedAt,
     payload,
