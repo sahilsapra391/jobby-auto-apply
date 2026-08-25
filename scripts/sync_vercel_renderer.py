@@ -26,6 +26,12 @@ FILES = (
 )
 BRAND_ASSETS = (
     "01-favicon/favicon.svg",
+    # favicon_links() inlines these two as data URIs, so they have to travel in
+    # the function bundle. deploy/public/ holds copies, but Vercel turns that
+    # directory into static edge output and drops it from the lambda, so a
+    # bundle without them renders locally and 502s on every deployed request.
+    "01-favicon/favicon.ico",
+    "01-favicon/apple-touch-icon.png",
     "03-mark/jobby-mark-ink.svg",
     "04-lockup/jobby-lockup-horizontal-ink.svg",
     "06-mascot/jobby-mascot-lineart.svg",

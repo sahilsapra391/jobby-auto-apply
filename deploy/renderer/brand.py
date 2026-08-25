@@ -48,6 +48,14 @@ def _read(rel):
         raise BrandError(f"brand asset missing: {path} ({err})") from err
 
 
+def _read_bytes(rel):
+    path = BRAND / rel
+    try:
+        return path.read_bytes()
+    except OSError as err:
+        raise BrandError(f"brand asset missing: {path} ({err})") from err
+
+
 def _first_path_d(svg, where):
     m = re.search(r'<path[^>]*\sd="([^"]+)"', svg)
     if not m:
@@ -147,13 +155,17 @@ def _pinned_favicon_svg():
     return pinned
 
 
-def _favicon_bytes(name, public_name):
-    """Read a source asset locally or its public deployment copy on Vercel."""
-    source = BRAND / "01-favicon" / name
-    if source.exists():
-        return source.read_bytes()
-    public = Path(__file__).resolve().parents[1] / "public" / public_name
-    return public.read_bytes()
+def _favicon_bytes(name):
+    """Read a binary favicon out of the brand pack.
+
+    This used to fall back to deploy/public/ "on Vercel", which had it exactly
+    backwards. public/ is the static output directory: Vercel serves those
+    files at the edge and leaves them out of the serverless bundle, so the
+    fallback resolved on any dev machine and raised FileNotFoundError on every
+    deployed request. Reading only from BRAND keeps local and deployed on one
+    path, which is why sync_vercel_renderer carries the .ico and .png too.
+    """
+    return _read_bytes(f"01-favicon/{name}")
 
 
 def favicon_links():
@@ -164,10 +176,8 @@ def favicon_links():
     browsers that ignore SVG icons.
     """
     svg = base64.b64encode(_pinned_favicon_svg().encode("utf-8")).decode()
-    ico = base64.b64encode(_favicon_bytes("favicon.ico", "favicon.ico")).decode()
-    touch = base64.b64encode(
-        _favicon_bytes("apple-touch-icon.png", "apple-touch-icon.png")
-    ).decode()
+    ico = base64.b64encode(_favicon_bytes("favicon.ico")).decode()
+    touch = base64.b64encode(_favicon_bytes("apple-touch-icon.png")).decode()
     return (
         f'<link rel="icon" href="data:image/svg+xml;base64,{svg}" type="image/svg+xml">\n'
         f'<link rel="icon" href="data:image/x-icon;base64,{ico}" sizes="32x32">\n'

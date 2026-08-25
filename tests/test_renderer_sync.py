@@ -1,7 +1,10 @@
 import sys
 import ast
 import importlib.util
+import json
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -104,6 +107,61 @@ class BundleCompletenessTest(unittest.TestCase):
         handler = (SYNC.TARGET.parent / "api" / "page.py").read_text(encoding="utf-8")
         self.assertIn('sys.path.insert(0, str(DEPLOY_ROOT / "renderer"))', handler)
         self.assertIn("import dashboard", handler)
+
+
+class BundleDataFilesTest(unittest.TestCase):
+    """The bundle has to ship every data file it reads, not just every module.
+
+    BundleCompletenessTest models a missing import. This models the other half,
+    which is what actually took the board down: brand.favicon_links() read
+    favicon.ico and apple-touch-icon.png out of deploy/public/ whenever the
+    brand pack copy was absent. public/ is Vercel's static output directory, so
+    the file is there on any dev machine and gone inside the lambda. Every
+    deployment from the Soft Premium renderer onward answered
+    "The board state could not be rendered." while the identical code rendered
+    fine locally and in every test.
+
+    Rendering against a copy of the bundle with public/ removed is the only
+    check that tells those two situations apart.
+    """
+
+    def render_from_bundle_layout(self, state):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # What Vercel puts in the function: the renderer and its assets.
+            # Deliberately not public/ — that becomes static edge output.
+            shutil.copytree(SYNC.TARGET, root / "renderer",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(SYNC.REPO / "deploy" / "assets", root / "assets")
+            code = (
+                "import json, sys\n"
+                f"sys.path.insert(0, {str(root / 'renderer')!r})\n"
+                "import dashboard\n"
+                "page = dashboard.build(json.loads(sys.stdin.read()), 'now')\n"
+                "print(len(page))\n"
+            )
+            return subprocess.run(
+                [sys.executable, "-c", code], input=json.dumps(state),
+                cwd=tmp, text=True, capture_output=True,
+            )
+
+    def test_the_board_renders_with_only_the_files_the_lambda_carries(self):
+        state = {
+            "profile": {"firstName": "A"},
+            "sessions": [{"applicationId": "one", "company": "Example",
+                          "role": "PM", "status": "watch", "region": "US",
+                          "pendingFields": []}],
+            "history": [], "roles": {}, "meta": {}, "jobs": {},
+            "searchConfig": None, "providers": {},
+        }
+        result = self.render_from_bundle_layout(state)
+        self.assertEqual(
+            result.returncode, 0,
+            "the deployed bundle reads a file it does not carry, so every "
+            "request 502s with 'The board state could not be rendered':\n"
+            + result.stderr,
+        )
+        self.assertGreater(int(result.stdout.strip()), 0)
 
 
 if __name__ == "__main__":

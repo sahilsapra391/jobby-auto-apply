@@ -32,9 +32,14 @@ added=$(git diff --cached --name-only --diff-filter=A)
 fail=0
 
 # Never, whatever anyone says. Screenshots are application forms.
+#
+# The three allowed prefixes are the brand kit, the favicons the deployed board
+# serves at the edge, and the brand-pack copy sync_vercel_renderer.py writes
+# into the serverless bundle. They match IMAGE_ALLOWED in tests/test_no_pii.py
+# and the negations in .gitignore; change one and change all three.
 for f in $added; do
   case "$f" in
-    assets/*|deploy/public/*) ;;
+    assets/*|deploy/assets/*|deploy/public/*) ;;
     *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.tiff|*.heic)
       echo "refusing to add an image: $f"
       echo "  Agent screenshots are filled application forms. They carry a name,"
