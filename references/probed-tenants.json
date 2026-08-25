@@ -1,0 +1,389 @@
+{
+ "verifiedOn": "2026-08-25",
+ "tenants": [
+  {
+   "name": "Oatly",
+   "ats": "teamtailor",
+   "token": "oatly",
+   "region": "SE"
+  },
+  {
+   "name": "Instabee",
+   "ats": "teamtailor",
+   "token": "instabee",
+   "region": "SE"
+  },
+  {
+   "name": "Anyfin",
+   "ats": "teamtailor",
+   "token": "anyfin",
+   "region": "SE"
+  },
+  {
+   "name": "Quinyx",
+   "ats": "teamtailor",
+   "token": "quinyx",
+   "region": "SE"
+  },
+  {
+   "name": "Tibber",
+   "ats": "teamtailor",
+   "token": "tibber",
+   "region": "NO"
+  },
+  {
+   "name": "Hemnet",
+   "ats": "teamtailor",
+   "token": "hemnet",
+   "region": "SE"
+  },
+  {
+   "name": "Funnel",
+   "ats": "teamtailor",
+   "token": "funnel",
+   "region": "SE"
+  },
+  {
+   "name": "Clickhouse",
+   "ats": "ashby",
+   "token": "clickhouse",
+   "region": "unknown"
+  },
+  {
+   "name": "Deliveroo",
+   "ats": "ashby",
+   "token": "deliveroo",
+   "region": "unknown"
+  },
+  {
+   "name": "Lunar",
+   "ats": "ashby",
+   "token": "lunar",
+   "region": "unknown"
+  },
+  {
+   "name": "Neon",
+   "ats": "ashby",
+   "token": "neon",
+   "region": "unknown"
+  },
+  {
+   "name": "Notion",
+   "ats": "ashby",
+   "token": "notion",
+   "region": "unknown"
+  },
+  {
+   "name": "Plaid",
+   "ats": "ashby",
+   "token": "plaid",
+   "region": "unknown"
+  },
+  {
+   "name": "Pleo",
+   "ats": "ashby",
+   "token": "pleo",
+   "region": "unknown"
+  },
+  {
+   "name": "Render",
+   "ats": "ashby",
+   "token": "render",
+   "region": "unknown"
+  },
+  {
+   "name": "Supabase",
+   "ats": "ashby",
+   "token": "supabase",
+   "region": "unknown"
+  },
+  {
+   "name": "Temporal",
+   "ats": "ashby",
+   "token": "temporal",
+   "region": "unknown"
+  },
+  {
+   "name": "Whoop",
+   "ats": "ashby",
+   "token": "whoop",
+   "region": "unknown"
+  },
+  {
+   "name": "Census",
+   "ats": "breezy",
+   "token": "census",
+   "region": "unknown"
+  },
+  {
+   "name": "Glance",
+   "ats": "breezy",
+   "token": "glance",
+   "region": "unknown"
+  },
+  {
+   "name": "Bluestone",
+   "ats": "greenhouse",
+   "token": "bluestone",
+   "region": "IN"
+  },
+  {
+   "name": "Calendly",
+   "ats": "greenhouse",
+   "token": "calendly",
+   "region": "unknown"
+  },
+  {
+   "name": "Cockroachlabs",
+   "ats": "greenhouse",
+   "token": "cockroachlabs",
+   "region": "unknown"
+  },
+  {
+   "name": "Contentstack",
+   "ats": "greenhouse",
+   "token": "contentstack",
+   "region": "unknown"
+  },
+  {
+   "name": "Druva",
+   "ats": "greenhouse",
+   "token": "druva",
+   "region": "IN"
+  },
+  {
+   "name": "India",
+   "ats": "greenhouse",
+   "token": "india",
+   "region": "unknown"
+  },
+  {
+   "name": "Remote",
+   "ats": "greenhouse",
+   "token": "remote",
+   "region": "unknown"
+  },
+  {
+   "name": "Route",
+   "ats": "greenhouse",
+   "token": "route",
+   "region": "unknown"
+  },
+  {
+   "name": "Webflow",
+   "ats": "greenhouse",
+   "token": "webflow",
+   "region": "unknown"
+  },
+  {
+   "name": "Paytm",
+   "ats": "lever",
+   "token": "paytm",
+   "region": "IN"
+  },
+  {
+   "name": "Spotify",
+   "ats": "lever",
+   "token": "spotify",
+   "region": "unknown"
+  },
+  {
+   "name": "Toptal",
+   "ats": "lever",
+   "token": "toptal",
+   "region": "unknown"
+  },
+  {
+   "name": "Vogo",
+   "ats": "lever",
+   "token": "vogo",
+   "region": "unknown"
+  },
+  {
+   "name": "Deel",
+   "ats": "pinpoint",
+   "token": "deel",
+   "region": "unknown"
+  },
+  {
+   "name": "Innovaccer",
+   "ats": "pinpoint",
+   "token": "innovaccer",
+   "region": "IN"
+  },
+  {
+   "name": "M2P",
+   "ats": "pinpoint",
+   "token": "m2p",
+   "region": "unknown"
+  },
+  {
+   "name": "Moengage",
+   "ats": "pinpoint",
+   "token": "moengage",
+   "region": "IN"
+  },
+  {
+   "name": "Razorpay",
+   "ats": "pinpoint",
+   "token": "razorpay",
+   "region": "IN"
+  },
+  {
+   "name": "Spotdraft",
+   "ats": "pinpoint",
+   "token": "spotdraft",
+   "region": "unknown"
+  },
+  {
+   "name": "Superops",
+   "ats": "pinpoint",
+   "token": "superops",
+   "region": "unknown"
+  },
+  {
+   "name": "Turing",
+   "ats": "pinpoint",
+   "token": "turing",
+   "region": "IN"
+  },
+  {
+   "name": "Navi",
+   "ats": "recruitee",
+   "token": "navi",
+   "region": "unknown"
+  },
+  {
+   "name": "Personio",
+   "ats": "recruitee",
+   "token": "personio",
+   "region": "unknown"
+  },
+  {
+   "name": "Freshworks",
+   "ats": "rippling",
+   "token": "freshworks",
+   "region": "IN"
+  },
+  {
+   "name": "Infra",
+   "ats": "rippling",
+   "token": "infra",
+   "region": "unknown"
+  },
+  {
+   "name": "Porter",
+   "ats": "rippling",
+   "token": "porter",
+   "region": "IN"
+  },
+  {
+   "name": "Bluestone",
+   "ats": "smartrecruiters",
+   "token": "bluestone",
+   "region": "IN"
+  },
+  {
+   "name": "Canva",
+   "ats": "smartrecruiters",
+   "token": "canva",
+   "region": "unknown"
+  },
+  {
+   "name": "Facets",
+   "ats": "smartrecruiters",
+   "token": "facets",
+   "region": "unknown"
+  },
+  {
+   "name": "Freshworks",
+   "ats": "smartrecruiters",
+   "token": "freshworks",
+   "region": "IN"
+  },
+  {
+   "name": "Gousto",
+   "ats": "smartrecruiters",
+   "token": "gousto",
+   "region": "unknown"
+  },
+  {
+   "name": "Lendingkart",
+   "ats": "smartrecruiters",
+   "token": "lendingkart",
+   "region": "unknown"
+  },
+  {
+   "name": "Mindtickle",
+   "ats": "smartrecruiters",
+   "token": "mindtickle",
+   "region": "IN"
+  },
+  {
+   "name": "Netradyne",
+   "ats": "smartrecruiters",
+   "token": "netradyne",
+   "region": "unknown"
+  },
+  {
+   "name": "Newtonschool",
+   "ats": "smartrecruiters",
+   "token": "newtonschool",
+   "region": "unknown"
+  },
+  {
+   "name": "Turtlemint",
+   "ats": "smartrecruiters",
+   "token": "turtlemint",
+   "region": "unknown"
+  },
+  {
+   "name": "Whatfix",
+   "ats": "smartrecruiters",
+   "token": "whatfix",
+   "region": "IN"
+  },
+  {
+   "name": "Wise",
+   "ats": "smartrecruiters",
+   "token": "wise",
+   "region": "unknown"
+  },
+  {
+   "name": "Lead",
+   "ats": "teamtailor",
+   "token": "lead",
+   "region": "unknown"
+  },
+  {
+   "name": "Lunar",
+   "ats": "teamtailor",
+   "token": "lunar",
+   "region": "unknown"
+  },
+  {
+   "name": "Mobile",
+   "ats": "teamtailor",
+   "token": "mobile",
+   "region": "unknown"
+  },
+  {
+   "name": "Oddbox",
+   "ats": "teamtailor",
+   "token": "oddbox",
+   "region": "unknown"
+  },
+  {
+   "name": "Apna",
+   "ats": "workable",
+   "token": "apna",
+   "region": "IN"
+  },
+  {
+   "name": "Deepsource",
+   "ats": "workable",
+   "token": "deepsource",
+   "region": "IN"
+  }
+ ]
+}
