@@ -505,6 +505,42 @@ renderer versions and many accounts' state in flight at once. Version state
 per record, degrade rather than refuse, and report the mismatch instead of
 failing on it.
 
+### Publish the slice a viewer can draw, never the store behind it
+
+The sibling rule, and it nearly bit on 2026-08-25. `publishable_state` was
+sending the whole job pool to KV. Measured against a synthetic 50,000-job pool:
+134.2 MB as the whole store, 14.8 MB as the slice `found_lane` would actually
+draw, 3.1 MB as the rendered page. The reader ceiling is 20 MB and Cloudflare's
+value limit is 25 MB, so "the store grew" and "the board still works" were about
+to stop being compatible. PR #22 publishes the `EMBED_CAP` slice plus the true
+total and a per-country census beside it, so the board can state a number it is
+not carrying.
+
+This is the same failure class as the favicon outage in §14 and the fingerprint
+gate above: something that holds at development scale and fails at deployed
+scale, silently, on a path nobody re-measured after the inputs changed. In
+multi-tenant it gets worse in the obvious direction, many accounts' pools
+against one envelope ceiling, which is a further argument for §8's per-account
+render from D1 rather than a snapshot envelope at all.
+
+### Ingest has no lock, and that is a multi-tenant precondition
+
+`ingest.py` reads `jobs.json`, sweeps for minutes, then writes the whole file
+back. It takes no lock. Two overlapping runs therefore do not merge: the later
+write silently discards the earlier one, along with every job it admitted.
+
+This was not theoretical. On 2026-08-25 two sessions ran overlapping sweeps for
+roughly ten minutes, and the store survived only because one run was killed on a
+timeout before it reached its write. The live pool was one successful write away
+from losing thousands of records with no error anywhere.
+
+Single-tenant, the exposure is a manual sweep overlapping the daemon's four-hour
+tick. Multi-tenant, Stage A runs on a schedule against a corpus that every
+account depends on, and the same race becomes a data-loss bug with a blast
+radius of every user. A lease or an advisory lock on the corpus write is a
+precondition for §3, not a hardening task afterwards. The document-job path
+already has exactly this discipline and it should be the model.
+
 ## 9. Auth: the Skeptic pattern
 
 Ported from `skeptic/backend/app/auth/`, which is the reference implementation
