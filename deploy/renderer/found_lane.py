@@ -1196,13 +1196,14 @@ CSS = """
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
   .jb-chip.years { background:var(--t-o); color:var(--orange); }
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
-  .jb-sections { display:grid; gap:.9rem; margin:.2rem 0 .1rem; }
+  .jb-sections { display:grid; gap:.9rem 2.2rem; margin:.2rem 0 .1rem;
+    grid-template-columns:1fr 1fr; align-items:start; }
   .jb-section h4 { margin:0 0 .35rem; font-size:.74rem; font-weight:640;
     letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); }
   .jb-section ul { margin:0; padding-left:1.05rem; display:grid; gap:.22rem; }
   .jb-section li { font-size:.82rem; line-height:1.5; color:var(--ink-2); }
   .jb-loading { margin:0; font-size:.8rem; color:var(--ink-3); }
-  @media (min-width:1100px) {
+  @media (max-width:900px) {
     .jb-sections { grid-template-columns:1fr; }
   }
   .jb-facts { display:flex; flex-wrap:wrap; gap:.35rem; }

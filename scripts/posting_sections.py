@@ -39,6 +39,18 @@ RESPONSIBILITY_HEADINGS = (
     "core responsibilities", "duties", "key duties", "what the job involves",
     "how you will contribute", "what you will contribute", "the opportunity",
     "job description", "position summary", "scope of the role",
+    # Employers write the same heading a dozen ways; these are the ones seen in
+    # the store that the first pass walked past.
+    "in your role you'll", "in your role you will", "in your role",
+    "what you'll be doing", "what youll be responsible for",
+    "what you will be responsible for", "your responsibilities",
+    "key accountabilities", "accountabilities", "primary responsibilities",
+    "main responsibilities", "essential duties", "essential functions",
+    "what the role involves", "the job", "your mission", "the mission",
+    "what success looks like", "your day", "a day in the life",
+    "you will", "you'll", "responsibilities include", "role responsibilities",
+    "about this role", "role summary", "position overview", "overview",
+    "what we need from you day to day",
 )
 REQUIREMENT_HEADINGS = (
     "skills and qualifications", "skills & qualifications", "qualifications",
@@ -51,6 +63,15 @@ REQUIREMENT_HEADINGS = (
     "what you need", "what you need to succeed", "ideal candidate",
     "the ideal candidate", "we are looking for", "our requirements",
     "candidate profile", "eligibility",
+    "skills", "your skills", "key skills", "core competencies", "competencies",
+    "experience", "experience and skills", "skills and experience",
+    "skills & experience", "qualifications and experience",
+    "required qualifications", "essential criteria", "essential skills",
+    "what you should have", "what you'll bring to the table",
+    "what makes you a fit", "who we are looking for", "who we're looking for",
+    "you should have", "you might be a fit if", "you may be a good fit if",
+    "requirements and qualifications", "job requirements", "prerequisites",
+    "background", "your background", "the successful candidate",
 )
 # Headings that end a section without starting one worth showing.
 CLOSING_HEADINGS = (
