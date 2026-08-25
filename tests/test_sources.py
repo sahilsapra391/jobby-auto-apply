@@ -18,6 +18,7 @@ Run from the repo root: python3 -m pytest tests/ -q
 """
 
 import importlib.util
+import inspect
 import json
 import pathlib
 import sys
@@ -1266,14 +1267,52 @@ class Rfc822Tests(unittest.TestCase):
 
 
 class ListingCompletenessTests(unittest.TestCase):
-    """`complete` is what separates a board sweep from a recent-items feed."""
+    """`complete` is what separates a board sweep from a recent-items feed.
 
-    def test_a_board_sweep_is_complete_by_default(self):
-        self.assertIs(base.ok("greenhouse", [])["listingComplete"], True)
+    Only a complete listing can be evidence that a posting missing from it was
+    taken down, and the staleness sweep removes jobs on that evidence. So the
+    default has to be the harmless answer.
+    """
 
-    def test_a_feed_can_say_it_is_not(self):
-        self.assertIs(base.ok("successfactors", [], complete=False)["listingComplete"],
-                      False)
+    def test_completeness_must_be_claimed_and_defaults_to_false(self):
+        """The fail-safe, and the reason the default is not the other way.
+
+        A connector that forgets the flag can at worst leave a stale card on
+        the board. Defaulted the other way, a new connector reading a recency
+        feed would mass-close on its first sweep and look like it was working.
+        """
+        self.assertIs(base.ok("anything", [])["listingComplete"], False)
+
+    def test_a_board_sweep_claims_it_explicitly(self):
+        self.assertIs(base.ok("greenhouse", [], complete=True)["listingComplete"], True)
+
+    def test_skipped_and_failed_are_never_complete(self):
+        """Not being asked, and failing to read, are both "unknown"."""
+        self.assertIs(base.skipped("greenhouse", "no key")["listingComplete"], False)
+        self.assertIs(base.failed("greenhouse", "503")["listingComplete"], False)
+
+    def test_the_aggregators_and_feeds_take_the_safe_default(self):
+        """Named one by one, because a search page or a recent-items feed
+        silently acquiring completeness is the exact regression to catch."""
+        for module in (adzuna, careerjet, jooble, reed, themuse, usajobs, feeds):
+            with self.subTest(module=module.__name__):
+                source = pathlib.Path(module.__file__).read_text()
+                self.assertNotIn("complete=True", source)
+
+    def test_every_connector_that_claims_completeness_is_a_whole_board_sweep(self):
+        """The list is short and deliberate. Adding to it means having checked
+        that one run reads every open requisition the tenant has."""
+        claiming = set()
+        for name, fn in sources.ALL.items():
+            source = pathlib.Path(inspect.getfile(fn)).read_text()
+            if "complete=True" in source or "complete=whole" in source \
+                    or "complete=not truncated" in source:
+                claiming.add(name)
+        self.assertEqual(claiming, {
+            "greenhouse", "lever", "ashby", "workday",
+            "smartrecruiters", "workable", "recruitee", "personio", "breezy",
+            "rippling", "teamtailor", "pinpoint", "jazzhr", "oracle_orc", "gem",
+        })
 
 
 if __name__ == "__main__":

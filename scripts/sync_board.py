@@ -20,7 +20,8 @@ REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
 sys.path.insert(0, str(REPO / "scripts"))
-import jobs_store  # noqa: E402  (needs the path above)
+import drop  # noqa: E402  (needs the path above)
+import jobs_store  # noqa: E402
 
 
 def run(args):
@@ -70,15 +71,15 @@ def main():
     # things the user did; a closed posting does not undo them and they keep
     # their cards. Watching is a shelf of roles still open to apply to, and a
     # role that cannot be applied to any more does not belong on it.
-    closed = set()
+    closed = {}
     try:
         pool = jobs_store.load_jobs(jobs_store.root_dir())
-        closed = {job_id for job_id, job in pool.items()
+        closed = {job_id: job.get("closedAt") for job_id, job in pool.items()
                   if job.get("state") == "expired"}
     except (OSError, ValueError, jobs_store.JobsStoreError):
         # An unreadable pool means we do not know what is closed. Retiring
         # nothing is the safe answer; retiring everything is not.
-        closed = set()
+        closed = {}
 
     retired, dropped_closed = [], []
     for s in sessions:
@@ -89,11 +90,20 @@ def main():
             if run(["session-delete", "--id", aid]).returncode == 0:
                 retired.append(aid)
         elif s.get("status") == "watch" and aid in closed:
-            if run(["session-delete", "--id", aid]).returncode == 0:
+            # Archived rather than deleted. Nobody misses a Found card they
+            # never looked at, but a Watching entry was chosen by hand, and a
+            # starred role silently disappearing reads as the board losing
+            # things. Dropped already records the lane, the stage it reached
+            # and a reason, which is exactly the trace this needs, so this
+            # reuses it instead of inventing a second archive.
+            when = (closed[aid] or "")[:10]
+            reason = ("posting closed by the employer"
+                      + (f", noticed on {when}" if when else ""))
+            if not drop.drop(aid, reason).get("error"):
                 dropped_closed.append(aid)
 
     result = {"retiredFromWatching": retired,
-              "closedAndRetired": dropped_closed,
+              "closedAndArchived": dropped_closed,
               "watchingNow": len(sessions) - len(retired) - len(dropped_closed),
               "submitted": len(submitted)}
 

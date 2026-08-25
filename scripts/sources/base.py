@@ -307,7 +307,7 @@ def rfc822_date(value):
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def ok(source, postings, requests=0, errors=None, note="", complete=True):
+def ok(source, postings, requests=0, errors=None, note="", complete=False):
     """A channel that answered.
 
     `complete` says whether what came back is the whole of every board asked
@@ -316,6 +316,13 @@ def ok(source, postings, requests=0, errors=None, note="", complete=True):
     returns "the most recent twenty" is not complete, however direct its
     postings are, and a connector reading one must say so or the sweep will
     expire live jobs that simply fell out of the window.
+
+    **It defaults to False, and the default is the point.** A connector that
+    forgets the flag gets the harmless answer: its postings are never evidence
+    of anything, so the worst it can do is leave a stale card on the board. The
+    other default fails the other way -- a new connector reading a recency feed
+    would mass-close on its first sweep, and it would look exactly like the
+    feature working. Completeness has to be claimed, not assumed.
     """
     return {"source": source, "status": "ok", "reason": note,
             "postings": list(postings), "requests": requests,

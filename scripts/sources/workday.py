@@ -101,5 +101,8 @@ def fetch(fetcher, companies=None, limit=None, **_):
     requests = fetcher.requests - before
     if errors and not postings:
         return base.failed(SOURCE, f"every board failed ({len(errors)})", requests, errors)
+    # Pages until the board's own reported total is reached, so a full run is
+    # the whole board. A --limit run stops early, and ingest already refuses to
+    # close on a limited sweep for exactly that reason.
     return base.ok(SOURCE, postings, requests, errors,
-                   f"{len(targets)} boards")
+                   note=f"{len(targets)} boards", complete=True)
