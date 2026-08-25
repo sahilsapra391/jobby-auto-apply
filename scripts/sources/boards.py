@@ -39,7 +39,14 @@ import base  # noqa: E402
 SOURCE_CLASS = "ats"
 TIER = "1a"
 
-SMARTRECRUITERS_URL = "https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100"
+SMARTRECRUITERS_URL = ("https://api.smartrecruiters.com/v1/companies/{token}"
+                       "/postings?limit={page}&offset={offset}")
+# The only one of the six that needs paging, and it was not doing it. Measured
+# 2026-08-25 over 14 registry tenants: Canva reported 253 postings and Coolblue
+# 474, and one request returned 100 of each. That was 527 roles we never saw,
+# and once absence from a board became evidence of closure it would also have
+# been 527 live roles a sweep called taken down.
+SMARTRECRUITERS_PAGE = 100
 WORKABLE_URL = "https://apply.workable.com/api/v1/widget/accounts/{token}?details=true"
 RECRUITEE_URL = "https://{token}.recruitee.com/api/offers/"
 PERSONIO_URL = "https://{token}.jobs.personio.de/xml"
@@ -52,48 +59,85 @@ def boards(companies, ats):
             if c.get("ats") == ats and c.get("token")]
 
 
-def _sweep(fetcher, ats, url_template, extract, parse, companies, limit, accept=None):
-    """One request per registry company on this platform, and loud about each."""
-    postings, errors, dead = [], [], 0
+def _sweep(fetcher, ats, url_template, extract, parse, companies, limit,
+           accept=None, page_size=None, total_of=None):
+    """One board per registry company, and loud about each.
+
+    `page_size` and `total_of` turn this into a paging sweep: `total_of(data)`
+    reports how many postings the board says it has, and pages are fetched
+    until that many have been seen. Without them one request is the whole
+    board, which is true of five of the six platforms here.
+
+    Completeness is not a judgement this makes; it reports what happened.
+    `truncated` is set when a board said it had more than we managed to read,
+    and the channel then declares itself incomplete, because a partial board
+    read is exactly the shape that makes a closure sweep dangerous.
+    """
+    postings, errors, dead, truncated = [], [], 0, 0
     targets = boards(companies, ats)
     if not targets:
         return base.skipped(ats, f"no {ats} boards in the company registry")
     before = fetcher.requests
+
     for company in targets:
-        url = url_template.format(token=company["token"])
-        if accept:
-            response = fetcher.get(url, headers={"Accept": accept})
-            data = response.body if response.ok else None
-        else:
-            data, response = fetcher.get_json(url)
-        if response.unchanged:
-            continue
-        if data is None:
-            if response.status == 404:
-                dead += 1
-            errors.append(base.describe(response, f"{company.get('name')} ({company['token']})"))
-            continue
-        try:
-            entries = extract(data)
-        except (AttributeError, TypeError, KeyError, ValueError,
-                ElementTree.ParseError) as exc:
-            errors.append(f"{company.get('name')}: unexpected response shape ({exc})")
-            continue
-        for entry in entries:
-            record = parse(entry, company)
-            if record is not None:
-                postings.append(record)
+        offset, total, seen = 0, None, 0
+        while True:
+            url = url_template.format(token=company["token"],
+                                      page=page_size or 0, offset=offset)
+            if accept:
+                response = fetcher.get(url, headers={"Accept": accept})
+                data = response.body if response.ok else None
+            else:
+                data, response = fetcher.get_json(url)
+            if response.unchanged:
+                break
+            if data is None:
+                if response.status == 404:
+                    dead += 1
+                errors.append(base.describe(
+                    response, f"{company.get('name')} ({company['token']})"))
+                # A board we could not finish reading is a board we know
+                # nothing about the rest of.
+                truncated += 1 if offset else 0
+                break
+            try:
+                entries = extract(data)
+                if total_of is not None and total is None:
+                    total = total_of(data)
+            except (AttributeError, TypeError, KeyError, ValueError,
+                    ElementTree.ParseError) as exc:
+                errors.append(f"{company.get('name')}: unexpected response shape ({exc})")
+                break
+            for entry in entries:
+                record = parse(entry, company)
+                if record is not None:
+                    postings.append(record)
+                if limit and len(postings) >= limit:
+                    break
+            seen += len(entries)
             if limit and len(postings) >= limit:
                 break
+            if not page_size or not entries:
+                break
+            if total is None or seen >= total:
+                break
+            offset += len(entries)
+        else:                                    # pragma: no cover - while/else
+            pass
+        if total is not None and seen < total and not (limit and len(postings) >= limit):
+            truncated += 1
         if limit and len(postings) >= limit:
             break
+
     note = f"{len(targets)} boards"
     if dead:
         note += f", {dead} token(s) 404 and need re-resolving"
+    if truncated:
+        note += f", {truncated} board(s) read only in part"
     requests = fetcher.requests - before
     if errors and not postings:
         return base.failed(ats, f"every board failed ({len(errors)})", requests, errors)
-    return base.ok(ats, postings, requests, errors, note)
+    return base.ok(ats, postings, requests, errors, note, complete=not truncated)
 
 
 # --- SmartRecruiters --------------------------------------------------------
@@ -126,7 +170,9 @@ def _smartrecruiters_job(entry, company):
 
 def smartrecruiters(fetcher, companies=None, limit=None, **_):
     return _sweep(fetcher, "smartrecruiters", SMARTRECRUITERS_URL,
-                  lambda d: d.get("content") or [], _smartrecruiters_job, companies, limit)
+                  lambda d: d.get("content") or [], _smartrecruiters_job,
+                  companies, limit, page_size=SMARTRECRUITERS_PAGE,
+                  total_of=lambda d: d.get("totalFound"))
 
 
 # --- Workable ---------------------------------------------------------------

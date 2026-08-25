@@ -20,10 +20,17 @@ def targets(companies, ats):
             if c.get("ats") == ats and c.get("token")]
 
 
-def finish(source, postings, errors, requests, count):
+def finish(source, postings, errors, requests, count, complete=False):
+    """`complete` says the whole of every board asked for came back.
+
+    It is not defaulted True here for the same reason base.ok is not: a
+    platform added later that forgets to claim it stays harmless, and one that
+    claims it wrongly closes live jobs.
+    """
     if errors and not postings:
         return base.failed(source, f"every board failed ({len(errors)})", requests, errors)
-    return base.ok(source, postings, requests, errors, f"{count} boards")
+    return base.ok(source, postings, requests, errors, f"{count} boards",
+                   complete=complete)
 
 
 def workplace(value, fallback=None):
@@ -68,7 +75,8 @@ def pinpoint(fetcher, companies=None, limit=None, **_):
                 break
         if limit and len(postings) >= limit:
             break
-    return finish(source, postings, errors, fetcher.requests - before, len(boards))
+    return finish(source, postings, errors, fetcher.requests - before,
+                  len(boards), complete=True)
 
 
 def teamtailor(fetcher, companies=None, limit=None, **_):
@@ -104,7 +112,8 @@ def teamtailor(fetcher, companies=None, limit=None, **_):
                 break
         if limit and len(postings) >= limit:
             break
-    return finish(source, postings, errors, fetcher.requests - before, len(boards))
+    return finish(source, postings, errors, fetcher.requests - before,
+                  len(boards), complete=True)
 
 
 class JazzListParser(HTMLParser):
@@ -166,11 +175,15 @@ def jazzhr(fetcher, companies=None, limit=None, **_):
                 break
         if limit and len(postings) >= limit:
             break
-    return finish(source, postings, errors, fetcher.requests - before, len(boards))
+    return finish(source, postings, errors, fetcher.requests - before,
+                  len(boards), complete=True)
 
 
 def oracle(fetcher, companies=None, limit=None, **_):
     source, postings, errors, before = "oracle_orc", [], [], fetcher.requests
+    # Cleared by any board the page ceiling cut short: past that point every
+    # posting would read as taken down, which is not something we know.
+    whole = True
     boards = targets(companies, source)
     if not boards:
         return base.skipped(source, "no Oracle Recruiting boards in the company registry")
@@ -220,11 +233,13 @@ def oracle(fetcher, companies=None, limit=None, **_):
                 complete = True
                 break
         if not complete:
+            whole = False
             errors.append(f"{company.get('name')}: board exceeded the "
                           f"{ORACLE_MAX_PAGES * ORACLE_PAGE_SIZE}-job safety ceiling")
         if limit and len(postings) >= limit:
             break
-    return finish(source, postings, errors, fetcher.requests - before, len(boards))
+    return finish(source, postings, errors, fetcher.requests - before,
+                  len(boards), complete=whole)
 
 
 def gem(fetcher, companies=None, limit=None, **_):
@@ -255,7 +270,8 @@ def gem(fetcher, companies=None, limit=None, **_):
                 break
         if limit and len(postings) >= limit:
             break
-    return finish(source, postings, errors, fetcher.requests - before, len(boards))
+    return finish(source, postings, errors, fetcher.requests - before,
+                  len(boards), complete=True)
 
 
 CONNECTORS = {"pinpoint": pinpoint, "teamtailor": teamtailor, "jazzhr": jazzhr,

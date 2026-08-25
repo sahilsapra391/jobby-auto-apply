@@ -65,9 +65,15 @@ def partial_channel(postings, name="greenhouse"):
 
 
 def channel(postings, name="greenhouse", status="ok", reason=""):
+    """A whole-board sweep, which is what the registry connectors are.
+
+    `complete=True` is spelled out rather than defaulted, because the default
+    is deliberately the harmless one: a connector has to claim completeness
+    before anything it returns can expire a job.
+    """
     def connector(fetcher, **_):
         if status == "ok":
-            return base.ok(name, postings, requests=1, note=reason)
+            return base.ok(name, postings, requests=1, note=reason, complete=True)
         if status == "skipped":
             return base.skipped(name, reason, requests=0)
         return base.failed(name, reason, requests=1, errors=[reason])
@@ -910,6 +916,36 @@ class StalenessSweepTests(IngestCase):
         report, jobs = self.run_ingest({"greenhouse": partial_channel([a])})
         self.assertEqual(report["closed"], 0)
         self.assertTrue(all(job["state"] == "new" for job in jobs.values()))
+
+    def test_one_board_failing_leaves_that_board_alone_and_the_others_working(self):
+        """The sharp case, and the one the brake does NOT handle.
+
+        A channel is many boards. When one 503s and the rest answer, the failed
+        board contributes no entry to what the sweep saw, so its jobs are never
+        even considered: they are outside the closure path, not merely under
+        the brake's threshold. A design that instead compared "everything this
+        channel returned" against "everything this channel holds" would read
+        one dead board as an employer that closed every role it had.
+        """
+        healthy = posting(company="Northwind",
+                          url="https://job-boards.greenhouse.io/northwind/jobs/1")
+        other = posting(company="Contoso",
+                        url="https://job-boards.greenhouse.io/contoso/jobs/9",
+                        title="Director of Platform Operations",
+                        description="Run the platform organisation. Twelve years "
+                                    "of infrastructure leadership required.")
+        self.run_ingest({"greenhouse": channel([healthy, other])})
+
+        # Contoso's board is not in this answer at all, as a 503 would leave it.
+        report, jobs = self.run_ingest({"greenhouse": channel([healthy])})
+        self.assertEqual(report["closed"], 0)
+        states = {job["company"]: job["state"] for job in jobs.values()}
+        self.assertEqual(states.get("Contoso"), "new")
+
+    def test_the_brake_threshold_is_a_named_constant_not_a_literal(self):
+        """So the refusal reason and the rule cannot drift apart."""
+        self.assertEqual(jobs_store.MAX_CLOSED_SHARE, 0.7)
+        self.assertEqual(jobs_store.MIN_BOARD_FOR_SHARE_CHECK, 5)
 
     def test_a_relisted_posting_comes_back_to_found(self):
         a, b = self._two_postings()

@@ -56,6 +56,8 @@ class SyncBoardClosureTests(unittest.TestCase):
             job = jobs_store.blank_job(job_id, "Northwind",
                                        f"Product Manager, {job_id.title()}")
             job["state"] = state
+            if state == "expired":
+                job["closedAt"] = "2026-08-25T17:00:00Z"
             jobs[job_id] = job
         jobs_store.save_jobs(self.root, jobs)
 
@@ -66,16 +68,39 @@ class SyncBoardClosureTests(unittest.TestCase):
         return json.loads(r.stdout)
 
     def live_sessions(self):
+        """Applications still on the board's workflow lanes.
+
+        A dropped session is not deleted; it moves to the archive. So
+        "still watching" means present AND not dropped.
+        """
         r = self.store("session-list")
-        return {s["applicationId"] for s in json.loads(r.stdout or "[]")}
+        return {s["applicationId"] for s in json.loads(r.stdout or "[]")
+                if s.get("status") != "dropped"}
+
+    def session(self, app_id):
+        r = self.store("session-load", "--id", app_id)
+        return json.loads(r.stdout or "{}")
 
     def test_a_watched_role_whose_posting_closed_leaves_watching(self):
         self.watch("alive")
         self.watch("dead")
         self.pool(alive="watched", dead="expired")
         result = self.sync()
-        self.assertEqual(result["closedAndRetired"], ["dead"])
+        self.assertEqual(result["closedAndArchived"], ["dead"])
         self.assertEqual(self.live_sessions(), {"alive"})
+
+    def test_the_closed_role_is_archived_with_a_reason_not_deleted(self):
+        """A Found card nobody looked at can vanish silently. A role the user
+        starred cannot: disappearing without a trace reads as a glitch."""
+        self.watch("dead")
+        self.pool(dead="expired")
+        self.sync()
+        archived = self.session("dead")
+        self.assertEqual(archived["status"], "dropped")
+        self.assertEqual(archived["droppedFrom"], "Watching")
+        self.assertIn("closed by the employer", archived["droppedReason"])
+        self.assertIn("2026-08-25", archived["droppedReason"])
+        self.assertTrue(archived["droppedAt"])
 
     def test_watching_now_counts_what_is_actually_left(self):
         self.watch("alive")
@@ -87,7 +112,7 @@ class SyncBoardClosureTests(unittest.TestCase):
         self.watch("alive")
         self.pool(alive="watched")
         result = self.sync()
-        self.assertEqual(result["closedAndRetired"], [])
+        self.assertEqual(result["closedAndArchived"], [])
         self.assertEqual(self.live_sessions(), {"alive"})
 
     def test_only_watch_sessions_are_retired_this_way(self):
@@ -104,7 +129,7 @@ class SyncBoardClosureTests(unittest.TestCase):
                 self.watch("busy", status=status)
                 self.pool(busy="expired")
                 result = self.sync()
-                self.assertEqual(result["closedAndRetired"], [])
+                self.assertEqual(result["closedAndArchived"], [])
                 self.assertEqual(self.live_sessions(), {"busy"})
 
     def test_an_unreadable_pool_retires_nothing(self):
@@ -112,7 +137,7 @@ class SyncBoardClosureTests(unittest.TestCase):
         self.watch("alive")
         (self.root / "jobs.json").write_text("{ this is not json")
         result = self.sync()
-        self.assertEqual(result["closedAndRetired"], [])
+        self.assertEqual(result["closedAndArchived"], [])
         self.assertEqual(self.live_sessions(), {"alive"})
 
 

@@ -32,6 +32,20 @@ def load(name):
 
 
 jobs_store = load("jobs_store")
+
+
+def load_source(name):
+    """The connectors live one directory down and import `base` as a sibling."""
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts" / "sources"))
+    spec = importlib.util.spec_from_file_location(
+        name, ROOT / "scripts" / "sources" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sources_base = load_source("base")
 search_config = load("search_config")
 seed_companies = load("seed_companies")
 sources_registry = load("sources_registry")
@@ -1085,6 +1099,34 @@ class PostedDateRefreshTests(unittest.TestCase):
         self.assertFalse(jobs_store.refresh_posted_date(
             held, {"postedAt": "2026-08-19T20:00:00Z"}))
         self.assertEqual(held["postedAt"], "2026-08-20T01:00:00+05:30")
+
+    def test_an_rss_offset_is_converted_on_the_way_in_not_relabelled(self):
+        """The other half of the same contract, and where it was broken.
+
+        `parse_stamp` reads instants correctly, but a feed's RFC 822 date has
+        to become one first. `parsedate_to_datetime` returns the feed's own
+        offset, and formatting that straight to a "Z" stamp writes the local
+        wall clock and calls it UTC. A feed publishing 18:00:00 -0400 was
+        stored as 18:00Z: four hours early, in the field the freshness gate,
+        prune, the Found sort and now the closure pass all read.
+        """
+        for rss, expected in (("Mon, 24 Aug 2026 18:00:00 -0400", "2026-08-24T22:00:00Z"),
+                              ("Tue, 25 Aug 2026 09:30:00 +0530", "2026-08-25T04:00:00Z"),
+                              ("Tue, 25 Aug 2026 02:00:00 GMT", "2026-08-25T02:00:00Z"),
+                              ("Tue, 25 Aug 2026 02:00:00 +0000", "2026-08-25T02:00:00Z")):
+            with self.subTest(rss=rss):
+                stamp = sources_base.rfc822_date(rss)
+                self.assertEqual(stamp, expected)
+                # And the round trip: what was written reads back as the same
+                # instant the feed actually meant.
+                self.assertEqual(
+                    jobs_store.parse_stamp(stamp),
+                    jobs_store.parse_stamp(expected))
+
+    def test_an_rss_date_that_cannot_be_read_is_none_rather_than_a_guess(self):
+        for junk in ("", None, "rubbish", "2026-08-25", "Mon, 32 Xxx 2026"):
+            with self.subTest(junk=junk):
+                self.assertIsNone(sources_base.rfc822_date(junk))
 
     def test_the_formats_already_in_the_store_still_parse(self):
         for text, expected in (("2026-08-19T20:00:00Z", "2026-08-19 20:00:00+00:00"),

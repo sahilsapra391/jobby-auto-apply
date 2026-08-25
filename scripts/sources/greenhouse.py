@@ -95,7 +95,9 @@ def fetch(fetcher, companies=None, limit=None, **_):
     requests = fetcher.requests - before
     if errors and not postings:
         return base.failed(SOURCE, f"every board failed ({len(errors)})", requests, errors)
-    return base.ok(SOURCE, postings, requests, errors, note)
+    # The board endpoint returns every open requisition for the tenant,
+    # so a posting missing from it has been taken down.
+    return base.ok(SOURCE, postings, requests, errors, note, complete=True)
 
 
 def fetch_body(fetcher, entry_url, token, job_id):
