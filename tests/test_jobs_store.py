@@ -423,7 +423,15 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(sorted(kept), ["old"], "80 days survives a 90-day window")
 
     def test_the_agreed_volume_knobs_are_what_ships(self):
-        self.assertEqual(jobs_store.STORED_CAP, 3000)
+        """Both numbers are Sahil's calls, not defaults anyone may drift.
+
+        STORED_CAP moved from 3000 to 50000 on 2026-08-25, after the store was
+        found sitting exactly on the old cap with 316 companies represented
+        against 546 known: a ring buffer at its ceiling, evicting on every
+        sweep. NEW_MAX_AGE_DAYS is unchanged and is a different clock, how long
+        an unacted-on job survives after it stops being seen.
+        """
+        self.assertEqual(jobs_store.STORED_CAP, 50000)
         self.assertEqual(jobs_store.NEW_MAX_AGE_DAYS, 30)
 
 

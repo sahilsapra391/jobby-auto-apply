@@ -276,6 +276,32 @@ def provider_payload(root=None):
     return settings_panel.public_payload(state)
 
 
+# What deploy/api/page.py will accept back. Kept as a number here rather than
+# imported, because the reader lives in the deployment and this runs on the
+# laptop, but the two have to mean the same thing.
+MAX_STATE_BYTES = 20 * 1024 * 1024
+
+
+def guard_state_size(payload):
+    """Refuse a state the deployed reader would reject.
+
+    page.py decompresses into a 20 MB ceiling and answers "The board state
+    could not be read" past it, so an oversized publish does not fail here, it
+    fails on every request until someone republishes something smaller. The
+    store is capped at tens of thousands of jobs and the board is not, which is
+    why dashboard.publishable_jobs sends the slice and not the pool. This is
+    the check that says so out loud if that ever stops being true.
+    """
+    if len(payload) > MAX_STATE_BYTES:
+        raise PublishError(
+            f"refusing to publish: the board state is "
+            f"{len(payload) / 1024 / 1024:.1f} MB and the deployed reader stops at "
+            f"{MAX_STATE_BYTES / 1024 / 1024:.0f} MB. The published board is untouched. "
+            "Something is sending the whole job pool instead of the slice "
+            "dashboard.publishable_jobs selects.")
+    return payload
+
+
 def push_content(html, state, docs, providers=None):
     """Write sanitized board state and documents into KV.
 
@@ -289,7 +315,8 @@ def push_content(html, state, docs, providers=None):
         docs_path = Path(tmp) / "documents.json"
         providers_path = Path(tmp) / "providers.json"
         html_path.write_text(html, encoding="utf-8")
-        state_path.write_text(json.dumps(state, separators=(",", ":")), encoding="utf-8")
+        state_path.write_bytes(guard_state_size(
+            json.dumps(state, separators=(",", ":")).encode("utf-8")))
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
