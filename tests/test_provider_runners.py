@@ -233,6 +233,10 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
                     run_apply.agent, "authenticated", return_value=(True, "")), \
                 mock.patch.object(run_apply.browser, "serve", return_value={}), \
                 mock.patch.object(
+                    run_apply.browser, "open_application",
+                    return_value={"opened": True, "url": self.summary["url"]},
+                ), \
+                mock.patch.object(
                     run_apply.browser,
                     "stage_application_uploads",
                     return_value=run_apply.artifact_snapshot(self.summary),

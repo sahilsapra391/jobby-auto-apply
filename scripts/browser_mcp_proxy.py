@@ -31,6 +31,12 @@ from typing import Any, BinaryIO, Sequence
 
 SERVER_NAME = "jobby-browser-firewall"
 SERVER_VERSION = "1.0.0"
+# The stateless MCP revision. A client that discovers this version never
+# sends initialize, so every result it accepts has to carry the completion
+# markers below. Answering server/discover without them left the firewall
+# "connected" with an empty tool list, and the form agent had no way to
+# touch the page. application_mcp.py already does this; the two must agree.
+MODERN_PROTOCOL_VERSION = "2026-07-28"
 MAX_CLIENT_LINE_BYTES = 1024 * 1024
 MAX_CHILD_LINE_BYTES = 8 * 1024 * 1024
 MAX_PDF_BYTES = 50 * 1024 * 1024
@@ -213,14 +219,14 @@ def _tool_definitions(upload_paths: Sequence[str]) -> tuple[dict[str, Any], ...]
         {
             "name": "browser_find",
             "description": "Find text in the current accessibility snapshot.",
-            "inputSchema": {
-                "oneOf": [
-                    _schema({"text": {"type": "string", "minLength": 1,
-                                       "maxLength": 1_000}}, ["text"]),
-                    _schema({"regex": {"type": "string", "minLength": 1,
-                                        "maxLength": 1_000}}, ["regex"]),
-                ]
-            },
+            # A bare top-level oneOf is not an object schema, and a client that
+            # requires "type": "object" drops the tool. Exactly one of the two is
+            # still enforced, in _validate_browser_find, which is the boundary
+            # that actually matters.
+            "inputSchema": _schema({
+                "text": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                "regex": {"type": "string", "minLength": 1, "maxLength": 1_000},
+            }),
         },
         {
             "name": "browser_click",
@@ -317,16 +323,12 @@ def _tool_definitions(upload_paths: Sequence[str]) -> tuple[dict[str, Any], ...]
         {
             "name": "browser_tabs",
             "description": "List tabs or select one existing tab.",
-            "inputSchema": {
-                "oneOf": [
-                    _schema({"action": {"type": "string", "const": "list"}},
-                            ["action"]),
-                    _schema({
-                        "action": {"type": "string", "const": "select"},
-                        "index": {"type": "integer", "minimum": 0, "maximum": 100},
-                    }, ["action", "index"]),
-                ]
-            },
+            # Object schema for the same reason as browser_find. The pairing of
+            # select with index is enforced in _validate_browser_tabs.
+            "inputSchema": _schema({
+                "action": {"type": "string", "enum": ["list", "select"]},
+                "index": {"type": "integer", "minimum": 0, "maximum": 100},
+            }, ["action"]),
         },
         {
             "name": "browser_wait_for",
@@ -345,6 +347,7 @@ class ClientDecision:
     forward: dict[str, Any] | None = None
     response: dict[str, Any] | None = None
     pending_method: str | None = None
+    modern: bool = False
 
 
 @dataclass(frozen=True)
@@ -365,6 +368,36 @@ def _response(
     else:
         response["result"] = result
     return response
+
+
+def _modern_request(params: dict[str, Any]) -> bool:
+    meta = params.get("_meta")
+    return (
+        isinstance(meta, dict)
+        and meta.get("io.modelcontextprotocol/protocolVersion")
+        == MODERN_PROTOCOL_VERSION
+    )
+
+
+def _complete_result(
+    payload: dict[str, Any], *, modern: bool, cacheable: bool = False
+) -> dict[str, Any]:
+    if not modern:
+        return payload
+    result = dict(payload)
+    result["resultType"] = "complete"
+    meta = dict(result.get("_meta") or {})
+    meta["io.modelcontextprotocol/serverInfo"] = {
+        "name": SERVER_NAME,
+        "version": SERVER_VERSION,
+    }
+    result["_meta"] = meta
+    if cacheable:
+        # The tool surface is fixed for the life of this proxy, and the upload
+        # enum names one application's two files, so the cache stays private.
+        result["ttlMs"] = 60_000
+        result["cacheScope"] = "private"
+    return result
 
 
 def _tool_error(request_id: Any, message: str) -> dict[str, Any]:
@@ -549,17 +582,18 @@ class BrowserPolicy:
                 request_id, error={"code": -32600, "message": "Invalid Request"}
             ))
         if method == "server/discover" and "id" in message:
-            return ClientDecision(response=_response(request_id, {
-                "supportedVersions": ["2026-07-28"],
+            return ClientDecision(response=_response(request_id, _complete_result({
+                "supportedVersions": [MODERN_PROTOCOL_VERSION],
                 "capabilities": {"tools": {"listChanged": False}},
                 "instructions": "Only fixed form and page tools are available.",
-            }))
+            }, modern=True, cacheable=True)))
         if "id" not in message:
             if method in {"notifications/initialized", "notifications/cancelled"}:
                 return ClientDecision(forward=message)
             return ClientDecision()
         if method in {"initialize", "ping"}:
-            return ClientDecision(forward=message, pending_method=method)
+            return ClientDecision(forward=message, pending_method=method,
+                                  modern=_modern_request(params))
         if method == "tools/list":
             if set(params) - {"cursor", "_meta"}:
                 return ClientDecision(response=_response(
@@ -572,7 +606,8 @@ class BrowserPolicy:
                     return ClientDecision(response=_response(
                         request_id, error={"code": -32602, "message": "Invalid params"}
                     ))
-            return ClientDecision(forward=message, pending_method=method)
+            return ClientDecision(forward=message, pending_method=method,
+                                  modern=_modern_request(params))
         if method == "tools/call":
             if set(params) - {"name", "arguments", "_meta"}:
                 return ClientDecision(response=_tool_error(
@@ -584,7 +619,8 @@ class BrowserPolicy:
                 return ClientDecision(response=_tool_error(
                     request_id, "Browser tool call was rejected by the firewall."
                 ))
-            return ClientDecision(forward=message, pending_method=method)
+            return ClientDecision(forward=message, pending_method=method,
+                                  modern=_modern_request(params))
         return ClientDecision(response=_response(
             request_id, error={"code": -32601, "message": "Method not found"}
         ))
@@ -607,6 +643,7 @@ class BrowserPolicy:
         self,
         message: Any,
         pending_method: str | None,
+        modern: bool = False,
     ) -> ChildDecision:
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             raise ProtocolError("browser backend returned invalid JSON-RPC")
@@ -640,8 +677,17 @@ class BrowserPolicy:
             }))
         if pending_method == "tools/list":
             return ChildDecision(to_client=_response(
-                message["id"], self.filter_tools_result(message["result"])
+                message["id"], _complete_result(
+                    self.filter_tools_result(message["result"]),
+                    modern=modern, cacheable=modern,
+                )
             ))
+        if modern and pending_method in {"tools/call", "ping"}:
+            result = message["result"]
+            if isinstance(result, dict):
+                return ChildDecision(to_client=_response(
+                    message["id"], _complete_result(result, modern=True)
+                ))
         return ChildDecision(to_client=message)
 
 
@@ -712,7 +758,7 @@ class StdioProxy:
         self.process = process
         self.source = source
         self.sink = sink
-        self.pending: dict[str, tuple[Any, str]] = {}
+        self.pending: dict[str, tuple[Any, str, bool]] = {}
         self.pending_lock = threading.Lock()
         self.client_lock = threading.Lock()
         self.child_lock = threading.Lock()
@@ -747,7 +793,7 @@ class StdioProxy:
         with self.pending_lock:
             pending = list(self.pending.values())
             self.pending.clear()
-        for request_id, _method in pending:
+        for request_id, _method, _modern in pending:
             self._write_client(_response(
                 request_id,
                 error={"code": -32000, "message": "Browser backend unavailable"},
@@ -788,7 +834,7 @@ class StdioProxy:
                         else:
                             duplicate = False
                             self.pending[pending_key] = (
-                                request_id, decision.pending_method
+                                request_id, decision.pending_method, decision.modern
                             )
                     if duplicate:
                         self._write_client(_response(
@@ -830,6 +876,7 @@ class StdioProxy:
                     self.backend_failed.set()
                     break
                 pending_method = None
+                pending_modern = False
                 pending_key = None
                 if isinstance(message, dict) and "id" in message and "method" not in message:
                     try:
@@ -841,9 +888,10 @@ class StdioProxy:
                             entry = self.pending.pop(pending_key, None)
                         if entry is not None:
                             pending_method = entry[1]
+                            pending_modern = entry[2]
                 try:
                     decision = self.policy.filter_child_message(
-                        message, pending_method
+                        message, pending_method, pending_modern
                     )
                 except ProtocolError:
                     self.backend_failed.set()

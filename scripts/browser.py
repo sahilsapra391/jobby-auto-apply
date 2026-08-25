@@ -603,6 +603,78 @@ def _open_tab(url, slot=None):
         return None
 
 
+def open_application(url, slot, settle_timeout=20):
+    """Put one slot on one posting, and leave that page as the only tab.
+
+    The form agent has no navigation tool: the firewall removes it so a posting
+    URL cannot be swapped for somewhere else mid-run. That makes opening the
+    page the trusted runner's job, and nothing was doing it. Chrome came up on
+    the about:blank tab that serve() uses to hold the window open, the agent
+    looked at a blank page, and every run parked itself with "the current tab is
+    not this application". That is what a queue of applications that never start
+    looks like from outside.
+
+    Reuse is deliberately narrow. A retry has to land back on the part-filled
+    form, and an ATS rewrites its own path between steps, so a tab on the same
+    origin counts as a match. A different origin never does, and the search
+    never leaves this slot: a wrong match here would fill one company's answers
+    into another company's form.
+    """
+    if slot not in SLOTS:
+        return {"opened": False, "why": "unknown browser slot"}
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {"opened": False, "why": "the posting is not an http address"}
+    if not running(slot):
+        return {"opened": False, "why": f"no browser is running for {slot}"}
+
+    want = _key(url)
+    pages = tabs(slot)
+    hit = next((t for t in pages if _key(t.get("url", "")) == want), None)
+    if hit is None:
+        host = parsed.netloc.lower()
+        hit = next((t for t in pages
+                    if urllib.parse.urlparse(t.get("url", "")).netloc.lower() == host),
+                   None)
+    reused = hit is not None
+    if hit is None:
+        hit = _open_tab(url, slot)
+        if hit is None or not hit.get("id"):
+            return {"opened": False, "why": "Chrome would not open a tab for this posting"}
+
+    target = hit["id"]
+    # The slot is left holding this posting and nothing else. The agent is told
+    # to work in the tab it is given, and a stray left over from a crashed run
+    # or a cleanup that did not complete is the one thing that could put it on
+    # another company's form. Closing happens only after the posting has a tab
+    # of its own, so the window is never left with nothing in it.
+    for page in pages:
+        other = page.get("id")
+        if other and other != target:
+            _cdp(f"/json/close/{other}", slot)
+    _cdp(f"/json/activate/{target}", slot)
+
+    settled = None
+    for _ in range(max(1, int(settle_timeout)) * 4):
+        settled = next((t for t in tabs(slot) if t.get("id") == target), None)
+        if settled is None:
+            return {"opened": False, "why": "the posting tab closed while it was loading"}
+        current = (settled.get("url") or "").strip().lower()
+        if current and current != "about:blank":
+            break
+        time.sleep(0.25)
+    else:
+        return {"opened": False, "why": f"the posting did not load within {settle_timeout}s"}
+
+    landed = urllib.parse.urlparse(settled.get("url", "")).netloc.lower()
+    # Recorded, not enforced. An ATS redirect between hosts is ordinary here, so
+    # refusing on a host change would stall real applications; the run log keeps
+    # the address that was actually reached.
+    return {"opened": True, "reused": reused, "slot": slot,
+            "redirected": landed != parsed.netloc.lower(),
+            "url": settled.get("url", ""), "title": (settled.get("title") or "")[:120]}
+
+
 def focus(url, open_if_missing=True, slot=None):
     """Bring the tab already showing this posting to the front.
 

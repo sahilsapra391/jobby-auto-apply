@@ -272,7 +272,7 @@ def verify_terminal_outcome(application_id, expected_artifacts):
     return {"ok": False, "terminal": None, "why": why, "safeToRestore": True}
 
 
-def build_prompt(summary, artifacts):
+def build_prompt(summary, artifacts, landed_url=""):
     pending = summary.get("pendingFields") or []
     identity = summary.get("identity") or {}
     return f"""You are the local form-filling worker for one job application. Fill exactly this
@@ -282,6 +282,7 @@ APPLICATION ID: {summary.get('applicationId')}
 COMPANY: {summary.get('company')}
 ROLE: {summary.get('role')}
 POSTING URL: {summary.get('url')}
+OPEN TAB: {landed_url or summary.get('url')}
 ATS: {summary.get('ats')}
 REGION: {summary.get('region')}
 RESUME PDF: {artifacts['resume']['path']}
@@ -298,7 +299,8 @@ application operations. Provider CLIs may prefix MCP tool names, so select tools
 and capability. You have no shell or general file access, and you do not need either one. If
 the browser tools are unavailable, call `jobby.park_application` with that blocker and stop.
 
-1. Work only in the current tab opened by the trusted runner. If RETRY BLOCKERS is not empty,
+1. The trusted runner has already opened OPEN TAB for you and closed everything else in
+   this browser. Work only in that tab. If RETRY BLOCKERS is not empty,
    the user has acted on the prior blocker. Reuse the open form, check the values still present,
    and continue. If the current tab is not this application, park it and stop. Do not open or
    navigate to another URL.
@@ -467,11 +469,23 @@ def main():
         print(json.dumps({"blocked": blocked, "slot": args.slot}, indent=2))
         return 2
 
+    posting_url = (summary.get("url") or "").strip()
+    landing = browser.open_application(posting_url, args.slot)
+    if not landing.get("opened"):
+        blocked = f"the posting would not open in {args.slot}: {landing.get('why')}"
+        store(["meta-set", "--key", "blocked", "--value", blocked])
+        print(json.dumps({
+            "blocked": blocked,
+            "applicationId": application_id,
+            "slot": args.slot,
+        }, indent=2))
+        return 2
+
     try:
         upload_artifacts = browser.stage_application_uploads(
             args.slot, application_id, artifacts
         )
-        prompt = build_prompt(summary, upload_artifacts)
+        prompt = build_prompt(summary, upload_artifacts, landing.get("url", ""))
     except (OSError, TypeError, ValueError) as exc:
         blocked = "the two application PDFs could not be staged for browser upload"
         store(["meta-set", "--key", "blocked", "--value", blocked])

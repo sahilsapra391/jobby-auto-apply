@@ -104,6 +104,21 @@ and network-log tools, blocks Enter-based submission, and binds upload access
 to the two staged PDFs by path, inode, size, and SHA-256 hash. Keep the trusted
 runner responsible for opening the application URL.
 
+That responsibility is `browser.open_application`, called from `run_apply.py`
+before the provider is invoked, and it went unimplemented until 2026-08-25. The
+agent has no navigation tool, so with nothing opening the page every run looked
+at the `about:blank` tab `serve()` uses to hold the window and parked itself.
+Do not remove that call, and do not hand an agent a slot it has not been put on.
+
+Two rules bind the firewall's advertised tool surface. Every `inputSchema` must
+be an object schema: a bare top-level `oneOf` makes a client drop the whole
+server's tool list, not just that tool, and the argument rules those schemas
+expressed belong in the validators anyway. And the answers to `server/discover`,
+`tools/list`, and `tools/call` must carry the stateless completion markers that
+`application_mcp.py` already sends, because a client on the 2026-07-28 revision
+never sends `initialize` and reads capabilities from the results. Either fault
+alone leaves the server reporting connected with no tools.
+
 Submission uses a one-use nonce. `pre_submit` writes the `submitting` event and
 returns the nonce. `record_completed` must present that nonce for the same
 application while the latest event is still `submitting`, along with visible
