@@ -140,6 +140,28 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/finish.py` and `scripts/application_mcp.py`: submission nonce state machine.
 - `references/oci-worker.md`: retired historical recovery path, not current setup.
 
+## What the deployed bundle may read
+
+`deploy/public/` is Vercel's static output directory. Vercel serves those files
+at the edge and leaves them out of the serverless function, so a renderer that
+reads a path under `public/` resolves it off the working tree on any dev
+machine and raises `FileNotFoundError` on every deployed request. That took the
+board down from the Soft Premium renderer until 2026-08-25, showing only
+"The board state could not be rendered." while local renders and the full test
+suite stayed green.
+
+Anything the renderer reads at render time travels in `deploy/assets/`, copied
+there by `sync_vercel_renderer.BRAND_ASSETS`. `BundleDataFilesTest` renders
+against a copy of the bundle with `public/` removed and is the check that
+separates "renders here" from "renders deployed". The image allowlist for that
+directory is written in three places that must agree: `.gitignore`,
+`IMAGE_ALLOWED` in `tests/test_no_pii.py`, and `.githooks/pre-commit`.
+
+To read a deployed failure: preview and `*.vercel.app` URLs sit behind Vercel
+SSO (`all_except_custom_domains`), so only `jobby.fyi` answers a scripted
+request. `vercel logs <deployment-url>` returns the function's own stdout,
+which is where `board_render_failed` names the exception type.
+
 ## Health monitoring
 
 The private `HEALTHCHECKS_URL` belongs in
