@@ -266,6 +266,54 @@ class SkillRatingTests(unittest.TestCase):
         self.assertIsNone(self.rating("How many years of SQL have you used?"))
         self.assertIsNone(self.rating("Do you know Excel?"))
 
+class AnyCountryWorkAuthorisationTests(unittest.TestCase):
+    """Sponsorship and work authorisation answer the same in every country.
+
+    They used to answer only for the US, and a separate stored answer said
+    sponsorship WAS required everywhere else. Two forms from the same standing
+    instruction could therefore contradict each other, and the one that went
+    out was whichever country the posting happened to be in.
+    """
+
+    def topic(self, question):
+        found = store.topic_answer(self.answers, question)
+        return (found or {}).get("topic")
+
+    def setUp(self):
+        self.answers = {
+            "a": {"question": "sponsorship anywhere", "value": "No",
+                  "tags": ["sponsorship-any-country"]},
+            "b": {"question": "authorised anywhere", "value": "Yes",
+                  "tags": ["work-authorisation-any-country"]},
+        }
+
+    def test_sponsorship_questions_match_in_any_country(self):
+        for question in (
+            "Do you require visa sponsorship to work in the United Kingdom?",
+            "Will you now or in the future require sponsorship to work in Canada?",
+            "Do you need sponsorship for employment in Singapore?",
+            "Will you require the company to sponsor a visa?",
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(self.topic(question), "sponsorship-any-country")
+
+    def test_authorisation_questions_match_in_any_country(self):
+        for question in (
+            "Are you legally authorized to work in Germany?",
+            "Do you have the right to work in Australia?",
+            "Are you eligible to work in Ireland?",
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(self.topic(question),
+                                 "work-authorisation-any-country")
+
+    def test_an_unrelated_question_matches_neither(self):
+        for question in ("What is your notice period?",
+                         "Have you worked with SQL?"):
+            with self.subTest(question=question):
+                self.assertIsNone(self.topic(question))
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,13 +2,11 @@
 """Run one vendor CLI login in a terminal, then connect it to Jobby."""
 
 import argparse
-import getpass
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import webbrowser
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -45,40 +43,32 @@ def publish_status(status):
 
 
 def login(provider_id, registry=None, runner=None):
+    """Sign in through the provider's own CLI. No API key is handled here.
+
+    Each CLI authenticates against the account the user already has: `codex
+    login`, `claude auth login`, and Gemini's interactive /auth. Asking for a
+    key in a terminal prompt was a worse experience and left this program
+    holding a secret it did not need.
+    """
     registry = registry or providers.ProviderRegistry()
     run = runner or subprocess.run
-    api_pages = {
-        "anthropic": "https://console.anthropic.com/settings/keys",
-        "gemini": "https://aistudio.google.com/app/apikey",
-    }
-    if provider_id in api_pages:
-        webbrowser.open(api_pages[provider_id], new=2)
-        print("Your browser is opening the provider's official API key page.")
-        print("The key stays on this device and is never sent to Jobby's servers.")
-        try:
-            secret = getpass.getpass(f"Paste the {provider_id.title()} API key: ")
-            providers.provider_secrets.store(provider_id, secret)
-            status = registry.connect(provider_id)
-            row = next(
-                item for item in status["providers"] if item["id"] == provider_id
-            )
-            exit_code = 0 if row.get("healthy") else 1
-            if exit_code:
-                providers.provider_secrets.delete(provider_id)
-        except (EOFError, KeyboardInterrupt, providers.provider_secrets.ProviderSecretError):
-            exit_code = 1
-            status = registry.public_status()
-    else:
-        command = providers.login_invocation(provider_id)
-        result = run(
-            command,
-            cwd=REPO,
-            env=providers.native_cli_env(),
-            check=False,
-        )
-        exit_code = result.returncode
-        status = registry.connect(provider_id) if exit_code == 0 \
-            else registry.public_status()
+
+    if provider_id == "gemini":
+        # Gemini has no auth subcommand; it signs in inside its own session.
+        print("Gemini signs in inside its own session. When it opens, type /auth")
+        print("and pick your Google account, then /quit once it says signed in.")
+
+    command = providers.login_invocation(provider_id)
+    result = run(
+        command,
+        cwd=REPO,
+        env=providers.native_cli_env(),
+        check=False,
+    )
+    exit_code = result.returncode
+    status = registry.connect(provider_id) if exit_code == 0 \
+        else registry.public_status()
+
     publish_status(status)
     row = next(item for item in status["providers"] if item["id"] == provider_id)
     return {

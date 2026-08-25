@@ -405,9 +405,20 @@ def login_invocation(
     binary = resolver(provider_id, True)
     if not binary:
         raise ProviderError(f"{PROVIDER_INFO[provider_id]['cli']} is not installed")
-    if provider_id != "openai":
-        raise ProviderError("Anthropic and Gemini connect with a local API key")
-    return [str(binary), "login"]
+    # Each CLI signs in against the account the user already has, so no API key
+    # is handled here at all. The Anthropic CLI reports a claude.ai login and a
+    # Max subscription through `auth status`, which is the same shape as
+    # `codex login status`, so nothing about the probe path changes.
+    #
+    # Gemini has no auth subcommand: it authenticates through its interactive
+    # session, where /auth opens the Google sign-in. Launching it bare is the
+    # login flow.
+    commands = {
+        "openai": [str(binary), "login"],
+        "anthropic": [str(binary), "auth", "login"],
+        "gemini": [str(binary)],
+    }
+    return commands[provider_id]
 
 
 def _probe_argv(provider_id: str, binary: str) -> list[str]:
@@ -1033,6 +1044,20 @@ class ProviderRegistry:
     @classmethod
     def _active_from_state(cls, state: Mapping[str, Any]) -> str | None:
         connections = state.get("connections") or {}
+
+        # A preferred provider wins whenever it is healthy, whatever order it
+        # was connected in. Connection order is the order accounts were added,
+        # which is not a statement about which model the work should run on;
+        # this is. Set with `providers.py prefer <id>`.
+        #
+        # It falls back rather than stalling. A preference that halts every
+        # application the moment one API key expires would be a worse failure
+        # than running on the next healthy provider and saying so.
+        preferred = state.get("preferredProvider")
+        if preferred in connections and \
+                connections[preferred].get("health") == "healthy":
+            return preferred
+
         return next(
             (
                 provider_id
@@ -1083,6 +1108,22 @@ class ProviderRegistry:
         with self._locked():
             state = self._load_locked()
             return self._public_status_locked(state)
+
+    def preferred(self) -> str | None:
+        with self._locked():
+            return self._load_locked().get("preferredProvider")
+
+    def set_preferred(self, provider_id: str | None) -> dict[str, Any]:
+        with self._locked():
+            state = self._load_locked()
+            if provider_id is None:
+                state.pop("preferredProvider", None)
+            else:
+                state["preferredProvider"] = provider_id
+            self._write_locked(state)
+            return {"preferredProvider": state.get("preferredProvider"),
+                    "active": self._active_from_state(state),
+                    "model": MODEL_IDS.get(provider_id) if provider_id else None}
 
     def active_provider(self) -> str | None:
         with self._locked():
@@ -1345,3 +1386,38 @@ def mark_unhealthy(
     provider_id: str, health: str = "authentication_required"
 ) -> dict[str, Any]:
     return _registry().mark_unhealthy(provider_id, health)
+
+
+def preferred() -> str | None:
+    """Which provider new work runs on when it is healthy, or None."""
+    return _registry().preferred()
+
+
+def set_preferred(provider_id: str | None) -> dict[str, Any]:
+    """Pin which model new work runs on, independently of connection order.
+
+    Connection order records when an account was added, which says nothing
+    about which model the work should use. This does.
+    """
+    if provider_id is not None:
+        provider_id = _require_provider(provider_id)
+    return _registry().set_preferred(provider_id)
+
+
+if __name__ == "__main__":
+    import argparse as _argparse
+
+    _ap = _argparse.ArgumentParser(description="Local provider registry.")
+    _sub = _ap.add_subparsers(dest="cmd", required=True)
+    _sub.add_parser("status", help="what is connected, healthy and preferred")
+    _pref = _sub.add_parser("prefer", help="run new work on this provider when healthy")
+    _pref.add_argument("provider", nargs="?", choices=sorted(PROVIDER_IDS),
+                       help="omit to clear the preference")
+    _args = _ap.parse_args()
+
+    if _args.cmd == "prefer":
+        print(json.dumps(set_preferred(_args.provider), indent=2))
+    else:
+        out = status()
+        out["preferred"] = preferred()
+        print(json.dumps(out, indent=2))

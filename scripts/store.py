@@ -292,6 +292,22 @@ TOPIC_MARKERS = [
         "where did you find this role", "referral source",
         "how were you referred", "source of application",
     )),
+    # Sponsorship and work authorisation, in ANY country. These used to be
+    # answered only for the US, and a separate stored answer said sponsorship
+    # WAS required everywhere else, so a UK or Canadian form got the opposite
+    # answer to a US one on the same standing instruction.
+    ("sponsorship-any-country", (
+        "require sponsorship", "requires sponsorship", "need sponsorship",
+        "visa sponsorship", "sponsorship for employment", "sponsor an employment",
+        "sponsor a visa", "sponsorship now or in the future",
+        "require the company to sponsor",
+    )),
+    ("work-authorisation-any-country", (
+        "legally authorized to work", "legally authorised to work",
+        "authorized to work in", "authorised to work in",
+        "right to work in", "eligible to work in", "work authorization in",
+        "work authorisation in",
+    )),
     ("compensation-breakup-india", (
         "compensation breakup", "compensation break-up", "ctc breakup",
         "ctc break-up", "salary breakup", "salary break-up",

@@ -53,17 +53,35 @@ class RegistryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_openai_uses_the_supported_native_browser_flow(self):
+    def test_every_provider_signs_in_through_its_own_cli(self):
+        """All three authenticate against the account the user already has.
+
+        Anthropic and Gemini used to raise here, because they connected with a
+        pasted API key instead. That was the wrong shape for anyone but the
+        person whose key it was, and it left this program holding a secret it
+        did not need. `claude auth login` reports a claude.ai login through the
+        same `auth status` the probe already uses; Gemini has no auth
+        subcommand and signs in inside its interactive session, so launching it
+        bare is the login.
+        """
         resolver = lambda provider, required: f"/agents/{provider}"
         self.assertEqual(
             providers.login_invocation("openai", binary_resolver=resolver),
             ["/agents/openai", "login"],
         )
-        for provider in ("anthropic", "gemini"):
-            with self.subTest(provider=provider), self.assertRaises(
-                providers.ProviderError
-            ):
-                providers.login_invocation(provider, binary_resolver=resolver)
+        self.assertEqual(
+            providers.login_invocation("anthropic", binary_resolver=resolver),
+            ["/agents/anthropic", "auth", "login"],
+        )
+        self.assertEqual(
+            providers.login_invocation("gemini", binary_resolver=resolver),
+            ["/agents/gemini"],
+        )
+
+    def test_a_missing_cli_still_raises_rather_than_guessing(self):
+        with self.assertRaises(providers.ProviderError):
+            providers.login_invocation(
+                "anthropic", binary_resolver=lambda provider, required: None)
 
     def test_first_successful_connection_stays_active(self):
         self.health["openai"] = True
