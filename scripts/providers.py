@@ -37,6 +37,39 @@ STATE_FILE = STATE_DIR / "providers.json"
 
 PROVIDER_IDS = ("openai", "anthropic", "gemini")
 TASK_KINDS = ("documents", "apply", "scan")
+
+# Which provider may do which task, and it is a capability matrix rather than a
+# provider list because the two are not the same question. Document generation
+# is provider-agnostic. Form filling and sourcing put an agent on a browser or
+# the open web, and need a fence that has been shown to bind by negative test,
+# not one that has merely been configured.
+#
+# Every entry here is a measurement from scripts/fence_probe.py, which tells a
+# real agent to write outside its workspace and run a shell command and then
+# asks the filesystem what happened. Re-run it before changing a row.
+#
+# gemini is documents-only. The Antigravity CLI advertises 57 built-in tools
+# including run_command, write_to_file and execute_browser_javascript, with no
+# allowlist, no per-run MCP scoping, and credentials in the Keychain so an
+# isolated HOME authenticates as nobody. Its documents fence is the absence of
+# --dangerously-skip-permissions, which works only because a documents run
+# needs no tool at all. A form agent needs its browser tools, so it needs that
+# flag, and the flag hands it a shell as well.
+TASK_CAPABILITIES = {
+    "openai": frozenset(TASK_KINDS),
+    "anthropic": frozenset(TASK_KINDS),
+    "gemini": frozenset(("documents",)),
+}
+
+
+def supports(provider_id: str, task_kind: str) -> bool:
+    """Whether this provider is fence-proven for this task."""
+    return task_kind in TASK_CAPABILITIES.get(provider_id, frozenset())
+
+
+def capable_providers(task_kind: str) -> list[str]:
+    """Connected providers allowed to do this task, in work order."""
+    return [p for p in work_order() if supports(p, task_kind)]
 MODEL_IDS = {
     "openai": "gpt-5.6-luna",
     "anthropic": "claude-sonnet-5",
@@ -777,6 +810,15 @@ def build_run_invocation(
     # workspaces or add-dir mounts.
     _ = state, writable_dirs
 
+    if not supports(provider_id, task_kind):
+        # Structural, not advisory. Every runner builds its invocation here, so
+        # a provider that is not fence-proven for a task cannot be handed that
+        # task by any caller, prompt or configuration change.
+        raise ProviderError(
+            f"{provider_id} is not cleared for {task_kind} work: its tool fence "
+            "has not been proven to bind by negative test"
+        )
+
     env = provider_cli_env(provider_id, base_env)
     browser_api = browser_adapter
     if task_kind == "apply" and browser_api is None:
@@ -867,11 +909,26 @@ def build_run_invocation(
         "stream-json",
         "--input-format",
         "stream-json",
-        "--dangerously-skip-permissions",
         "--disable-slash-commands",
         "--print-timeout",
         GEMINI_PRINT_TIMEOUT,
     ]
+    # No --dangerously-skip-permissions, and that flag is the entire fence.
+    #
+    # agy has no allowlist, so the flag is all or nothing: with it, all 57
+    # built-in tools are auto-approved, and a fence probe caught exactly that.
+    # Asked to run `printf %s <token> > SHELL.txt` during a *documents* task it
+    # ran it, and the token was on disk afterwards. Schema-checking the output
+    # says nothing about what the agent does on the way to producing it.
+    #
+    # Without the flag the tools are unreachable and the same probe leaves the
+    # canary untouched. Documents needs no tool: it is one turn of prompt in,
+    # JSON out, and it returns the identical result either way. Measured on
+    # agy 1.1.20.
+    #
+    # This is why apply and scan are refused above rather than run this way. A
+    # form agent needs its browser tools, so it needs the flag, and the flag
+    # hands it run_command with them.
     if task_kind in ("apply", "scan"):
         # MEASURED REFUSAL, not a placeholder. Three things have to hold for an
         # agent loose on a browser or the open web, and none of them can be

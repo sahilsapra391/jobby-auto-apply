@@ -819,9 +819,23 @@ class GeminiAntigravityTests(unittest.TestCase):
 
     def test_it_uses_the_flags_agy_does_have(self):
         argv = self.build("documents").argv
-        self.assertIn("--dangerously-skip-permissions", argv)
         self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
         self.assertEqual(argv[argv.index("--input-format") + 1], "stream-json")
+
+    def test_documents_never_auto_approves_the_57_built_in_tools(self):
+        """That flag is the whole fence, and agy has no allowlist beside it.
+
+        A fence probe caught this: with --dangerously-skip-permissions, a
+        *documents* run asked to `printf %s <token> > SHELL.txt` ran it, and
+        the token was on disk afterwards. Schema-checking the output says
+        nothing about what the agent does on the way to producing it.
+
+        Without the flag the same probe leaves every canary untouched, and the
+        document result is byte-identical: one turn of prompt in, JSON out,
+        needing no tool at all.
+        """
+        self.assertNotIn(
+            "--dangerously-skip-permissions", self.build("documents").argv)
 
     def test_the_print_timeout_outlasts_the_callers_own_bound(self):
         # agy defaults to five minutes and kills its own turn. run_apply bounds
@@ -847,9 +861,47 @@ class GeminiAntigravityTests(unittest.TestCase):
             with self.subTest(task=task):
                 with self.assertRaises(providers.ProviderError) as caught:
                     self.build(task)
-                self.assertIn("57 unrestricted built-in tools",
-                              str(caught.exception))
+                self.assertIn("not cleared for", str(caught.exception))
         self.assertTrue(self.build("documents").argv)
+
+
+
+class TaskCapabilityTests(unittest.TestCase):
+    """Routing lives in code, not in a prompt or a comment.
+
+    The same principle as employment history living in the template so a run
+    cannot express it: a provider whose fence has not been proven to bind must
+    be unable to be handed the task, by any caller, prompt or config change.
+    """
+
+    def test_every_provider_is_in_the_matrix(self):
+        self.assertEqual(
+            set(providers.TASK_CAPABILITIES), set(providers.PROVIDER_IDS))
+        for tasks in providers.TASK_CAPABILITIES.values():
+            self.assertTrue(set(tasks) <= set(providers.TASK_KINDS))
+
+    def test_document_generation_is_provider_agnostic(self):
+        for provider in providers.PROVIDER_IDS:
+            with self.subTest(provider=provider):
+                self.assertTrue(providers.supports(provider, "documents"))
+
+    def test_gemini_is_documents_only(self):
+        self.assertTrue(providers.supports("gemini", "documents"))
+        self.assertFalse(providers.supports("gemini", "apply"))
+        self.assertFalse(providers.supports("gemini", "scan"))
+
+    def test_building_an_uncleared_invocation_is_refused(self):
+        # Structural: every runner builds its invocation through this call.
+        with self.assertRaises(providers.ProviderError) as caught:
+            providers.build_run_invocation(
+                "gemini", "apply", "x", workspace=tempfile.mkdtemp(),
+                binary_resolver=lambda name, _r: f"/agents/{name}",
+                base_env={"PATH": "/usr/bin"},
+            )
+        self.assertIn("not cleared for apply", str(caught.exception))
+
+    def test_an_unknown_provider_supports_nothing(self):
+        self.assertFalse(providers.supports("nobody", "documents"))
 
 
 

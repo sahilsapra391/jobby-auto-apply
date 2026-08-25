@@ -158,7 +158,9 @@ class RunnerRefusesABlankPageTests(unittest.TestCase):
             "coverLetter": {"path": "/tmp/cover.pdf", "size": 1, "sha256": "y"},
         }
         staged = mock.Mock()
-        with mock.patch.object(run_apply, "store", fake_store), \
+        with mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
+                mock.patch.object(run_apply, "store", fake_store), \
              mock.patch.object(run_apply, "load_brief", return_value=summary), \
              mock.patch.object(run_apply, "_refuse_duplicate", return_value=False), \
              mock.patch.object(run_apply, "artifact_snapshot", return_value=artifacts), \
