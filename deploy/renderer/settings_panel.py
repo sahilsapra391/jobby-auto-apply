@@ -213,18 +213,46 @@ CSS = r"""
 
 SCRIPT = r"""
   (function () {
-    var settingsView = location.pathname.replace(/\/+$/, '') === '/settings';
-    if (settingsView) {
-      document.body.classList.add('settings-view');
-      document.title = 'Settings | Jobby';
+    var homeTitle = document.title;
+    function isSettingsPath() {
+      return location.pathname.replace(/\/+$/, '') === '/settings';
+    }
+    function paintPrimaryNav(settings) {
+      document.querySelectorAll('[data-primary-view]').forEach(function (link) {
+        var current = link.dataset.primaryView === (settings ? 'settings' : 'home');
+        if (current) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+      });
+    }
+    function applyView(settings) {
+      document.body.classList.toggle('settings-view', settings);
+      document.title = settings ? 'Settings | Jobby' : homeTitle;
+      paintPrimaryNav(settings);
+      if (settings) startProviderPolling();
+    }
+    function swapView(settings) {
+      if (settings === document.body.classList.contains('settings-view')) return;
+      var run = function () { window.scrollTo(0, 0); applyView(settings); };
+      var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!document.startViewTransition || still) { run(); return; }
+      var root = document.documentElement;
+      root.classList.add('jb-vt');
+      var transition = document.startViewTransition(run);
+      transition.finished.then(clear, clear);
+      function clear() { root.classList.remove('jb-vt'); }
     }
     document.querySelectorAll('[data-primary-view]').forEach(function (link) {
-      var current = settingsView
-        ? link.dataset.primaryView === 'settings'
-        : link.dataset.primaryView === 'home';
-      if (current) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
+      link.addEventListener('click', function (event) {
+        if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        var settings = link.dataset.primaryView === 'settings';
+        if (settings !== document.body.classList.contains('settings-view')) {
+          history.pushState({ settingsView: settings }, '', settings ? '/settings' : '/');
+          swapView(settings);
+        }
+      });
     });
+    window.addEventListener('popstate', function () { swapView(isSettingsPath()); });
     var message = document.getElementById('provider-message');
     var labels = {
       connected: 'Connected', disconnected: 'Not connected', connecting: 'Waiting for sign-in',
@@ -312,10 +340,15 @@ SCRIPT = r"""
         }
       }, 1000);
     }
-    if (document.body.classList.contains('settings-view')) {
+    var slowPoll = null;
+    function startProviderPolling() {
       refreshProviders();
-      setInterval(refreshProviders, 30000);
+      if (slowPoll) return;
+      slowPoll = setInterval(function () {
+        if (document.body.classList.contains('settings-view')) refreshProviders();
+      }, 30000);
     }
+    applyView(isSettingsPath());
     document.querySelectorAll('.provider-action').forEach(function (button) {
       button.addEventListener('click', function () {
         var body = { provider: button.dataset.provider, target: button.dataset.target,
