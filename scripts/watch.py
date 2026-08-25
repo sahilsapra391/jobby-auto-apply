@@ -1251,9 +1251,14 @@ def park_document_failure(aid, state):
     if not claimed or claimed[0].get("applicationId") != aid:
         raise TickError("the Apply queue changed while parking a document failure")
     code = state.get("errorCode") or "worker_failed"
+    # The code alone sent six applications to Settings to look at a provider
+    # that was healthy the whole time. When the request itself was refused, the
+    # refusal names the missing fact and belongs on the card.
+    why = state.get("errorDetail") or ""
     detail = (
-        f"The local document worker stopped with {code}. Press Retry after checking "
-        "the provider and worker status in Settings."
+        f"The local document worker stopped with {code}"
+        + (f": {why}" if why else "")
+        + ". Press Retry after checking the provider and worker status in Settings."
     )
     result = run([
         sys.executable,

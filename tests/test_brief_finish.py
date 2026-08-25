@@ -430,5 +430,78 @@ class BriefTests(unittest.TestCase):
             self.assertIsNone(docs["coverLetter"])
 
 
+class PromotedFromFoundTests(StoreTemp):
+    """A job promoted from the Found board has no extraction, and never did.
+
+    promote.py builds the Watching session out of the job record before
+    anything has read the posting, and nothing later filled the gap. On
+    2026-08-25 that was 24 of 87 sessions, six of which had reached Apply and
+    parked on `invalid_request` one second after their document job was
+    created. brief is the one funnel the document contract reads through, so
+    the recovery belongs here rather than in each caller.
+
+    These stay offline. The job record names an ATS with no body fetcher, so
+    posting_body falls straight through to the stored excerpt.
+    """
+
+    def jobs(self, **over):
+        record = {
+            "id": "acme-pm",
+            "company": "Acme",
+            "canonicalSource": "lever",
+            "canonicalUrl": "https://jobs.lever.co/acme/1234",
+            "descriptionExcerpt": "Own the roadmap for the billing platform.",
+            "state": "watched",
+        }
+        record.update(over)
+        (self.root / "jobs.json").write_text(json.dumps({"acme-pm": record}))
+
+    def build(self, aid="acme-pm"):
+        env = dict(os.environ, JOB_APPLICATION_DIR=str(self.root))
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "brief.py"), "--id", aid],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_a_session_with_no_extraction_recovers_the_posting_from_the_job(self):
+        self.session("acme-pm", promotedFrom="found")
+        self.jobs()
+        out = self.build()
+        self.assertIsNotNone(out["jdPath"])
+        self.assertEqual(pathlib.Path(out["jdPath"]).read_text(),
+                         "Own the roadmap for the billing platform.")
+
+    def test_the_recovered_posting_is_cached_so_a_second_brief_stays_offline(self):
+        # The file is the cache. Without it every brief for a promoted
+        # application would go back out to the employer's board, and brief runs
+        # more than once per application.
+        self.session("acme-pm", promotedFrom="found")
+        self.jobs()
+        first = self.build()
+        pathlib.Path(first["jdPath"]).write_text("cached posting body")
+        (self.root / "jobs.json").write_text(json.dumps({}))
+        second = self.build()
+        self.assertEqual(first["jdPath"], second["jdPath"])
+        self.assertEqual(pathlib.Path(second["jdPath"]).read_text(),
+                         "cached posting body")
+
+    def test_an_extraction_still_wins_over_the_job_record(self):
+        self.session("acme-pm", extraction="The posting an agent actually read")
+        self.jobs()
+        out = self.build()
+        self.assertEqual(pathlib.Path(out["jdPath"]).read_text(),
+                         "The posting an agent actually read")
+
+    def test_an_application_with_no_job_record_still_reports_no_posting(self):
+        # The refusal has to survive. An application with nothing to tailor
+        # against must fail the contract, not generate a resume from a title.
+        self.session("acme-pm", promotedFrom="found")
+        out = self.build()
+        self.assertIsNone(out["jdPath"])
+        self.assertIsNone(out["extraction"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

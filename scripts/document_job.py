@@ -15,6 +15,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,8 @@ LOCAL_STATES = REMOTE_STATES | {"submitting", "ready"}
 RESULT_KEYS = {"resumeHtml", "resumePdf", "coverHtml", "coverPdf"}
 REMOTE_POLL_SECONDS = 15
 MISSING_STATUS_GRACE_SECONDS = 2 * 60
+MAX_ERROR_DETAIL = 140
+_DETAIL_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
 
 # Only fixed codes may enter a session or CLI response. Vendor messages,
 # network bodies, and subprocess stderr are never retained.
@@ -78,6 +81,26 @@ class DocumentJobError(Exception):
 
 def _safe_error(code):
     return code if code in SAFE_ERROR_CODES else "transport_error"
+
+
+def _safe_detail(value):
+    """One short, fixed-vocabulary sentence naming why a request was refused.
+
+    A fixed error code alone cost a day. Six applications parked on
+    `invalid_request`, which `_submit` returns for every exception out of
+    `build_bundle`, and the actual reason -- the application has no job
+    description -- never left the process. The code stays fixed and public;
+    this carries the sentence beside it.
+
+    Only messages this repository writes reach here, and every one of them is a
+    literal in `document_contract`. The scrub is belt and braces: a message that
+    ever starts interpolating a path, a posting, or a provider body is cut to
+    the characters a plain sentence needs, folded to one line, and bounded.
+    """
+    if not isinstance(value, str):
+        return ""
+    cleaned = _DETAIL_DISALLOWED.sub(" ", value)
+    return " ".join(cleaned.split())[:MAX_ERROR_DETAIL]
 
 
 def _utc_now():
@@ -155,6 +178,9 @@ def _clean_state(value):
     for key in ("errorCode", "lastErrorCode"):
         if value.get(key):
             clean[key] = _safe_error(value[key])
+    detail = _safe_detail(value.get("errorDetail"))
+    if detail:
+        clean["errorDetail"] = detail
     files = _clean_files(value.get("files"))
     if files is not None:
         clean["files"] = files
@@ -252,7 +278,7 @@ def _changed(current, **updates):
 
 def _clear_errors(state):
     out = dict(state)
-    for key in ("errorCode", "lastErrorCode", "lastErrorAt"):
+    for key in ("errorCode", "lastErrorCode", "lastErrorAt", "errorDetail"):
         out.pop(key, None)
     return out
 
@@ -266,10 +292,15 @@ def _record_last_error(application_id, state, code, root=None):
     return _save_state(application_id, updated, root)
 
 
-def _record_failure(application_id, state, code, root=None):
+def _record_failure(application_id, state, code, root=None, detail=""):
     updated = _changed(state, state="failed", errorCode=_safe_error(code))
     for key in ("lastErrorCode", "lastErrorAt"):
         updated.pop(key, None)
+    clean = _safe_detail(detail)
+    if clean:
+        updated["errorDetail"] = clean
+    else:
+        updated.pop("errorDetail", None)
     return _save_state(application_id, updated, root)
 
 
@@ -391,6 +422,12 @@ def _submit(application_id, state, root=None, transport=None):
             state["provider"],
             root=root,
         )
+    except document_contract.DocumentContractError as exc:
+        # The contract refuses on facts about the request, not on its content,
+        # so its own sentence is safe to keep and is the only thing that tells
+        # the user which fact is missing.
+        return _record_failure(
+            application_id, state, "invalid_request", root, str(exc))
     except (Exception, SystemExit):
         return _record_failure(application_id, state, "invalid_request", root)
 

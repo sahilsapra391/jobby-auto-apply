@@ -19,7 +19,13 @@ import document_job
 import store
 
 
-class DocumentJobTest(unittest.TestCase):
+class DocumentJobStore:
+    """Shared setup, as a plain mixin.
+
+    Not a TestCase. Subclassing one to borrow its setUp re-runs every test it
+    holds, and test_suite_integrity refuses that.
+    """
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -69,6 +75,7 @@ class DocumentJobTest(unittest.TestCase):
         value.update(extra)
         return value
 
+class DocumentJobTest(DocumentJobStore, unittest.TestCase):
     def test_transport_enqueue_uses_private_file_and_keeps_plaintext_out_of_argv(self):
         observed = {}
 
@@ -495,6 +502,68 @@ class DocumentJobTest(unittest.TestCase):
         )
         self.assertEqual("claimed", state["state"])
         transport.assert_called_once_with("status", self.job_id)
+
+
+class ContractRefusalDetailTest(DocumentJobStore, unittest.TestCase):
+    """The refusal reason has to reach the card, and nothing else may.
+
+    Six applications parked on the fixed code `invalid_request` for a day. The
+    code is correct and stays; what was missing was the sentence beside it. The
+    contract refuses on facts about the request, so its own message is safe.
+    Everything else stays opaque, which is what the RuntimeError case below
+    pins.
+    """
+
+    def refuse(self, error):
+        with mock.patch.object(document_job, "_brief",
+                               return_value={"documentsReady": False}), \
+                mock.patch.object(document_job.document_contract, "build_bundle",
+                                  side_effect=error):
+            return document_job.ensure(
+                self.application_id, "openai", self.root, mock.Mock())
+
+    def test_a_contract_refusal_names_the_missing_fact(self):
+        state = self.refuse(document_job.document_contract.DocumentContractError(
+            "the application has no job description"))
+        self.assertEqual("invalid_request", state["errorCode"])
+        self.assertEqual("the application has no job description",
+                         state["errorDetail"])
+
+    def test_an_unexpected_error_still_carries_no_detail_at_all(self):
+        state = self.refuse(RuntimeError("private details"))
+        self.assertEqual("invalid_request", state["errorCode"])
+        self.assertNotIn("errorDetail", state)
+        self.assertNotIn("private details", json.dumps(self.session()))
+
+    def test_a_detail_is_folded_to_one_bounded_line(self):
+        state = self.refuse(document_job.document_contract.DocumentContractError(
+            "line one\nline two\t" + "x" * 400))
+        detail = state["errorDetail"]
+        self.assertLessEqual(len(detail), document_job.MAX_ERROR_DETAIL)
+        self.assertNotIn("\n", detail)
+        self.assertTrue(detail.startswith("line one line two"))
+
+    def test_a_detail_cannot_smuggle_markup_or_a_path(self):
+        state = self.refuse(document_job.document_contract.DocumentContractError(
+            "<b>/Users/someone/secret.pdf</b> refused"))
+        detail = state["errorDetail"]
+        for banned in ("<", ">", "/", "\\"):
+            self.assertNotIn(banned, detail)
+        self.assertIn("refused", detail)
+
+    def test_a_later_success_clears_the_detail_with_the_code(self):
+        self.refuse(document_job.document_contract.DocumentContractError(
+            "the application has no job description"))
+        self.state("submitting")
+        transport = mock.Mock(return_value=self.status(self.job_id, "queued"))
+        with mock.patch.object(document_job.document_contract, "build_bundle",
+                               return_value={"schemaVersion": 1}):
+            state = document_job.sync(self.application_id, "anthropic",
+                                      self.root, transport)
+        self.assertEqual("queued", state["state"])
+        self.assertNotIn("errorDetail", state)
+        self.assertNotIn("errorCode", state)
+
 
 
 if __name__ == "__main__":
