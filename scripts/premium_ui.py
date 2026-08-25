@@ -12,7 +12,9 @@ CSS = r"""
   :root {
     --bg:#f7f3ed; --card:#fffdf9; --sunk:#f0ebe3; --seg:#ece7df;
     --ink:#202131; --ink-2:#65636b; --ink-3:#8b8790;
-    --hair:rgba(47,43,55,.12); --blue:#37388f; --purple:#5150a9;
+    --hair:rgba(47,43,55,.12); --hair-strong:rgba(47,43,55,.34);
+    --mark-plate:transparent; --mark-ink:#202131;
+    --blue:#37388f; --purple:#5150a9;
     --green:#347157; --green-bg:#e5f1e8; --orange:#a65a32;
     --red:#a6403d; --red-ink:#963936; --btn-g:#37388f; --btn-g-ink:#fff;
     --t-o:rgba(166,90,50,.09); --t-g:rgba(52,113,87,.10);
@@ -25,7 +27,9 @@ CSS = r"""
     :root:not([data-theme="light"]) {
       --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
       --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
-      --hair:rgba(255,255,255,.105); --blue:#a6a7ff; --purple:#b9a8ff;
+      --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+      --mark-plate:#f4efe3; --mark-ink:#1d1e27;
+      --blue:#a6a7ff; --purple:#b9a8ff;
       --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
       --red:#e07d79; --red-ink:#ee8b87; --btn-g:#9c9dff; --btn-g-ink:#171827;
       --t-o:rgba(231,155,112,.11); --t-g:rgba(124,197,158,.11);
@@ -37,7 +41,9 @@ CSS = r"""
   :root[data-theme="dark"] {
     --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
     --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
-    --hair:rgba(255,255,255,.105); --blue:#a6a7ff; --purple:#b9a8ff;
+    --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+    --mark-plate:#f4efe3; --mark-ink:#1d1e27;
+    --blue:#a6a7ff; --purple:#b9a8ff;
     --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
     --red:#e07d79; --red-ink:#ee8b87; --btn-g:#9c9dff; --btn-g-ink:#171827;
     --t-o:rgba(231,155,112,.11); --t-g:rgba(124,197,158,.11);
@@ -78,9 +84,8 @@ CSS = r"""
     letter-spacing:-.045em; }
   .lede { font-size:1rem; }
   .stamp { margin:.35rem 0 0; }
-  .jb-morph { width:68px; height:68px; margin:0; }
-  .jb-morph .heromark { width:68px; height:68px; }
-  .jb-mascot2 { height:114px; }
+  .jb-morph { width:132px; height:146px; margin:0; }
+  .jb-mascot2 { height:106px; }
 
   .segwrap { position:sticky; top:.7rem; margin-bottom:1.6rem; z-index:20; }
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
@@ -96,20 +101,21 @@ CSS = r"""
     height:3px; border-radius:3px 3px 0 0; background:var(--blue); }
   .tab .n { background:var(--sunk); }
 
-  .panel { view-transition-name:jobby-content; animation:premium-panel-in .46s var(--ease); }
-  @keyframes premium-panel-in { from { opacity:0; transform:translateY(12px); }
+  .panel { animation:premium-panel-in .32s var(--ease); }
+  @keyframes premium-panel-in { from { opacity:0; transform:translateY(8px); }
     to { opacity:1; transform:none; } }
-  ::view-transition-old(jobby-content) { animation:premium-old .2s ease both; }
-  ::view-transition-new(jobby-content) { animation:premium-new .42s var(--ease) both; }
-  @keyframes premium-old { to { opacity:0; transform:translateY(-6px); } }
-  @keyframes premium-new { from { opacity:0; transform:translateY(10px); } }
+  html.jb-vt .panel { animation:none; }
+  ::view-transition-old(root) { animation:premium-fade-out .22s var(--ease) both; }
+  ::view-transition-new(root) { animation:premium-fade-in .34s var(--ease) both; }
+  ::view-transition-old(jobby-header),::view-transition-new(jobby-header) { animation:none; }
+  @keyframes premium-fade-out { to { opacity:0; } }
+  @keyframes premium-fade-in { from { opacity:0; } }
 
   .card,.sheet,.empty,.note,.jb-banner,.jb-filters,.jb-addlink,.provider-card,.split-note {
     border:1px solid var(--hair); border-radius:var(--radius); box-shadow:var(--sh); }
-  .card { border-radius:var(--radius); padding:1.25rem; transition:transform .38s var(--ease),
-    box-shadow .38s var(--ease),border-color .28s,background-color .3s; }
-  .card:hover { transform:translateY(-4px) scale(1.004); box-shadow:var(--sh-hover);
-    border-color:color-mix(in srgb,var(--blue) 24%,var(--hair)); }
+  .card { border-radius:var(--radius); padding:1.25rem;
+    transition:border-color .24s var(--ease),background-color .3s; }
+  .card:hover { border-color:var(--hair-strong); }
   .card.hold,.card.ready,.card.ref,.card.flight { background:var(--card); }
   .card.hold { border-top:3px solid var(--orange); }
   .card.ready { border-top:3px solid var(--green); }
@@ -140,10 +146,8 @@ CSS = r"""
   .jb-card { display:grid; grid-template-columns:minmax(15rem,1.25fr) minmax(18rem,1.8fr) minmax(15rem,auto);
     grid-template-rows:auto auto auto; align-items:center; gap:.7rem 1.25rem;
     border:1px solid var(--hair); border-radius:var(--radius); padding:1rem 1.1rem;
-    box-shadow:var(--sh); transition:transform .4s var(--ease),box-shadow .4s var(--ease),
-    border-color .28s,background-color .3s; }
-  .jb-card:hover,.jb-card.open { transform:translateY(-4px) scale(1.003);
-    box-shadow:var(--sh-hover); border-color:color-mix(in srgb,var(--blue) 25%,var(--hair)); }
+    box-shadow:var(--sh); transition:border-color .24s var(--ease),background-color .3s; }
+  .jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }
   .jb-head { grid-column:1; grid-row:1 / span 2; align-items:center; justify-content:space-between; }
   .jb-identity { display:flex; align-items:center; gap:.72rem; min-width:0; }
   .jb-identity > div { min-width:0; }
@@ -168,7 +172,7 @@ CSS = r"""
   .company-title > div,.company-cell > span { min-width:0; }
   .company-cell .company-mark { width:2.15rem; height:2.15rem; border-radius:9px; }
 
-  .settings-page { max-width:1180px; padding:1rem 0 5rem; view-transition-name:jobby-content; }
+  .settings-page { max-width:1180px; padding:1rem 0 5rem; }
   .settings-titlebar { margin-bottom:1.5rem; }
   .settings-titlebar h2,.dialog-head h2 { font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
     font-weight:500; letter-spacing:-.035em; }
@@ -249,11 +253,11 @@ CSS = r"""
     .primary-nav a { flex:1; }
     .themeseg { grid-column:2; grid-row:1; }
     .wrap { padding-top:1.6rem; }
-    .jb-morph,.jb-morph .heromark { width:56px; height:56px; }
-    .jb-mascot2 { height:92px; }
+    .jb-morph { width:104px; height:115px; }
+    .jb-mascot2 { height:84px; }
   }
   @media (prefers-reduced-motion:reduce) {
     ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) { animation:none !important; }
-    .dropped-dialog[open],.dropped-dialog::backdrop { animation:none; }
+    .dropped-dialog[open],.dropped-dialog::backdrop,.panel { animation:none; }
   }
 """

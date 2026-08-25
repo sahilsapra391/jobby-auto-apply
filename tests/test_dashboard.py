@@ -122,11 +122,11 @@ class DashboardTest(unittest.TestCase):
 
 class BrandTest(unittest.TestCase):
     def test_mark_outline_is_emitted_once_and_referenced(self):
-        # The traced outline is ~7KB. It appears in the app bar and again in
-        # the hero, so inlining it twice would cost a pointless second copy.
+        # The traced outline is ~7KB and is emitted into <defs> once. The hero
+        # rests as the mascot now, so the app bar lockup is its only reference.
         html = build()
         self.assertEqual(html.count('id="jb-mark"'), 1)
-        self.assertEqual(html.count('href="#jb-mark"'), 2)
+        self.assertEqual(html.count('href="#jb-mark"'), 1)
 
     def test_logo_is_the_same_mark_in_every_theme(self):
         # One logo everywhere: white mark on an ink circle, on the board, in
@@ -180,11 +180,33 @@ class BrandTest(unittest.TestCase):
         html = build()
         self.assertIn("Jobby is a free agent.</h1>", html)
         self.assertIn('class="jb-morph"', html)
-        self.assertIn('aria-label="Reveal Jobby mascot"', html)
+        self.assertIn('aria-label="Jobby"', html)
         self.assertNotIn("Scan for new jobs</button>", html)
         self.assertIn(">Scan now</button>", html)
         self.assertIn("--radius:15px", html)
-        self.assertIn("view-transition-name:jobby-content", html)
+        self.assertIn("view-transition-name:jobby-header", html)
+
+    def test_hero_mark_rests_as_the_mascot_on_a_plate_in_dark_themes(self):
+        # The drawing is the mark now, not a hover reveal over the badge, and the
+        # cream plate is what keeps its dark linework readable on a near-black page.
+        html = build()
+        self.assertIn('<span class="jb-plate"', html)
+        self.assertIn('class="jb-mascot2"', html)
+        self.assertNotIn("heromark", html)
+        self.assertIn("--mark-plate:transparent", html)
+        self.assertIn("--mark-plate:#f4efe3", html)
+        self.assertIn("background:var(--mark-plate)", html)
+        self.assertIn("color:var(--mark-ink)", html)
+
+    def test_job_cards_answer_hover_with_their_outline_not_a_lift(self):
+        # The controls are still allowed to leave the card; the card is not.
+        html = build()
+        self.assertIn(".card:hover { border-color:var(--hair-strong); }", html)
+        self.assertIn(".jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }", html)
+        for rule in (".card:hover", ".jb-card:hover"):
+            start = html.index(rule)
+            self.assertNotIn("transform", html[start:html.index("}", start)])
+        self.assertIn(".btn:hover,.jb-btn:hover { opacity:1; transform:translateY(-2px);", html)
 
     def test_first_party_visible_copy_has_no_em_dash(self):
         page = build()

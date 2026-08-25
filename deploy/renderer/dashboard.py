@@ -714,6 +714,7 @@ def build(state, generated):
       var t = localStorage.getItem('jobby.theme');
       if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
     }} catch (e) {{}}
+    document.documentElement.classList.add('jb-intro');
   }})();
 </script>
 <!-- Vercel Web Analytics -->
@@ -799,40 +800,34 @@ def build(state, generated):
      the circle, which makes the pair look low against the theme control. */
   .lockup {{ height:1.6rem; width:auto; display:block; overflow:visible;
     position:relative; top:-1px; }}
-  .heromark {{ width:72px; height:72px; display:block; margin:0 auto 1.15rem;
-    overflow:visible; }}
-  /* Hover the mark and it becomes the mascot. Two beats: the silhouette draws
-     itself with a dashoffset on a pathLength="1" contour, then the interior ink
-     wipes in top to bottom. The badge scales up and fades under it, so the one
-     turns into the other rather than swapping. */
-  .jb-morph {{ position:relative; width:72px; height:72px; margin:0 auto 1.15rem;
-    cursor:pointer; -webkit-tap-highlight-color:transparent; outline:none; }}
-  .jb-morph .heromark {{ position:absolute; inset:0; width:100%; height:100%;
-    margin:0; transition:transform .45s cubic-bezier(.34,1.4,.5,1), opacity .25s ease; }}
-  /* Anchored to the bottom of the badge and grown upward, not centred on it.
-     Centred, half its height hung below the badge and straight into the
-     headline, and shrinking it only made the overlap smaller rather than
-     removing it. Growing upward there is only whitespace to take. */
-  .jb-mascot2 {{ position:absolute; left:50%; bottom:0; height:112px; width:auto;
-    color:var(--ink); pointer-events:none;
-    transform:translateX(-50%) scale(.6); transform-origin:bottom center;
-    opacity:0;
-    transition:transform .5s cubic-bezier(.34,1.4,.5,1), opacity .3s ease; }}
-  .jb-mascot2 .jm2-contour {{ stroke-dasharray:1; stroke-dashoffset:1;
-    transition:stroke-dashoffset .1s linear; }}
-  .jb-mascot2 .jm2-ink {{ clip-path:inset(0 0 100% 0); opacity:0;
-    transition:clip-path .1s linear, opacity .1s linear; }}
-  .jb-morph:hover .heromark, .jb-morph:focus-visible .heromark {{
-    transform:scale(1.5); opacity:0; }}
-  .jb-morph:hover .jb-mascot2, .jb-morph:focus-visible .jb-mascot2 {{
-    transform:translateX(-50%) scale(1); opacity:1; }}
-  .jb-morph:hover .jm2-contour, .jb-morph:focus-visible .jm2-contour {{
-    stroke-dashoffset:0; transition:stroke-dashoffset .55s ease .05s; }}
-  .jb-morph:hover .jm2-ink, .jb-morph:focus-visible .jm2-ink {{
-    clip-path:inset(0 0 0 0); opacity:1;
-    transition:clip-path .85s ease .38s, opacity .2s ease .34s; }}
+  /* The mascot is the hero mark, at rest. It used to be a hover reveal over the
+     circular badge, but the badge already sits in the app bar lockup, so the
+     drawing is the thing worth showing and hover is no longer a prerequisite.
+     The linework is one colour, so on a near-black page it rendered as cream on
+     ink and read as a ghost. Dark themes therefore set it on a cream oval and
+     ink it dark: --mark-plate and --mark-ink carry that pair, and in light
+     themes the plate is transparent because the page is already cream. */
+  .jb-morph {{ position:relative; width:132px; height:146px; margin:0 auto 1.15rem;
+    display:grid; place-items:center; }}
+  .jb-plate {{ position:absolute; left:50%; top:50%; width:100%; height:100%;
+    transform:translate(-50%,-50%); border-radius:50%; background:var(--mark-plate);
+    transition:background-color .38s cubic-bezier(.22,1,.36,1); }}
+  .jb-mascot2 {{ position:relative; height:106px; width:auto; display:block;
+    color:var(--mark-ink); pointer-events:none;
+    transition:color .38s cubic-bezier(.22,1,.36,1); }}
+  /* The draw-on beats stay, but they play once on first paint rather than on
+     hover: the contour runs its dashoffset to zero, then the interior ink wipes
+     down. Resting state is the finished drawing, so anything that re-renders the
+     hero later gets the mark whole instead of replaying the reveal. */
+  .jb-mascot2 .jm2-contour {{ stroke-dasharray:1; stroke-dashoffset:0; }}
+  .jb-mascot2 .jm2-ink {{ clip-path:inset(0 0 0 0); opacity:1; }}
+  .jb-intro .jm2-contour {{ animation:jm2-draw .75s ease .1s backwards; }}
+  .jb-intro .jm2-ink {{ animation:jm2-wipe .8s ease .5s backwards; }}
+  @keyframes jm2-draw {{ from {{ stroke-dashoffset:1; }} to {{ stroke-dashoffset:0; }} }}
+  @keyframes jm2-wipe {{ from {{ clip-path:inset(0 0 100% 0); opacity:0; }}
+    to {{ clip-path:inset(0 0 0 0); opacity:1; }} }}
   @media (prefers-reduced-motion:reduce) {{
-    .jb-morph .heromark, .jb-mascot2, .jb-mascot2 * {{ transition-duration:.01ms !important; }} }}
+    .jb-intro .jm2-contour, .jb-intro .jm2-ink {{ animation:none; }} }}
 
   .themeseg {{ display:inline-flex; background:var(--seg); border-radius:100px;
     padding:3px; gap:2px; flex:none; justify-self:end; }}
@@ -851,8 +846,8 @@ def build(state, generated):
     .primary-nav {{ padding:.18rem; gap:.1rem; }}
     .primary-nav a {{ min-height:1.9rem; padding:.34rem .62rem; font-size:.8rem; }}
     .themebtn {{ width:1.75rem; }}
-    .jb-morph, .jb-morph .heromark {{ width:60px; height:60px; }}
-    .jb-mascot2 {{ height:95px; }} }}
+    .jb-morph {{ width:104px; height:115px; }}
+    .jb-mascot2 {{ height:84px; }} }}
 
   .top {{ text-align:center; margin-bottom:2rem; }}
   h1 {{ font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
@@ -1078,8 +1073,8 @@ def build(state, generated):
       <p class="lede">{f"{len(blocked)} waiting on you" if blocked else "Nothing blocked"}{f" &middot; {len(inflight)} in flight" if inflight else ""}</p>
       <p class="stamp">{esc(name)} &middot; Updated {esc(generated)}</p>
     </div>
-    <div class="jb-morph" tabindex="0" role="img" aria-label="Reveal Jobby mascot">
-      {brand.icon(cls="heromark jb-badge", label="")}
+    <div class="jb-morph" role="img" aria-label="Jobby">
+      <span class="jb-plate" aria-hidden="true"></span>
       {brand.mascot()}
     </div>
   </div>
@@ -1190,6 +1185,11 @@ def build(state, generated):
   document.querySelectorAll('[data-company-logo]').forEach(prepareCompanyLogo);
   window.jobbyPrepareCompanyLogo = prepareCompanyLogo;
 
+  var heroInk = document.querySelector('.jb-mascot2 .jm2-ink');
+  function endIntro() {{ document.documentElement.classList.remove('jb-intro'); }}
+  if (heroInk) heroInk.addEventListener('animationend', endIntro);
+  setTimeout(endIntro, 2600);
+
   var tabs = document.querySelectorAll('.tab');
   function activateTab(t) {{
     tabs.forEach(function (o) {{ o.classList.remove('on'); o.setAttribute('aria-selected','false'); }});
@@ -1199,10 +1199,7 @@ def build(state, generated):
     if (p) p.classList.add('on');
   }}
   tabs.forEach(function (t) {{
-    t.addEventListener('click', function () {{
-      if (document.startViewTransition) document.startViewTransition(function () {{ activateTab(t); }});
-      else activateTab(t);
-    }});
+    t.addEventListener('click', function () {{ activateTab(t); }});
   }});
   var droppedDialog = document.getElementById('p-dropped');
   var droppedOpen = document.getElementById('dropped-open');

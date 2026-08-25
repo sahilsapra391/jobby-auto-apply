@@ -22,12 +22,37 @@ button. A future Profile pill can join the centred control later.
 The active visual system is Soft Premium, with restrained Option 1 hierarchy.
 Its isolated tokens and responsive overrides live in `scripts/premium_ui.py`.
 System, Light, and Dark are three icon-only controls. System removes the saved
-theme override so the page continues to follow the operating system. Cross-document
-and in-page transitions use the browser View Transitions API when present, and
-the reduced-motion media query disables decorative motion. The hero mark sits
-on the right where the old large scan button used to be. Keep its existing
-logo-to-mascot hover reveal. The only scan action in the UI is Scan now inside
-the Found status banner.
+theme override so the page continues to follow the operating system. The
+reduced-motion media query disables decorative motion.
+
+One mechanism owns each screen change, and mixing them is what made the board
+feel rough. Home and Settings are the same document (`vercel.json` rewrites both
+paths to `api/page`), so the nav links are intercepted, the body class flips
+inside `document.startViewTransition`, and `history.pushState` moves the URL. A
+tab switch changes one block on an otherwise identical page and gets no view
+transition at all, only the incoming panel's own keyframes. Do not put
+`view-transition-name` back on `.panel` or `.settings-page`: two panels differ in
+height by tens of thousands of pixels, so the group animated that size and
+stretched both snapshots to fit it. `.appbar` keeps `jobby-header` so it holds
+still. And no keyframe on a panel may use a fill mode, because the Found panel
+runs past 50,000px and a transform held on a layer that tall exceeds the max
+texture and rasterizes blank.
+
+The hero mark sits on the right where the old large scan button used to be, and
+the mascot drawing is its resting state rather than a hover reveal over the
+circular badge. The linework is a single colour, so dark themes set it on a
+cream oval and ink it dark: `--mark-plate` and `--mark-ink` carry that pair, and
+in light themes the plate is transparent because the page is already cream. The
+plate has to circumscribe the drawing, which fills its viewBox corner to corner;
+an ear or a foot crossing the edge lands as dark ink on a dark page. The
+contour-draw and ink-wipe beats survive as a first-paint flourish gated on
+`html.jb-intro`, cleared when the wipe ends so returning from Settings does not
+replay the reveal.
+
+Job cards answer hover with their outline, not with movement. Found, In flight,
+and Needs you cards rest on `--hair` and hover to `--hair-strong` with no
+transform. Their controls still lift; the card underneath does not. The only
+scan action in the UI is Scan now inside the Found status banner.
 
 Company identity is centralized in `scripts/company_logos.py`. Job feeds may
 store a trusted `logoUrl`, and promoted roles carry that value into Watching.

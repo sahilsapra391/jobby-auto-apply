@@ -1141,8 +1141,8 @@ CSS = """
   .jb-card { background:var(--card); border-radius:20px; padding:1.3rem 1.4rem 1.1rem;
     box-shadow:var(--sh); display:flex; flex-direction:column; gap:.8rem;
     min-width:0; overflow-wrap:anywhere;
-    border:1px solid transparent; transition:border-color .18s, transform .18s; }
-  .jb-card:hover { border-color:var(--hair); transform:translateY(-1px); }
+    border:1px solid var(--hair); transition:border-color .22s; }
+  .jb-card:hover { border-color:var(--hair-strong); }
   .jb-head { display:flex; gap:1rem; align-items:flex-start; }
   .jb-ring { width:56px; height:56px; border-radius:50%; flex:none; display:grid;
     place-items:center; background:var(--sunk); }
