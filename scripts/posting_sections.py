@@ -72,6 +72,10 @@ REQUIREMENT_HEADINGS = (
     "you should have", "you might be a fit if", "you may be a good fit if",
     "requirements and qualifications", "job requirements", "prerequisites",
     "background", "your background", "the successful candidate",
+    "what you have", "preferred skills", "preferred skills and experience",
+    "preferred experience", "additional requirements", "other requirements",
+    "minimum experience", "desired experience", "nice to haves",
+    "what we'd like to see", "what we would like to see", "you bring",
 )
 # Headings that end a section without starting one worth showing.
 CLOSING_HEADINGS = (
@@ -108,6 +112,28 @@ REQUIREMENT_HEADINGS = _normalise_all(REQUIREMENT_HEADINGS)
 CLOSING_HEADINGS = _normalise_all(CLOSING_HEADINGS)
 
 
+# Employers introduce a heading as often as they just write it.
+LEAD_INS = ("here's ", "here is ", "heres ", "so ", "now ", "and ", "the ")
+
+# Words title case leaves lowercase, so they cannot be evidence either way.
+TITLE_CASE_SMALL_WORDS = {
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for",
+    "with", "from", "by", "as", "is", "are", "you", "your", "our", "we",
+}
+
+
+def _strip_lead(words):
+    """"here's what we're looking for" -> "what we're looking for"."""
+    changed = True
+    while changed:
+        changed = False
+        for lead in LEAD_INS:
+            if words.startswith(lead) and len(words) > len(lead):
+                words = words[len(lead):]
+                changed = True
+    return words
+
+
 def _looks_like_heading(line):
     stripped = line.strip()
     if not stripped or len(stripped) > MAX_HEADING_CHARS:
@@ -118,9 +144,38 @@ def _looks_like_heading(line):
     return not re.match(r"^[-*•·●▪\d]+[.)\s]", stripped)
 
 
+def _is_strong_heading(line):
+    """Does this line announce a section, rather than merely being short?
+
+    This decides whether an unrecognised line is allowed to *end* the section
+    it follows, and being wrong about it is expensive: a requirements list
+    written as short unbulleted lines ("Network security", "Applied
+    cryptography") was closing its own section, so 43.7% of the board came back
+    with responsibilities and no requirements at all. A heading announces
+    itself, with a colon, a dash, or capitals.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.endswith((":", "-", "—", "–")):
+        return True
+    letters = [c for c in stripped if c.isalpha()]
+    if letters and all(c.isupper() for c in letters):
+        return True
+    # Title Case reads as a heading, but only real title case: every word that
+    # is not a small connecting word has to be capitalised. Testing the first
+    # letter alone matches any sentence, and a requirements list written as
+    # short unbulleted lines is all sentences.
+    words = stripped.split()
+    if len(words) < 2 or len(words) > 5 or stripped.endswith((".", ",", ";")):
+        return False
+    substantive = [w for w in words if w.lower() not in TITLE_CASE_SMALL_WORDS]
+    return bool(substantive) and all(w[0].isupper() for w in substantive if w[:1].isalpha())
+
+
 def _classify(line):
     """`responsibilities`, `requirements`, `closing`, or None."""
-    words = _words(line)
+    words = _strip_lead(_words(line))
     if not words:
         return None
     for name, headings in (("requirements", REQUIREMENT_HEADINGS),
@@ -159,7 +214,10 @@ def split_sections(body):
                 continue
             # An unrecognised heading ends the section it follows, rather than
             # letting a "Why join us" written as "Life at Acme" leak into it.
-            if current and _words(line):
+            # Only a line that announces itself as a heading gets to do that;
+            # a short unbulleted line is far likelier to be a bullet that lost
+            # its marker, and closing the section on one loses the rest of it.
+            if current and _words(line) and _is_strong_heading(line):
                 current = None
                 continue
         if current:

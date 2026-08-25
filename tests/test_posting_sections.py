@@ -71,6 +71,30 @@ class SectionTests(unittest.TestCase):
             out = posting_sections.split_sections(heading + "\n- 5 years of Python.\n")
             self.assertEqual(out["requirements"], ["5 years of Python."], heading)
 
+    def test_a_short_unbulleted_line_does_not_close_the_section(self):
+        # This is what cost 43.7% of the board its requirements column: a list
+        # written as short lines without bullet markers looked like a wall of
+        # headings, and the first one closed the section it was inside.
+        body = ("Requirements\n"
+                "Applied cryptography\n"
+                "Network security\n"
+                "Operating system security\n")
+        out = posting_sections.split_sections(body)
+        self.assertEqual(len(out["requirements"]), 3)
+
+    def test_a_heading_that_announces_itself_still_closes_the_section(self):
+        for closer in ("BENEFITS:", "Why join us", "Compensation:"):
+            body = f"Requirements\n- 5 years of Python.\n{closer}\n- Free lunch.\n"
+            out = posting_sections.split_sections(body)
+            self.assertEqual(out["requirements"], ["5 years of Python."], closer)
+
+    def test_a_heading_introduced_rather_than_stated_is_still_a_heading(self):
+        for heading in ("Here's what we're looking for:",
+                        "Here is what you bring:",
+                        "So what you'll do:"):
+            out = posting_sections.split_sections(heading + "\n- Do the thing.\n")
+            self.assertTrue(out["requirements"] or out["responsibilities"], heading)
+
     def test_a_posting_with_no_recognisable_heading_returns_nothing(self):
         out = posting_sections.split_sections("We are hiring.\nCome and work here.\n")
         self.assertEqual(out, {"responsibilities": [], "requirements": []})

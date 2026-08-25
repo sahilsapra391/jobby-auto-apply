@@ -67,7 +67,7 @@ def _has(sections):
     return bool(sections.get("responsibilities") or sections.get("requirements"))
 
 
-def fetch_missing(jobs, workers=8, limit=None, progress=None):
+def fetch_missing(jobs, workers=8, limit=None, progress=None, refetch=False):
     """Read the full posting for records the excerpt could not answer.
 
     The excerpt stops at 1,500 characters and a requirements block is usually
@@ -79,13 +79,13 @@ def fetch_missing(jobs, workers=8, limit=None, progress=None):
     """
     targets = [
         job for job in jobs.values()
-        if not _has(job.get("sections"))
+        if (refetch or not _has(job.get("sections")))
         and any(host in (job.get("canonicalUrl") or "") for host in FETCHABLE)
     ]
     if limit:
         targets = targets[:limit]
     counts = {"considered": len(targets), "fetched": 0, "failed": 0,
-              "sectionsAdded": 0, "yearsAdded": 0}
+              "sectionsAdded": 0, "sectionsReplaced": 0, "yearsAdded": 0}
 
     def work(job):
         try:
@@ -104,9 +104,10 @@ def fetch_missing(jobs, workers=8, limit=None, progress=None):
                 continue
             counts["fetched"] += 1
             sections = posting_sections.split_sections(body)
-            if _has(sections):
+            if _has(sections) and (refetch or not _has(job.get("sections"))):
+                had = _has(job.get("sections"))
                 job["sections"] = sections
-                counts["sectionsAdded"] += 1
+                counts["sectionsAdded" if not had else "sectionsReplaced"] += 1
             found = extract.years_from_sections(sections, body)
             current = job.get("extracted") or {}
             if found and current.get("yearsMin") is None:
@@ -122,6 +123,8 @@ def main():
     ap.add_argument("--force", action="store_true", help="recompute existing sections")
     ap.add_argument("--fetch", action="store_true",
                     help="read the full posting for records the excerpt cannot answer")
+    ap.add_argument("--refetch", action="store_true",
+                    help="with --fetch, re-read postings that already have sections")
     ap.add_argument("--limit", type=int, help="cap how many postings --fetch reads")
     ap.add_argument("--workers", type=int, default=8, help="parallel fetches (default 8)")
     args = ap.parse_args()
@@ -137,10 +140,12 @@ def main():
         def progress(done, total):
             print(f"  fetched {done}/{total}", file=sys.stderr, flush=True)
         counts["fetch"] = fetch_missing(jobs, workers=args.workers,
-                                        limit=args.limit, progress=progress)
+                                        limit=args.limit, progress=progress,
+                                        refetch=args.refetch)
     counts["wrote"] = False
     changed = (counts["sectionsAdded"] or counts["yearsAdded"]
                or (counts.get("fetch") or {}).get("sectionsAdded")
+               or (counts.get("fetch") or {}).get("sectionsReplaced")
                or (counts.get("fetch") or {}).get("yearsAdded"))
     if not args.dry_run and changed:
         handle, tmp = tempfile.mkstemp(dir=str(root), suffix=".tmp")
