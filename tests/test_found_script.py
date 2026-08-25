@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("toolpath", ROOT / "scripts" / "toolpath.py")
 toolpath = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(toolpath)
+import company_logos  # noqa: E402
 import dashboard  # noqa: E402
 import found_lane  # noqa: E402
 import jobs_store  # noqa: E402
@@ -1465,6 +1466,79 @@ class RealPayloadTests(ScriptHarness, unittest.TestCase):
         out = self.run_script([self.real_row(workplace="onsite")])
         self.assertIn("On-site", out["text"])
 
+class LogoContractTests(unittest.TestCase):
+    """The logo derivation is one contract written in two languages.
+
+    company_logos.py decides the policy and sends a plan digit; found_lane's
+    script performs the derivation over fields the payload already carries,
+    because a domain string per job does not fit the page weight budget. Split
+    like that, the two halves can drift silently, so every input that either
+    half branches on gets a case: each plan, and each legal suffix the name
+    normaliser strips. A first version of this test covered the plans only and
+    still passed with a suffix deleted from the script's copy of the list.
+    """
+
+    CASES = [
+        ("Twilio", "https://boards.greenhouse.io/twilio/jobs/1"),
+        ("Paytm", "https://job-boards.greenhouse.io/paytm/jobs/9"),
+        ("Davies", "https://davies.pinpointhq.com/jobs/2"),
+        ("Gusto, Inc.", "https://jobs.lever.co/gusto/abc"),
+        ("Acme Robotics", "https://careers.acmerobotics.com/roles/7"),
+        ("JPMorgan Chase & Co.", "https://jpmc.fa.oraclecloud.com/x"),
+        ("Zip", "https://jobs.lever.co/zip/1"),
+        ("Great Minds", "https://greatminds.recruitee.com/o/pm"),
+        ("Dun & Bradstreet", "https://boards.greenhouse.io/dnb/jobs/3"),
+        ("", "https://boards.greenhouse.io/unknown/jobs/4"),
+        ("Sanity", ""),
+    ] + [
+        # One per legal suffix, so deleting any of them from either list fails.
+        (f"Northwind {suffix.title()}", "https://jpmc.fa.oraclecloud.com/x")
+        for suffix in sorted(company_logos.LEGAL_SUFFIXES)
+    ] + [
+        # And the same names where the suffix is not trailing, so a normaliser
+        # that strips them anywhere rather than only at the end fails too.
+        (f"{suffix.title()} Northwind", "https://jpmc.fa.oraclecloud.com/x")
+        for suffix in sorted(company_logos.LEGAL_SUFFIXES)
+    ]
+
+    HARNESS = """
+      var LOGOS = [];
+      %s
+      var out = [];
+      CASES.forEach(function (c) {
+        out.push(logoUrl({ lp: c.lp, co: c.co, url: c.url, lg: -1 }));
+      });
+      console.log(JSON.stringify(out));
+    """
+
+    def test_the_script_derives_what_company_logos_would_have_sent(self):
+        node = node_or_skip(self)
+        cases = [{"co": co, "url": url,
+                  "lp": company_logos.logo_plan({"company": co}, url)}
+                 for co, url in self.CASES]
+        expected = [company_logos.proxy_url({"company": co}, url)
+                    for co, url in self.CASES]
+
+        # Lift just the derivation out of the real script, so the test cannot
+        # pass against a copy that has drifted from what ships.
+        source = found_lane.SCRIPT
+        start = source.index("  var LEGAL_SUFFIXES = {")
+        end = source.index("  function companyMark(job) {")
+        derivation = source[start:end]
+        script = ("var CASES = " + json.dumps(cases) + ";\n"
+                  + self.HARNESS % derivation)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(script)
+            path = fh.name
+        try:
+            result = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            actual = json.loads(result.stdout.strip().splitlines()[-1])
+        finally:
+            pathlib.Path(path).unlink()
+
+        for (co, url), want, got in zip(self.CASES, expected, actual):
+            self.assertEqual(want, got, f"{co!r} from {url!r}")
 
 if __name__ == "__main__":
     unittest.main()

@@ -115,7 +115,7 @@ def safe_url(url):
     return text if text.startswith(("https://", "http://")) else ""
 
 
-def compact(job, why_table):
+def compact(job, why_table, logo_table=None):
     """One job, trimmed to what a card and its Details panel actually show.
 
     Deliberately terse. The weights are identical on every job and are hoisted
@@ -142,7 +142,12 @@ def compact(job, why_table):
         "rank": direct_rank(job),
         "co": job.get("company") or "",
         "ti": tidy_title(job.get("title")),
-        "lg": company_logos.proxy_url(job, job.get("canonicalUrl") or ""),
+        "lp": company_logos.logo_plan(job, job.get("canonicalUrl") or ""),
+        "lg": (logo_table.intern(company_logos.proxy_url(job, job.get("canonicalUrl") or ""))
+               if logo_table is not None
+                   and company_logos.logo_plan(job, job.get("canonicalUrl") or "")
+                       == company_logos.PLAN_NONE
+               else -1),
         "url": safe_url(job.get("canonicalUrl")),
         "src": SOURCE_LABELS.get(job.get("canonicalSource") or "",
                                  (job.get("canonicalSource") or "").title()),
@@ -183,6 +188,21 @@ def tidy_days(text):
         if wrong in text:
             text = text.replace(wrong, right)
     return text
+
+
+class StringTable:
+    """Interns any repeated string into a shared list of unique values."""
+
+    def __init__(self):
+        self.strings = []
+        self._index = {}
+
+    def intern(self, text):
+        text = str(text or "")
+        if text not in self._index:
+            self._index[text] = len(self.strings)
+            self.strings.append(text)
+        return self._index[text]
 
 
 class WhyTable:
@@ -586,11 +606,13 @@ def payload(jobs, census=None, total=None):
     the interned explanations. Together they were about a third of the payload.
     """
     table = WhyTable()
-    rows = [compact(job, table) for job in jobs]
+    logos = StringTable()
+    rows = [compact(job, table, logos) for job in jobs]
     document = {
         "w": [MATCH_WEIGHTS.get(name, 0) for name in COMPONENTS],
         "c": list(COMPONENTS),
         "y": table.strings,
+        "g": logos.strings,
         "n": census or {},
         "t": total if total is not None else len(rows),
         "j": rows,
@@ -1168,6 +1190,15 @@ CSS = """
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
   .jb-chip.years { background:var(--t-o); color:var(--orange); }
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
+  .jb-facts { display:flex; flex-wrap:wrap; gap:.35rem; }
+  .jb-fact { display:grid; grid-template-columns:4.4rem 1fr 2.1rem; align-items:center;
+    gap:.4rem; width:100%; font-size:.7rem; color:var(--ink-3); }
+  .jb-fact-name { text-transform:capitalize; letter-spacing:-.005em; }
+  .jb-fact-track { height:4px; border-radius:4px; background:var(--sunk); overflow:hidden; }
+  .jb-fact-fill { display:block; height:100%; border-radius:4px; background:var(--green);
+    min-width:2px; }
+  .jb-fact-fill.none { background:var(--red); }
+  .jb-fact-num { text-align:right; font-variant-numeric:tabular-nums; }
   .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
     padding-top:.9rem; border-top:1px solid var(--hair); }
 
@@ -1247,6 +1278,7 @@ SCRIPT = r"""
   var WEIGHTS = DATA.w || [];
   var COMPONENTS = DATA.c || [];
   var WHY = DATA.y || [];
+  var LOGOS = DATA.g || [];
   var CENSUS = DATA.n || {};
   var POOL_TOTAL = DATA.t || JOBS.length;
   var grid = document.getElementById('jb-grid');
@@ -1532,19 +1564,64 @@ SCRIPT = r"""
     return b;
   }
 
+  // The mechanical half of company_logos.py. Which derivation to run is decided
+  // there and arrives as job.lp; this only performs it, over co and url, which
+  // the payload already carries. tests/test_found_script.py checks the two
+  // agree on real records, because they are one contract in two languages.
+  var LEGAL_SUFFIXES = {
+    inc:1, llc:1, ltd:1, limited:1, corp:1, corporation:1, co:1, company:1,
+    gmbh:1, bv:1, nv:1, ag:1, sa:1, plc:1, pvt:1, private:1, pty:1, srl:1,
+    spa:1, oy:1, ab:1, as:1, aps:1, holdings:1, group:1
+  };
+  function compactText(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+  function nameCore(company) {
+    var words = String(company || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+    while (words.length && LEGAL_SUFFIXES[words[words.length - 1]]) words.pop();
+    return words.join('');
+  }
+  function urlParts(raw) {
+    try {
+      var u = new URL(raw, 'https://x.invalid');
+      return { host: (u.hostname || '').toLowerCase(),
+               segments: u.pathname.split('/').filter(Boolean) };
+    } catch (e) { return { host: '', segments: [] }; }
+  }
+  function logoUrl(job) {
+    var plan = job.lp || 0;
+    if (!plan) {
+      return (LOGOS.length && job.lg >= 0) ? (LOGOS[job.lg] || '') : '';
+    }
+    var parts = urlParts(job.url || '');
+    var base = '';
+    var exact = false;
+    if (plan === 1) { base = parts.host; exact = true; }
+    else if (plan === 2) { base = compactText(parts.segments[0] || ''); }
+    else if (plan === 3) { base = compactText((parts.host.split('.')[0] || '')); }
+    else if (plan === 4) { base = nameCore(job.co || ''); }
+    if (!base) return '';
+    var domain = exact ? base : base + '.com';
+    return '/api/company-logo?domain=' + encodeURIComponent(domain) +
+           (exact ? '' : '&alt=1');
+  }
+
   function companyMark(job) {
     var mark = el('span', 'company-mark');
     mark.setAttribute('aria-hidden', 'true');
     var words = String(job.co || '').match(/[A-Za-z0-9]+/g) || [];
     var initial = words.length ? words[0].charAt(0) + (words[1] ? words[1].charAt(0) : '') : '?';
     mark.appendChild(el('span', null, initial.toUpperCase()));
-    if (job.lg) {
+    var logoSrc = logoUrl(job);
+    if (logoSrc) {
       var img = document.createElement('img');
       img.alt = '';
       img.loading = 'lazy';
       img.setAttribute('data-company-logo', '');
-      img.src = job.lg;
-      if (window.jobbyPrepareCompanyLogo) window.jobbyPrepareCompanyLogo(img);
+      img.src = logoSrc;
+      if (typeof window !== 'undefined' && window.jobbyPrepareCompanyLogo) {
+        window.jobbyPrepareCompanyLogo(img);
+      }
       mark.appendChild(img);
     }
     return mark;
@@ -1586,8 +1663,29 @@ SCRIPT = r"""
     chips.appendChild(chip(job.src || 'Unknown source',
                            job.rank <= 1 ? 'direct' : ''));
     (job.ga || []).forEach(function (label) { chips.appendChild(chip(label, 'gate')); });
-    (job.tg || []).slice(0, 3).forEach(function (tag) { chips.appendChild(chip(tag)); });
     article.appendChild(chips);
+
+    var facts = el('div', 'jb-facts');
+    var parts = job.pt || [];
+    COMPONENTS.forEach(function (name, i) {
+      var earned = parts[i] || 0;
+      var possible = WEIGHTS[i] || 0;
+      if (!possible) return;
+      var row = el('div', 'jb-fact');
+      row.appendChild(el('span', 'jb-fact-name', name));
+      var track = el('span', 'jb-fact-track');
+      var fill = el('span', 'jb-fact-fill');
+      fill.style.width = Math.round(100 * earned / possible) + '%';
+      if (earned === 0) fill.classList.add('none');
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el('span', 'jb-fact-num', earned + '/' + possible));
+      var why = job.wy && WHY[job.wy[i]] ? WHY[job.wy[i]] : '';
+      row.title = name + ': ' + earned + ' of ' + possible + (why ? ' - ' + why : '');
+      facts.appendChild(row);
+    });
+    (job.tg || []).slice(0, 4).forEach(function (tag) { facts.appendChild(chip(tag)); });
+    article.appendChild(facts);
 
     var acts = el('div', 'jb-acts');
     var eye = button('', 'Watch', ICONS.watch());

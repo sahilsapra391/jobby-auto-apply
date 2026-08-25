@@ -84,16 +84,53 @@ outside clicks and Escape close it explicitly. Every listener in
 `found_lane.SCRIPT` is guarded, because `tests/test_found_script.py` runs that
 file in Node against a minimal `document` stub with no `addEventListener`.
 
+Every lane is one width. `--shell` in `scripts/premium_ui.py` sets it, and the
+app bar and the wrap both read it. The card lanes used to stop at 1360 while the
+table lanes broke out to 1800 with negative margins, which is why Found, In
+flight and Needs you looked like they were using half the screen next to
+Watching and Submitted. That break-out is now a no-op and stays only so the
+rule does not have to be hunted for if the wrap narrows again.
+
+The Found row is four columns above 1200px: identity, summary and chips, the
+match breakdown, and the controls. The breakdown is the rubric that already
+rides on every record and used to appear only behind Details, which is worth
+more card space than anything else available. Do not reach for `extracted`
+degree, employmentType or roleCategory to fill space: all three measured 0 of
+10,990 records populated on 2026-08-25, so they render as "not stated" and
+nothing else.
+
 Company identity is centralized in `scripts/company_logos.py`. Job feeds may
 store a trusted `logoUrl`, and promoted roles carry that value into Watching.
 Source ingestion also records an employer-owned website when a job description
 links to a domain matching the company name. The board otherwise derives a
 real employer domain from direct employer posting URLs. Never use an ATS or job
 aggregator favicon as an employer mark.
+When no employer domain is recorded, one is derived from the applicant tracking
+slug or the company name. `logo_plan` decides which and returns a single digit,
+and `found_lane.SCRIPT` performs the derivation over `co` and `url`, which the
+payload already carries. That split exists for page weight: `main` sits at
+3.63MB against a 3.7MB budget at the embed cap, which leaves about 21 bytes a
+job, and a domain string does not fit. `LogoContractTests` compares the two
+halves on every plan and every legal suffix, because they are one contract in
+two languages; a first version covered only the plans and passed with a suffix
+deleted from the script's copy.
+
+Both derivations require the slug or name to agree with the recorded company,
+and the guard is the point. Measured over 200 randomly sampled companies on
+2026-08-25, a known domain or a candidate returned an image for 168 of 200, up
+from about half. Adding the first word of the name on its own reached 178 and
+was discarded: what it bought was Federal Deposit Insurance Corporation
+resolving to federal.ai and Bureau of Prisons to bureau.ai. A stranger's logo is
+worse than no logo, and a favicon endpoint answers 404 for a domain it does not
+know, so a wrong guess costs a monogram rather than a wrong mark.
+
 The authenticated `/api/company-logo` route in `deploy/api/board.js` validates
-the request, fetches the image server-side, limits response size and type, and
-returns a private cached response. The browser must only load same-origin logo
-URLs. Monograms are the required fallback.
+the request, fetches candidates server-side in order, limits response size and
+type, and returns a private cached response. `alt=1` means "try the other TLDs
+of this label"; that list lives in the route because it is a constant, and
+spelling it out per job is what put the payload over budget. The browser must
+only load same-origin logo URLs. Monograms are the required fallback, and about
+one company in six still lands on one.
 
 Found locations use the hierarchical picker in `scripts/found_lane.py`.
 `COUNTRY_NAMES` supplies full visible names and `CONTINENT_COUNTRIES` assigns

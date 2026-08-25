@@ -12,8 +12,12 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
   const method = options.method || 'GET';
-  if (url.hostname === 'www.google.com' && url.pathname === '/s2/favicons') {
-    return new Response(Uint8Array.from([137, 80, 78, 71]), {
+  if (url.hostname === 't3.gstatic.com' && url.pathname === '/faviconV2') {
+    const asked = new URL(url.searchParams.get('url'));
+    if (asked.hostname !== 'example.com') {
+      return new Response('', { status: 404 });
+    }
+    return new Response(new Uint8Array(256).fill(137), {
       status: 200, headers: { 'content-type': 'image/png' },
     });
   }
@@ -103,6 +107,32 @@ test('company logos stay behind the password and proxy only safe domains', async
     request('/api/company-logo?src=https%3A%2F%2Fhostile.example%2Ftrack.png', undefined, 'GET')
   );
   assert.equal(unsafe.status, 404);
+
+  // alt=1 means "try the other TLDs of this label". example.io misses and
+  // example.com answers, so the walk has to reach it.
+  const expanded = await handler.fetch(
+    request('/api/company-logo?domain=example.io&alt=1', undefined, 'GET')
+  );
+  assert.equal(expanded.status, 200);
+
+  // Without the flag there is nothing to fall back to.
+  const single = await handler.fetch(
+    request('/api/company-logo?domain=example.io', undefined, 'GET')
+  );
+  assert.equal(single.status, 404);
+
+  // A domain nothing answers for stays a 404, which is what leaves the
+  // monogram in place rather than showing another company's mark.
+  const missing = await handler.fetch(
+    request('/api/company-logo?domain=nothing-here.example&alt=1', undefined, 'GET')
+  );
+  assert.equal(missing.status, 404);
+
+  // Only well-formed domains reach the network at all.
+  const hostile = await handler.fetch(
+    request('/api/company-logo?domain=' + encodeURIComponent('a b/../evil'), undefined, 'GET')
+  );
+  assert.equal(hostile.status, 404);
 });
 
 test('authenticated cross-site and simple-content posts are refused', async () => {
