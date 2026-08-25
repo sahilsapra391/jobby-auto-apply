@@ -511,21 +511,57 @@ class NoToolsInvocationTests(unittest.TestCase):
             set(role_schema["required"]), set(role_schema["properties"])
         )
 
-    def test_gemini_uses_json_without_yolo_approval(self):
+    def test_gemini_keeps_the_stream_format_its_stdin_prompt_requires(self):
+        """The document lane must not rewrite agy's output format.
+
+        This used to force --output-format json and downgrade --approval-mode.
+        The Antigravity CLI has no --approval-mode, so that lookup raised and
+        every Gemini document job failed as "Gemini document command is
+        invalid" before the provider was started. And json output cannot be
+        asked for here: agy requires stream-json output whenever the prompt
+        arrives as stream-json input, which is how the resume and the posting
+        stay out of argv.
+        """
         invocation = self.invocation(
             "gemini",
             [
-                "gemini", "--model", providers.MODEL_IDS["gemini"],
-                "--output-format", "stream-json", "--approval-mode", "yolo",
+                "agy", "--model", providers.MODEL_IDS["gemini"],
+                "--output-format", "stream-json",
+                "--input-format", "stream-json",
+                "--dangerously-skip-permissions",
             ],
         )
         secured = worker.no_tools_document_invocation(invocation)
         self.assertEqual(
-            secured.argv[secured.argv.index("--output-format") + 1], "json"
+            secured.argv[secured.argv.index("--output-format") + 1], "stream-json"
         )
         self.assertEqual(
-            secured.argv[secured.argv.index("--approval-mode") + 1], "default"
+            secured.argv[secured.argv.index("--input-format") + 1], "stream-json"
         )
+        self.assertNotIn("--approval-mode", secured.argv)
+
+    def test_a_reappearing_approval_mode_is_refused_rather_than_rewritten(self):
+        # A flag agy does not have is drift, not something to downgrade.
+        invocation = self.invocation(
+            "gemini",
+            ["agy", "--model", providers.MODEL_IDS["gemini"],
+             "--output-format", "stream-json", "--approval-mode", "yolo"],
+        )
+        with self.assertRaises(worker.GenerationFailed):
+            worker.no_tools_document_invocation(invocation)
+
+    def test_the_antigravity_result_envelope_is_parsed(self):
+        # agy closes with {"event":"result","result":{"response":"<json>"}},
+        # one level deeper than any other wrapper puts the payload.
+        payload = {"resumeOverrides": {}, "coverLetter": {"employer": "Acme"}}
+        stream = "\n".join([
+            json.dumps({"event": "init", "init": {"model": "x"}}),
+            json.dumps({"event": "step_update", "step": {"n": 1}}),
+            json.dumps({"event": "result",
+                        "result": {"status": "SUCCESS",
+                                   "response": json.dumps(payload)}}),
+        ])
+        self.assertEqual(worker.parse_provider_response(stream), payload)
 
 
 class ProviderRunnerTests(unittest.TestCase):
