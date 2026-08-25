@@ -56,10 +56,94 @@ TASK_KINDS = ("documents", "apply", "scan")
 # needs no tool at all. A form agent needs its browser tools, so it needs that
 # flag, and the flag hands it a shell as well.
 TASK_CAPABILITIES = {
-    "openai": frozenset(TASK_KINDS),
+    # documents is toolless on every provider (see DOCUMENTS_TOOLLESS), so it
+    # needs no fence probe: there is nothing to escape with.
+    #
+    # apply and scan put an agent on a browser or the open web and need a fence
+    # PROVEN to bind by scripts/fence_probe.py. Inconclusive means no.
+    #
+    # openai: documents only. Its probe returned three clean canaries while the
+    # CLI answered "You've hit your usage limit", so nothing was attempted and
+    # nothing was proved. Re-probe when quota resets and restore apply and scan
+    # only on `bound`.
+    "openai": frozenset(("documents",)),
+    # anthropic: probed bound on all three, 2026-08-25.
     "anthropic": frozenset(TASK_KINDS),
+    # gemini: documents only, and not for want of probing. The Antigravity CLI
+    # advertises 57 built-in tools with no allowlist, no per-run MCP scoping,
+    # and credentials in the Keychain so an isolated HOME authenticates as
+    # nobody. A form agent needs the flag that reaches its browser tools, and
+    # that flag hands it run_command too.
     "gemini": frozenset(("documents",)),
 }
+
+
+# What "no tools" is spelled as, per CLI. Documents is one turn of prompt in
+# and JSON out: it needs no tool on any provider, so it gets none on any
+# provider, and the capability question disappears because there is nothing to
+# escape with.
+#
+# This began as a Gemini fix. Dropping --dangerously-skip-permissions closed a
+# real escape, a documents run had executed a shell command and left the token
+# on disk. That was never a Gemini fact, it was a documents fact, and the other
+# two are held to it here rather than by anyone remembering.
+DOCUMENTS_TOOLLESS = {
+    "anthropic": {
+        "required_pairs": (("--tools", ""), ("--allowedTools", "")),
+        "required_flags": ("--strict-mcp-config",),
+        "forbidden_flags": (),
+    },
+    "openai": {
+        "required_pairs": (("--sandbox", "read-only"),),
+        "required_flags": ("--ignore-user-config", "--ignore-rules"),
+        # Every executor Codex offers, off by name.
+        "required_disabled": (
+            "shell_tool", "unified_exec", "apply_patch_freeform", "code_mode",
+            "computer_use", "browser_use", "multi_agent",
+        ),
+        "forbidden_flags": (),
+    },
+    "gemini": {
+        "required_pairs": (),
+        "required_flags": (),
+        # The whole fence. agy has no allowlist to put beside it, so with this
+        # present all 57 built-in tools are auto-approved, run_command included.
+        "forbidden_flags": ("--dangerously-skip-permissions",),
+    },
+}
+
+
+def assert_documents_toolless(provider_id: str, argv: list[str]) -> None:
+    """Refuse to hand a documents run anything it could act on the world with.
+
+    Structural rather than advisory: it runs on every build, so a future edit
+    that reintroduces a tool to a documents invocation fails here instead of
+    in production.
+    """
+    rules = DOCUMENTS_TOOLLESS.get(provider_id)
+    if rules is None:
+        raise ProviderError(
+            f"{provider_id} has no toolless document contract")
+    for flag, value in rules["required_pairs"]:
+        if flag not in argv or argv[argv.index(flag) + 1] != value:
+            raise ProviderError(
+                f"{provider_id} document run is missing {flag} {value!r}")
+    for flag in rules["required_flags"]:
+        if flag not in argv:
+            raise ProviderError(
+                f"{provider_id} document run is missing {flag}")
+    for flag in rules["forbidden_flags"]:
+        if flag in argv:
+            raise ProviderError(
+                f"{provider_id} document run must not pass {flag}")
+    disabled = {
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1]) if value == "--disable"
+    }
+    for feature in rules.get("required_disabled", ()):
+        if feature not in disabled:
+            raise ProviderError(
+                f"{provider_id} document run must disable {feature}")
 
 
 def supports(provider_id: str, task_kind: str) -> bool:
@@ -856,6 +940,8 @@ def build_run_invocation(
             argv.extend([
                 "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"
             ])
+        if task_kind == "documents":
+            assert_documents_toolless(provider_id, argv)
         return RunInvocation(provider_id, task_kind, argv, env, work, prompt)
 
     if provider_id == "openai":
@@ -879,6 +965,8 @@ def build_run_invocation(
             "--sandbox", "read-only", "-C", str(work),
             "--skip-git-repo-check", "--ephemeral", "--json", "-",
         ])
+        if task_kind == "documents":
+            assert_documents_toolless(provider_id, argv)
         return RunInvocation(provider_id, task_kind, argv, env, work, prompt)
 
     # The Antigravity CLI, `agy`, replaced the Gemini CLI for individual
@@ -985,6 +1073,8 @@ def build_run_invocation(
     env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
     env.pop("GEMINI_SANDBOX", None)
 
+    if task_kind == "documents":
+        assert_documents_toolless(provider_id, argv)
     return RunInvocation(
         provider_id, task_kind, argv, env, work, _gemini_stream_prompt(prompt))
 

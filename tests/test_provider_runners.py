@@ -84,6 +84,19 @@ class BrowserStub:
         return pathlib.Path("/private/tmp/gemini-settings.json")
 
 
+def all_tasks_cleared():
+    """Pin invocation SHAPE for a provider the live matrix currently gates.
+
+    openai is documents-only until its fence probe returns bound, but the shape
+    of its apply and scan invocations is a security assertion worth keeping:
+    read-only sandbox, no shell, no general filesystem. This says "when it is
+    cleared, this is what it must look like" without clearing it in production.
+    """
+    return mock.patch.object(
+        providers, "TASK_CAPABILITIES",
+        {p: frozenset(providers.TASK_KINDS) for p in providers.PROVIDER_IDS},
+    )
+
 class ProviderInvocationTests(unittest.TestCase):
     def build(self, provider):
         self.temp = tempfile.TemporaryDirectory()
@@ -112,7 +125,8 @@ class ProviderInvocationTests(unittest.TestCase):
         self.assertIn("/private/tmp/browser-mcp.json", invocation.argv)
 
     def test_openai_receives_inline_browser_mcp_settings(self):
-        invocation = self.build("openai")
+        with all_tasks_cleared():
+            invocation = self.build("openai")
         command = " ".join(invocation.argv)
         self.assertIn("mcp_servers.browser.command", command)
         self.assertIn("mcp_servers.browser.required=true", command)
@@ -215,6 +229,8 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
             )
 
         log_dir = self.resume.parent / "logs"
+        cleared = all_tasks_cleared(); cleared.start()
+        self.addCleanup(cleared.stop)
         with mock.patch.object(
                 sys, "argv", ["run_apply.py", "--id", "acme-pm",
                               "--provider", "openai", "--slot", "apply-2"]), \
@@ -423,6 +439,8 @@ class ScanRunnerTests(unittest.TestCase):
     def test_every_scan_provider_is_confined_to_search_and_fetch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            stack = all_tasks_cleared(); stack.start()
+            self.addCleanup(stack.stop)
             invocations = {
                 provider: run_scan.provider_invocation(
                     provider,
@@ -432,7 +450,7 @@ class ScanRunnerTests(unittest.TestCase):
                 )
                 for provider in providers.PROVIDER_IDS
                 if provider != "gemini"
-            }
+            } if True else {}
             # gemini is refused for scan rather than confined. Its fence was
             # --allowed-tools plus a --policy file, and the Antigravity CLI
             # that replaced the Gemini CLI has neither, so nothing could be
@@ -652,6 +670,9 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
 
     def drive(self, results, outcomes, order=("anthropic", "openai"),
               authenticated=None, first="anthropic"):
+        # These exercise the walk itself, so both providers must be selectable.
+        cleared = all_tasks_cleared(); cleared.start()
+        self.addCleanup(cleared.stop)
         seen = []
         if authenticated is None:
             def authenticated(force=False, provider=None):

@@ -31,7 +31,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import ats_match  # noqa: E402
+import ats_match
+import voice_lint  # noqa: E402
 import cover_letter  # noqa: E402
 import document_contract  # noqa: E402
 import providers  # noqa: E402
@@ -306,6 +307,7 @@ class JobLog:
         "cover letter fields rejected",
         "cover letter readability rejected",
         "cover letter address rejected",
+        "cover letter voice rejected",
         "artifacts validated",
         "result published",
         "failure published",
@@ -717,6 +719,30 @@ def validate_artifacts(runtime: dict[str, Any]) -> dict[str, Any]:
     if not layout.get("match"):
         raise ResultInvalid("resume layout does not match the base resume")
 
+    runtime["artifactValidationStage"] = "voice"
+    try:
+        letter_html = cover_html.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise ResultInvalid("the cover letter could not be read for voice") from exc
+    # The banned constructions bind whatever else is available. The specifics
+    # half needs his record to compare against, and is skipped rather than
+    # faked when there is none, which in production there always is: the
+    # document contract requires storyFacts before a job is accepted.
+    evidence = runtime.get("baseResumeText") or ""
+    try:
+        evidence += "\n" + _prompt_file(runtime.get("storyFactsPath"), "story facts")
+    except (ResultInvalid, GenerationFailed, OSError, TypeError):
+        pass
+    try:
+        voice_lint.check(
+            letter_html,
+            evidence=evidence,
+            posting=runtime.get("jobDescription", "") or "",
+        )
+    except voice_lint.VoiceError as exc:
+        runtime["artifactValidationDetail"] = "cover_voice"
+        raise ResultInvalid(f"cover letter voice: {exc}") from exc
+
     runtime["artifactValidationStage"] = "cover_letter"
     content_path = Path(runtime["taskRoot"]) / "cover-content.json"
     content = _read_small_json(content_path)
@@ -858,6 +884,22 @@ near-duplicate bullets anywhere in the resume.
 
 Keep the cover letter to one page. opening and closing must each be at most 450
 characters. Return one or two evidence paragraphs, each at most 650 characters.
+
+VOICE. The letter is checked against these and rejected if it breaks them, so they
+are constraints rather than preferences.
+- Never use an em-dash or an en-dash. Use a comma, a period, or parentheses.
+- Never open with "I am excited to apply" or any variant of it, and never close with
+  "thank you for your time and consideration".
+- Never write "strongly resonates", "resonates with my background", "I am confident
+  that", "I believe I would be a great fit", or "perfect fit for this role".
+- Never use delve, tapestry, pivotal, empower, "testament to", "moreover", or
+  "furthermore".
+- Lead with what he did and the number it moved, naming the real systems and tools
+  from the base resume and storyFacts. A letter that only repeats the posting's own
+  vocabulary back is rejected: it must carry specifics that come from his record and
+  not from the job description.
+- First person, active voice, varied sentence length. Prefer a plain short sentence
+  to a balanced one.
 
 The base resume and storyFacts are the only sources for candidate facts. Writing samples
 show voice only. Never turn a writing sample or job-description claim into a candidate
@@ -2406,6 +2448,7 @@ class DocumentWorker:
                     "cover_fields": "cover letter fields rejected",
                     "cover_readability": "cover letter readability rejected",
                     "cover_address": "cover letter address rejected",
+            "cover_voice": "cover letter voice rejected",
                 }.get(runtime.get("artifactValidationDetail"))
                 if detail_event:
                     log.record(detail_event)
