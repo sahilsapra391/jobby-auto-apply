@@ -48,6 +48,11 @@ deploy/node_modules/
 **/*.png
 !assets/**/*.png
 !deploy/public/*.png
+# The generated brand-pack copy the serverless bundle carries. Written
+# only by sync_vercel_renderer.py, out of assets/brand/, which is already
+# allowed above. Vercel keeps deploy/public/ out of the function, so the
+# board reads its favicons from here instead.
+!deploy/assets/**/*.png
 
 # Scratch renders from a run. Same contents as an application: a real
 # address, phone and email on every page.
