@@ -336,6 +336,37 @@ def spawn(name, argv, logname, note=""):
 APPLY_LOCKS = list(browser.SLOTS)
 APPLY_SLOTS = len(APPLY_LOCKS)
 
+# Two very different jobs share the `scan` lock, and only one of them has any
+# business holding up an Apply.
+#
+# `run_scan.py` is an agent sweep: it drives a provider, so it competes with a
+# form runner for the one connection `select_provider_for_work` hands out. That
+# contention is real and Apply should wait for it.
+#
+# `ingest.py` is an HTTP pass over the job boards. It touches no provider and no
+# browser, and the apply path never calls `jobs_store.save_jobs`, so it cannot
+# lose an update to a form runner either. It shares the lock only because an
+# agent sweep and an API ingest both rewrite the pool and one at a time is the
+# rule, which is a statement about scans and was never a statement about Apply.
+#
+# Conflating them cost roughly thirteen minutes of dead Apply, six times a day,
+# silently: the tick evaluated the branch, found the lock held, spawned nothing,
+# and logged nothing. Pressing Apply during a sweep did nothing at all and then
+# worked again, with no way to tell those apart from the outside.
+INGEST_LOCK_NOTES = frozenset(("tier1-ingest", "ingest"))
+
+
+def scan_blocking_apply():
+    """The scan holder that should hold up Apply, or None.
+
+    Returns the lock record so the caller can say which sweep it is waiting on
+    rather than reporting a bare boolean nobody can act on.
+    """
+    held = lock_holder("scan")
+    if not held or held.get("note") in INGEST_LOCK_NOTES:
+        return None
+    return held
+
 
 def free_apply_slots():
     """Slot names with no live runner, in order."""
@@ -1539,7 +1570,8 @@ def tick(force_publish=False):
     free_slots = free_apply_slots()
     affinity_slot = browser_slot_for_application(head_id) if apply_head else None
     candidate_slots = candidate_apply_slots(head_id) if apply_head else free_slots
-    if apply_ok and apply_head and candidate_slots and not lock_holder("scan"):
+    blocking_scan = scan_blocking_apply()
+    if apply_ok and apply_head and candidate_slots and not blocking_scan:
         slot = candidate_slots[0]
         retained = affinity_slot == slot
         if reserve(slot, note=head_id):
@@ -1570,6 +1602,15 @@ def tick(force_publish=False):
                 "applicationId": head_id,
                 "provider": selected_provider,
             })
+    elif apply_ok and apply_head and candidate_slots and blocking_scan:
+        # Say so. An Apply that waits is a legitimate outcome; an Apply that
+        # waits without a word is indistinguishable from one that was dropped,
+        # which is what this looked like from the board for six sweeps a day.
+        changed["applyDeferred"] = {
+            "applicationId": head_id,
+            "waitingOn": blocking_scan.get("note") or "scan",
+            "since": blocking_scan.get("at"),
+        }
 
     rescued = sweep_stuck({x.get("applicationId") for x in (q.get("apply") or [])})
     if rescued:
