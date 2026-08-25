@@ -57,11 +57,21 @@ class BrowserMcpPolicyTests(unittest.TestCase):
             ["items"]["enum"],
             [str(self.resume), str(self.cover)],
         )
-        tab_choices = by_name["browser_tabs"]["inputSchema"]["oneOf"]
         self.assertEqual(
-            {choice["properties"]["action"]["const"] for choice in tab_choices},
+            set(by_name["browser_tabs"]["inputSchema"]["properties"]["action"]["enum"]),
             {"list", "select"},
         )
+        # Claude Code drops the whole server's tool list, not just the offending
+        # tool, when one advertised schema is not an object schema. Two tools
+        # used a bare top-level oneOf, so the form agent got no page tools at all
+        # and parked every application. The pairing rules those schemas expressed
+        # are enforced in the validators, which is the boundary that binds.
+        for name, tool in sorted(by_name.items()):
+            with self.subTest(tool=name):
+                schema = tool["inputSchema"]
+                self.assertEqual(schema.get("type"), "object")
+                self.assertIsInstance(schema.get("properties"), dict)
+                self.assertFalse(set(schema) & {"oneOf", "anyOf", "allOf", "not"})
 
     def test_direct_code_console_network_storage_route_and_drop_tools_are_rejected(self):
         denied = [
@@ -246,6 +256,95 @@ class BrowserMcpPolicyTests(unittest.TestCase):
             ["browser_snapshot"],
         )
 
+
+
+
+class StatelessProtocolTests(unittest.TestCase):
+    """The 2026-07-28 revision, which Claude Code uses, never sends initialize.
+
+    A client that discovers this revision reads capabilities from the discovery
+    answer and treats a result without the completion markers as coming from a
+    server it cannot use. The firewall answered discovery in the new revision
+    while replying in the old shape, so Claude Code reported the server
+    connected and registered none of its tools. Every apply run then had no way
+    to touch the page. application_mcp.py already had this; keep them in step.
+    """
+
+    MODERN = {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name).resolve()
+        self.resume = root / "resume.pdf"
+        self.cover = root / "cover.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\nresume")
+        self.cover.write_bytes(b"%PDF-1.4\ncover")
+        self.policy = browser_mcp_proxy.BrowserPolicy(
+            [str(self.resume), str(self.cover)]
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_discovery_answer_carries_the_stateless_completion_markers(self):
+        decision = self.policy.prepare_client_message({
+            "jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {},
+        })
+        result = decision.response["result"]
+        self.assertEqual(result["supportedVersions"], ["2026-07-28"])
+        self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(result["resultType"], "complete")
+        self.assertEqual(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            browser_mcp_proxy.SERVER_NAME,
+        )
+        self.assertEqual(result["cacheScope"], "private")
+
+    def test_a_stateless_tool_list_is_marked_complete_and_a_legacy_one_is_not(self):
+        child = {"tools": [{"name": name} for name in self.policy.tool_names]}
+        for modern, expected in ((True, "complete"), (False, None)):
+            with self.subTest(modern=modern):
+                params = {"_meta": dict(self.MODERN)} if modern else {}
+                decision = self.policy.prepare_client_message({
+                    "jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": params,
+                })
+                self.assertEqual(decision.modern, modern)
+                answer = self.policy.filter_child_message(
+                    {"jsonrpc": "2.0", "id": 7, "result": child},
+                    "tools/list", decision.modern,
+                )
+                result = answer.to_client["result"]
+                self.assertEqual(len(result["tools"]), len(self.policy.tool_names))
+                self.assertEqual(result.get("resultType"), expected)
+
+    def test_a_stateless_tool_call_result_is_marked_complete(self):
+        decision = self.policy.prepare_client_message({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": {"name": "browser_tabs", "arguments": {"action": "list"},
+                       "_meta": dict(self.MODERN)},
+        })
+        self.assertTrue(decision.modern)
+        answer = self.policy.filter_child_message(
+            {"jsonrpc": "2.0", "id": 8,
+             "result": {"content": [{"type": "text", "text": "ok"}]}},
+            "tools/call", decision.modern,
+        )
+        self.assertEqual(answer.to_client["result"]["resultType"], "complete")
+
+    def test_flattened_schemas_still_refuse_the_pairings_the_oneOf_expressed(self):
+        for name, arguments in (
+            ("browser_find", {}),
+            ("browser_find", {"text": "a", "regex": "b"}),
+            ("browser_tabs", {"action": "select"}),
+            ("browser_tabs", {"action": "close"}),
+            ("browser_tabs", {"action": "list", "index": 2}),
+        ):
+            with self.subTest(name=name, arguments=arguments):
+                decision = self.policy.prepare_client_message(
+                    request(1, name, arguments)
+                )
+                self.assertIsNone(decision.forward)
+                self.assertTrue(decision.response["result"]["isError"])
 
 if __name__ == "__main__":
     unittest.main()
