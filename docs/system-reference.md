@@ -828,41 +828,39 @@ remembers to run is how it drifts.
 
 ## 15. Known gaps
 
-- **India is a registry-coverage gap, not a scoring gap.** Filtering the board
-  to India returns the embedding floor and nothing more, while the United States
-  returns six times as much. The instinct is to reach for the scoring dial.
-  Don't: India's median score is **69 against the United States' 63**, and its
-  mean title match is the **best of any market at 30.3 of 35**. Indian postings
-  match the searched titles better than American ones do.
+- **~~India is a registry-coverage gap~~ — WITHDRAWN, 2026-08-25.** I wrote this
+  entry the same day and the measurement behind it does not survive. It said
+  India was 20.4% direct listings against the United States' 59.1%, and argued
+  that the ranking gap was therefore a coverage problem to be fixed with Indian
+  employer boards.
 
-  What India lacks is jobs in the 80+ band — 17 against 165 — and that tracks
-  direct-listing share almost exactly:
+  Re-measured on the live store after a fuller sweep: **India is 99.7% direct
+  (370 of 371), the United States 82.9% (2,753 of 3,322)**. India is now the
+  best market by direct share, not the worst.
 
-  | market | direct listings | share of pool | jobs at 80+ |
-  |---|---:|---:|---:|
-  | US | 1,854 | 59.1% | 165 |
-  | Canada | 544 | 35.1% | 49 |
-  | India | 251 | 20.4% | 17 |
-  | UK | 255 | 15.6% | 17 |
-  | Germany | 113 | 12.1% | 11 |
-  | UAE | 20 | 4.5% | 7 |
+  Two things moved it, neither of them a change in India. `oracle_orc` had two
+  boards when I measured and now contributes 125 of India's 371 records and 876
+  of the United States' — one connector landing moved India by a third of its
+  volume. And the keyword gate became the binding filter (6,694 rejections,
+  ahead of the date window's 6,124); aggregator copies carry truncated bodies
+  and generic titles, so they fail a keyword test far more often than an ATS
+  listing with a full description does. The population my 20.4% described no
+  longer exists.
 
-  Canada has a smaller pool than the UK, is twice as direct, and took 140 of the
-  remainder while the UK took none. Pool size does not predict the award;
-  direct-listing share does. A direct listing carries a full body, so it earns a
-  real keywords and experience read instead of the half-weight an unknown gets,
-  and that is what reaches 80. Sixty of the United States' 165 top scorers come
-  from USAJOBS, which by definition returns nothing for anywhere else.
+  What was true, and is worth keeping: direct-listing share predicts the
+  selection remainder, because a full body earns a real keywords and experience
+  read instead of the half-weight an unknown gets. What was not true is that
+  India specifically lacked it.
 
-  So the selection remainder is score-ordered globally and ends up sorting on
-  coverage while calling it merit. **The fix is Indian employers in
-  `companies.json`**, which is what the per-tenant registry is for. Weighting the
-  floor toward the two home markets is a legitimate stopgap for the board today,
-  but it treats the symptom, and it should never be described as a scoring fix.
+  Two lessons rather than one. A share measured on a store under cap pressure is
+  partly an artifact of eviction: `keep_priority` evicts aggregators first, so
+  the survivors skew direct and the number flatters itself. And a market
+  property inferred from a single snapshot of a registry is a property of the
+  registry, not of the market.
 
-  Blocked on one thing: `companies.json` records no country, so all 516 entries
-  read as unknown and the registry cannot answer "how many Indian employers do
-  we poll" — which is the number this gap is judged on. Add the field first.
+  Adding real tenant tokens is still worth doing — five platforms had one board
+  each and returned nothing regardless of what anyone believed about India. But
+  it should be argued on coverage, not on a gap that has closed.
 
 - **Slots 2 and 3 have empty browser profiles.** LinkedIn Easy Apply parks there
   until `browser.py --stop && browser.py --clone-logins` is run with nothing in
