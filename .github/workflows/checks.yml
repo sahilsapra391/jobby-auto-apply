@@ -1,0 +1,80 @@
+# What a PR has to prove before it can reach the board.
+#
+# The board is deployed by two routes that meet only in production: code goes
+# out when main merges and Vercel rebuilds, state is published to Cloudflare KV
+# from the laptop every few minutes. Nothing used to check that the two agreed,
+# and twice that cost a day. Once when three commits of UI work sat in the repo
+# because deploy/renderer was never re-synced, so the deployment kept serving an
+# older interface. Once when the renderer read a favicon out of deploy/public/,
+# which exists on every laptop and is not in the serverless bundle, so it
+# rendered locally, passed every test, and 502'd on every deployed request.
+#
+# Both are the same shape: the working tree is not the thing that ships. These
+# checks run against what ships.
+
+name: checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          # The version Vercel builds the function with. Matching it here is the
+          # point: 3.13 on a laptop will happily run code the deployment cannot.
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: The deployed renderer matches scripts/
+        run: |
+          # Scoped to the two directories sync_vercel_renderer.py generates.
+          # The rest of deploy/ — api/, the .mjs helpers, vercel.json — is
+          # hand-written, and failing a PR for editing those would teach
+          # everyone to ignore this check. --porcelain rather than a diff so a
+          # newly added asset shows up as untracked instead of silently passing.
+          python3 scripts/sync_vercel_renderer.py
+          stale="$(git status --porcelain -- deploy/renderer deploy/assets)"
+          if [ -n "$stale" ]; then
+            echo "$stale"
+            echo "::error::The deployed renderer bundle is stale. Run 'python3 scripts/sync_vercel_renderer.py' and commit deploy/renderer and deploy/assets, or Vercel keeps building the old one."
+            exit 1
+          fi
+
+      - name: Python tests
+        run: |
+          # Everything except the two modules that render the real base resume
+          # out of ~/.job-application. Those need the user's own documents and
+          # a local Chrome, so they stay on the laptop. Listing the exclusions
+          # rather than the inclusions means a new test file is picked up here
+          # the moment it is added.
+          suite=$(ls tests/test_*.py \
+            | sed 's|tests/||; s|\.py$||' \
+            | grep -vE '^(test_resume_pdf|test_resume_build)$' \
+            | sed 's|^|tests.|')
+          python3 -m unittest $suite
+
+      - name: Node tests
+        run: node --test tests/*.test.mjs
+
+      - name: Syntax
+        run: |
+          python3 -m py_compile scripts/*.py deploy/api/page.py
+          bash -n deploy/oci/setup.sh

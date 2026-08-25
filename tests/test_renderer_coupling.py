@@ -11,15 +11,22 @@ mismatch fell through to dashboard.build, threw, and surfaced as a bare 502
 reading "The board state could not be rendered" — which says neither what is
 wrong nor that it clears on its own.
 
-A hash cannot be forgotten the way a constant can.
+A hash cannot be forgotten the way a constant can. But it also cannot be made
+to agree everywhere: there is one jobby:board-state and many deployments, and
+every open PR gets a preview whose renderer hashes differently from main's.
+The laptop can only stamp the branch it is standing on. So the hash reports,
+and only a render that actually failed acts on the report.
 
 Run from the repo root: python3 -m unittest discover -s tests
 """
 
+import base64
 import hashlib
 import importlib.util
+import os
 import pathlib
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -73,6 +80,77 @@ class MismatchReportingTests(unittest.TestCase):
         """Older publishers wrote no such field. Do not block the board on a
         value that is still rolling out."""
         self.assertIsNone(page._renderer_mismatch(""))
+
+
+class Recorder(page.handler):
+    """The handler with its socket removed.
+
+    Overriding _send captures the decision — which status, which headers —
+    without standing up http.server just to read it back out again.
+    """
+
+    def __init__(self, authorized=True):
+        self.headers = {"Authorization": "Basic " + AUTH} if authorized else {}
+        self.command = "GET"
+        self.captured = None
+
+    def _send(self, status, body, content_type, extra=None):
+        self.captured = (status, body, dict(extra or {}))
+
+
+STATE = {
+    "profile": {"firstName": "A"}, "sessions": [], "history": [], "roles": {},
+    "meta": {}, "jobs": {}, "searchConfig": None, "providers": {},
+}
+AUTH = base64.b64encode(b"jobby:secret").decode()
+FOREIGN = "0000deadbeef0000"
+
+
+class DriftDoesNotBlockAWorkingBoardTests(unittest.TestCase):
+    """A preview must draw, or previews are worthless.
+
+    Refusing to render on a hash mismatch 503s every preview of every PR that
+    touches a renderer module, permanently, because the laptop stamps main and
+    the preview is not main. Reviewing a UI change on its preview is the whole
+    reason the preview exists.
+    """
+
+    def run_page(self, fingerprint, build):
+        recorder = Recorder()
+        with mock.patch.dict(os.environ, {"DASHBOARD_PASSWORD": "secret"}, clear=False), \
+             mock.patch.object(page, "_state", return_value=(STATE, "2026-08-25T00:00:00Z", fingerprint)), \
+             mock.patch.object(page.dashboard, "build", build):
+            recorder._page()
+        return recorder.captured
+
+    def test_a_preview_whose_renderer_drifted_still_serves_the_board(self):
+        status, body, extra = self.run_page(FOREIGN, lambda *a: "<html>board</html>")
+        self.assertEqual(status, 200)
+        self.assertIn(b"board", body)
+
+    def test_both_fingerprints_ride_out_on_every_rendered_page(self):
+        _, _, extra = self.run_page(FOREIGN, lambda *a: "<html>board</html>")
+        self.assertEqual(extra["X-Jobby-State-Fingerprint"], FOREIGN)
+        self.assertEqual(extra["X-Jobby-Renderer-Fingerprint"], page._renderer_fingerprint())
+
+    def test_state_with_no_fingerprint_reports_none_rather_than_blank(self):
+        _, _, extra = self.run_page("", lambda *a: "<html>board</html>")
+        self.assertEqual(extra["X-Jobby-State-Fingerprint"], "none")
+
+    def test_a_render_that_fails_under_drift_says_which_half_is_behind(self):
+        def explode(*a):
+            raise KeyError("postedAt")
+        status, body, extra = self.run_page(FOREIGN, explode)
+        self.assertEqual(status, 503)
+        self.assertIn(b"different version of the renderer", body)
+        self.assertEqual(extra.get("Retry-After"), "60")
+
+    def test_a_render_that_fails_without_drift_is_the_plain_502(self):
+        def explode(*a):
+            raise KeyError("postedAt")
+        status, body, _ = self.run_page(page._renderer_fingerprint(), explode)
+        self.assertEqual(status, 502)
+        self.assertIn(b"could not be rendered", body)
 
 
 if __name__ == "__main__":

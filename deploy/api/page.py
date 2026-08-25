@@ -180,27 +180,34 @@ class handler(BaseHTTPRequestHandler):
             print(json.dumps({"event": "board_state_read_failed", "errorType": type(error).__name__}))
             self._send(502, b"The board state could not be read.\n", "text/plain; charset=utf-8")
             return
-        mismatch = _renderer_mismatch(envelope_fingerprint)
-        if mismatch:
-            # Say which half is behind instead of throwing. The board and the
-            # code that renders it are deployed by different routes: state is
-            # published from the user's machine every few minutes, code only on
-            # a merge. Between the two there is a window where new state meets
-            # an older renderer, and that used to surface as a bare 502 reading
-            # "The board state could not be rendered", which says nothing about
-            # what is wrong or that it will clear on its own.
-            print(json.dumps({"event": "renderer_state_mismatch", **mismatch}))
-            self._send(503,
-                       b"The board was published by a different version of the "
-                       b"renderer than this deployment. A deploy is catching up; "
-                       b"reload shortly.\n",
-                       "text/plain; charset=utf-8", {"Retry-After": "60"})
-            return
+        # Drift is measured before the render but only *acted on* after one,
+        # because there is exactly one jobby:board-state and many deployments.
+        # Every open PR gets a preview whose renderer hashes differently from
+        # main's, and the laptop can only stamp the branch it is standing on,
+        # so the two can never all agree. Refusing to draw on a hash mismatch
+        # therefore 503s every preview permanently, which is the one thing
+        # previews exist to prevent. The state itself is renderer-agnostic
+        # data; rendererSchemaVersion above is what guards its shape.
+        #
+        # So: try the render. If it works, say who drew it in a header and
+        # leave the board up. If it throws, that is the case the mismatch was
+        # written for, and the answer says which half is behind instead of the
+        # bare "could not be rendered" that cost a day.
+        drift = _renderer_mismatch(envelope_fingerprint)
         try:
             page = dashboard.build(state, _display_time(generated_at)).encode("utf-8")
         except (OSError, ValueError, KeyError, TypeError) as error:
-            print(json.dumps({"event": "board_render_failed", "errorType": type(error).__name__}))
-            self._send(502, b"The board state could not be rendered.\n", "text/plain; charset=utf-8")
+            failure = {"event": "board_render_failed", "errorType": type(error).__name__}
+            print(json.dumps({**failure, **(drift or {})}))
+            if drift:
+                self._send(503,
+                           b"The board was published by a different version of the "
+                           b"renderer than this deployment. A deploy is catching up; "
+                           b"reload shortly.\n",
+                           "text/plain; charset=utf-8", {"Retry-After": "60"})
+            else:
+                self._send(502, b"The board state could not be rendered.\n",
+                           "text/plain; charset=utf-8")
             return
         self._send(
             200,
@@ -210,6 +217,10 @@ class handler(BaseHTTPRequestHandler):
                 "Content-Security-Policy": CSP,
                 "X-Jobby-Renderer-Commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "local"),
                 "X-Jobby-State-Generated-At": generated_at or "unknown",
+                # Both halves, always, so drift is visible on a working board
+                # rather than only in the wreckage of a broken one.
+                "X-Jobby-Renderer-Fingerprint": _renderer_fingerprint(),
+                "X-Jobby-State-Fingerprint": envelope_fingerprint or "none",
             },
         )
 
