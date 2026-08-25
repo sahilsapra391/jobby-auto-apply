@@ -214,8 +214,10 @@ def build(aid):
     # cache so a second brief for the same application stays offline. Without
     # this every promoted application died in document_contract as
     # "the application has no job description".
+    jd_source = "extraction" if jd_text.strip() else ""
+    jd_error = ""
     if not jd_text.strip() and not jd_path.exists():
-        jd_text = posting_body.resolve(aid)
+        jd_text, jd_source, jd_error = posting_body.resolve_detail(aid)
     # Never overwrite a posting body with nothing. On a retry the extraction can
     # be absent while the file written by the first attempt is still the only
     # copy of the posting anywhere.
@@ -223,6 +225,10 @@ def build(aid):
         jd_path.write_text(jd_text)
     elif not jd_path.exists():
         jd_path = None
+    elif not jd_source:
+        jd_source = "cached"
+    if jd_path is None and not jd_error:
+        jd_error = "the application has no job description"
 
     base = pick_base(profile, entry.get("region"))
     expected_documents = document_contract.output_names(
@@ -244,6 +250,12 @@ def build(aid):
         "duplicate": guard,
         "folder": str(folder),
         "jdPath": str(jd_path) if jd_path else None,
+        # An excerpt is 1,500 characters and cuts mid-word. Tailoring against it
+        # produces a weaker application that still goes out under the user's
+        # name, so which text was used travels with the brief rather than being
+        # inferred later from the size of a file.
+        "jobDescriptionSource": jd_source,
+        "jobDescriptionError": jd_error,
         "extraction": extraction,
         "baseResume": (base or {}).get("path"),
         "identity": (base or {}).get("identity"),

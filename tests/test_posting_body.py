@@ -29,7 +29,10 @@ def load(name):
 
 
 posting_body = load("posting_body")
-base = posting_body.base
+# The routing moved into job_description, which is where the per-board URL
+# shapes are now covered. This module owns the store-side question: which text
+# an application ends up with when the full body cannot be read.
+base = posting_body.job_description.base
 
 FULL_BODY = "<p>Who we are</p><p>" + ("Build the thing. " * 400) + "</p>"
 EXCERPT = "Who we are. Build the thi"
@@ -43,42 +46,17 @@ class FakeFetcher:
         self.fail = fail
         self.urls = []
 
-    def get_json(self, url):
+    def get_json(self, url, conditional=True, headers=None):
         self.urls.append(url)
         if self.fail:
             return None, base.Response(404, error="not found")
         return self.payload, base.Response(200)
 
-
-class GreenhouseUrlTests(unittest.TestCase):
-    def test_reads_the_token_and_job_id_from_the_current_board_host(self):
-        self.assertEqual(
-            posting_body._greenhouse_parts(
-                "https://job-boards.greenhouse.io/twilio/jobs/8136763"),
-            ("twilio", "8136763"))
-
-    def test_a_query_string_does_not_become_part_of_the_job_id(self):
-        # The older boards.greenhouse.io links in the pool arrive carrying
-        # ?gh_jid=. Splitting the raw URL on "/" welds that to the job id and
-        # the API answers 404, which is a fetch failure that looks like a dead
-        # posting. Two of the six parked applications had this URL shape.
-        self.assertEqual(
-            posting_body._greenhouse_parts(
-                "https://boards.greenhouse.io/robinhood/jobs/8131181"
-                "?gh_jid=8131181&t=gh_src%3D"),
-            ("robinhood", "8131181"))
-
-    def test_a_non_greenhouse_url_has_no_parts(self):
-        self.assertIsNone(posting_body._greenhouse_parts(
-            "https://jobs.lever.co/acme/1234"))
-
-    def test_a_board_listing_page_is_not_a_job(self):
-        self.assertIsNone(posting_body._greenhouse_parts(
-            "https://job-boards.greenhouse.io/twilio"))
-
-    def test_a_non_numeric_job_id_is_refused(self):
-        self.assertIsNone(posting_body._greenhouse_parts(
-            "https://job-boards.greenhouse.io/twilio/jobs/apply"))
+    def get(self, url, conditional=True, headers=None):
+        # The page fallback. A board that answers nothing is followed by one
+        # request against the page a person would read.
+        self.urls.append(url)
+        return base.Response(404)
 
 
 class ResolveTests(unittest.TestCase):
@@ -122,14 +100,32 @@ class ResolveTests(unittest.TestCase):
             "abc123", root=self.root, fetcher=FakeFetcher(payload={"content": ""}))
         self.assertEqual(text, EXCERPT)
 
-    def test_an_ats_with_no_fetcher_uses_the_excerpt_without_a_request(self):
+    def test_lever_is_read_rather_than_falling_back(self):
+        # This case used to assert the opposite, because the only fetcher was
+        # Greenhouse and every other board went straight to the excerpt. Lever,
+        # Ashby, SmartRecruiters and Workday are read now, and the pool spans
+        # all of them.
         self.write_jobs({"abc123": self.job(
             canonicalSource="lever",
             canonicalUrl="https://jobs.lever.co/acme/1234")})
-        fetcher = FakeFetcher(payload={"content": FULL_BODY})
-        text = posting_body.resolve("abc123", root=self.root, fetcher=fetcher)
+        fetcher = FakeFetcher(payload={"descriptionPlain": "Build the thing. " * 60})
+        text, source, _ = posting_body.resolve_detail(
+            "abc123", root=self.root, fetcher=fetcher)
+        self.assertEqual(source, "posting")
+        self.assertIn("Build the thing", text)
+        self.assertEqual(fetcher.urls, ["https://api.lever.co/v0/postings/acme/1234"])
+
+    def test_a_board_nobody_can_read_falls_back_to_the_excerpt_and_says_so(self):
+        self.write_jobs({"abc123": self.job(
+            canonicalSource="workable",
+            canonicalUrl="https://apply.workable.com/acme/j/ABC123")})
+        text, source, why = posting_body.resolve_detail(
+            "abc123", root=self.root, fetcher=FakeFetcher(fail=True))
         self.assertEqual(text, EXCERPT)
-        self.assertEqual(fetcher.urls, [])
+        # The caller records which text it got. A resume tailored against 1,500
+        # truncated characters is a weaker application that still goes out.
+        self.assertEqual(source, "excerpt")
+        self.assertTrue(why)
 
     def test_a_job_the_store_does_not_hold_resolves_to_nothing(self):
         self.write_jobs({})

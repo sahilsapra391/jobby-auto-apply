@@ -50,6 +50,7 @@ SAFE_ERROR_CODES = {
     "cloudflare_not_configured",
     "generation_failed",
     "invalid_request",
+    "job_description_missing",
     "job_expired",
     "job_id_invalid",
     "job_missing",
@@ -422,6 +423,13 @@ def _submit(application_id, state, root=None, transport=None):
             state["provider"],
             root=root,
         )
+    except document_contract.MissingJobDescription as exc:
+        # Its own code, because it is the one refusal the user can act on. A
+        # posting that was withdrawn, or a board this cannot read, is not the
+        # same kind of thing as "invalid_request", which reads like a bug in
+        # Jobby and sends them nowhere.
+        return _record_failure(
+            application_id, state, "job_description_missing", root, str(exc))
     except document_contract.DocumentContractError as exc:
         # The contract refuses on facts about the request, not on its content,
         # so its own sentence is safe to keep and is the only thing that tells

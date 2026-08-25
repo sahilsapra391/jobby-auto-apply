@@ -33,6 +33,16 @@ class DocumentContractError(Exception):
     pass
 
 
+class MissingJobDescription(DocumentContractError):
+    """No posting body could be resolved for this application.
+
+    Its own class because it is the one bundle failure the user can act on, and
+    because `_submit` collapses every other cause into the fixed code
+    `invalid_request`. Six applications in a row failed with that code and it
+    named nothing; the reason underneath never reached the board.
+    """
+
+
 @contextmanager
 def _store_root(root=None):
     previous = os.environ.get("JOB_APPLICATION_DIR")
@@ -166,7 +176,9 @@ def build_bundle(application_id, provider, root=None):
         if not job_text.strip() and summary.get("jdPath"):
             job_text = _read_text(summary["jdPath"], "the job description")
         if not job_text.strip():
-            raise DocumentContractError("the application has no job description")
+            raise MissingJobDescription(
+                summary.get("jobDescriptionError")
+                or "the application has no job description")
         if len(job_text.encode()) > MAX_TEXT_BYTES:
             raise DocumentContractError("the job description is too large")
 

@@ -976,12 +976,32 @@ class ProviderResponseTests(unittest.TestCase):
             with self.subTest(value=value[:40]):
                 self.assertEqual(worker.parse_provider_response(value), payload)
 
-    def test_prose_fences_and_ambiguous_results_are_rejected(self):
+    def test_a_response_that_is_nothing_but_one_fence_is_unwrapped(self):
+        # Claude fences its JSON. The prompt has said not to since it was
+        # written, and rejecting the result threw away work the model had
+        # already done correctly, so a response that is exactly one fence and
+        # nothing else is unwrapped.
         payload = provider_payload()
-        with self.assertRaises(worker.ResultInvalid):
-            worker.parse_provider_response(
-                "```json\n" + json.dumps(payload) + "\n```"
-            )
+        for value in (
+            "```json\n" + json.dumps(payload) + "\n```",
+            "```\n" + json.dumps(payload) + "\n```",
+        ):
+            with self.subTest(value=value[:12]):
+                self.assertEqual(worker.parse_provider_response(value), payload)
+
+    def test_prose_around_a_fence_is_still_refused(self):
+        payload = provider_payload()
+        for value in (
+            "Here is the JSON you asked for:\n```json\n" + json.dumps(payload) + "\n```",
+            "```json\n" + json.dumps(payload) + "\n```\nLet me know if you need changes.",
+            "```json\n" + json.dumps(payload) + "\n```\n```json\n{}\n```",
+        ):
+            with self.subTest(value=value[:30]):
+                with self.assertRaises(worker.ResultInvalid):
+                    worker.parse_provider_response(value)
+
+    def test_ambiguous_results_are_rejected(self):
+        payload = provider_payload()
         changed = provider_payload()
         changed["coverLetter"]["role"] = "Different Role"
         with self.assertRaises(worker.ResultInvalid):
@@ -1009,10 +1029,16 @@ class ProviderResponseTests(unittest.TestCase):
         with self.assertRaises(worker.ResultInvalid):
             worker.validate_provider_content(payload, runtime)
 
+        # employer and role come from the trusted request for every provider now,
+        # so a model naming the wrong company is corrected rather than rejected.
+        # This used to raise, and it cost every Anthropic job whose model read
+        # the fuller job title off the posting it was given.
         payload = provider_payload()
         payload["coverLetter"]["employer"] = "Another Company"
-        with self.assertRaises(worker.ResultInvalid):
-            worker.validate_provider_content(payload, runtime)
+        payload["coverLetter"]["role"] = "Some Other Role"
+        corrected = worker.validate_provider_content(payload, runtime)
+        self.assertEqual(corrected["coverLetter"]["employer"], "Private Company")
+        self.assertEqual(corrected["coverLetter"]["role"], "Private Role")
 
         payload = provider_payload()
         del payload["coverLetter"]["salutation"]
