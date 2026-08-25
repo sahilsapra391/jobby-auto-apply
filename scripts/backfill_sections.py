@@ -31,8 +31,11 @@ import posting_sections  # noqa: E402
 import runlock  # noqa: E402
 import store  # noqa: E402
 
-# Boards whose full posting `posting_body` knows how to read.
-FETCHABLE = ("greenhouse.io", "lever.co", "ashbyhq.com")
+def _fetchable(job):
+    """Worth trying. job_description falls back to the page for unknown hosts,
+    so the only real requirement is a posting URL."""
+    url = (job.get("canonicalUrl") or "").lower()
+    return url.startswith(("http://", "https://"))
 
 
 def backfill(jobs, force=False):
@@ -80,8 +83,7 @@ def fetch_missing(jobs, workers=8, limit=None, progress=None, refetch=False):
     """
     targets = [
         job for job in jobs.values()
-        if (refetch or not _has(job.get("sections")))
-        and any(host in (job.get("canonicalUrl") or "") for host in FETCHABLE)
+        if (refetch or not _has(job.get("sections"))) and _fetchable(job)
     ]
     if limit:
         targets = targets[:limit]

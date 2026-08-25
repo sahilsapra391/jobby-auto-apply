@@ -73,6 +73,33 @@ class RouteTests(unittest.TestCase):
             "/job/Paris/Tax-Apprentice-_r20698-1",
     }
 
+    def test_oracle_is_read_through_its_rest_resource(self):
+        """The page route reports a live Oracle posting as delisted.
+
+        Oracle Recruiting Cloud answers a direct fetch of the posting with a
+        redirect to its own index, which `_from_page` correctly reads as "no
+        longer listed". 1,466 of the board's postings are on it, and every one
+        of them was unreadable until the REST resource was wired up.
+        """
+        posting = ("https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience"
+                   "/en/sites/CX_1/job/341846")
+        api = ('https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/'
+               'recruitingCEJobRequisitionDetails?onlyData=true&expand=all'
+               '&finder=ById;Id="341846",siteNumber=CX_1')
+        filler = "<p>" + ("Own the roadmap and the outcomes it drives. " * 30) + "</p>"
+        fetcher = FakeFetcher({api: {"items": [{
+            "ExternalDescriptionStr":
+                "<p>Job Responsibilities</p><p>Own the roadmap.</p>" + filler,
+            "ExternalQualificationsStr":
+                "<p>Required qualifications</p><p>5 years.</p>",
+        }]}})
+        text = job_description.fetch(posting, fetcher=fetcher)
+        self.assertEqual(fetcher.asked, [api])
+        self.assertIn("Own the roadmap.", text)
+        # Both fields carry part of the body, and either can hold the
+        # requirements, so neither may be dropped.
+        self.assertIn("5 years.", text)
+
     def test_each_board_is_read_through_its_own_api(self):
         for posting, api in self.CASES.items():
             with self.subTest(posting=posting):

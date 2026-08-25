@@ -8,6 +8,7 @@
 // Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
 // board.
 
+import { gunzipSync } from 'node:zlib';
 import { getBoard, getBoardState, getDoc, getLocalStatus } from '../kvcontent.mjs';
 
 const REALM = 'Application board';
@@ -65,6 +66,20 @@ const QUEUES = { '/api/scan': 'scan', '/api/apply': 'apply', '/api/retry': 'appl
                  '/api/submitted': 'marked', '/api/drop': 'drop',
                  '/api/restore': 'restore', '/api/focus': 'focus',
                  '/api/watch': 'watch', '/api/pass': 'pass' };
+
+// The same envelope api/page.py reads: gzip, base64, with a ceiling so a
+// malformed value cannot be a decompression bomb.
+const MAX_STATE_BYTES = 20 * 1024 * 1024;
+
+function decodeBoardState(envelope) {
+  try {
+    const compressed = Buffer.from(envelope.payload, 'base64');
+    const bytes = gunzipSync(compressed, { maxOutputLength: MAX_STATE_BYTES });
+    return JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return null;
+  }
+}
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...BASE_HEADERS },
@@ -373,7 +388,8 @@ export default {
     if (pathname === '/api/posting' && request.method === 'GET') {
       const id = String(requestUrl.searchParams.get('id') || '');
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false }, 400);
-      const state = await getBoardState(process.env).catch(() => null);
+      const envelope = await getBoardState(process.env).catch(() => null);
+      const state = envelope ? decodeBoardState(envelope) : null;
       const job = state && state.jobs ? state.jobs[id] : null;
       const sections = (job && job.sections) || {};
       const trim = (lines) => (Array.isArray(lines) ? lines : [])
