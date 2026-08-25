@@ -250,6 +250,8 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
                     ),
                 ), \
                 mock.patch.object(run_apply.agent, "invalidate") as invalidate, \
+                mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
                 mock.patch.object(run_apply, "store", return_value=completed()), \
                 mock.patch.object(
                     run_apply, "verify_terminal_outcome",
@@ -295,7 +297,9 @@ class ApplyOutcomeTests(ApplyFixtureMixin, unittest.TestCase):
             "event": "completed", "applicationId": "acme-pm",
             "at": "2026-08-23T10:00:00Z",
         }]
-        with mock.patch.object(run_apply, "store", side_effect=self.fake_store(history)):
+        with mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
+                mock.patch.object(run_apply, "store", side_effect=self.fake_store(history)):
             outcome = run_apply.verify_terminal_outcome("acme-pm", artifacts)
         self.assertTrue(outcome["ok"])
         self.assertEqual(outcome["terminal"], "completed")
@@ -329,7 +333,9 @@ class ApplyOutcomeTests(ApplyFixtureMixin, unittest.TestCase):
             "event": "submitting", "applicationId": "acme-pm",
             "at": "2026-08-23T10:00:00Z",
         }]
-        with mock.patch.object(run_apply, "store", side_effect=self.fake_store(history, {})):
+        with mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
+                mock.patch.object(run_apply, "store", side_effect=self.fake_store(history, {})):
             outcome = run_apply.verify_terminal_outcome("acme-pm", artifacts)
         self.assertFalse(outcome["ok"])
         self.assertEqual(outcome["terminal"], "submission_unverified")
@@ -342,7 +348,9 @@ class ApplyOutcomeTests(ApplyFixtureMixin, unittest.TestCase):
             "event": "completed", "applicationId": "acme-pm",
             "at": "2026-08-23T10:00:00Z",
         }]
-        with mock.patch.object(run_apply, "store", side_effect=self.fake_store(history)):
+        with mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
+                mock.patch.object(run_apply, "store", side_effect=self.fake_store(history)):
             outcome = run_apply.verify_terminal_outcome("acme-pm", artifacts)
         self.assertFalse(outcome["ok"])
         self.assertIn("changed", outcome["why"])
@@ -693,6 +701,8 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
                 mock.patch.object(run_apply.provider_login, "publish_status"), \
                 mock.patch.object(run_apply.providers, "mark_unhealthy"), \
                 mock.patch.object(run_apply.agent, "invalidate"), \
+                mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
                 mock.patch.object(run_apply, "store", return_value=completed()), \
                 mock.patch.object(
                     run_apply, "verify_terminal_outcome",

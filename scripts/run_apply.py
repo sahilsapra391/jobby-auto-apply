@@ -26,6 +26,7 @@ import agent  # noqa: E402
 import browser  # noqa: E402
 import provider_login  # noqa: E402
 import provider_process  # noqa: E402
+import mcp_preflight  # noqa: E402
 import provider_usage  # noqa: E402
 import providers  # noqa: E402
 import toolpath  # noqa: E402
@@ -508,6 +509,44 @@ def main():
         }, indent=2))
         return 2
 
+    # Ask the servers for their tools before an agent is spawned. A server that
+    # connects and advertises nothing does not fail: the agent improvises,
+    # reports that only the jobby tools were exposed, and parks the application
+    # on a blocker the user cannot act on while holding one of five slots. Four
+    # of the five were held that way on 2026-08-25.
+    #
+    # The cause is still not reproduced; the proxy answers correctly on every
+    # hand probe. This does not wait for it. The handshake is captured on the
+    # way past, so several occurrences should name the cause for free.
+    application_context = {
+        "applicationId": application_id,
+        "resume": artifacts["resume"]["path"],
+        "cover": artifacts["coverLetter"]["path"],
+        "uploadResume": upload_artifacts["resume"]["path"],
+        "uploadCover": upload_artifacts["coverLetter"]["path"],
+    }
+    try:
+        advertised = mcp_preflight.check(
+            browser.server_configs(args.slot, application_context)
+        )
+    except mcp_preflight.PreflightError as exc:
+        blocked = (
+            f"the {exc.server} tools were not available for {args.slot}: {exc.reason}"
+        )
+        store(["meta-set", "--key", "blocked", "--value", blocked])
+        _set_phase(
+            application_id, "--restore", "--phase", "Failed", "--detail",
+            f"{exc.server} advertised no usable tools; nothing was filled",
+        )
+        print(json.dumps({
+            "blocked": blocked,
+            "applicationId": application_id,
+            "slot": args.slot,
+            "server": exc.server,
+            "handshake": exc.capture,
+        }, indent=2))
+        return 2
+
     # Every connected provider gets a turn, newest connection first. One
     # provider used to get the only turn: if its CLI hung, overflowed its
     # output bound, or came back on the wrong model, the application parked and
@@ -558,13 +597,7 @@ def main():
                     workspace=agent_workspace.name,
                     browser_slot=args.slot,
                     browser_adapter=browser,
-                    application_context={
-                        "applicationId": application_id,
-                        "resume": artifacts["resume"]["path"],
-                        "cover": artifacts["coverLetter"]["path"],
-                        "uploadResume": upload_artifacts["resume"]["path"],
-                        "uploadCover": upload_artifacts["coverLetter"]["path"],
-                    },
+                    application_context=application_context,
                 )
             except providers.ProviderError as exc:
                 agent_workspace.cleanup()
@@ -738,6 +771,7 @@ def main():
     print(json.dumps({
         "ran": application_id,
         "provider": selected_provider,
+        "toolsAdvertised": {k: len(v) for k, v in advertised.items()},
         "attempts": attempts,
         "providerExit": provider_exit,
         "timedOut": timed_out,
