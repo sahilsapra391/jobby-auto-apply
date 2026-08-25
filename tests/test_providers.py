@@ -861,9 +861,47 @@ class GeminiAntigravityTests(unittest.TestCase):
             with self.subTest(task=task):
                 with self.assertRaises(providers.ProviderError) as caught:
                     self.build(task)
-                self.assertIn("57 unrestricted built-in tools",
-                              str(caught.exception))
+                self.assertIn("not cleared for", str(caught.exception))
         self.assertTrue(self.build("documents").argv)
+
+
+
+class TaskCapabilityTests(unittest.TestCase):
+    """Routing lives in code, not in a prompt or a comment.
+
+    The same principle as employment history living in the template so a run
+    cannot express it: a provider whose fence has not been proven to bind must
+    be unable to be handed the task, by any caller, prompt or config change.
+    """
+
+    def test_every_provider_is_in_the_matrix(self):
+        self.assertEqual(
+            set(providers.TASK_CAPABILITIES), set(providers.PROVIDER_IDS))
+        for tasks in providers.TASK_CAPABILITIES.values():
+            self.assertTrue(set(tasks) <= set(providers.TASK_KINDS))
+
+    def test_document_generation_is_provider_agnostic(self):
+        for provider in providers.PROVIDER_IDS:
+            with self.subTest(provider=provider):
+                self.assertTrue(providers.supports(provider, "documents"))
+
+    def test_gemini_is_documents_only(self):
+        self.assertTrue(providers.supports("gemini", "documents"))
+        self.assertFalse(providers.supports("gemini", "apply"))
+        self.assertFalse(providers.supports("gemini", "scan"))
+
+    def test_building_an_uncleared_invocation_is_refused(self):
+        # Structural: every runner builds its invocation through this call.
+        with self.assertRaises(providers.ProviderError) as caught:
+            providers.build_run_invocation(
+                "gemini", "apply", "x", workspace=tempfile.mkdtemp(),
+                binary_resolver=lambda name, _r: f"/agents/{name}",
+                base_env={"PATH": "/usr/bin"},
+            )
+        self.assertIn("not cleared for apply", str(caught.exception))
+
+    def test_an_unknown_provider_supports_nothing(self):
+        self.assertFalse(providers.supports("nobody", "documents"))
 
 
 

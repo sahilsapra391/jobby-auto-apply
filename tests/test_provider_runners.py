@@ -123,7 +123,7 @@ class ProviderInvocationTests(unittest.TestCase):
         # there is no scoped invocation to build. Refusing is the scope.
         with self.assertRaises(providers.ProviderError) as caught:
             self.build("gemini")
-        self.assertIn("gemini cannot run apply work", str(caught.exception))
+        self.assertIn("not cleared for apply work", str(caught.exception))
 
 
 class ApplyFixtureMixin:
@@ -650,8 +650,8 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
     how one application is submitted twice under a real name.
     """
 
-    def drive(self, results, outcomes, order=("gemini", "anthropic", "openai"),
-              authenticated=None):
+    def drive(self, results, outcomes, order=("anthropic", "openai"),
+              authenticated=None, first="anthropic"):
         seen = []
         if authenticated is None:
             def authenticated(force=False, provider=None):
@@ -675,7 +675,7 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
                 mock.patch.object(run_apply, "load_brief", return_value=self.summary), \
                 mock.patch.object(run_apply, "_refuse_duplicate", return_value=False), \
                 mock.patch.object(
-                    run_apply.agent, "resolve_provider", return_value="gemini"), \
+                    run_apply.agent, "resolve_provider", return_value=first), \
                 mock.patch.object(
                     run_apply.agent, "authenticated", side_effect=authenticated), \
                 mock.patch.object(
@@ -721,18 +721,33 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
             outcomes=[{"ok": False, "terminal": None},
                       {"ok": True, "terminal": "completed"}],
         )
-        self.assertEqual(tried, ["gemini", "anthropic"])
+        self.assertEqual(tried, ["anthropic", "openai"])
         self.assertEqual(code, 0)
 
     def test_it_walks_all_the_way_down_the_connection_order(self):
         code, tried = self.drive(
-            results=[self.result(1), self.result(1), self.result(0)],
+            results=[self.result(1), self.result(0)],
             outcomes=[{"ok": False, "terminal": None},
-                      {"ok": False, "terminal": None},
                       {"ok": True, "terminal": "completed"}],
         )
-        self.assertEqual(tried, ["gemini", "anthropic", "openai"])
+        self.assertEqual(tried, ["anthropic", "openai"])
         self.assertEqual(code, 0)
+
+    def test_a_provider_not_cleared_for_form_filling_is_never_tried(self):
+        """The capability matrix, enforced where the walk is built.
+
+        gemini is documents-only: the Antigravity CLI has no allowlist, so the
+        flag a form agent needs to reach its browser tools also hands it
+        run_command. A fence probe caught it running a shell command during a
+        documents task, which is what put it here.
+        """
+        code, tried = self.drive(
+            results=[self.result(0)],
+            outcomes=[{"ok": True, "terminal": "completed"}],
+            order=("gemini", "anthropic", "openai"),
+        )
+        self.assertNotIn("gemini", tried)
+        self.assertEqual(tried[0], "anthropic")
 
     def test_a_parked_form_is_never_handed_to_a_second_provider(self):
         # The user has to do something. Another agent re-opening that form is
@@ -741,26 +756,26 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
             results=[self.result(3)],
             outcomes=[{"ok": False, "terminal": "parked"}],
         )
-        self.assertEqual(tried, ["gemini"])
+        self.assertEqual(tried, ["anthropic"])
 
     def test_a_submitted_form_is_never_handed_to_a_second_provider(self):
         code, tried = self.drive(
             results=[self.result(1)],
             outcomes=[{"ok": False, "terminal": "submission_unverified"}],
         )
-        self.assertEqual(tried, ["gemini"])
+        self.assertEqual(tried, ["anthropic"])
 
     def test_the_first_success_stops_the_walk(self):
         code, tried = self.drive(
             results=[self.result(0)],
             outcomes=[{"ok": True, "terminal": "completed"}],
         )
-        self.assertEqual(tried, ["gemini"])
+        self.assertEqual(tried, ["anthropic"])
         self.assertEqual(code, 0)
 
     def test_an_unauthenticated_account_is_skipped_without_being_run(self):
         def authenticated(force=False, provider=None):
-            return (provider != "anthropic", "not connected")
+            return (provider != "openai", "not connected")
 
         code, tried = self.drive(
             results=[self.result(1), self.result(0)],
@@ -768,7 +783,7 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
                       {"ok": True, "terminal": "completed"}],
             authenticated=authenticated,
         )
-        self.assertEqual(tried, ["gemini", "openai"])
+        self.assertEqual(tried, ["anthropic"])
 
 
 

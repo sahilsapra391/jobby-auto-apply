@@ -458,7 +458,7 @@ def main():
     # the loop below exists precisely to walk past that one.
     ok, reason = agent.authenticated(force=True, provider=selected_provider)
     if not ok:
-        for fallback in providers.work_order():
+        for fallback in providers.capable_providers("apply"):
             if fallback == selected_provider:
                 continue
             ok, reason = agent.authenticated(force=True, provider=fallback)
@@ -560,17 +560,34 @@ def main():
     # must not repeat: re-running one over a submitted form is how an
     # application goes out twice under the user's name. Only a provider that
     # achieved nothing is worth replacing.
-    candidates = [selected_provider]
-    for candidate in providers.work_order():
-        if candidate not in candidates:
-            candidates.append(candidate)
+    # Only providers cleared for form filling. A provider whose fence has not
+    # been proven to bind is not a slower option here, it is not an option.
+    attempts = []
+    candidates = [
+        p for p in [selected_provider] + providers.work_order()
+        if providers.supports(p, "apply")
+    ]
+    candidates = list(dict.fromkeys(candidates))
+    for skipped in providers.work_order():
+        if not providers.supports(skipped, "apply"):
+            attempts.append({
+                "provider": skipped,
+                "skipped": "not cleared for form filling: tool fence unproven",
+            })
+    if not candidates:
+        blocked = "no connected provider is cleared for form filling"
+        store(["meta-set", "--key", "blocked", "--value", blocked])
+        print(json.dumps({
+            "blocked": blocked, "applicationId": application_id,
+            "attempts": attempts,
+        }, indent=2))
+        return 2
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
     log = run_log_path(application_id)
     descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
-    attempts = []
     provider_exit = 3
     timed_out = False
     overflow_stream = None
