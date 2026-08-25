@@ -204,6 +204,27 @@ def load_prices(path=None):
     return payload if isinstance(models, dict) else None
 
 
+def unpriced_reason(usage, model, prices):
+    """Why this row has no cost, or None when it does have one."""
+    if usage is None:
+        return "no usage reported"
+    if not prices:
+        return "no price table"
+    rates = (prices.get("models") or {}).get(model)
+    if not isinstance(rates, dict):
+        return f"no price entry for model {model or '(unnamed)'}"
+    expires = rates.get("ratesExpireOn")
+    if expires:
+        try:
+            deadline = datetime.strptime(str(expires), "%Y-%m-%d").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return f"unreadable ratesExpireOn for {model}"
+        if datetime.now(timezone.utc).date() > deadline.date():
+            return f"rates for {model} expired on {expires}"
+    return None
+
+
 def estimate_usd(usage, model, prices):
     """Dollar cost for one invocation, or None when it cannot be known.
 
@@ -253,6 +274,13 @@ class Record:
     usage: dict = field(default_factory=dict)
     costUsd: float = None
     priceAsOf: str = None
+    # Why a cost is missing, when it is. None simply meant "no number" and read
+    # identically whether the table was absent, the rates had lapsed, or the
+    # pinned model had been renamed out from under its own price entry. The
+    # last of those is what happened: the table said gemini-3.7-flash while
+    # providers.MODEL_IDS pinned gemini-3.7-flash-medium, so every Gemini row
+    # costed as null and nothing anywhere said so.
+    unpricedReason: str = None
 
 
 def ledger_path(root=None):
@@ -280,6 +308,7 @@ def record(application_id, provider, model, task_kind, usage, *,
         usage=asdict(usage) if usage is not None else {},
         costUsd=estimate_usd(usage, model, prices),
         priceAsOf=(prices or {}).get("asOf"),
+        unpricedReason=unpriced_reason(usage, model, prices),
     )
     try:
         path = ledger_path(root)

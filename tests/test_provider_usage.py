@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import provider_usage  # noqa: E402
+import provider_usage
+import providers  # noqa: E402
 
 
 OPENAI = ('{"type":"turn.completed","usage":{"input_tokens":76582,'
@@ -131,14 +132,21 @@ class PriceTableTests(unittest.TestCase):
             self.assertIsNone(provider_usage.load_prices(Path(tmp) / "absent.json"))
 
     def test_the_shipped_table_prices_every_model_jobby_pins(self):
-        # Catches a typo in the JSON, and catches the day an introductory rate
-        # lapses without anyone updating the file.
+        """Catches a typo, a lapsed introductory rate, and a renamed pin.
+
+        The model list used to be three literals here, and one of them was
+        gemini-3.7-flash while providers.MODEL_IDS pinned
+        gemini-3.7-flash-medium. So this test priced a model nobody ran, passed,
+        and Gemini's real cost recorded as null for as long as that was true.
+        Derived from the pins now, so the two cannot drift apart again.
+        """
         prices = provider_usage.load_prices()
         self.assertIsNotNone(prices, "references/model-prices.json is unusable")
         usage = provider_usage.parse(OPENAI)
-        unpriced = [model for model in ("gpt-5.6-luna", "claude-sonnet-5",
-                                        "gemini-3.7-flash")
-                    if provider_usage.estimate_usd(usage, model, prices) is None]
+        unpriced = [
+            model for model in sorted(set(providers.MODEL_IDS.values()))
+            if provider_usage.estimate_usd(usage, model, prices) is None
+        ]
         self.assertEqual(unpriced, [], f"expired or missing rates: {unpriced}")
 
 
@@ -183,6 +191,62 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(summary["app4"]["invocations"], 2)
             self.assertEqual(summary["app4"]["measured"], 1)
             self.assertFalse(summary["app4"]["costKnown"])
+
+
+class PricedModelTests(unittest.TestCase):
+    """Every pinned model must have a price, and a miss must say so.
+
+    The table carried gemini-3.7-flash while providers.MODEL_IDS pinned
+    gemini-3.7-flash-medium. Every Gemini row costed as null, nothing anywhere
+    said why, and cost tracking was off for a whole provider without a single
+    failure. A rename does that quietly unless something checks.
+    """
+
+    def setUp(self):
+        self.prices = provider_usage.load_prices()
+
+    def test_the_price_table_loads(self):
+        self.assertIsNotNone(
+            self.prices, "the price table is missing, malformed or stale")
+
+    def test_every_pinned_model_has_a_price_entry(self):
+        missing = [
+            model for model in providers.MODEL_IDS.values()
+            if model not in (self.prices.get("models") or {})
+        ]
+        self.assertEqual(
+            missing, [],
+            "these pinned models have no price entry, so their cost silently "
+            "records as null: " + ", ".join(missing))
+
+    def test_every_pinned_model_actually_costs_a_run(self):
+        # An entry that exists but has lapsed is the same silence.
+        usage = provider_usage.Usage(
+            input_tokens=1000, output_tokens=100, cached_input_tokens=0,
+            cache_write_input_tokens=0, reasoning_output_tokens=0,
+            blocks_seen=1, shape="test",
+        ) if hasattr(provider_usage, "Usage") else None
+        if usage is None:
+            self.skipTest("no Usage constructor exposed")
+        for model in sorted(set(providers.MODEL_IDS.values())):
+            with self.subTest(model=model):
+                self.assertIsNone(
+                    provider_usage.unpriced_reason(usage, model, self.prices))
+                self.assertIsNotNone(
+                    provider_usage.estimate_usd(usage, model, self.prices))
+
+    def test_a_missing_entry_is_named_not_silent(self):
+        usage = provider_usage.parse('{"usage":{"input_tokens":10,"output_tokens":2}}')
+        reason = provider_usage.unpriced_reason(usage, "not-a-model", self.prices)
+        self.assertIn("no price entry", reason or "")
+        self.assertIn("not-a-model", reason or "")
+
+    def test_no_price_table_is_named_too(self):
+        usage = provider_usage.parse('{"usage":{"input_tokens":10,"output_tokens":2}}')
+        self.assertEqual(
+            provider_usage.unpriced_reason(usage, "claude-sonnet-5", None),
+            "no price table")
+
 
 
 if __name__ == "__main__":
