@@ -366,6 +366,27 @@ export default {
       return handleProviderAction(request);
     }
 
+    // What the posting listed under its own headings, for one expanded card.
+    // On demand rather than in the page, because the embedded payload is capped
+    // at 4MB and sections average about 265 bytes a record; the published state
+    // is capped at 20MB and sits at 9.4, so it can afford to carry them.
+    if (pathname === '/api/posting' && request.method === 'GET') {
+      const id = String(requestUrl.searchParams.get('id') || '');
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false }, 400);
+      const state = await getBoardState(process.env).catch(() => null);
+      const job = state && state.jobs ? state.jobs[id] : null;
+      const sections = (job && job.sections) || {};
+      const trim = (lines) => (Array.isArray(lines) ? lines : [])
+        .map((line) => String(line || '').slice(0, 400))
+        .filter(Boolean)
+        .slice(0, 12);
+      return json({
+        ok: true,
+        responsibilities: trim(sections.responsibilities),
+        requirements: trim(sections.requirements),
+      }, 200);
+    }
+
     if (pathname === '/api/providers' && request.method === 'GET') {
       const [board, localStatus] = await Promise.all([
         getBoard(process.env).catch(() => null),

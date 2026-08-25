@@ -1190,6 +1190,15 @@ CSS = """
   .jb-chip.boards { background:var(--t-g); color:var(--green); }
   .jb-chip.years { background:var(--t-o); color:var(--orange); }
   .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
+  .jb-sections { display:grid; gap:.9rem; margin:.2rem 0 .1rem; }
+  .jb-section h4 { margin:0 0 .35rem; font-size:.74rem; font-weight:640;
+    letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); }
+  .jb-section ul { margin:0; padding-left:1.05rem; display:grid; gap:.22rem; }
+  .jb-section li { font-size:.82rem; line-height:1.5; color:var(--ink-2); }
+  .jb-loading { margin:0; font-size:.8rem; color:var(--ink-3); }
+  @media (min-width:1100px) {
+    .jb-sections { grid-template-columns:1fr; }
+  }
   .jb-facts { display:flex; flex-wrap:wrap; gap:.35rem; }
   .jb-fact { display:grid; grid-template-columns:4.4rem 1fr 2.1rem; align-items:center;
     gap:.4rem; width:100%; font-size:.7rem; color:var(--ink-3); }
@@ -1466,27 +1475,54 @@ SCRIPT = r"""
     return 'var(--ink-3)';
   }
 
+  var sectionCache = {};
+  function renderSections(holder, data) {
+    holder.textContent = '';
+    var rows = [['Key responsibilities', data.responsibilities || []],
+                ['Requirements', data.requirements || []]];
+    var any = false;
+    rows.forEach(function (pair) {
+      if (!pair[1].length) return;
+      any = true;
+      var row = el('div', 'jb-section');
+      row.appendChild(el('h4', null, pair[0]));
+      var list = el('ul');
+      pair[1].forEach(function (line) { list.appendChild(el('li', null, line)); });
+      row.appendChild(list);
+      holder.appendChild(row);
+    });
+    if (!any) {
+      holder.appendChild(el('p', 'jb-loading',
+        'This posting does not use headings this can read.'));
+    }
+  }
+  function loadSections(job, holder) {
+    if (sectionCache[job.id]) { renderSections(holder, sectionCache[job.id]); return; }
+    if (typeof fetch !== 'function') { holder.textContent = ''; return; }
+    fetch('/api/posting?id=' + encodeURIComponent(job.id), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.ok) { holder.textContent = ''; return; }
+        sectionCache[job.id] = data;
+        renderSections(holder, data);
+      })
+      // A saved copy of the board has no route to ask, and that is not an
+      // error worth showing; the rest of the panel still stands.
+      .catch(function () { holder.textContent = ''; });
+  }
+
   function detailPanel(job) {
     var panel = el('div', 'jb-panel');
     if (job.sum) panel.appendChild(el('p', 'jb-excerpt', job.sum));
 
-    var bars = el('div', 'jb-bars');
-    COMPONENTS.forEach(function (name, i) {
-      var scored = (job.pt || [])[i];
-      if (scored === undefined) return;
-      var weight = WEIGHTS[i] || 1;
-      var row = el('div', 'jb-bar');
-      row.appendChild(el('u', null, name));
-      var track = el('span');
-      var fill = el('i');
-      fill.style.width = Math.round((scored / weight) * 100) + '%';
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(el('em', null, scored + '/' + weight));
-      row.title = WHY[(job.wy || [])[i]] || '';
-      bars.appendChild(row);
-    });
-    panel.appendChild(bars);
+    // What the posting itself says, in its own two halves. These are fetched
+    // rather than embedded: sections average about 265 bytes a record and the
+    // page is capped at 4MB, so carrying them for every job costs more than the
+    // whole budget. Only an opened card pays.
+    var sections = el('div', 'jb-sections');
+    sections.appendChild(el('p', 'jb-loading', 'Reading the posting...'));
+    panel.appendChild(sections);
+    loadSections(job, sections);
 
     (job.ga || []).forEach(function (label) {
       panel.appendChild(el('p', 'jb-excerpt', 'Capped at 25: ' + label));

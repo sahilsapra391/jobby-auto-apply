@@ -95,7 +95,8 @@ CSS = r"""
   .jb-morph { width:139px; height:153px; margin:0; }
   .jb-mascot2 { height:111px; }
 
-  .segwrap { position:sticky; top:.7rem; margin-bottom:1.6rem; z-index:20; }
+  .segwrap { position:sticky; top:.7rem; margin:0 auto 1.6rem; z-index:20;
+    width:100%; max-width:1360px; }
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
     padding:0; gap:0; overflow:visible; border:1px solid var(--hair);
     border-radius:var(--radius); background:var(--card); box-shadow:var(--sh); }

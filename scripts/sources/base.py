@@ -44,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import extract  # noqa: E402
+import posting_sections  # noqa: E402
 import company_logos  # noqa: E402
 import identity  # noqa: E402
 import jobs_store  # noqa: E402
@@ -633,11 +634,17 @@ def posting(source, source_class, tier, company, title, url, *, location=None,
         "lang": lang,
         "descriptionExcerpt": body[:EXCERPT_CHARS],
         "descFingerprint": identity.fingerprint(body),
+        # The sections are what the board shows when a card is expanded, and
+        # they are also the best input to the year figure: read on its own, a
+        # requirements bullet has no responsibilities and no company blurb in it
+        # to be confused by.
+        "sections": posting_sections.split_sections(body),
         # Extracted here, from the whole body, because the requirements section
         # is almost always below the excerpt cap: only 4 of 195 stored excerpts
         # in the supervised run carried a year figure at all. The full text is
         # in hand exactly once, right now, and only the number is kept.
-        "extracted": {**record["extracted"], **extract.extract(body)},
+        "extracted": {**record["extracted"],
+                      **extract.extract(body, posting_sections.split_sections(body))},
         "tags": sorted({str(t).strip().lower() for t in (tags or []) if str(t).strip()}),
         "salary": salary,
     })
