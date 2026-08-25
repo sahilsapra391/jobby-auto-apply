@@ -94,6 +94,22 @@ LEGAL_SUFFIXES = (
 # Curated per-region coverage, so a fresh install is not limited to whatever
 # the user happened to apply to. Region is where the company is headquartered,
 # not where the roles are; the config's location filter does that job.
+# Teamtailor tenants verified against https://{token}.teamtailor.com/jobs.json
+# on 2026-08-25, each answering 200 with a non-empty `items` array. The registry
+# previously held one entry — name "Teamtailor", token "career" — which is the
+# vendor's own marketing subdomain and not a board. career.teamtailor.com does
+# not resolve, so the connector reported "every board failed (1)" on every run
+# and the platform contributed nothing.
+TEAMTAILOR_SEEDS = [
+    ("Oatly", "teamtailor", "oatly", "SE"),
+    ("Instabee", "teamtailor", "instabee", "SE"),
+    ("Anyfin", "teamtailor", "anyfin", "SE"),
+    ("Quinyx", "teamtailor", "quinyx", "SE"),
+    ("Tibber", "teamtailor", "tibber", "NO"),
+    ("Hemnet", "teamtailor", "hemnet", "SE"),
+    ("Funnel", "teamtailor", "funnel", "SE"),
+]
+
 SEED_PACK = [
     ("Acronis", "workday", "acronis", "CH"),
     ("GEICO", "workday", "geico", "US"),
@@ -101,12 +117,17 @@ SEED_PACK = [
     ("FocusKPI", "jazzhr", "focuskpi", "US"),
     ("Oracle", "oracle_orc", "CX_1", "US"),
     ("Pinpoint", "pinpoint", "workwithus", "GB"),
-    ("Teamtailor", "teamtailor", "career", "SE"),
     ("Careem", "greenhouse", "careem", "AE"),
     ("Tamara", "greenhouse", "tamara", "AE"),
     ("Storyblok", "greenhouse", "storyblok", "AT"),
     ("Airtasker", "ashby", "airtasker", "AU"),
-    ("SafetyCulture", "ashby", "safetyculture", "AU"),
+    # SafetyCulture is deliberately absent. It left Ashby —
+    # api.ashbyhq.com/posting-api/job-board/safetyculture returns 404 — and it
+    # was the one dead token of 137, reported as an error on every single run.
+    # Not re-pointed by guess: smartrecruiters answers for the name but with
+    # zero postings, which is not evidence of a move. The pack is the *verified*
+    # list, so an unresolved company does not belong in it; from_roles and
+    # from_postings will re-add it with a real token the next time it is seen.
     ("Culture Amp", "greenhouse", "cultureamp", "AU"),
     ("Eucalyptus", "greenhouse", "eucalyptus", "AU"),
     ("Airtasker", "lever", "airtasker", "AU"),
@@ -781,7 +802,7 @@ def from_postings(postings):
 
 def from_pack():
     out = []
-    for name, ats, token, region in SEED_PACK:
+    for name, ats, token, region in SEED_PACK + TEAMTAILOR_SEEDS:
         record = blank_company(name, region, "pack")
         record["ats"] = ats
         record["token"] = token

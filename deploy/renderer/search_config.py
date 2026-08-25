@@ -281,7 +281,18 @@ def save(root, config, bump=True):
         current = load(root)
     except ConfigError:
         current = None
-    checked = validate(config)
+
+    # Merge over what is already saved, never replace it. The board renders
+    # eighteen of the twenty-two settings and posts exactly those, so a plain
+    # validate() filled the other four from DEFAULTS and every press of Save
+    # silently undid them. storedCap was the expensive one: set to null on
+    # purpose, reset to 3,000 by the next save, and the pool collapsed from
+    # 14,171 records to a saturated ring buffer evicting one job per admission.
+    #
+    # A setting the board cannot show is still a setting the user chose.
+    merged = dict(current or {})
+    merged.update(config)
+    checked = validate(merged)
     if bump:
         previous = (current or {}).get("version", 0)
         checked["version"] = max(previous, int(config.get("version") or 0)) + 1

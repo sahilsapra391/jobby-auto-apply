@@ -760,5 +760,66 @@ class ScanDestinationTests(unittest.TestCase):
         self.assertIn("read-only", prompt)
 
 
+class SavedSearchMergeTests(unittest.TestCase):
+    """Saving a search must not undo a setting the board cannot show.
+
+    The board renders eighteen of the twenty-two config settings and posts
+    exactly those, so a plain validate() filled the rest from DEFAULTS and every
+    press of Save silently reverted them. storedCap was the expensive one: set
+    to null deliberately, reset to 3,000 by the next save, and the pool
+    collapsed from 14,171 records to a saturated ring buffer evicting one job
+    for every one it admitted.
+    """
+
+    def board_shaped(self, saved):
+        # Exactly the keys the client posts.
+        keys = ("keywords", "excludeKeywords", "searchScope", "roleCategories",
+                "locations", "includeRemoteForSelection", "workplace",
+                "companiesMode", "companies", "maxExperienceYears", "degreeMax",
+                "employmentTypes", "jobTypes", "postedWithin", "includeUnknowns",
+                "sort", "directOnly")
+        return {k: saved[k] for k in keys if k in saved}
+
+    def test_settings_the_board_cannot_show_survive_a_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            first = search_config.save(root, dict(search_config.DEFAULTS,
+                                                  storedCap=None,
+                                                  minScoreToKeep=55,
+                                                  tier1IntervalMinutes=240))
+            second = search_config.save(root, self.board_shaped(first))
+            self.assertIsNone(second["storedCap"])
+            self.assertEqual(second["minScoreToKeep"], 55)
+            self.assertEqual(second["tier1IntervalMinutes"], 240)
+
+    def test_what_the_board_does_send_still_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            search_config.save(root, dict(search_config.DEFAULTS, postedWithin="7d"))
+            out = search_config.save(root, {"postedWithin": "30d"})
+            self.assertEqual(out["postedWithin"], "30d")
+
+    def test_the_version_still_moves_on_every_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            a = search_config.save(root, dict(search_config.DEFAULTS))
+            b = search_config.save(root, {"postedWithin": "30d"})
+            self.assertGreater(b["version"], a["version"])
+
+    def test_every_setting_the_board_omits_is_covered_by_the_merge(self):
+        # The general guard: whatever the client stops sending, the merge keeps.
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            saved = search_config.save(root, dict(search_config.DEFAULTS,
+                                                  storedCap=None, minScoreToKeep=55,
+                                                  sponsorsVisaOnly=True,
+                                                  tier2SweepsPerDay=9))
+            after = search_config.save(root, self.board_shaped(saved))
+            for key in ("storedCap", "minScoreToKeep", "sponsorsVisaOnly",
+                        "tier2SweepsPerDay", "tier1IntervalMinutes"):
+                with self.subTest(setting=key):
+                    self.assertEqual(after[key], saved[key])
+
+
 if __name__ == "__main__":
     unittest.main()
