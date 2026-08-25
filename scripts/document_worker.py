@@ -101,6 +101,17 @@ PROVIDER_PACKAGE_NAMES = {
 # scrubs whatever it reads back, and a value that survives both is one the two
 # halves agree about.
 MAX_FAILURE_REASON = 140
+# Enough for a CLI usage error or an auth message, far short of a transcript.
+MAX_PROVIDER_STDERR_KEPT = 4 * 1024
+
+
+def _first_line(raw: bytes | bytearray) -> str:
+    """The first meaningful line of a provider's stderr, for a failure reason."""
+    text = bytes(raw).decode("utf-8", "replace")
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
 _REASON_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
 
 
@@ -1945,7 +1956,7 @@ class ProviderRunner:
                 stdin=(subprocess.PIPE if invocation.stdin_payload is not None
                        else subprocess.DEVNULL),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 start_new_session=True,
             )
         except OSError as exc:
@@ -1980,6 +1991,38 @@ class ProviderRunner:
             target=drain_stdout, name="jobby-provider-stdout", daemon=True
         )
         reader.start()
+
+        # Kept, bounded, and only ever used to say why a run failed. This was
+        # DEVNULL, so "provider process failed" was the whole account of every
+        # non-zero exit: a CLI rejecting its own arguments, an expired login and
+        # a usage limit were indistinguishable, and each cost a separate
+        # investigation. It is scrubbed by failure_reason on the way to the log
+        # and again by the client on the way to the card.
+        stderr_tail = bytearray()
+
+        def drain_stderr() -> None:
+            if process.stderr is None:
+                return
+            try:
+                while True:
+                    chunk = process.stderr.read(4096)
+                    if not chunk:
+                        break
+                    if len(stderr_tail) < MAX_PROVIDER_STDERR_KEPT:
+                        stderr_tail.extend(
+                            chunk[:MAX_PROVIDER_STDERR_KEPT - len(stderr_tail)])
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    process.stderr.close()
+                except OSError:
+                    pass
+
+        errors = threading.Thread(
+            target=drain_stderr, name="jobby-provider-stderr", daemon=True
+        )
+        errors.start()
 
         def feed_stdin() -> None:
             if process.stdin is None:
@@ -2029,7 +2072,10 @@ class ProviderRunner:
             if overflow.is_set():
                 raise GenerationFailed("provider response exceeded its size limit")
             if process.returncode != 0:
-                raise GenerationFailed("provider process failed")
+                raise GenerationFailed(
+                    f"provider exited {process.returncode}"
+                    + (f": {_first_line(stderr_tail)}" if stderr_tail else "")
+                )
             try:
                 decoded = bytes(output).decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -2047,6 +2093,7 @@ class ProviderRunner:
             raise
         finally:
             reader.join(timeout=1)
+            errors.join(timeout=1)
             writer.join(timeout=1)
 
 
