@@ -172,21 +172,10 @@ def weworkremotely(fetcher, limit=None, **_):
         return base.posting(
             "weworkremotely", SOURCE_CLASS, TIER, entry.get("company"), entry.get("title"),
             entry.get("url"), location=base.parse_location(entry.get("region")),
-            workplace="remote", posted_at=_rfc822(entry.get("pubDate")),
+            workplace="remote", posted_at=base.rfc822_date(entry.get("pubDate")),
             description=entry.get("description") or "", logo_url=entry.get("logoUrl"))
     return base.ok("weworkremotely", _collect("weworkremotely", entries, parse, limit),
                    requests, note=f"{len(entries)} in the feed")
-
-
-def _rfc822(value):
-    """RSS dates are RFC 822, which fromisoformat cannot read."""
-    from email.utils import parsedate_to_datetime
-    if not value:
-        return None
-    try:
-        return parsedate_to_datetime(value).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except (TypeError, ValueError):
-        return None
 
 
 CONNECTORS = {
