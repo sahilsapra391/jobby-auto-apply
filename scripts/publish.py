@@ -303,6 +303,36 @@ def push_content(html, state, docs, providers=None):
     return json.loads(r.stdout or "{}")
 
 
+def sync_renderer():
+    """Regenerate the deployed renderer bundle, and say if it moved.
+
+    deploy/renderer is a copy of the modules the Vercel function imports, and
+    Vercel builds it from git. So a change to scripts/found_lane.py that nobody
+    remembered to sync deploys the *old* interface, silently, while every local
+    test passes. That is not hypothetical: three commits of UI work sat in the
+    repo and never reached the board that way.
+
+    Running it here means a publish can never write state that the deployed
+    renderer was not built to draw. It cannot deploy the result — Vercel builds
+    from git — so when the bundle moves this says so and asks for a commit,
+    which is the one thing a script cannot do on someone's behalf.
+    """
+    before = {}
+    target = REPO / "deploy" / "renderer"
+    for path in sorted(target.glob("*.py")):
+        before[path.name] = path.read_bytes()
+
+    sync_module = REPO / "scripts" / "sync_vercel_renderer.py"
+    proc = subprocess.run([sys.executable, str(sync_module)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise PublishError((proc.stderr or "renderer sync failed").strip()[:300])
+
+    moved = [path.name for path in sorted(target.glob("*.py"))
+             if before.get(path.name) != path.read_bytes()]
+    return moved
+
+
 def cmd_publish(args, base):
     """Publish the board.
 
@@ -312,6 +342,12 @@ def cmd_publish(args, base):
     reaches production by merging to main, which is what Vercel is connected to.
     Pass --deploy to push code from here anyway.
     """
+    moved = sync_renderer()
+    if moved:
+        print("Renderer bundle refreshed from scripts/: " + ", ".join(moved))
+        print("  Commit deploy/renderer/ or the deployment keeps serving the old "
+              "interface — Vercel builds it from git, not from here.")
+
     summary = build_dashboard(args.root)
     docs = build_documents(args.root)
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "

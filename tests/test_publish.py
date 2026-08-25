@@ -9,6 +9,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 """
 
 import importlib.util
+import inspect
 import json
 import sys
 import os
@@ -338,6 +339,41 @@ class DryRunTests(unittest.TestCase):
             body = json.loads(self.run_publish([], d).stdout)
             self.assertFalse(body["published"])
             self.assertIn("refusing to publish", body["error"])
+
+
+class RendererSyncOnPublishTests(unittest.TestCase):
+    """A publish can never write state the deployed renderer was not built for.
+
+    deploy/renderer is a copy Vercel builds from git, so a change to
+    scripts/found_lane.py that nobody synced deploys the old interface silently
+    while every local test passes. Three commits of UI work reached the repo and
+    never reached the board exactly that way.
+    """
+
+    def test_publish_syncs_before_it_builds(self):
+        source = inspect.getsource(publish.cmd_publish)
+        self.assertIn("sync_renderer()", source)
+        self.assertLess(source.index("sync_renderer()"),
+                        source.index("build_dashboard"))
+
+    def test_it_reports_what_moved_rather_than_silently_fixing_it(self):
+        # A script cannot commit on someone's behalf, and Vercel builds from
+        # git, so saying nothing would leave the deployment stale anyway.
+        source = inspect.getsource(publish.cmd_publish)
+        self.assertIn("Commit deploy/renderer/", source)
+
+    def test_a_clean_tree_reports_nothing_moved(self):
+        self.assertEqual(publish.sync_renderer(), [])
+
+    def test_a_changed_module_is_detected(self):
+        target = ROOT / "deploy" / "renderer" / "found_lane.py"
+        original = target.read_bytes()
+        try:
+            target.write_bytes(original + b"\n# drift\n")
+            self.assertIn("found_lane.py", publish.sync_renderer())
+        finally:
+            target.write_bytes(original)
+            publish.sync_renderer()
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ The order is fixed and each step is cheaper than the one after it:
 
 import argparse
 import json
+import pathlib
 import subprocess
 import sys
 import time
@@ -155,10 +156,26 @@ def already_decided(index, posting):
 # --- the configuration gate -------------------------------------------------
 
 def _text_for_scope(posting, config):
+    """What an *include* keyword is matched against."""
     text = posting.get("title") or ""
     if config.get("searchScope") != "title":
         text = f"{text}\n{posting.get('descriptionExcerpt') or ''}"
     return text
+
+
+def _text_for_exclusions(posting):
+    """What an *exclude* keyword is matched against: everything, always.
+
+    An exclusion is a veto, and a veto should look everywhere. "staffing
+    agency" almost never appears in a job title and almost always appears in
+    the body, so scoping exclusions to the title would quietly stop rejecting
+    exactly the postings the list exists to reject.
+
+    This used to follow `searchScope` along with the include terms. That was
+    invisible while the scope defaulted to title-and-description, and became a
+    silent widening of what got stored the moment the default moved to titles.
+    """
+    return f"{posting.get('title') or ''}\n{posting.get('descriptionExcerpt') or ''}"
 
 
 def gate(posting, config, now=None):
@@ -199,7 +216,7 @@ def gate(posting, config, now=None):
 
     text = _text_for_scope(posting, config)
     excludes = config.get("excludeKeywords") or []
-    lowered = text.lower()
+    lowered = _text_for_exclusions(posting).lower()
     for word in excludes:
         if word.lower() in lowered:
             return f"mentions an excluded word ({word})"
@@ -417,6 +434,63 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     return report, jobs
 
 
+def add_postings(root, postings, now=None):
+    """Put postings into the Found pool, the same way a connector's would go.
+
+    The agent sweep used to write `status: "watch"` sessions directly, so
+    anything it found landed in Watching without the user ever seeing it in
+    Found. Sahil's rule is that a scan fills Found and only the eye moves a job
+    to Watching, so the sweep needs a door into the pool — and it has to be this
+    door, not a second one. A job added here is scored by the same rubric,
+    resolved by the same identity rules and merged into the same records as one
+    a connector found, which is what makes "seen on 2 boards" mean anything.
+
+    Returns a report in the same shape a run does.
+    """
+    now = now or datetime.now(timezone.utc)
+    config = search_config.load(root) or dict(search_config.DEFAULTS)
+    jobs = jobs_store.load_jobs(root)
+    passed = jobs_store.load_passed(root)
+    companies = jobs_store.load_companies(root)
+    index = identity.Index(jobs, companies)
+    decided = applied_index(root)
+    tombstones = tombstone_index(passed)
+
+    report = {"found": 0, "kept": 0, "deduped": 0, "gatedOut": 0, "gatedOutBy": {},
+              "errors": [], "added": [], "byChannel": {}}
+    for posting in postings:
+        report["found"] += 1
+        reason = gate(posting, config, now=now)
+        if reason:
+            _count_gate(report, reason)
+            continue
+        if _tombstoned(tombstones, posting):
+            _count_gate(report, "dropped by the user before")
+            continue
+        state, why = already_decided(decided, posting)
+        flags = {"duplicateOfApplied": True, "duplicateReason": why} if state == "applied" else {}
+        posting["score"] = match_score.score(posting, config, now=now, flags=flags)
+        posting["configVersion"] = config.get("version", 0)
+        if state in ("applied", "watched"):
+            posting["state"] = state
+        match_id, how = identity.resolve(index, posting)
+        try:
+            jobs, action = jobs_store.upsert(jobs, posting, match_id=match_id,
+                                             matched=how is not None)
+        except jobs_store.JobsStoreError as exc:
+            report["errors"].append({"channel": "agent-sweep", "why": str(exc)})
+            continue
+        if action == "merged":
+            report["deduped"] += 1
+        else:
+            report["kept"] += 1
+            report["added"].append(match_id)
+        index.add(match_id, jobs[match_id])
+    jobs_store.save_jobs(root, jobs)
+    report["storedTotal"] = len(jobs)
+    return report
+
+
 def tombstone_index(passed):
     """The tombstones, arranged for lookup rather than a scan.
 
@@ -505,6 +579,10 @@ def _publish():
 
 def main():
     ap = argparse.ArgumentParser(description="Run one Tier-1 sourcing pass.")
+    ap.add_argument("--add", metavar="FILE",
+                    help="a JSON posting, or array of them, to put into Found "
+                         "(what the agent sweep uses instead of writing "
+                         "watch entries)")
     ap.add_argument("--tier", default="1", choices=["1"],
                     help="Tier 2 sweeps are Phase 3")
     ap.add_argument("--store", help="store directory (default ~/.job-application)")
@@ -516,6 +594,19 @@ def main():
     args = ap.parse_args()
 
     root = jobs_store.root_dir(args.store)
+
+    if args.add:
+        raw = json.loads(pathlib.Path(args.add).expanduser().read_text())
+        postings = raw if isinstance(raw, list) else [raw]
+        try:
+            report = add_postings(root, postings)
+        except (IngestError, jobs_store.JobsStoreError,
+                search_config.ConfigError) as exc:
+            print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
+            return 2
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+
     try:
         report, _ = run(root, channels=args.channel, limit=args.limit,
                         dry_run=args.dry_run, publish=args.publish)

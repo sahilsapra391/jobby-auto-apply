@@ -69,6 +69,12 @@ TRANSITIONS = {
 # an aggregator's copy of it is a summary written by someone else.
 CANONICAL_RANK = {"ats": 0, "careers": 1, "aggregator": 2, "feed": 2, "other": 3}
 
+# These connectors formerly wrote a non-publication field into postedAt. A
+# one-time production repair clears records for which that connector is still
+# canonical, then a fresh connector pass restores genuine publication dates.
+UNTRUSTED_LEGACY_DATE_SOURCES = frozenset(
+    ("greenhouse", "workable", "recruitee", "jooble"))
+
 
 class JobsStoreError(Exception):
     pass
@@ -83,6 +89,16 @@ def parse_stamp(value):
     if not value:
         return None
     text = str(value).strip()
+    # Offsets first, and without truncating. The old path sliced to twenty
+    # characters and tried "...Z"; an offset stamp failed that, fell through to
+    # the ten-character date form, and was read as midnight UTC — silently up
+    # to a day out. Latent while every connector emitted Z, and a trap for the
+    # next one that does not.
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
     for fmt, width in (("%Y-%m-%dT%H:%M:%SZ", 20), ("%Y-%m-%d", 10)):
         try:
             return datetime.strptime(text[:width], fmt).replace(tzinfo=timezone.utc)
@@ -131,6 +147,44 @@ def load_jobs(root):
 def save_jobs(root, jobs):
     store.write_private(paths(root)["jobs"], jobs)
     return jobs
+
+
+def clear_untrusted_legacy_dates(jobs):
+    """Clear dates written by former edit, draft, or refresh fallbacks.
+
+    The canonical-source guard preserves a valid ATS date on a record that also
+    has an old Jooble sighting. The caller owns persistence so dry runs and the
+    atomic store write stay explicit.
+    """
+    changed = []
+    for job_id, job in jobs.items():
+        if (job.get("postedAt") and
+                job.get("canonicalSource") in UNTRUSTED_LEGACY_DATE_SOURCES):
+            job["postedAt"] = None
+            changed.append(job_id)
+    return changed
+
+
+def refresh_posted_date(existing, incoming):
+    """Copy genuine source date evidence onto an already stored identity.
+
+    This is intentionally narrower than an upsert. Search gating decides which
+    new jobs enter Found, but it must not stop a known record from learning its
+    publication date on a later source sighting.
+    """
+    incoming_at = parse_stamp(incoming.get("postedAt"))
+    if incoming_at is None:
+        return False
+    held_at = parse_stamp(existing.get("postedAt"))
+    # Compared as instants, not as strings. "2026-08-19T00:00:00Z" and
+    # "2026-08-19" are the same day, but the string compare put the bare date
+    # first, so every run rewrote the record to the less precise form and
+    # counted it as a date refresh. Offsets were worse: an IST stamp sorts
+    # after a UTC one that is genuinely later.
+    if held_at is not None and held_at <= incoming_at:
+        return False
+    existing["postedAt"] = incoming["postedAt"]
+    return True
 
 
 def load_passed(root):
@@ -435,7 +489,9 @@ def keep_priority(job):
                if isinstance(s, dict)]
     best = min(classes, key=canonical_rank, default="other")
     direct = 1 if canonical_rank(best) <= 1 else 0
-    when = job.get("postedAt") or job.get("firstSeenAt") or ""
+    # Discovery time is internal provenance, not job age. An undated record
+    # must never outrank a dated one merely because Jobby saw it recently.
+    when = job.get("postedAt") or ""
     return (direct, score, str(when))
 
 

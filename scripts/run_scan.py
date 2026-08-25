@@ -4,7 +4,7 @@
 The provider is a research process, not a persistence process. It receives a
 bounded search brief, can use only its native web search and fetch tools, and
 returns JSON. This trusted runner validates that JSON, removes known roles with
-seen.py, saves watch sessions through store.py, and then republishes the board.
+seen.py, adds them to the Found lane through ingest.py, and republishes the board.
 
   python3 scripts/run_scan.py --check   # exit 0 if a scan is waiting
   python3 scripts/run_scan.py           # claim one and run it
@@ -32,6 +32,8 @@ import provider_login  # noqa: E402
 import provider_process  # noqa: E402
 import providers  # noqa: E402
 import search_config  # noqa: E402
+import ingest  # noqa: E402
+import jobs_store  # noqa: E402
 import store  # noqa: E402
 import toolpath  # noqa: E402
 
@@ -791,11 +793,50 @@ def _save_watch_sessions(candidates, root=None, id_factory=_candidate_id):
     return saved, failed
 
 
+def _save_found_jobs(candidates, root=None):
+    """Put validated candidates into the Found lane.
+
+    Sahil's rule: a scan may only add to Found. Watching is his shelf and the
+    eye is the only route onto it. A sweep that writes watch entries puts roles
+    in front of him he never chose, which is the opposite of what the lane is
+    for — and it is how 44 of 49 live watch entries got there.
+
+    Deliberately the same door the connectors use, so a swept role is scored by
+    the same rubric, resolved by the same identity rules, merged into the same
+    records, and refused outright if he has already passed on it.
+    """
+    postings = []
+    for candidate in candidates:
+        posting = {
+            "title": candidate["role"],
+            "company": candidate["company"],
+            "canonicalUrl": candidate["url"],
+            "canonicalSource": candidate.get("source") or "agent-sweep",
+            "descriptionExcerpt": candidate.get("extraction") or "",
+            "location": {"raw": candidate.get("region") or ""},
+            "sources": [{
+                "source": candidate.get("source") or "agent-sweep",
+                "sourceClass": "ats" if candidate.get("ats") else "board",
+                "url": candidate["url"],
+            }],
+        }
+        if candidate.get("postedDate"):
+            posting["postedAt"] = f"{candidate['postedDate']}T00:00:00Z"
+        postings.append(posting)
+    if not postings:
+        return [], []
+    try:
+        report = ingest.add_postings(jobs_store.root_dir(root), postings)
+    except Exception as exc:  # surfaced, never swallowed
+        return [], [{"index": None, "reason": str(exc)[:240]}]
+    return report.get("added", []), report.get("errors", [])
+
+
 def persist_scan_result(payload, scan_date, root=None, *, seen_runner=subprocess.run):
-    """Validate, dedupe, and save only trusted candidate dictionaries."""
+    """Validate, dedupe, and put trusted candidates into Found."""
     checked = validate_scan_result(payload, scan_date)
     deduped = _run_seen(checked["candidates"], root=root, runner=seen_runner)
-    saved, save_failed = _save_watch_sessions(deduped["new"], root=root)
+    saved, save_failed = _save_found_jobs(deduped["new"], root=root)
     return {
         "checked": checked["checked"],
         "presented": checked["presented"],

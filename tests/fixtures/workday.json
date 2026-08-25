@@ -1,0 +1,23 @@
+{
+  "total": 2,
+  "jobPostings": [
+    {
+      "title": "Senior Product Manager - Data Products",
+      "externalPath": "/job/Bethesda-MD/Senior-Product-Manager---Data-Products_R0064914",
+      "timeType": "Full time",
+      "locationsText": "Bethesda, MD",
+      "postedOn": "Posted 2 Days Ago",
+      "remoteType": "Hybrid",
+      "bulletFields": ["R0064914"]
+    },
+    {
+      "title": "Product Manager",
+      "externalPath": "/job/Remote-United-States/Product-Manager_R0062160",
+      "timeType": "Full time",
+      "locationsText": "Remote (United States)",
+      "postedOn": "Posted Today",
+      "remoteType": "Remote",
+      "bulletFields": ["R0062160"]
+    }
+  ]
+}

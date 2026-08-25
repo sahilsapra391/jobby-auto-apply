@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("dashboard", ROOT / "scripts" / "dashboard.py")
 dashboard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dashboard)
+import clock
 import found_lane  # noqa: E402
 
 
@@ -637,7 +638,8 @@ class FoundHeaderTests(unittest.TestCase):
         quiet = self.render(meta={"lastIngest": {
             "at": "2026-08-19T20:58:00Z", "found": 0, "kept": 0, "deduped": 0,
             "gatedOut": 0, "byChannel": {}, "channelsSkipped": [], "errors": []}})
-        self.assertIn("Last scan 20:58", quiet)
+        # Eastern, not UTC: 20:58Z in August is 16:58 EDT.
+        self.assertIn("Last scan 16:58 EDT", quiet)
         self.assertNotIn("No scan has run yet", quiet)
 
     def test_skipped_channels_are_named_on_the_board(self):
@@ -685,7 +687,8 @@ class FoundHeaderTests(unittest.TestCase):
         html = self.render(config={"version": 7, "tier1IntervalMinutes": 4 * 60},
                            meta={"nextTier1ScanAt": "2026-08-19T21:58:00Z"})
         self.assertIn("Search v7 is live", html)
-        self.assertIn("next run 21:58", html)
+        self.assertIn("next run 17:58 EDT", html)
+        self.assertNotIn("UTC", visible_text(html))
         # The cadence in hours. "Every 240 minutes" is arithmetic homework, and
         # the line used to read "Every 60 minutes, plus 6 sweeps a day", which
         # put the Tier-1 interval and the Phase-3 agent sweeps in one sentence
@@ -1203,6 +1206,69 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertIn("grid-template-columns:1fr auto 1fr", appbar_css)
         body = page[page.index("body {"):page.index(".primary-nav {")]
         self.assertNotIn("padding-left", body)
+
+
+def visible_text(html):
+    """The page with its script and style blocks removed.
+
+    Asserting on raw markup catches the comments in the client script, and a
+    comment explaining why a conversion happens is not the board telling anyone
+    the time in UTC.
+    """
+    stripped = re.sub(r"<script\b.*?</script>", " ", html, flags=re.S)
+    return re.sub(r"<style\b.*?</style>", " ", stripped, flags=re.S)
+
+
+class EasternTimeTests(unittest.TestCase):
+    """Everything a person reads is Eastern. The store stays UTC.
+
+    Not a fixed offset. America/New_York is EDT for eight months and EST for
+    four, and a hardcoded -5 would have been right in February and an hour wrong
+    today. The zone matters for dates too, not only clocks: 2026-08-21T01:30Z is
+    the 20th in Eastern, so slicing ten characters off a UTC stamp showed
+    tomorrow's date.
+    """
+
+    def test_summer_reads_edt_and_winter_reads_est(self):
+        self.assertEqual(clock.time_label("2026-08-20T20:00:01Z"), "16:00 EDT")
+        self.assertEqual(clock.time_label("2026-01-15T20:00:01Z"), "15:00 EST")
+
+    def test_a_late_evening_stamp_keeps_the_eastern_date(self):
+        # The bug slicing would have had: 01:30Z on the 21st is the 20th here.
+        self.assertEqual(clock.date_label("2026-08-21T01:30:00Z"), "2026-08-20")
+        self.assertEqual(clock.date_label("2026-08-20T12:00:00Z"), "2026-08-20")
+
+    def test_nothing_in_never_becomes_something_out(self):
+        for empty in ("", None, "garbage", "2026-13-45T99:99:99Z"):
+            with self.subTest(value=empty):
+                self.assertEqual(clock.time_label(empty), "")
+                self.assertEqual(clock.date_label(empty), "")
+                self.assertEqual(clock.stamp_label(empty), "")
+
+    def test_an_offset_stamp_is_converted_not_assumed(self):
+        # Same instant, three spellings, one answer.
+        for spelling in ("2026-08-20T20:00:00Z", "2026-08-20T20:00:00+00:00",
+                         "2026-08-20T22:00:00+02:00"):
+            with self.subTest(stamp=spelling):
+                self.assertEqual(clock.time_label(spelling), "16:00 EDT")
+
+    def test_the_zone_is_named_not_offset(self):
+        # A fixed offset is the failure mode this exists to avoid.
+        source = (ROOT / "scripts" / "clock.py").read_text()
+        self.assertIn("America/New_York", source)
+        self.assertNotIn("timedelta(hours=-5", source)
+        self.assertNotIn("timedelta(hours=-4", source)
+
+    def test_no_board_lane_still_prints_utc(self):
+        html = dashboard.build({
+            "profile": {}, "sessions": [], "history": [], "roles": {}, "jobs": {},
+            "searchConfig": {"version": 1, "tier1IntervalMinutes": 240},
+            "meta": {"nextTier1ScanAt": "2026-08-19T21:58:00Z", "lastIngest": {
+                "at": "2026-08-19T20:58:00Z", "found": 3, "kept": 1, "deduped": 0,
+                "gatedOut": 0, "byChannel": {}, "channelsSkipped": [],
+                "errors": []}}}, clock.now_label())
+        self.assertNotIn("UTC", visible_text(html))
+        self.assertIn("EDT", html)
 
 
 if __name__ == "__main__":

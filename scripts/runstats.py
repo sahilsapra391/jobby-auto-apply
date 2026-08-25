@@ -176,9 +176,17 @@ def collect(aid, text, short):
         "otherCalls": other,
         "pdfRenders": renders,
         "templateRenders": template_renders,
-        # More than one template render means the first one needed fixing. That
-        # is the number to watch on a posting the template has never seen.
-        "documentNeededCorrection": template_renders > 1,
+        # NOT template renders. Rendering the template again is the cheap
+        # iteration the design is built around: edit the overrides, re-render
+        # the HTML in milliseconds, re-check the content gate, and only put it
+        # through Chrome once at the end. Counting those as corrections said 7
+        # of 10 runs had a document go wrong when the truth was 0: the same
+        # runs had one PDF render each and not a single layout failure.
+        #
+        # A correction is the expensive kind: the layout gate rejected the page,
+        # or the PDF had to be produced more than the two a resume and a cover
+        # letter need.
+        "documentNeededCorrection": verify_failures > 0 or renders > 2,
         "verifyFailures": verify_failures,
         "scripts": scripts,
     }

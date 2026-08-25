@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("toolpath", ROOT / "scripts" / "toolpath.py")
 toolpath = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(toolpath)
+import dashboard  # noqa: E402
 import found_lane  # noqa: E402
 import jobs_store  # noqa: E402
 import store  # noqa: E402
@@ -198,7 +199,7 @@ const nodes = {};
 // asks "is this value still on offer" — which is exactly what the restore does
 // before it forces a stored value back into a control.
 const SELECTS = {
-  'jb-sort': ['new', 'direct', 'score'],
+  'jb-sort': ['new', 'score'],
   'jb-scope': ['title+description', 'title'],
   'jb-cmode': ['all', 'only', 'hide'],
 };
@@ -590,7 +591,7 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         # because the shipped default has moved once already.
         jobs = [self.job("old", pa="2026-07-01", sc=95),
                 self.job("new", pa="2026-08-18", sc=10)]
-        self.assertEqual(self.run_script(jobs, {"jb-sort": "direct"})["ids"],
+        self.assertEqual(self.run_script(jobs, {"jb-sort": "score"})["ids"],
                          ["old", "new"])
         self.assertEqual(self.run_script(jobs, {"jb-sort": "new"})["ids"],
                          ["new", "old"])
@@ -623,24 +624,31 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
 
 class DirectListingTests(ScriptHarness, unittest.TestCase):
     """Applying through the employer's own ATS beats applying through a
-    redirect, so the lane leads with direct listings."""
+    redirect, so the lane ships showing direct listings only.
 
-    def test_direct_listings_lead_even_when_an_aggregator_scores_higher(self):
+    This used to be a third sort as well as a checkbox. Two controls for one
+    idea, and the sort was the weaker of them: it pushed aggregator copies down
+    rather than out, so they still filled the board. The checkbox does the whole
+    job and ships checked, so the sort is gone.
+    """
+
+    def test_the_checkbox_keeps_direct_listings_and_drops_the_rest(self):
         out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
                                self.job("ats", rank=0, src="greenhouse", sc=70)],
-                              {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["ats", "agg"])
-
-    def test_within_a_group_the_better_match_still_leads(self):
-        out = self.run_script([self.job("lo", rank=0, sc=60),
-                               self.job("hi", rank=0, sc=90)], {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["hi", "lo"])
+                              {"jb-direct": True})
+        self.assertEqual(out["ids"], ["ats"])
 
     def test_a_careers_page_counts_as_direct(self):
         out = self.run_script([self.job("agg", rank=2, sc=99),
                                self.job("careers", rank=1, sc=50)],
-                              {"jb-sort": "direct"})
-        self.assertEqual(out["ids"], ["careers", "agg"])
+                              {"jb-direct": True})
+        self.assertEqual(out["ids"], ["careers"])
+
+    def test_with_the_checkbox_off_both_survive_and_score_orders_them(self):
+        out = self.run_script([self.job("agg", rank=2, src="careerjet", sc=95),
+                               self.job("ats", rank=0, src="greenhouse", sc=70)],
+                              {"jb-direct": False, "jb-sort": "score"})
+        self.assertEqual(out["ids"], ["agg", "ats"])
 
     def test_sorting_by_match_ignores_how_direct_it_is(self):
         out = self.run_script([self.job("agg", rank=2, sc=95),
@@ -1181,6 +1189,219 @@ class ViewPersistenceTests(ScriptHarness, unittest.TestCase):
         save = save[:save.index("};")]
         self.assertIn("sort:", save)
         self.assertIn("directOnly:", save)
+
+
+class EveryControlTests(ScriptHarness, unittest.TestCase):
+    """One test per control, because "it looks broken" is hard to act on.
+
+    Match % had no branch at all: choosing it fell through every arm of the sort
+    and left the rows in payload order, so the control did nothing and there was
+    no test that would have said so. These drive each control through the real
+    script and assert the actual ordering or the actual surviving ids.
+    """
+
+    def rows(self):
+        # Deliberately varied on every axis a control can touch.
+        return [
+            self.job("a", ti="Product Manager", co="Alpha", cty="US", wp="remote",
+                     sc=60, pa="2026-08-19", rank=0, yr=2, sum="owns billing"),
+            self.job("b", ti="Senior Product Manager", co="Beta", cty="IN", wp="hybrid",
+                     sc=90, pa="2026-08-10", rank=2, yr=7, sum="runs the warehouse"),
+            self.job("c", ti="Business Analyst", co="Gamma", cty="US", wp="onsite",
+                     sc=75, pa="2026-08-15", rank=1, yr=None, sum="kubernetes work"),
+        ]
+
+    def ids(self, controls):
+        base = {"jb-direct": False, "date": "60d", "jb-scope": "title"}
+        base.update(controls)
+        return self.run_script(self.rows(), base)["ids"]
+
+    # --- sorts -----------------------------------------------------------
+    def test_sort_by_match_percent_orders_by_score(self):
+        self.assertEqual(self.ids({"jb-sort": "score"}), ["b", "c", "a"])
+
+    def test_sort_by_newest_orders_by_date(self):
+        self.assertEqual(self.ids({"jb-sort": "new"}), ["a", "c", "b"])
+
+    def test_direct_first_is_gone_and_the_checkbox_covers_it(self):
+        # It did what "direct listings only" already does. A saved search still
+        # naming it reads as the default rather than falling through to no sort.
+        self.assertNotIn("direct", [v for v, _ in found_lane.SORT_OPTIONS])
+        self.assertEqual(sorted(self.ids({"jb-sort": "direct"})),
+                         sorted(self.ids({"jb-sort": "new"})))
+
+    def test_an_unknown_sort_lands_on_the_default_not_on_no_sort(self):
+        # The Match % bug in general form: a value with no branch used to leave
+        # the rows in payload order.
+        self.assertEqual(self.ids({"jb-sort": "sideways"}), self.ids({"jb-sort": "new"}))
+
+    def test_every_offered_sort_has_a_branch_in_the_script(self):
+        script = found_lane.SCRIPT
+        table = script[script.index("var SORTS = ["):]
+        table = table[:table.index("];") + 2]
+        for value, _ in found_lane.SORT_OPTIONS:
+            with self.subTest(sort=value):
+                self.assertIn("'" + value + "'", table)
+
+    def test_every_offered_sort_actually_reorders_something(self):
+        # The guard for the bug itself: a sort that changes nothing is a sort
+        # with no branch.
+        seen = {}
+        for value, _ in found_lane.SORT_OPTIONS:
+            seen[value] = self.ids({"jb-sort": value})
+        self.assertEqual(len(set(tuple(v) for v in seen.values())), len(seen),
+                         f"two sorts produced identical order: {seen}")
+
+    # --- the keyword box -------------------------------------------------
+    def test_a_keyword_matches_anywhere_inside_the_title(self):
+        # "product manager" has to find "Senior Product Manager".
+        self.assertEqual(sorted(self.ids({"keywords": ["product manager"],
+                                          "jb-sort": "new"})), ["a", "b"])
+
+    def test_a_keyword_is_case_insensitive(self):
+        self.assertEqual(sorted(self.ids({"keywords": ["PRODUCT MANAGER"]})), ["a", "b"])
+
+    def test_keywords_are_or_across_titles(self):
+        self.assertEqual(sorted(self.ids({"keywords": ["product manager", "analyst"]})),
+                         ["a", "b", "c"])
+
+    def test_title_scope_does_not_reach_the_description(self):
+        self.assertEqual(self.ids({"keywords": ["kubernetes"]}), [])
+
+    def test_widening_the_scope_reaches_the_description(self):
+        self.assertEqual(self.ids({"keywords": ["kubernetes"],
+                                   "jb-scope": "title+description"}), ["c"])
+
+    # --- the other filters ------------------------------------------------
+    def test_the_exclude_box_removes_a_match(self):
+        self.assertEqual(sorted(self.ids({"jb-ex": "senior"})), ["a", "c"])
+
+    def test_the_date_window_bites(self):
+        # Clock pinned to 2026-08-20: a is 1 day old, c is 5, b is 10.
+        self.assertEqual(self.ids({"date": "7d", "jb-sort": "new"}), ["a", "c"])
+        self.assertEqual(self.ids({"date": "24h", "jb-sort": "new"}), ["a"])
+        self.assertEqual(self.ids({"date": "60d", "jb-sort": "new"}), ["a", "c", "b"])
+
+    def test_direct_listings_only_drops_the_aggregator_copy(self):
+        self.assertEqual(sorted(self.ids({"jb-direct": True})), ["a", "c"])
+
+    def test_a_country_selection_narrows(self):
+        self.assertEqual(self.ids({"allLocations": ["US", "IN"], "locations": ["IN"],
+                                   "jb-remote": False}), ["b"])
+
+    def test_a_workplace_selection_narrows(self):
+        self.assertEqual(self.ids({"workplaces": ["onsite"]}), ["c"])
+
+    def test_max_experience_narrows_and_honours_unknown(self):
+        loose = sorted(self.ids({"jb-exp": "3"}))
+        self.assertEqual(loose, ["a", "c"])          # c is unknown, allowed
+        strict = self.ids({"jb-exp": "3",
+                           "unknowns": ["degree", "workplace", "postedAt"]})
+        self.assertEqual(strict, ["a"])              # unknown experience excluded
+
+    def test_only_these_companies(self):
+        self.assertEqual(self.ids({"jb-cmode": "only", "jb-companies": "Beta"}), ["b"])
+
+    def test_hide_these_companies(self):
+        self.assertEqual(sorted(self.ids({"jb-cmode": "hide", "jb-companies": "Beta"})),
+                         ["a", "c"])
+
+    def test_two_filters_together_narrow_further_than_either(self):
+        one = set(self.ids({"jb-direct": True}))
+        two = set(self.ids({"jb-direct": True, "workplaces": ["onsite"]}))
+        self.assertTrue(two < one, f"{two} is not a strict subset of {one}")
+
+
+class DecisionFeedbackTests(ScriptHarness, unittest.TestCase):
+    """Pressing a button has to look like something happened.
+
+    The board is a published snapshot and publishing is throttled behind a
+    deploy gap, so a decision does not appear in any lane for minutes. The card
+    vanished from Found and nothing anywhere admitted to having gained it, which
+    from the sofa is indistinguishable from the button being broken. It was not:
+    six applications were in flight and five watch entries had been created
+    while the board still showed the old counts.
+    """
+
+    def test_the_eye_moves_a_count_to_watching(self):
+        script = found_lane.SCRIPT
+        watch = script[script.index("function doWatch"):]
+        watch = watch[:watch.index("function doPass")]
+        self.assertIn("bump('watch', 1)", watch)
+        self.assertIn("bump('found', -1)", found_lane.SCRIPT)
+
+    def test_apply_moves_a_count_to_in_flight_not_watching(self):
+        # An Apply goes straight past the watch list, so bumping Watching would
+        # be a lie about where to look for it.
+        script = found_lane.SCRIPT
+        apply_fn = script[script.index("function doApply"):]
+        apply_fn = apply_fn[:apply_fn.index("// Anything acted on")]
+        self.assertIn("bump('flight', 1)", apply_fn)
+        self.assertNotIn("bump('watch', 1)", apply_fn)
+
+    def test_pass_moves_a_count_to_dropped(self):
+        script = found_lane.SCRIPT
+        pass_fn = script[script.index("function doPass"):]
+        pass_fn = pass_fn[:pass_fn.index("function doApply")]
+        self.assertIn("bump('dropped', 1)", pass_fn)
+
+    def test_every_count_named_here_exists_on_the_page(self):
+        # The counts are found by selector, so a lane that moves or is renamed
+        # silently stops every one of these working. Dropped did exactly that:
+        # it became a dock button with its own count rather than a tab, and
+        # pressing Pass quietly moved nothing.
+        import re
+        named = set(re.findall(r"bump\('(\w+)'", found_lane.SCRIPT))
+        page = dashboard.build({"profile": {}, "sessions": [], "history": [],
+                                "roles": {}, "jobs": {}, "meta": {},
+                                "searchConfig": None}, "test")
+        tabs = set(re.findall(r'data-tab="(\w+)"', page))
+        docks = set(re.findall(r'class="(\w+)-count"', page))
+        self.assertTrue(named, "no counts are being moved at all")
+        missing = named - tabs - docks
+        self.assertEqual(missing, set(), f"{missing} is neither a tab nor a dock count")
+
+    def test_a_failed_decision_puts_the_card_back(self):
+        # Swallowing the failure meant a dead network and a successful queue
+        # looked identical, and the job was gone either way.
+        script = found_lane.SCRIPT
+        decide = script[script.index("function decide"):]
+        decide = decide[:decide.index("function note")]
+        self.assertIn("hidden[job.id] = false", decide)
+        self.assertIn("forget(WATCH_KEY", decide)
+        self.assertIn("bump('found', 1)", decide)
+
+    def test_a_refusal_from_the_server_counts_as_a_failure(self):
+        # ok:false with HTTP 200 is the shape the API actually returns.
+        script = found_lane.SCRIPT
+        decide = script[script.index("function decide"):]
+        self.assertIn("res.ok === false", decide[:decide.index("function note")])
+
+
+class StoredWordingTests(unittest.TestCase):
+    """The rubric's explanations are persisted, so fixing the writer is not enough.
+
+    "posted 1 days ago" was written into fourteen thousand records before anyone
+    read one closely. Tidying it where it is displayed reaches all of them
+    without a migration and without touching a score.
+    """
+
+    def test_the_two_awkward_counts_are_reworded(self):
+        self.assertEqual(found_lane.tidy_days("posted 0 days ago"), "posted today")
+        self.assertEqual(found_lane.tidy_days("posted 1 days ago"), "posted yesterday")
+        self.assertEqual(found_lane.tidy_days("first seen 1 days ago; no posted date"),
+                         "first seen yesterday; no posted date")
+
+    def test_every_other_count_is_left_exactly_alone(self):
+        for n in [2, 10, 11, 21, 101]:
+            with self.subTest(days=n):
+                text = "posted %d days ago" % n
+                self.assertEqual(found_lane.tidy_days(text), text)
+
+    def test_it_runs_on_the_way_into_the_payload(self):
+        table = found_lane.WhyTable()
+        table.intern("posted 1 days ago")
+        self.assertEqual(table.strings, ["posted yesterday"])
 
 
 class RealPayloadTests(ScriptHarness, unittest.TestCase):

@@ -266,5 +266,32 @@ class GateTests(unittest.TestCase):
         self.assertEqual(low["total"], min(low["raw"], match_score.GATE_CAP))
 
 
+class FreshnessWordingTests(unittest.TestCase):
+    """The rubric explanation is read by a person. "1 days ago" is not English.
+
+    Wording only. The number it reads from is the number freshness is scored on,
+    and that arithmetic is deliberately untouched: it went through the gate, and
+    rounding a day differently would move scores.
+    """
+
+    def test_the_awkward_counts_read_as_words(self):
+        self.assertEqual(match_score.when_words(0), "today")
+        self.assertEqual(match_score.when_words(0.4), "today")
+        self.assertEqual(match_score.when_words(1), "yesterday")
+        self.assertEqual(match_score.when_words(1.2), "yesterday")
+
+    def test_everything_else_still_counts_days(self):
+        self.assertEqual(match_score.when_words(2), "2 days ago")
+        self.assertEqual(match_score.when_words(30.6), "31 days ago")
+
+    def test_no_explanation_ever_says_one_days(self):
+        # The whole string, not a substring: "11 days ago" contains "1 days
+        # ago" and is perfectly good English.
+        bad = {"0 days ago", "1 days ago", "-1 days ago"}
+        for age in range(0, 120):
+            with self.subTest(age=age):
+                self.assertNotIn(match_score.when_words(age), bad)
+
+
 if __name__ == "__main__":
     unittest.main()
