@@ -1,0 +1,686 @@
+{
+  "_comment": [
+    "The onboarding question taxonomy. Topics, not questions.",
+    "",
+    "This file contains NO ANSWERS and must never contain any. It is the shared",
+    "half of the north star's line: that a Greenhouse form asks about visa",
+    "sponsorship is public knowledge every account benefits from, while what any",
+    "person said is theirs alone and lives in their own store. That property is",
+    "what lets this file ship in the repository and survive an open-source",
+    "publish. A proposal to put answer values here breaks it.",
+    "",
+    "Derived from 100 real employer questions observed across Greenhouse, Ashby,",
+    "Lever, Workday, SmartRecruiters and Oracle. Those 100 collapse to the topics",
+    "below because employers ask the same thing many ways: sponsorship appeared",
+    "six times, relocation five, political contributions four, sexual orientation",
+    "four. Asking a person thirty topics instead of a hundred questions is the",
+    "difference between twenty minutes and giving up.",
+    "",
+    "`match` is how an unseen phrasing is recognised as a topic already answered.",
+    "Every term must appear in the question text, lowercased. scripts/",
+    "questionnaire.py checks this taxonomy against a real answer store and fails",
+    "when an observed question matches no topic, so the file cannot silently fall",
+    "behind what employers actually ask.",
+    "",
+    "tier 1  blocking. No application completes without it.",
+    "tier 2  high frequency, asked during onboarding.",
+    "tier 3  long tail, captured on first encounter in Needs you.",
+    "",
+    "`perIdentity` marks topics whose answer differs by the posting's country.",
+    "A person with a US and an India right to work has two of each of these, and",
+    "one profile row per user cannot hold them."
+  ],
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "work-authorisation",
+      "tier": 1,
+      "ask": "Which countries can you work in without needing sponsorship?",
+      "type": "country-multi",
+      "perIdentity": true,
+      "match": [
+        [
+          "authorized",
+          "work"
+        ],
+        [
+          "authorised",
+          "work"
+        ],
+        [
+          "legally authorized"
+        ],
+        [
+          "right to work"
+        ]
+      ],
+      "why": "Blocks almost every application, and asked in nearly every jurisdiction's phrasing."
+    },
+    {
+      "id": "visa-sponsorship",
+      "tier": 1,
+      "ask": "Which countries would you need visa sponsorship for, now or in future?",
+      "type": "country-multi",
+      "perIdentity": true,
+      "match": [
+        [
+          "sponsorship"
+        ],
+        [
+          "sponsor",
+          "visa"
+        ],
+        [
+          "require sponsorship"
+        ]
+      ],
+      "why": "Six distinct phrasings observed. Always paired with work authorisation and always required."
+    },
+    {
+      "id": "relocation",
+      "tier": 1,
+      "ask": "Are you willing to relocate for the right role?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no",
+        "for the right role"
+      ],
+      "match": [
+        [
+          "relocate"
+        ],
+        [
+          "relocation"
+        ]
+      ],
+      "why": "Five phrasings observed. Cheap to answer, blocks applications when missing."
+    },
+    {
+      "id": "work-setup",
+      "tier": 1,
+      "ask": "Which work setups will you take?",
+      "type": "multi",
+      "options": [
+        "remote",
+        "hybrid",
+        "onsite"
+      ],
+      "match": [
+        [
+          "work setup"
+        ],
+        [
+          "onsite at the job location"
+        ],
+        [
+          "remote",
+          "hybrid"
+        ]
+      ],
+      "why": "Drives both form answers and search gating."
+    },
+    {
+      "id": "notice-period",
+      "tier": 1,
+      "ask": "What notice do you have to give, and when could you start?",
+      "type": "text-short",
+      "match": [
+        [
+          "notice period"
+        ],
+        [
+          "earliest start"
+        ],
+        [
+          "when can you start"
+        ],
+        [
+          "start date"
+        ]
+      ],
+      "why": "Required on most non-US forms and on every Indian one."
+    },
+    {
+      "id": "phone",
+      "tier": 1,
+      "ask": "What phone number should applications use?",
+      "type": "phone",
+      "perIdentity": true,
+      "match": [
+        [
+          "phone number"
+        ]
+      ],
+      "why": "Identity field. No form completes without it."
+    },
+    {
+      "id": "street-address",
+      "tier": 1,
+      "ask": "What postal address should applications use?",
+      "type": "address",
+      "perIdentity": true,
+      "match": [
+        [
+          "street address"
+        ],
+        [
+          "full address"
+        ]
+      ],
+      "why": "Per identity: a US application and an India application need different addresses, and choosing the wrong one is a real defect this project already fixed once."
+    },
+    {
+      "id": "years-experience",
+      "tier": 1,
+      "ask": "How many years of professional experience do you have?",
+      "type": "number",
+      "match": [
+        [
+          "total years"
+        ],
+        [
+          "years of experience"
+        ],
+        [
+          "years of professional"
+        ]
+      ],
+      "why": "Asked as a bare number and as per-skill variants. Also feeds the experience gate."
+    },
+    {
+      "id": "links",
+      "tier": 1,
+      "ask": "Which profile links should applications include?",
+      "type": "links",
+      "match": [
+        [
+          "github"
+        ],
+        [
+          "linkedin url"
+        ],
+        [
+          "portfolio"
+        ],
+        [
+          "website"
+        ]
+      ],
+      "why": "Nearly universal and trivially answered once."
+    },
+    {
+      "id": "signature-name",
+      "tier": 1,
+      "ask": "What full name should be typed as your electronic signature?",
+      "type": "text-short",
+      "match": [
+        [
+          "electronic signature"
+        ],
+        [
+          "type your full name"
+        ],
+        [
+          "signature"
+        ]
+      ],
+      "why": "A submit-blocking field on legal-declaration forms."
+    },
+    {
+      "id": "compensation-expectation",
+      "tier": 1,
+      "sensitive": true,
+      "ask": "What compensation are you looking for?",
+      "type": "money",
+      "perIdentity": true,
+      "match": [
+        [
+          "expected salary"
+        ],
+        [
+          "expected ctc"
+        ],
+        [
+          "compensation expect"
+        ],
+        [
+          "salary expect"
+        ]
+      ],
+      "why": "Blocks Indian and screening-heavy US forms. Sensitive: stored only with explicit per-field consent, never rendered into board HTML."
+    },
+    {
+      "id": "current-compensation",
+      "tier": 2,
+      "sensitive": true,
+      "ask": "What are you currently paid?",
+      "type": "money",
+      "perIdentity": true,
+      "match": [
+        [
+          "current base salary"
+        ],
+        [
+          "current compensation"
+        ],
+        [
+          "compensation breakup"
+        ]
+      ],
+      "why": "Illegal to ask in several US states and routine in India. Sensitive, and a person may decline."
+    },
+    {
+      "id": "salary-range-acknowledgement",
+      "tier": 2,
+      "ask": "If a posting states a range you find acceptable, may Jobby acknowledge it on your behalf?",
+      "type": "policy",
+      "match": [
+        [
+          "range aligns"
+        ],
+        [
+          "acknowledge and agree that this range"
+        ]
+      ],
+      "why": "A policy rather than a fact: the answer depends on the posted range, so it is a standing rule with a floor."
+    },
+    {
+      "id": "background-check",
+      "tier": 2,
+      "ask": "Are you willing to complete a background check if an offer is made?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "match": [
+        [
+          "background check"
+        ],
+        [
+          "drug screening"
+        ]
+      ],
+      "why": "Willingness, which is a different question from authorising one now. Kept distinct on purpose."
+    },
+    {
+      "id": "interview-recording",
+      "tier": 2,
+      "ask": "May interviews be recorded and transcribed?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no",
+        "ask me each time"
+      ],
+      "match": [
+        [
+          "recorded and transcribed"
+        ],
+        [
+          "record and auto-transcribe"
+        ],
+        [
+          "brighthire"
+        ],
+        [
+          "interview being recorded"
+        ]
+      ],
+      "why": "Consent, so it must be the person's own choice and never a default."
+    },
+    {
+      "id": "non-compete",
+      "tier": 2,
+      "ask": "Are you bound by any non-compete, non-solicit or other restrictive covenant?",
+      "type": "choice",
+      "options": [
+        "no",
+        "yes"
+      ],
+      "match": [
+        [
+          "non-compete"
+        ],
+        [
+          "non-solicitation"
+        ],
+        [
+          "restrictive covenant"
+        ],
+        [
+          "post-employment obligation"
+        ],
+        [
+          "limit your ability to perform"
+        ]
+      ],
+      "why": "Four phrasings observed. A legal declaration, so a wrong answer matters more than a missing one."
+    },
+    {
+      "id": "conflicts-of-interest",
+      "tier": 2,
+      "ask": "Do you have any conflicts of interest to disclose?",
+      "type": "choice",
+      "options": [
+        "no",
+        "yes"
+      ],
+      "match": [
+        [
+          "conflict of interest"
+        ],
+        [
+          "conflicts of interest"
+        ],
+        [
+          "close personal relationship"
+        ],
+        [
+          "related to any employee"
+        ],
+        [
+          "close associate of an officer"
+        ]
+      ],
+      "why": "Five phrasings, and the honest answer is usually the same across all of them."
+    },
+    {
+      "id": "government-official",
+      "tier": 2,
+      "ask": "Are you, or is a close relative, a current or former government official?",
+      "type": "choice",
+      "options": [
+        "no",
+        "yes"
+      ],
+      "match": [
+        [
+          "government official"
+        ]
+      ],
+      "why": "Anti-bribery declaration, common in finance and public-sector postings."
+    },
+    {
+      "id": "political-contributions",
+      "tier": 2,
+      "ask": "Have you made political contributions in the last two years?",
+      "type": "choice",
+      "options": [
+        "no",
+        "yes"
+      ],
+      "match": [
+        [
+          "political contribution"
+        ],
+        [
+          "political candidate"
+        ],
+        [
+          "pac"
+        ]
+      ],
+      "why": "Four phrasings, near-universal in US financial-services forms."
+    },
+    {
+      "id": "debarment",
+      "tier": 2,
+      "ask": "Have you ever been debarred or suspended from federal contracting?",
+      "type": "choice",
+      "options": [
+        "no",
+        "yes"
+      ],
+      "match": [
+        [
+          "debarred"
+        ],
+        [
+          "suspended from federal"
+        ],
+        [
+          "exclusion"
+        ]
+      ],
+      "why": "Required wherever federal contracts are involved."
+    },
+    {
+      "id": "prior-relationship-with-employer",
+      "tier": 3,
+      "ask": "Have you interviewed here before, or do you know anyone who works here?",
+      "type": "per-application",
+      "match": [
+        [
+          "interviewed at this company"
+        ],
+        [
+          "anyone currently working at"
+        ],
+        [
+          "association with deloitte"
+        ]
+      ],
+      "why": "Depends on the employer, so it cannot be answered in advance. Parks in Needs you."
+    },
+    {
+      "id": "how-did-you-hear",
+      "tier": 2,
+      "ask": "How should Jobby answer 'how did you hear about this job'?",
+      "type": "policy",
+      "match": [
+        [
+          "how did you hear"
+        ]
+      ],
+      "why": "A standing rule, not a fact. The honest answer is the same every time."
+    },
+    {
+      "id": "future-contact-consent",
+      "tier": 2,
+      "ask": "May employers retain your details and contact you about future roles?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "match": [
+        [
+          "retain your information"
+        ],
+        [
+          "future job opportunit"
+        ],
+        [
+          "recruitment privacy notice"
+        ]
+      ],
+      "why": "Consent, and it is asked often enough to be worth settling once."
+    },
+    {
+      "id": "accuracy-attestation",
+      "tier": 2,
+      "ask": "Jobby will tick truth attestations only when nothing in the application was inferred. Confirm you want that.",
+      "type": "policy",
+      "match": [
+        [
+          "information provided is true"
+        ],
+        [
+          "certify that"
+        ],
+        [
+          "i certify"
+        ]
+      ],
+      "why": "A safety rule surfaced as a choice, because it is the user's signature being given. Never a silent default."
+    },
+    {
+      "id": "self-identification",
+      "tier": 2,
+      "sensitive": true,
+      "consentGated": true,
+      "ask": "Employers often ask optional demographic questions. What should Jobby do?",
+      "type": "policy",
+      "options": [
+        "decline to self-identify",
+        "answer using details I provide"
+      ],
+      "match": [
+        [
+          "gender"
+        ],
+        [
+          "ethnicity"
+        ],
+        [
+          "veteran"
+        ],
+        [
+          "disability"
+        ],
+        [
+          "sexual orientation"
+        ],
+        [
+          "transgender"
+        ],
+        [
+          "age range"
+        ],
+        [
+          "date of birth"
+        ],
+        [
+          "lesbian, gay"
+        ],
+        [
+          "communities do you belong"
+        ]
+      ],
+      "why": "Ten observed phrasings across gender, ethnicity, veteran status, disability, sexual orientation, gender identity, age and date of birth. Nearly always optional on the form, so declining is a complete answer. Presented once as a single consented choice rather than as ten questions, and stored per field. Never rendered into board HTML."
+    },
+    {
+      "id": "skill-self-rating",
+      "tier": 3,
+      "ask": "Rate yourself on a named tool, one to ten.",
+      "type": "per-application",
+      "match": [
+        [
+          "rate yourself"
+        ]
+      ],
+      "why": "The tool named varies by posting, so it cannot be pre-answered. Parks in Needs you."
+    },
+    {
+      "id": "why-this-role",
+      "tier": 2,
+      "storyBacked": true,
+      "ask": "What are you looking for in your next role, and what do you want to avoid?",
+      "type": "text-long",
+      "match": [
+        [
+          "looking for in your next role"
+        ],
+        [
+          "what motivates you"
+        ],
+        [
+          "why are you looking"
+        ],
+        [
+          "why did you leave"
+        ]
+      ],
+      "why": "Genuine free text, and one of only a handful. Answered once in the person's own words and replayed, never regenerated."
+    },
+    {
+      "id": "self-description",
+      "tier": 2,
+      "storyBacked": true,
+      "ask": "Describe yourself in a short phrase.",
+      "type": "text-short",
+      "match": [
+        [
+          "describe yourself"
+        ]
+      ],
+      "why": "Short free text reused across forms."
+    },
+    {
+      "id": "ai-practice",
+      "tier": 3,
+      "storyBacked": true,
+      "ask": "How has AI changed how you work, and do you have a personal AI project?",
+      "type": "text-long",
+      "match": [
+        [
+          "personal project or side experiment in ai"
+        ],
+        [
+          "ai changed the way you approach"
+        ]
+      ],
+      "why": "Currently common in this person's target market and may not generalise. Tier 3 until a second user's corpus says otherwise."
+    },
+    {
+      "id": "experience-ceiling",
+      "tier": 3,
+      "ask": "What is the highest years-of-experience requirement you would still apply to?",
+      "type": "number",
+      "match": [
+        [
+          "maximum years-of-experience"
+        ]
+      ],
+      "why": "A search preference rather than a form answer. Belongs with search config, recorded here so it is not asked twice."
+    }
+  ],
+  "storyBank": {
+    "_comment": [
+      "Not a questionnaire. Twelve narrative entries in the source corpus, each a",
+      "worked example a free-text answer draws from. A stranger arrives with none",
+      "of these and no amount of resume parsing produces one, which is why this is",
+      "an interview rather than a form and is the real elicitation problem.",
+      "",
+      "Prompts below are the themes observed, generalised away from one person's",
+      "specifics. Ask for two or three at signup, not twelve."
+    ],
+    "prompts": [
+      "A time you delivered under an impossible constraint.",
+      "A time you drove adoption or influence without authority.",
+      "A time you were right against consensus, and how you proved it.",
+      "The thing you have built that you are proudest of, and what broke.",
+      "A time you earned trust at scale, with many stakeholders.",
+      "A time you took ownership of something ambiguous and unowned.",
+      "A time customer obsession cost you something.",
+      "A time frugality or initiative produced a result budget would not have."
+    ]
+  },
+  "excluded": {
+    "_comment": [
+      "Entries in a stored answer file that are NOT employer questions and are",
+      "therefore not the taxonomy's job to cover. Listed rather than silently",
+      "skipped, because an uncounted exclusion is how a real gap hides.",
+      "",
+      "These are Jobby's own operating rules that were saved without a policy tag.",
+      "They belong with the standing policies, and the honest fix is upstream in",
+      "the store rather than a special case here."
+    ],
+    "rules": [
+      {
+        "match": [
+          "tailored resume or cover letter be rebuilt"
+        ],
+        "why": "An internal regeneration rule. No employer asks it."
+      },
+      {
+        "match": [
+          "email otp"
+        ],
+        "why": "Jobby's own handling policy for OTP, verification links and ATS account creation. An operating rule, and one the refusal boundaries already cover."
+      }
+    ]
+  }
+}
