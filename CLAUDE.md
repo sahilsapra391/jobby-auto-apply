@@ -349,7 +349,54 @@ Git deployment owns the renderer. After changing any renderer module listed in
 
 ## Worktree discipline
 
-This checkout contains user-owned modified and untracked work unrelated to the
-provider change. Inspect diffs by path. Do not delete, rewrite, stage, or fold
-those files into this work. In particular, leave sourcing investigations,
+**The checkout the launchd plist points at is production. Nothing but `main` is
+ever checked out there. All agent work happens in worktrees, without exception.**
+
+The three services execute
+`/Users/sahilsapra/Documents/Development.nosync/jobby-auto-apply/scripts/*.py`
+by absolute path. A branch checked out there is not a branch, it is a
+deployment, and applications submitted from it go out under a real name and
+cannot be recalled. On 2026-08-25 the daemon spent part of an afternoon running
+an unmerged branch in a transient rebase state while three finished fixes sat on
+`main` doing nothing.
+
+This class of failure has now cost the project three times: the conflicted merge
+that took the board down, the force-push that ate three commits, and this. The
+rule costs nothing, so it holds without exception.
+
+Corollaries, each of which was learned the expensive way:
+
+- Announce in writing before moving that branch or restarting a service, and say
+  which you are taking when two sessions could reach for the same one.
+- Merging is not deploying. A long-lived Python process does not reload modules,
+  so the arming event is the restart. `scripts/brief.py` is the exception: the
+  watcher spawns it as a subprocess, so edits to it are live on save.
+- After a restart, confirm from each daemon's own start time against the
+  checkout's reflog which SHA it is actually running. A healthy-looking process
+  can be executing code from hours ago.
+
+This checkout also contains user-owned modified and untracked work unrelated to
+any one change. Inspect diffs by path. Do not delete, rewrite, stage, or fold
+those files into your work. In particular, leave sourcing investigations,
 captured job pages, and schema experiments alone unless the user names them.
+
+## What counts as evidence
+
+**A docstring, a fixture, a test, a commit message or another session's summary
+can assert a fact about the world. None of them is evidence for it. Only a
+measurement is, and the measurement, not the assertion, is what gets reported.**
+
+Re-reading the claim is not verifying the claim. On 2026-08-25 a session
+reported "Claude wraps its JSON in a fence on every run" as verified, having
+only re-read the docstring making that claim; a document job from the same
+morning had parsed an unfenced Anthropic response with the unmodified parser.
+It is the same shape as the Adzuna fixture that invented an employer origin link
+and had a passing test sitting on top of the fiction.
+
+This matters more with several sessions running than with one, because claims
+propagate faster than corrections and a wrong "verified" gets cited by peers who
+cannot see where it came from.
+
+So: quantify the claim and state what was and was not observed. "Intermittent,
+observed on X at Y, not reproduced on Z" rather than "every time". Where a fix
+addresses a failure you have not reproduced, say "likeliest cause", not "was".
