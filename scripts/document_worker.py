@@ -32,6 +32,7 @@ REPO = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import ats_match
+import provider_usage
 import voice_lint  # noqa: E402
 import cover_letter  # noqa: E402
 import document_contract  # noqa: E402
@@ -2417,6 +2418,18 @@ class DocumentWorker:
                 self.heartbeat_seconds,
             )
             log.record("provider finished")
+            # What the documents phase cost. Only the form phase was ever
+            # recorded, so all 687 rows on this machine say taskKind "form" and
+            # "what does one application cost" could only be answered for half
+            # of it. Telemetry only: record never raises, and a row it fails to
+            # write costs a measurement rather than the job.
+            provider_usage.record(
+                bundle.get("applicationId") or "",
+                invocation.provider_id,
+                providers.MODEL_IDS.get(invocation.provider_id, ""),
+                "documents",
+                provider_usage.parse(provider_output),
+            )
 
             try:
                 parsed = self.response_parser(provider_output)
