@@ -28,6 +28,7 @@ The order is fixed and each step is cheaper than the one after it:
 """
 
 import argparse
+import contextlib
 import json
 import pathlib
 import subprocess
@@ -40,9 +41,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import identity  # noqa: E402
 import jobs_store  # noqa: E402
 import match_score  # noqa: E402
+import runlock  # noqa: E402
 import search_config  # noqa: E402
 import seed_companies  # noqa: E402
 import sources  # noqa: E402
+
+# The watcher's own lock, on purpose, not one of our own. `watch.spawn` takes
+# `scan` for the sweeps it starts, and `watch.lock_holder("scan")` is what the
+# rest of the daemon reads. A second lock would be internally consistent and
+# would not exclude the daemon's sweep, which is the overlap that loses data.
+SWEEP_LOCK = "scan"
 import toolpath  # noqa: E402
 from sources import base, greenhouse  # noqa: E402
 
@@ -595,6 +603,28 @@ def main():
 
     root = jobs_store.root_dir(args.store)
 
+    # One sweep at a time. Both branches below read the whole store, work for
+    # minutes, then write it back, so two overlapping runs do not interleave:
+    # the second to finish silently discards everything the first stored. A
+    # dry run writes nothing, so it is left free rather than made to wait, and
+    # it does not gate Apply while it observes.
+    guard = (contextlib.nullcontext() if args.dry_run
+             else runlock.held(root, SWEEP_LOCK, note="ingest"))
+    try:
+        with guard:
+            return _run_cli(args, root)
+    except runlock.LockBusy as exc:
+        # Refuse rather than queue: two sweeps find no more jobs than one, so
+        # waiting buys nothing and a queued second run would only widen the
+        # window in which the store is being rewritten.
+        print(f"ingest: a sweep is already running, so this one will not start. {exc}",
+              file=sys.stderr)
+        print(json.dumps({"error": str(exc), "skipped": "sweep already running"},
+                         indent=2, sort_keys=True))
+        return 3
+
+
+def _run_cli(args, root):
     if args.add:
         raw = json.loads(pathlib.Path(args.add).expanduser().read_text())
         postings = raw if isinstance(raw, list) else [raw]
