@@ -494,7 +494,10 @@ def persist_browser_slot(aid, slot):
     except json.JSONDecodeError as exc:
         raise TickError(f"application session is unreadable for {aid}") from exc
     previous = entry.get("browserSlot")
-    if previous in APPLY_LOCKS and previous != slot:
+    if (previous in APPLY_LOCKS and previous != slot
+            and not slot_affinity_is_stale(aid, previous)):
+        # Still genuinely this application's slot, so moving would strand the
+        # form state in it and leave one application owning two profiles.
         raise TickError(f"application {aid} already owns {previous}")
     entry["browserSlot"] = slot
     _save_session(entry)
@@ -592,8 +595,34 @@ def reconcile_browser_slots():
     return {"parked": parked, "released": released}
 
 
+def slot_affinity_is_stale(aid, affinity):
+    """True when the recorded slot now belongs to a different application.
+
+    Affinity exists so a resumed application returns to the Chrome profile that
+    still holds its half-filled form. That only means anything while the slot is
+    free or parked in this application's name. Once another application holds
+    it, live or parked, the profile behind it is theirs and the recorded slot
+    points at nothing this application can ever use again.
+    """
+    if affinity not in APPLY_LOCKS:
+        return False
+    held = lock_holder(affinity)
+    if held is None:
+        return False
+    return not (held.get("parked") is True and held.get("note") == aid)
+
+
 def candidate_apply_slots(aid):
-    """Honor durable affinity, otherwise return genuinely unused slots."""
+    """Honor durable affinity, otherwise return genuinely unused slots.
+
+    Falling back matters more than the affinity does. This returned [] when the
+    recorded slot had been taken by someone else, and [] is not "wait", it is
+    "never": the head of the Apply queue could not be started, and because only
+    the head is ever started, every click queued behind it stopped too. On
+    2026-08-25 that wedged the whole queue for four and a half hours with a free
+    slot sitting unused, and no retry could clear it, because pressing Retry
+    re-queued behind the same head.
+    """
     affinity = browser_slot_for_application(aid)
     if not affinity:
         return free_apply_slots()
@@ -602,7 +631,9 @@ def candidate_apply_slots(aid):
         return [affinity]
     if held.get("parked") is True and held.get("note") == aid:
         return [affinity]
-    return []
+    # Stale. Losing the old profile costs a form that has to be filled again;
+    # honouring it costs every application behind this one, permanently.
+    return free_apply_slots()
 
 
 def queue_depth(q, name):

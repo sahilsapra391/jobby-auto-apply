@@ -1276,6 +1276,16 @@ class ProviderRegistry:
             self._write_locked(state)
             return self._public_status_locked(state)
 
+    def work_order(self) -> list[str]:
+        """Connected providers in the order work should try them.
+
+        The same sequence select_for_work probes, exposed so a stage that can
+        fall through on failure walks the identical one rather than inventing a
+        second that drifts from it.
+        """
+        with self._locked():
+            return list(self._ordered_from_state(self._load_locked()))
+
     def select_for_work(self) -> dict[str, Any]:
         """Probe connections in order and return the first account that can work."""
         with self._locked():
@@ -1425,6 +1435,11 @@ def refresh(provider_id: str | None = None) -> dict[str, Any]:
 
 def select_for_work() -> dict[str, Any]:
     return _registry().select_for_work()
+
+
+def work_order() -> list[str]:
+    """Connected providers in the order work should try them."""
+    return _registry().work_order()
 
 
 def mark_unhealthy(

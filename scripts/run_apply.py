@@ -452,7 +452,18 @@ def main():
         print(json.dumps({"blocked": blocked, "applicationId": application_id}, indent=2))
         return 2
 
+    # Refuse only when nothing is usable. Refusing because the FIRST choice is
+    # unhealthy is what made a single bad account stop the run outright, and
+    # the loop below exists precisely to walk past that one.
     ok, reason = agent.authenticated(force=True, provider=selected_provider)
+    if not ok:
+        for fallback in providers.work_order():
+            if fallback == selected_provider:
+                continue
+            ok, reason = agent.authenticated(force=True, provider=fallback)
+            if ok:
+                selected_provider = fallback
+                break
     if not ok:
         blocked = agent.blocked_reason(reason, selected_provider)
         store(["meta-set", "--key", "blocked", "--value", blocked])
@@ -497,60 +508,95 @@ def main():
         }, indent=2))
         return 2
 
-    agent_workspace = tempfile.TemporaryDirectory(prefix="jobby-apply-")
-    try:
-        invocation = providers.build_run_invocation(
-            selected_provider,
-            "apply",
-            prompt,
-            workspace=agent_workspace.name,
-            browser_slot=args.slot,
-            browser_adapter=browser,
-            application_context={
-                "applicationId": application_id,
-                "resume": artifacts["resume"]["path"],
-                "cover": artifacts["coverLetter"]["path"],
-                "uploadResume": upload_artifacts["resume"]["path"],
-                "uploadCover": upload_artifacts["coverLetter"]["path"],
-            },
-        )
-    except providers.ProviderError as exc:
-        agent_workspace.cleanup()
-        blocked = agent.blocked_reason(str(exc), selected_provider)
-        store(["meta-set", "--key", "blocked", "--value", blocked])
-        print(json.dumps({"blocked": blocked, "provider": selected_provider}, indent=2))
-        return 2
-
-    phase_start = _set_phase(
-        application_id,
-        "--phase",
-        "Queued",
-        "--detail",
-        f"starting the local form run with {selected_provider}",
-    )
-    if phase_start.returncode != 0:
-        agent_workspace.cleanup()
-        why = (
-            phase_start.stderr or phase_start.stdout or "phase update failed"
-        ).strip()[:200]
-        print(json.dumps({
-            "applicationId": application_id,
-            "started": False,
-            "why": why,
-        }, indent=2))
-        return 2
+    # Every connected provider gets a turn, newest connection first. One
+    # provider used to get the only turn: if its CLI hung, overflowed its
+    # output bound, or came back on the wrong model, the application parked and
+    # waited for a human, with two other healthy accounts sitting connected and
+    # idle. A 45-minute timeout spent that way is the most expensive way this
+    # can fail.
+    #
+    # It stops the moment anything durable happened. `terminal` covers
+    # completed, parked, cancelled, abandoned and submission_unverified, and
+    # every one of them means the form has been touched in a way a second agent
+    # must not repeat: re-running one over a submitted form is how an
+    # application goes out twice under the user's name. Only a provider that
+    # achieved nothing is worth replacing.
+    candidates = [selected_provider]
+    for candidate in providers.work_order():
+        if candidate not in candidates:
+            candidates.append(candidate)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
     log = run_log_path(application_id)
     descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+
+    attempts = []
+    provider_exit = 3
     timed_out = False
-    provider_stderr = ""
     overflow_stream = None
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+    provider_stderr = ""
+    model_mismatch = False
+    auth_failed = False
+    outcome = {}
+
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        for index, candidate in enumerate(candidates):
+            ready, why = agent.authenticated(force=True, provider=candidate)
+            if not ready:
+                attempts.append({"provider": candidate, "skipped": why[:200]})
+                handle.write(f"\n=== {candidate} skipped: {why[:200]} ===\n")
+                handle.flush()
+                continue
+
+            agent_workspace = tempfile.TemporaryDirectory(prefix="jobby-apply-")
+            try:
+                invocation = providers.build_run_invocation(
+                    candidate,
+                    "apply",
+                    prompt,
+                    workspace=agent_workspace.name,
+                    browser_slot=args.slot,
+                    browser_adapter=browser,
+                    application_context={
+                        "applicationId": application_id,
+                        "resume": artifacts["resume"]["path"],
+                        "cover": artifacts["coverLetter"]["path"],
+                        "uploadResume": upload_artifacts["resume"]["path"],
+                        "uploadCover": upload_artifacts["coverLetter"]["path"],
+                    },
+                )
+            except providers.ProviderError as exc:
+                agent_workspace.cleanup()
+                attempts.append({"provider": candidate, "skipped": str(exc)[:200]})
+                handle.write(f"\n=== {candidate} could not be invoked: {str(exc)[:200]} ===\n")
+                handle.flush()
+                continue
+
+            selected_provider = candidate
+            detail = f"starting the local form run with {candidate}"
+            if index:
+                detail = f"retrying the form with {candidate} after {candidates[index - 1]}"
+            phase_start = _set_phase(
+                application_id, "--phase", "Queued", "--detail", detail
+            )
+            if phase_start.returncode != 0:
+                agent_workspace.cleanup()
+                why = (
+                    phase_start.stderr or phase_start.stdout or "phase update failed"
+                ).strip()[:200]
+                handle.write(f"\n=== {candidate} not started: {why} ===\n")
+                attempts.append({"provider": candidate, "skipped": why})
+                continue
+
+            timed_out = False
+            overflow_stream = None
+            provider_stderr = ""
+            model_mismatch = False
+            auth_failed = False
             handle.write(
-                f"application={application_id} provider={selected_provider} slot={args.slot}\n"
+                f"\n=== attempt {index + 1}: application={application_id} "
+                f"provider={candidate} slot={args.slot} ===\n"
             )
             handle.flush()
             try:
@@ -579,8 +625,8 @@ def main():
                 # write costs a measurement rather than the application.
                 provider_usage.record(
                     application_id,
-                    selected_provider,
-                    providers.MODEL_IDS.get(selected_provider, ""),
+                    candidate,
+                    providers.MODEL_IDS.get(candidate, ""),
                     "form",
                     provider_usage.parse(proc.stdout),
                 )
@@ -604,39 +650,70 @@ def main():
                     )
             except OSError as exc:
                 provider_exit = 127
+                proc = None
                 handle.write(f"provider process could not start: {exc}\n")
-    finally:
-        agent_workspace.cleanup()
+            finally:
+                agent_workspace.cleanup()
 
-    model_mismatch = False
-    if selected_provider == "gemini" and provider_exit == 0:
-        try:
-            providers.verify_gemini_served_model(proc.stdout, stream=True)
-        except providers.GeminiModelMismatch:
-            model_mismatch = True
-            provider_exit = 126
-            provider_login.publish_status(
-                providers.mark_unhealthy("gemini", "unavailable")
+            if candidate == "gemini" and provider_exit == 0 and proc is not None:
+                try:
+                    providers.verify_gemini_served_model(proc.stdout, stream=True)
+                except providers.GeminiModelMismatch:
+                    model_mismatch = True
+                    provider_exit = 126
+                    provider_login.publish_status(
+                        providers.mark_unhealthy("gemini", "unavailable")
+                    )
+                    blocked = "Gemini did not use the exact model selected in Settings."
+                    store(["meta-set", "--key", "blocked", "--value", blocked])
+
+            auth_failed = (
+                provider_exit != 0
+                and not model_mismatch
+                and overflow_stream is None
+                and provider_process.looks_like_provider_auth_failure(
+                    candidate, provider_stderr
+                )
             )
-            blocked = "Gemini did not use the exact model selected in Settings."
-            store(["meta-set", "--key", "blocked", "--value", blocked])
+            if auth_failed:
+                provider_login.publish_status(agent.invalidate(candidate))
+                blocked = agent.blocked_reason(
+                    "the provider process could not authenticate", candidate
+                )
+                store(["meta-set", "--key", "blocked", "--value", blocked])
 
-    auth_failed = (
-        provider_exit != 0
-        and not model_mismatch
-        and overflow_stream is None
-        and provider_process.looks_like_provider_auth_failure(
-            selected_provider, provider_stderr
-        )
-    )
-    if auth_failed:
-        provider_login.publish_status(agent.invalidate(selected_provider))
-        blocked = agent.blocked_reason(
-            "the provider process could not authenticate", selected_provider
-        )
-        store(["meta-set", "--key", "blocked", "--value", blocked])
+            outcome = verify_terminal_outcome(application_id, artifacts)
+            attempts.append({
+                "provider": candidate,
+                "providerExit": provider_exit,
+                "timedOut": timed_out,
+                "outputOverflow": overflow_stream,
+                "modelMismatch": model_mismatch,
+                "authFailed": auth_failed,
+                "terminal": outcome.get("terminal"),
+            })
 
-    outcome = verify_terminal_outcome(application_id, artifacts)
+            if provider_exit == 0 and outcome.get("ok"):
+                break
+            if outcome.get("terminal"):
+                # Parked, submitted, cancelled or abandoned. Whatever happened,
+                # it is on the record and a second agent must not go over it.
+                break
+            if not auth_failed and not model_mismatch and provider_exit != 0:
+                # It reached nothing and it was this account's fault, so take it
+                # out of rotation for the next tick rather than handing it the
+                # same work again.
+                provider_login.publish_status(
+                    providers.mark_unhealthy(candidate, "unavailable")
+                )
+            handle.write(
+                f"=== {candidate} produced no outcome (exit {provider_exit}); "
+                "falling through ===\n"
+            )
+            handle.flush()
+
+    if not outcome:
+        outcome = verify_terminal_outcome(application_id, artifacts)
     slot_release = None
     if outcome.get("terminal") in {"completed", "cancelled", "abandoned"}:
         slot_release = release_terminal_browser_slot(application_id, args.slot)
@@ -661,6 +738,7 @@ def main():
     print(json.dumps({
         "ran": application_id,
         "provider": selected_provider,
+        "attempts": attempts,
         "providerExit": provider_exit,
         "timedOut": timed_out,
         "outputOverflow": overflow_stream,
