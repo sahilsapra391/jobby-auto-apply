@@ -26,6 +26,7 @@ import agent  # noqa: E402
 import browser  # noqa: E402
 import provider_login  # noqa: E402
 import provider_process  # noqa: E402
+import provider_usage  # noqa: E402
 import providers  # noqa: E402
 import toolpath  # noqa: E402
 
@@ -571,6 +572,18 @@ def main():
                     provider_exit = 125
                 else:
                     provider_exit = proc.returncode
+                # Token spend, before stdout is anything but a log line. The
+                # CLIs have always reported usage here and nothing read it, so
+                # every application before this one is uncosted. Telemetry
+                # only: provider_usage never raises, and a row it fails to
+                # write costs a measurement rather than the application.
+                provider_usage.record(
+                    application_id,
+                    selected_provider,
+                    providers.MODEL_IDS.get(selected_provider, ""),
+                    "form",
+                    provider_usage.parse(proc.stdout),
+                )
                 if proc.stdout:
                     handle.write("\n[provider stdout]\n")
                     handle.write(proc.stdout)

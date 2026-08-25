@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "Per-million-token prices for the exact models Jobby pins. USD.",
+    "",
+    "Dated on purpose. A cost computed from a forgotten table reads exactly like",
+    "a cost computed from a current one, so provider_usage.py refuses a table",
+    "older than PRICE_MAX_AGE_DAYS and refuses any model past ratesExpireOn.",
+    "",
+    "Two of the three models are on introductory pricing as of 2026-08-25, and",
+    "one of them expires within a week. That is the reason for per-model expiry",
+    "rather than a single table date: on 2026-09-01 the Anthropic figure below",
+    "becomes wrong while the table as a whole is still fresh.",
+    "",
+    "cachedInputPerMTok is the rate for the cached SUBSET of input, not an extra",
+    "charge on top. cacheWritePerMTok is what it costs to put tokens into the",
+    "cache in the first place.",
+    "",
+    "To update: change the rates, change asOf, change ratesExpireOn, and record",
+    "where the number came from in source."
+  ],
+  "asOf": "2026-08-25",
+  "currency": "USD",
+  "unit": "per million tokens",
+  "models": {
+    "gpt-5.6-luna": {
+      "inputPerMTok": 0.20,
+      "cachedInputPerMTok": 0.02,
+      "cacheWritePerMTok": 0.20,
+      "outputPerMTok": 1.20,
+      "ratesExpireOn": "2026-11-30",
+      "source": "OpenAI GPT-5.6 pricing, post 2026-07-30 reduction. Cached input bills at 10% of standard. Long-context requests bill higher ($0.40/$1.80) and are NOT modelled here, so a very large context run is under-estimated.",
+      "note": "No announced expiry; ratesExpireOn is a review date, not a vendor deadline."
+    },
+    "claude-sonnet-5": {
+      "inputPerMTok": 2.00,
+      "cachedInputPerMTok": 0.20,
+      "cacheWritePerMTok": 2.50,
+      "outputPerMTok": 10.00,
+      "ratesExpireOn": "2026-08-31",
+      "source": "Anthropic published rates. Introductory pricing of $2.00/$10.00 runs through 2026-08-31; standard rates are $3.00/$15.00.",
+      "note": "EXPIRES 2026-08-31. From 2026-09-01 set inputPerMTok 3.00, cachedInputPerMTok 0.30, cacheWritePerMTok 3.75, outputPerMTok 15.00. Cache multipliers are Anthropic's standard 0.1x read and 1.25x write applied to the base input rate; verify against the pricing page when updating."
+    },
+    "gemini-3.7-flash": {
+      "inputPerMTok": 0.75,
+      "cachedInputPerMTok": 0.075,
+      "cacheWritePerMTok": 0.75,
+      "outputPerMTok": 3.75,
+      "ratesExpireOn": "2026-12-31",
+      "source": "Google introductory pricing through 2026-12-31; standard rates from 2027-01-01 are $1.50/$7.50 with cached input at $0.15.",
+      "note": "EXPIRES 2026-12-31. From 2027-01-01 double every rate here."
+    }
+  }
+}
