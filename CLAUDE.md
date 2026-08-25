@@ -47,12 +47,42 @@ plate has to circumscribe the drawing, which fills its viewBox corner to corner;
 an ear or a foot crossing the edge lands as dark ink on a dark page. The
 contour-draw and ink-wipe beats survive as a first-paint flourish gated on
 `html.jb-intro`, cleared when the wipe ends so returning from Settings does not
-replay the reveal.
+replay the reveal. Clicking the mark replays it, which needs a reflow between
+removing the class and re-adding it or the browser coalesces the two.
 
-Job cards answer hover with their outline, not with movement. Found, In flight,
-and Needs you cards rest on `--hair` and hover to `--hair-strong` with no
-transform. Their controls still lift; the card underneath does not. The only
-scan action in the UI is Scan now inside the Found status banner.
+Neither beat may animate a compositor-driven property. CSS `clip-path` and
+`opacity` both promote the pack to its own layer, which Chrome rasterizes coarse
+for the length of the animation and re-rasterizes sharp only at the end; on
+linework this fine that is a visible half second of blur. The wipe is therefore
+an SVG `clipPath` whose rect grows in the drawing's own coordinate space, and
+that clip wraps the ink group rather than sitting on it, because a clip on an
+element with its own transform resolves in the space that transform establishes
+and the ink group carries a flip.
+
+Nothing on the board answers hover by moving except a control you press. Found,
+In flight, Needs you and the Settings provider cards rest on `--hair` and hover
+to `--hair-strong` with no transform. The nav pills and the three theme controls
+wash to `--hover-wash` rather than lifting. An unselected tab washes toward the
+selected tab's own treatment at about half strength, so the hover previews what
+the click will give. Buttons still lift; the surfaces under them do not.
+
+The logo is the way back to the board from anywhere, and the board means Found,
+not whichever tab was last open. It calls `window.jobbyGoHome`, which
+`settings_panel.py` publishes so the switch is shared rather than duplicated.
+The only scan action in the UI is Scan now inside the Found status banner.
+
+Native select popups and checkboxes are drawn by the operating system, so they
+were the only controls on the board that could not follow the design system.
+`premium_ui.SCRIPT` wraps every `<select>` in a styled face and leaves the native
+element in the DOM owning value and events, which is what keeps the found lane's
+existing wiring working untouched. Two things that face has to keep doing: saved
+searches and Clear assign to `.value` and dispatch nothing, so the wrapper
+redefines that property to stay in step; and an implicit `<label>` forwards its
+clicks to the control it wraps, which is now invisible, so those are redirected.
+The location picker is a `<details>`, which closes only on its own summary, so
+outside clicks and Escape close it explicitly. Every listener in
+`found_lane.SCRIPT` is guarded, because `tests/test_found_script.py` runs that
+file in Node against a minimal `document` stub with no `addEventListener`.
 
 Company identity is centralized in `scripts/company_logos.py`. Job feeds may
 store a trusted `logoUrl`, and promoted roles carry that value into Watching.

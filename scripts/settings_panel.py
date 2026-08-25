@@ -253,6 +253,11 @@ SCRIPT = r"""
       });
     });
     window.addEventListener('popstate', function () { swapView(isSettingsPath()); });
+    window.jobbyGoHome = function () {
+      if (!document.body.classList.contains('settings-view')) return;
+      history.pushState({ settingsView: false }, '', '/');
+      swapView(false);
+    };
     var message = document.getElementById('provider-message');
     var labels = {
       connected: 'Connected', disconnected: 'Not connected', connecting: 'Waiting for sign-in',

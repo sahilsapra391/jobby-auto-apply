@@ -1213,7 +1213,7 @@ class ProviderSettingsTests(unittest.TestCase):
         page = build()
         appbar_start = page.index('<header class="appbar">')
         appbar_end = page.index('</header>', appbar_start)
-        brand = page.index('<div class="brand">', appbar_start, appbar_end)
+        brand = page.index('class="brand"', appbar_start, appbar_end)
         nav = page.index('<nav class="primary-nav"')
         theme = page.index('<div class="themeseg"', appbar_start, appbar_end)
         self.assertLess(brand, nav)
@@ -1228,6 +1228,62 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertIn("grid-template-columns:1fr auto 1fr", appbar_css)
         body = page[page.index("body {"):page.index(".primary-nav {")]
         self.assertNotIn("padding-left", body)
+
+    def test_the_logo_goes_home_and_lands_on_found(self):
+        # "The board" means Found, not whichever tab happened to be open, and it
+        # has to work from Settings too, which is a body class rather than a page.
+        page = build()
+        self.assertIn('<a class="brand" href="/" data-home-found', page)
+        self.assertIn("var brandLink = document.querySelector('[data-home-found]')", page)
+        self.assertIn("if (window.jobbyGoHome) window.jobbyGoHome();", page)
+        self.assertIn("window.jobbyGoHome = function () {", page)
+
+    def test_hover_moves_colour_not_position(self):
+        # Nav pills, theme controls and unselected tabs wash instead of lifting,
+        # and an unselected tab washes toward the selected tab's own treatment.
+        page = build()
+        self.assertIn('.primary-nav a:not([aria-current="page"]):hover '
+                      "{ background:var(--hover-wash); color:var(--ink); }", page)
+        self.assertIn(".themebtn:not(.on):hover { background:var(--hover-wash); "
+                      "color:var(--ink); }", page)
+        self.assertIn(".tab:not(.on):hover { background:color-mix(in srgb,var(--t-p) 55%,transparent);", page)
+        self.assertIn(".provider-card:hover { border-color:var(--hair-strong); }", page)
+        for rule in (".primary-nav a:not(", ".themebtn:not(.on):hover",
+                     ".provider-card:hover"):
+            start = page.index(rule)
+            self.assertNotIn("translateY", page[start:page.index("}", start)])
+
+    def test_the_filter_controls_are_ours_rather_than_the_browsers(self):
+        # Native select popups and checkboxes are drawn by the operating system,
+        # so they were the only controls on the board off the design system.
+        page = build()
+        self.assertIn(".jb-select-menu {", page)
+        self.assertIn('input[type="checkbox"] { appearance:none;', page)
+        self.assertIn('input[type="checkbox"]:indeterminate::after', page)
+        self.assertIn("document.querySelectorAll('select').forEach(enhance);", page)
+        # The native element keeps owning value and events; this is only its face.
+        self.assertIn("select.dispatchEvent(new Event('change', { bubbles: true }));", page)
+        self.assertIn("Object.defineProperty(select, 'value'", page)
+
+    def test_watching_row_controls_sit_on_one_line(self):
+        # align-items:center centres margin boxes, so a top margin on Apply and
+        # none on the drop control left the two 3px apart. The spacing that
+        # margin was providing belongs to the column's gap.
+        page = build()
+        apply_rule = page[page.index(".btn.apply {"):]
+        apply_rule = apply_rule[:apply_rule.index("}")]
+        self.assertNotIn("margin", apply_rule)
+        self.assertIn("gap:.85rem; white-space:nowrap", page)
+
+    def test_the_mark_replays_on_click_without_a_composited_blur(self):
+        # A CSS clip-path or opacity animation promotes the pack to its own
+        # layer, which Chrome rasterizes coarse until the animation ends.
+        page = build()
+        self.assertIn('<rect class="jm2-wipe-rect"', page)
+        self.assertIn("@keyframes jm2-wipe { from { height:0px; } to { height:1628px; } }", page)
+        self.assertNotIn("clip-path:inset(0 0 100% 0)", page)
+        self.assertIn("heroMark.addEventListener('click', playIntro);", page)
+        self.assertIn('role="button" tabindex="0" aria-label="Replay the Jobby mark"', page)
 
 
 def visible_text(html):
