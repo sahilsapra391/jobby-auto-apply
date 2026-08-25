@@ -90,6 +90,9 @@ MAX_HEADING_WORDS = 8
 # A heading line is short. A sentence that happens to start with "requirements"
 # is not a heading, and this is what tells them apart.
 MAX_HEADING_CHARS = 70
+# How much may follow the part of a heading this recognises. Long enough for
+# "qualifications, capabilities, and skills", bounded by the two caps above.
+HEADING_TAIL_CHARS = 30
 
 
 def _words(line):
@@ -113,7 +116,11 @@ CLOSING_HEADINGS = _normalise_all(CLOSING_HEADINGS)
 
 
 # Employers introduce a heading as often as they just write it.
-LEAD_INS = ("here's ", "here is ", "heres ", "so ", "now ", "and ", "the ")
+LEAD_INS = (
+    "here's ", "here is ", "heres ", "so ", "now ", "and ", "the ",
+    "job ", "key ", "core ", "primary ", "main ", "essential ", "principal ",
+    "position ", "role ", "general ", "specific ", "additional ", "other ",
+)
 
 # Words title case leaves lowercase, so they cannot be evidence either way.
 TITLE_CASE_SMALL_WORDS = {
@@ -175,19 +182,22 @@ def _is_strong_heading(line):
 
 def _classify(line):
     """`responsibilities`, `requirements`, `closing`, or None."""
-    words = _strip_lead(_words(line))
-    if not words:
+    whole = _words(line)
+    if not whole:
         return None
-    for name, headings in (("requirements", REQUIREMENT_HEADINGS),
-                           ("responsibilities", RESPONSIBILITY_HEADINGS),
-                           ("closing", CLOSING_HEADINGS)):
-        for heading in headings:
-            # Anchored at the start so "experience with requirements gathering"
-            # is not a requirements heading.
-            if words == heading or words.startswith(heading + " ") \
-                    or words.startswith(heading):
-                if len(words) <= len(heading) + 12:
-                    return name
+    for words in (whole, _strip_lead(whole)):
+        if not words:
+            continue
+        for name, headings in (("requirements", REQUIREMENT_HEADINGS),
+                               ("responsibilities", RESPONSIBILITY_HEADINGS),
+                               ("closing", CLOSING_HEADINGS)):
+            for heading in headings:
+                # Anchored at the start so "experience with requirements
+                # gathering" is not a requirements heading.
+                if words == heading or words.startswith(heading + " ") \
+                        or words.startswith(heading):
+                    if len(words) <= len(heading) + HEADING_TAIL_CHARS:
+                        return name
     return None
 
 

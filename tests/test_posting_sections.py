@@ -95,6 +95,21 @@ class SectionTests(unittest.TestCase):
             out = posting_sections.split_sections(heading + "\n- Do the thing.\n")
             self.assertTrue(out["requirements"] or out["responsibilities"], heading)
 
+    def test_a_qualified_heading_is_still_the_heading_it_qualifies(self):
+        # Oracle and JPMC write "Job Responsibilities" and "Required
+        # qualifications, capabilities, and skills" on 1,466 of the board's
+        # postings. Matching from the front alone walked past both: one has a
+        # word in front, the other has four behind.
+        for heading in ("Job Responsibilities", "Core Responsibilities",
+                        "Primary Responsibilities", "Position Responsibilities"):
+            out = posting_sections.split_sections(heading + "\n- Own it.\n")
+            self.assertEqual(out["responsibilities"], ["Own it."], heading)
+        for heading in ("Required qualifications, capabilities, and skills",
+                        "Preferred qualifications, capabilities and skills",
+                        "Essential Criteria", "Additional Requirements"):
+            out = posting_sections.split_sections(heading + "\n- 5 years.\n")
+            self.assertEqual(out["requirements"], ["5 years."], heading)
+
     def test_a_posting_with_no_recognisable_heading_returns_nothing(self):
         out = posting_sections.split_sections("We are hiring.\nCome and work here.\n")
         self.assertEqual(out, {"responsibilities": [], "requirements": []})

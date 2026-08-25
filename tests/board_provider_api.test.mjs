@@ -6,6 +6,8 @@ process.env.CF_KV_NAMESPACE_ID = 'namespace';
 process.env.CF_API_TOKEN = 'token';
 process.env.DASHBOARD_PASSWORD = 'test-password';
 
+import { gzipSync } from 'node:zlib';
+
 const values = new Map();
 const originalFetch = globalThis.fetch;
 
@@ -88,6 +90,52 @@ test('sanitized board state is compressed and health reports its publication', a
   assert.equal(health.statePublished, true);
   assert.equal(health.stateGeneratedAt, '2026-08-24T12:00:00Z');
   assert.equal(health.rendererSchemaVersion, health.stateSchemaVersion);
+});
+
+test('the posting route decodes the state envelope it is given', async () => {
+  // The regression this pins: getBoardState returns {schemaVersion, encoding,
+  // payload} with the state gzipped inside it, and the route read .jobs
+  // straight off that envelope. Every id missed, so every card reported that
+  // the posting had no headings. A stand-in that served jobs.json directly
+  // could not have shown it, which is how it reached production.
+  const state = {
+    jobs: {
+      abc123: {
+        title: 'Product Manager',
+        sections: {
+          responsibilities: ['Own the roadmap.', 'Mentor the team.'],
+          requirements: ['5 years of product experience.'],
+        },
+      },
+    },
+  };
+  values.set('jobby:board-state', JSON.stringify({
+    schemaVersion: 1,
+    rendererSchemaVersion: 1,
+    encoding: 'gzip+base64',
+    generatedAt: '2026-08-25T12:00:00Z',
+    payload: gzipSync(Buffer.from(JSON.stringify(state), 'utf8')).toString('base64'),
+  }));
+
+  const found = await handler.fetch(request('/api/posting?id=abc123', undefined, 'GET'));
+  assert.equal(found.status, 200);
+  const body = await found.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.responsibilities, ['Own the roadmap.', 'Mentor the team.']);
+  assert.deepEqual(body.requirements, ['5 years of product experience.']);
+
+  // An id the state does not carry is an empty answer, not an error.
+  const missing = await handler.fetch(request('/api/posting?id=nosuchjob', undefined, 'GET'));
+  assert.equal(missing.status, 200);
+  assert.deepEqual((await missing.json()).responsibilities, []);
+
+  // And the gate and the id shape are both enforced.
+  const anonymous = await handler.fetch(
+    request('/api/posting?id=abc123', undefined, 'GET', false));
+  assert.equal(anonymous.status, 401);
+  const hostile = await handler.fetch(
+    request('/api/posting?id=' + encodeURIComponent('../etc'), undefined, 'GET'));
+  assert.equal(hostile.status, 400);
 });
 
 test('company logos stay behind the password and proxy only safe domains', async () => {

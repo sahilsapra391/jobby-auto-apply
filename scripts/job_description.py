@@ -106,6 +106,37 @@ def _workday(url):
             lambda data: (data.get("jobPostingInfo") or {}).get("jobDescription") or "")
 
 
+def _oracle(url):
+    # Oracle Recruiting Cloud serves a single-page shell that answers a direct
+    # fetch with a redirect to its own index, so the page route reports the
+    # posting as delisted when it is live. The REST resource behind it returns
+    # the description, and the requisition id and site are both in the URL.
+    match = re.match(
+        r"https://([^/]+)/hcmUI/CandidateExperience/(?:[^/]+/)?sites/([^/]+)/"
+        r"(?:job|requisitions/preview)/(\d+)",
+        url.split("?")[0],
+    )
+    if not match:
+        return None
+    host, site, requisition = match.groups()
+    api = (f"https://{host}/hcmRestApi/resources/latest/"
+           f"recruitingCEJobRequisitionDetails?onlyData=true&expand=all"
+           f'&finder=ById;Id="{requisition}",siteNumber={site}')
+
+    def read(data):
+        items = data.get("items") or []
+        if not items:
+            return ""
+        item = items[0]
+        # The body is split across two fields on most tenants, and either can
+        # be the one carrying the requirements.
+        return " ".join(part for part in (item.get("ExternalDescriptionStr"),
+                                          item.get("ExternalQualificationsStr"))
+                        if part)
+
+    return api, read
+
+
 # Ordered by how much of the queue each one carries, so the common case is
 # matched first. A host this does not know falls through to the page itself.
 ENDPOINTS = (
@@ -114,6 +145,7 @@ ENDPOINTS = (
     ("ashbyhq.com", _ashby),
     ("smartrecruiters.com", _smartrecruiters),
     ("myworkdayjobs.com", _workday),
+    ("oraclecloud.com", _oracle),
 )
 
 
