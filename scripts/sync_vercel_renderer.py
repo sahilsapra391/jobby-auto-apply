@@ -20,6 +20,10 @@ FILES = (
     "jobs_store.py",
     "match_score.py",
     "premium_ui.py",
+    # jobs_store imports this for the pool write lock. The deployed function
+    # only ever reads, so it never takes the lock -- but the import happens at
+    # module load, and a missing module 502s every request.
+    "runlock.py",
     "search_config.py",
     "settings_panel.py",
     "store.py",

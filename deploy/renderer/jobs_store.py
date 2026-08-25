@@ -28,6 +28,7 @@ the user made, and a cap is not allowed to eat those.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -35,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runlock
 import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 
 # Volume knobs, confirmed with the user before build. Stored pool first: the
@@ -155,9 +157,50 @@ def load_jobs(root):
     return _read(paths(root)["jobs"], {})
 
 
-def save_jobs(root, jobs):
-    store.write_private(paths(root)["jobs"], jobs)
+# Read-modify-write on the whole pool is the shape that has now lost work
+# twice. The lock is the fix, but a lock that each new script has to remember
+# to take is a lock the next script will not take: on 2026-08-25 a sections
+# backfill, written by somebody who had never heard of the sweep, discarded 222
+# closures and 113 new jobs. So the lock lives here, on the write itself, and
+# `edit` below is the only shape in which a caller can read-modify-write.
+POOL_LOCK = "scan"
+
+
+def save_jobs(root, jobs, note="save_jobs"):
+    """Write the pool, under the lock, always.
+
+    `runlock.held` is reentrant for the process that already owns the lock, so
+    a sweep holding it for eight minutes writes through here without
+    self-deadlocking, and everything else is excluded while it does.
+    """
+    with runlock.held(root, POOL_LOCK, note=note):
+        store.write_private(paths(root)["jobs"], jobs)
     return jobs
+
+
+@contextlib.contextmanager
+def edit(root, note="edit"):
+    """The pool, held open for a read-modify-write.
+
+        with jobs_store.edit(root, note="mark_watched") as (jobs, edit):
+            jobs[job_id]["state"] = "watched"
+
+    `edit["write"] = False` skips the write for a call that turned out to
+    change nothing. The pool is 36MB, and the eye being pressed twice should
+    not rewrite it.
+
+    Locking only the write would still leave the read stale: load, wait while a
+    sweep finishes, then save a pool built before it started. The whole span
+    has to be inside the lock, which is what this is for. Raises
+    `runlock.LockBusy` if somebody else is mid-write; callers refuse rather
+    than queue, because a queued writer is holding a copy that is already old.
+    """
+    with runlock.held(root, POOL_LOCK, note=note):
+        jobs = load_jobs(root)
+        state = {"write": True}
+        yield jobs, state
+        if state["write"]:
+            store.write_private(paths(root)["jobs"], jobs)
 
 
 def clear_untrusted_legacy_dates(jobs):
@@ -456,32 +499,35 @@ def tombstone(job, reason=""):
 
 def mark_passed(root, job_id, reason=""):
     """Pass on a job: state, then tombstone. Idempotent per job id."""
-    jobs = load_jobs(root)
-    passed = load_passed(root)
-    job = jobs.get(job_id)
-    if job is None:
-        if job_id in passed:
-            return {"passed": job_id, "alreadyPassed": True}
-        raise JobsStoreError(f"no job with id {job_id}")
-    if job.get("state") != "passed":
-        transition(job, "passed")
-    passed.setdefault(job_id, tombstone(job, reason))
-    save_jobs(root, jobs)
-    save_passed(root, passed)
-    return {"passed": job_id, "company": job.get("company"), "title": job.get("title")}
+    with edit(root, note="mark_passed") as (jobs, state):
+        passed = load_passed(root)
+        job = jobs.get(job_id)
+        if job is None:
+            if job_id in passed:
+                state["write"] = False
+                return {"passed": job_id, "alreadyPassed": True}
+            state["write"] = False
+            raise JobsStoreError(f"no job with id {job_id}")
+        if job.get("state") != "passed":
+            transition(job, "passed")
+        passed.setdefault(job_id, tombstone(job, reason))
+        save_passed(root, passed)
+        return {"passed": job_id, "company": job.get("company"),
+                "title": job.get("title")}
 
 
 def mark_watched(root, job_id):
     """Promote a job to Watching. Idempotent: the eye may be pressed twice."""
-    jobs = load_jobs(root)
-    job = jobs.get(job_id)
-    if job is None:
-        raise JobsStoreError(f"no job with id {job_id}")
-    if job.get("state") == "watched":
-        return {"watched": job_id, "alreadyWatched": True, "job": job}
-    transition(job, "watched")
-    save_jobs(root, jobs)
-    return {"watched": job_id, "job": job}
+    with edit(root, note="mark_watched") as (jobs, state):
+        job = jobs.get(job_id)
+        if job is None:
+            state["write"] = False
+            raise JobsStoreError(f"no job with id {job_id}")
+        if job.get("state") == "watched":
+            state["write"] = False
+            return {"watched": job_id, "alreadyWatched": True, "job": job}
+        transition(job, "watched")
+        return {"watched": job_id, "job": job}
 
 
 def keep_priority(job):
