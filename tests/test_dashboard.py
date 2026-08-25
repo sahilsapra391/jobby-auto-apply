@@ -1275,6 +1275,20 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertNotIn("margin", apply_rule)
         self.assertIn("gap:.85rem; white-space:nowrap", page)
 
+    def test_the_expanded_card_shows_five_points_and_no_repeat(self):
+        # Five is what fits before the panel becomes the posting, and fewer
+        # when the posting has fewer. The excerpt is not repeated: the card
+        # face already carries it a line above the panel.
+        page = build()
+        self.assertIn("var SECTION_POINTS = 5;", page)
+        self.assertIn("(data.responsibilities || []).slice(0, SECTION_POINTS)", page)
+        self.assertIn("(data.requirements || []).slice(0, SECTION_POINTS)", page)
+        self.assertIn("'see more on'", page)
+        self.assertNotIn("'seen on'", page)
+        panel = page[page.index("function detailPanel(job) {"):]
+        panel = panel[:panel.index("function ", 40)]
+        self.assertNotIn("job.sum", panel)
+
     def test_the_mark_replays_on_click_without_a_composited_blur(self):
         # A CSS clip-path or opacity animation promotes the pack to its own
         # layer, which Chrome rasterizes coarse until the animation ends.
