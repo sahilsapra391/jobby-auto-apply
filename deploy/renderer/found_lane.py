@@ -1483,10 +1483,13 @@ SCRIPT = r"""
   }
 
   var sectionCache = {};
+  var SECTION_POINTS = 5;
   function renderSections(holder, data) {
     holder.textContent = '';
-    var rows = [['Key responsibilities', data.responsibilities || []],
-                ['Requirements', data.requirements || []]];
+    var rows = [['Key responsibilities',
+                 (data.responsibilities || []).slice(0, SECTION_POINTS)],
+                ['Requirements',
+                 (data.requirements || []).slice(0, SECTION_POINTS)]];
     var any = false;
     rows.forEach(function (pair) {
       if (!pair[1].length) return;
@@ -1520,7 +1523,8 @@ SCRIPT = r"""
 
   function detailPanel(job) {
     var panel = el('div', 'jb-panel');
-    if (job.sum) panel.appendChild(el('p', 'jb-excerpt', job.sum));
+    // No excerpt here: the card face already carries it a line above, and
+    // repeating it meant every expansion opened on something already read.
 
     // What the posting itself says, in its own two halves. These are fetched
     // rather than embedded: sections average about 265 bytes a record and the
@@ -1540,7 +1544,7 @@ SCRIPT = r"""
     }
     if ((job.sg || []).length) {
       var links = el('div', 'jb-sight');
-      links.appendChild(el('span', 'jb-chip', 'seen on'));
+      links.appendChild(el('span', 'jb-chip', 'see more on'));
       job.sg.forEach(function (s) {
         var a = document.createElement('a');
         a.className = 'go';
