@@ -253,7 +253,7 @@ refuse anything.
 `passed.json` stops being a file to port. Tombstones become a state on the
 user's overlay row.
 
-## 5. Corpus retention, which does not exist today
+## 5. Corpus retention, which did not exist and is now half-measured
 
 This is the consequence of §3 that is easiest to miss and most likely to be
 found in production. It has already been found in production. What follows was
@@ -367,7 +367,70 @@ So the split needs two retention policies where there is currently one:
   as it is.
 
 Neither exists yet. Sizing the corpus cap requires measuring the union scope's
-real volume, which nobody has done.
+real volume, which was unmeasured when this section was written and is measured
+below.
+
+### The experiment ran, and the saturation is resolved
+
+Config raised to `postedWithin: 60d`, `storedCap: 50000` (version 21), one sweep
+on the live store, 2026-08-25T15:31:59Z.
+
+| | before, 7d / 3,000 | after, 60d / 50,000 |
+|---|---|---|
+| found | 25,922 | 20,088 |
+| gated out | 23,580 | 14,283 |
+| kept | 1,278 | 3,528 |
+| pruned | 1,278 | **139** |
+| stored total | 3,000 | **6,389** |
+| requests | 605 | 606 |
+| duration | 1,098s | **811s** |
+| `jobs.json` | 10.2 MB | 20.6 MB |
+
+**The ring buffer is gone.** Pruning fell to 139, and those are age-outs under
+`NEW_MAX_AGE_DAYS` rather than cap evictions. The pool no longer destroys unseen
+jobs. Note that kept and pruned have stopped tracking each other, which is the
+clean version of the evidence the earlier draft got wrong.
+
+Three results nobody predicted.
+
+**The binding constraint moved, and it is not what anyone was arguing about.**
+The age window was 91.2% of rejections at 7d. At 60d it is 42.9%, and "matches
+none of the search terms" is now the largest single reason at 46.9%.
+`minScoreToKeep` went from 4 rejections to 832. The pool is neither
+filter-limited by recency nor supply-limited; it is **keyword-limited**, on four
+terms.
+
+**It got faster.** 811 seconds against 1,098, on one extra request. The
+projected 170 MB file-economics failure never arrived, because the pool settled
+at 6,389 and never approached the cap.
+
+**The 98.9% direct-listing purity was an artifact of the cap.** Measured over
+records admitted by this sweep alone, direct share is **73.4%**. Over the
+pre-existing survivors it is 98.9%, and over the whole store 85.4%. So
+`keep_priority` was not revealing a high-quality source mix, it was manufacturing
+one by evicting aggregators under saturation. Remove the pressure and the true
+incoming mix appears. The whole-store figure is anchored by history and should
+not be quoted; the honest measurement is over records with `firstSeenAt` at or
+after the sweep start.
+
+By country, on the same store: US 3,398 jobs at 83.0% direct, CA 545 at 97.4%,
+GB 538 at 63.9%, **IN 403 at 97.0%**. Companies represented went from 318 to
+874. India is the better-served country, not the worse one, which retires the
+premise that it needs more direct employer boards.
+
+### What is still true, and what to watch
+
+6,389 is one sweep, not an equilibrium. That sweep netted 3,528 and the daemon
+runs six times a day. If dedupe does not climb steeply, the pool reaches 50,000
+within days and the ring buffer returns at a larger radius, at roughly 160 MB of
+JSON loaded and rewritten on every ingest. Watch the kept-to-deduped ratio over
+the next several ticks before treating this as stable.
+
+So the corpus-retention argument survives the experiment intact, with its
+numbers changed. A cap sized by guesswork will re-saturate; the union-scope
+corpus in §3 is strictly larger than the 6,389 one user's four keywords admit;
+and both retention policies above are still unwritten. What the experiment
+retires is the idea that the cap is a tuning knob to visit later.
 
 ## 6. Trust boundary: three data classes
 
