@@ -771,6 +771,30 @@ def search_config_version():
         return "unreadable"
 
 
+def render_modules():
+    """Every module the rendered board is built from, from one source of truth.
+
+    This used to name three files. The deployed bundle carries eleven, because
+    dashboard.py and found_lane.py import the rest, so a change to premium_ui,
+    company_logos, match_score, jobs_store, brand, ats_match, search_config or
+    store altered the page while leaving the fingerprint identical. The board in
+    KV then kept serving the previous render against freshly deployed code, and
+    the two drifted with nothing reporting it.
+
+    Read from sync_vercel_renderer.FILES so the list cannot be right in one
+    place and stale in the other: the same set that gets copied into the
+    deployment is the set that decides whether to republish.
+    """
+    try:
+        sys.path.insert(0, str(REPO / "scripts"))
+        import sync_vercel_renderer
+        return tuple(sync_vercel_renderer.FILES)
+    except Exception:
+        # Never let a fingerprint failure stop a tick. Falling back to the
+        # renderers proper still catches the common case.
+        return ("dashboard.py", "found_lane.py", "settings_panel.py")
+
+
 def render_version():
     """What the board would be rendered *by*, not what it would be rendered from.
 
@@ -785,7 +809,7 @@ def render_version():
     any change to either, and none after that.
     """
     digest = hashlib.sha256()
-    for name in ("dashboard.py", "found_lane.py", "settings_panel.py"):
+    for name in render_modules():
         try:
             digest.update((REPO / "scripts" / name).read_bytes())
         except OSError:
