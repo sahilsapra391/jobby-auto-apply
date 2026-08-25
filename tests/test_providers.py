@@ -661,5 +661,37 @@ class InvocationTests(unittest.TestCase):
         self.assertNotIn("--search", invocation.argv)
 
 
+
+
+class PreferredProviderTests(unittest.TestCase):
+    """The preference has to survive a reload, not just a write.
+
+    _normalize_state rebuilds a clean object and copies only the fields it
+    knows, so anything added elsewhere is dropped on the next load. The
+    preferred provider was written to disk, read back correctly by whoever
+    wrote it, and erased by the first component to reload the registry. It
+    looked persisted right up until something else read it, which is why
+    checking the file straight after writing it proved nothing.
+    """
+
+    def test_a_preference_survives_normalisation(self):
+        raw = {"version": providers.STATE_VERSION, "connections": {},
+               "nextConnectionOrder": 1, "preferredProvider": "anthropic"}
+        self.assertEqual(
+            providers._normalize_state(raw).get("preferredProvider"), "anthropic")
+
+    def test_an_unknown_preference_is_dropped_rather_than_carried(self):
+        raw = {"version": providers.STATE_VERSION, "connections": {},
+               "nextConnectionOrder": 1, "preferredProvider": "not-a-provider"}
+        self.assertIsNone(
+            providers._normalize_state(raw).get("preferredProvider"))
+
+    def test_no_preference_stays_absent(self):
+        raw = {"version": providers.STATE_VERSION, "connections": {},
+               "nextConnectionOrder": 1}
+        self.assertIsNone(
+            providers._normalize_state(raw).get("preferredProvider"))
+
+
 if __name__ == "__main__":
     unittest.main()

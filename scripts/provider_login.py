@@ -55,8 +55,13 @@ def login(provider_id, registry=None, runner=None):
 
     if provider_id == "gemini":
         # Gemini has no auth subcommand; it signs in inside its own session.
-        print("Gemini signs in inside its own session. When it opens, type /auth")
-        print("and pick your Google account, then /quit once it says signed in.")
+        # stderr, not stdout. This is guidance for a person at a terminal, and
+        # stdout here is read as data: printing it there put two lines into
+        # every test run and hid the suite summary behind them twice.
+        print("Gemini signs in inside its own session. When it opens, type /auth",
+              file=sys.stderr)
+        print("and pick your Google account, then /quit once it says signed in.",
+              file=sys.stderr)
 
     command = providers.login_invocation(provider_id)
     result = run(

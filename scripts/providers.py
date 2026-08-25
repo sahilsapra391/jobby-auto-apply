@@ -913,6 +913,16 @@ def _normalize_state(raw: Any) -> dict[str, Any]:
     if not isinstance(next_order, int) or isinstance(next_order, bool):
         next_order = max_order + 1
     clean["nextConnectionOrder"] = max(next_order, max_order + 1, 1)
+
+    # Carried through deliberately. _normalize_state rebuilds a clean object
+    # and copies only what it knows, so a field added elsewhere is silently
+    # dropped on the next load. The preferred provider was written to disk,
+    # read back correctly by whoever wrote it, and then erased by the first
+    # component to reload the registry: it looked persisted right up until
+    # something else read it.
+    preferred = raw.get("preferredProvider")
+    if preferred in PROVIDER_IDS:
+        clean["preferredProvider"] = preferred
     return clean
 
 
