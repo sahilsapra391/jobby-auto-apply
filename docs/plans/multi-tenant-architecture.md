@@ -273,8 +273,17 @@ cross-checked with a peer session that found it independently:
 | **pruned** | **1,156** |
 | stored total | 3,000 |
 
-Kept equals pruned exactly, and the total is pinned at `STORED_CAP`. **The job
-pool is a saturated ring buffer.** Every job admitted evicts one already there.
+The evidence is that `storedTotal` equals `STORED_CAP` exactly, at 3,000, and
+`prune()` ran on the same sweep. **The job pool is a saturated ring buffer** and
+every job admitted evicts one already there.
+
+Note that kept equalling pruned is *not* independent evidence of this, though an
+earlier draft of this section cited it as though it were. `storedTotal_after =
+storedTotal_before + kept - pruned`, so once the store is at the cap the equality
+is arithmetically forced rather than observed. It is a consequence of
+saturation, not proof of it. The counters are genuinely independent in the code
+(`ingest.py:390` and `:418`), which is what made the coincidence look like a
+finding. Credit to the peer session that challenged it.
 
 It is worse than that number suggests, because `prune()` only drops records in
 state `new`, correctly, since a cap is not allowed to eat the user's decisions.
@@ -283,15 +292,34 @@ all 1,156 evictions come out of the 2,856 jobs nobody has looked at yet: **about
 forty percent of the unseen pool is destroyed on every sweep.** A job found on
 Monday and not opened is gone before the user gets to it.
 
+Which 40% is not random, and that matters. `keep_priority` (`jobs_store.py:467`)
+sorts on direct-listing first, then score, then age, and the cap evicts from the
+reversed tail. So the pool destroys its lowest-priority unseen records first, by
+design, and the design is a good one: its docstring records a run where sorting
+on score alone left only 214 direct listings among 3,000 survivors, because
+aggregator snippets are short and keyword-dense and outscore real job
+descriptions. The cap is discarding the right records. It is simply discarding
+far too many of them.
+
 Two other numbers from the same sweep matter. 18,457 of the 20,245 rejections
 (91.2%) were "posted more than 7 days ago", against a `postedWithin` of `7d` in
 `search-config.json`, which is a user-editable field and not a constant. Only 4
 records in 22,324 were rejected by `minScoreToKeep`. So the age window is doing
 essentially all of the filtering and the score threshold is doing none.
 
-For the record, the pool is 3,000 jobs across 546 companies today. The north
-star's "14,292 in the pool, 4,442 companies" appears to be a cumulative
-discovery count rather than what is stored, and that table should be corrected.
+The age window also cuts the wrong way. A peer session measured ATS records at
+89.2% dated against aggregators at 54.8%, and undated records bypass the window
+entirely because `includeUnknowns.postedAt` is true. So the 7-day gate
+preferentially discards *direct employer inventory*, which is the inventory
+`keep_priority` exists to protect. The two mechanisms are working against each
+other.
+
+For the record, the store today holds 3,000 jobs, 318 distinct companies
+represented, against a registry of 547. The north star's "14,292 in the pool,
+4,442 companies" appears to be a cumulative discovery count rather than what is
+stored, and that table should be corrected. Three different company numbers were
+in circulation across sessions before this was settled: 547 is the registry,
+318 is what the store represents.
 
 ### What this means
 
