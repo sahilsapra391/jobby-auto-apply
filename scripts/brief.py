@@ -102,6 +102,29 @@ def pick_base(profile, region):
     return resumes[0] if resumes else None
 
 
+def run_identity(profile, base):
+    """The identity block, with the three fields every form opens with.
+
+    The per-resume identity carries address, location and phone, and that is
+    all it ever carried. It has no name and no email, because those live once
+    at the top of the profile rather than per resume. The prompt sends an agent
+    to `identity` for the candidate's details, so it looked for a first name,
+    a last name and an email, found none, checked the answer store, found none
+    there either, and parked the application on the three easiest questions on
+    the form. Measured on 2026-08-25: the profile had all three set the whole
+    time, and two applications were parked asking for them.
+
+    The per-resume values still win. A resume that carries its own phone or
+    location is the one being sent, and this only adds what is missing.
+    """
+    identity = dict((base or {}).get("identity") or {})
+    for key in ("firstName", "lastName", "email"):
+        value = (profile or {}).get(key)
+        if value and not identity.get(key):
+            identity[key] = value
+    return identity or None
+
+
 def find_documents(folder, role, expected=None):
     """The resume and cover letter already sitting in the company folder.
 
@@ -258,7 +281,7 @@ def build(aid):
         "jobDescriptionError": jd_error,
         "extraction": extraction,
         "baseResume": (base or {}).get("path"),
-        "identity": (base or {}).get("identity"),
+        "identity": run_identity(profile, base),
         "baseKey": (base or {}).get("key"),
         "documents": docs,
         "documentsReady": bool(docs["resume"] and docs["coverLetter"]),

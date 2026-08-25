@@ -503,5 +503,47 @@ class PromotedFromFoundTests(StoreTemp):
 
 
 
+class RunIdentityTests(unittest.TestCase):
+    """The three fields every application form opens with.
+
+    A per-resume identity carries address, location and phone and never
+    carried a name or an email, because those live once at the top of the
+    profile. The prompt sends an agent to `identity` for the candidate's
+    details, so it found none of the three, checked the answer store, found
+    none there either, and parked on the easiest questions on the form. Two
+    real applications were parked that way on 2026-08-25 with all three set in
+    the profile the whole time.
+    """
+
+    PROFILE = {
+        "firstName": "Test", "lastName": "Candidate",
+        "email": "candidate@example.test",
+    }
+
+    def test_the_name_and_email_reach_the_agent(self):
+        base = {"identity": {"phone": "5550001111", "location": "Boston, MA"}}
+        identity = brief.run_identity(self.PROFILE, base)
+        self.assertEqual(identity["firstName"], "Test")
+        self.assertEqual(identity["lastName"], "Candidate")
+        self.assertEqual(identity["email"], "candidate@example.test")
+        # and nothing the resume already carried is lost
+        self.assertEqual(identity["phone"], "5550001111")
+        self.assertEqual(identity["location"], "Boston, MA")
+
+    def test_a_resume_that_carries_its_own_value_keeps_it(self):
+        # The resume being sent is the one that wins; this only fills gaps.
+        base = {"identity": {"email": "regional@example.test"}}
+        identity = brief.run_identity(self.PROFILE, base)
+        self.assertEqual(identity["email"], "regional@example.test")
+
+    def test_a_profile_missing_them_adds_nothing(self):
+        identity = brief.run_identity({}, {"identity": {"phone": "5550001111"}})
+        self.assertEqual(identity, {"phone": "5550001111"})
+
+    def test_no_base_and_no_profile_is_still_none(self):
+        self.assertIsNone(brief.run_identity({}, None))
+
+
+
 if __name__ == "__main__":
     unittest.main()
