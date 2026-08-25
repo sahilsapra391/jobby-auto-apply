@@ -314,6 +314,19 @@ preferentially discards *direct employer inventory*, which is the inventory
 `keep_priority` exists to protect. The two mechanisms are working against each
 other.
 
+And `keep_priority` has already won the fight it was built for. Rolling each
+job up to the best class across its sightings, the store is **2,968 direct of
+3,000, or 98.9%**, against 31 aggregator and 1 feed. Across individual source
+entries it is 3,414 `ats`, 47 `aggregator`, 10 `feed`. The rollup matters: a job
+seen on both an ATS and an aggregator counts as direct, which is how
+`keep_priority` and `identity.py:343` already treat it.
+
+That number retires a plan. Any proposal premised on closing a direct-listing
+gap by adding employers' own boards is aiming at a gap that does not exist. Note
+also that `sourceClass` is nested inside each entry of the job's `sources` array
+and is `None` at the top level, which cost two sessions a wrong measurement each
+before it was pinned down.
+
 For the record, the store today holds 3,000 jobs, 318 distinct companies
 represented, against a registry of 547. The north star's "14,292 in the pool,
 4,442 companies" appears to be a cumulative discovery count rather than what is
