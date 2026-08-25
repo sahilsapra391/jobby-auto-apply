@@ -393,6 +393,47 @@ def transport_call(action, job_id, bundle=None, env=None, timeout=120):
         raise DocumentJobError("transport_error") from exc
 
 
+# The worker's own per-job log, on this machine. The failure line looks like
+#   - 2026-08-25T18:00:00Z failure published [result_invalid] the sentence
+# and only the tail after the code is read.
+MAX_WORKER_LOG_BYTES = 64 * 1024
+_WORKER_FAILURE_LINE = re.compile(
+    r"failure (?:published|publish deferred) \[[a-z_]+\]\s*(.*)$")
+
+
+def _worker_failure_reason(job_id, root=None):
+    """The sentence the worker wrote beside the code, or "".
+
+    The code travels through KV because it is fixed status metadata. The
+    sentence does not, and must not, so it is read from the local log instead.
+    The worker and the client run on the same Mac, so there is nothing to
+    transport: the file is already there, owner-only, next to the state.
+
+    Best effort by design. A missing or unreadable log means the card shows the
+    code alone, which is exactly what it showed before this existed.
+    """
+    # A job id is a UUID. Validating it is what stops the name being a path:
+    # "../../etc/passwd" reads as a perfectly good filename otherwise, and
+    # relying on the file simply not existing is not a guard, it is luck.
+    try:
+        name = str(uuid.UUID(str(job_id))).lower()
+    except (ValueError, TypeError, AttributeError):
+        return ""
+    try:
+        path = (Path(store.paths(store.root_dir(root))["sessions"]).parent
+                / "document-logs" / f"{name}.log")
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read(MAX_WORKER_LOG_BYTES)
+    except (OSError, ValueError, TypeError):
+        return ""
+    reason = ""
+    for line in text.splitlines():
+        found = _WORKER_FAILURE_LINE.search(line)
+        if found:
+            reason = found.group(1)
+    return _safe_detail(reason)
+
+
 def _remote_update(application_id, state, status, root=None):
     if not isinstance(status, dict):
         raise DocumentJobError("status_invalid")
@@ -407,6 +448,7 @@ def _remote_update(application_id, state, status, root=None):
             state,
             status.get("errorCode") or "worker_failed",
             root,
+            detail=_worker_failure_reason(state["jobId"], root),
         )
     updated = _clear_errors(_changed(state, state=remote_state))
     expires_at = _valid_timestamp(status.get("expiresAt"))
