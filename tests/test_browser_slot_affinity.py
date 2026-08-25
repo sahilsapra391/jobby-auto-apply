@@ -251,5 +251,65 @@ class BrowserAffinityTests(unittest.TestCase):
         self.assertNotIn("browserSlot", saved_payloads[0])
 
 
+class IdleSlotReleaseTests(unittest.TestCase):
+    """A parked slot exists for a form the user still has to act on.
+
+    Once the application is back in Watching there is no form in flight and no
+    blocker, so the reservation is holding a Chrome profile nobody is coming
+    back to. There are five, and on 2026-08-25 four were held that way while
+    the Apply queue sat behind them. The applications looked healthy on the
+    board, which is why nothing surfaced it.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.original = watch.LOCK_DIR
+        watch.LOCK_DIR = pathlib.Path(self.temp.name)
+
+    def tearDown(self):
+        watch.LOCK_DIR = self.original
+        self.temp.cleanup()
+
+    def reconcile(self, session):
+        with mock.patch.object(watch, "_sessions", return_value=[session]), \
+                mock.patch.object(watch, "_latest_history", return_value={}), \
+                mock.patch.object(watch, "release_browser_slot",
+                                  side_effect=lambda aid, slot, entry=None: True):
+            return watch.reconcile_browser_slots()
+
+    def session(self, status, pending=None, slot="apply-2"):
+        entry = {"applicationId": "acme-pm", "status": status, "browserSlot": slot}
+        if pending:
+            entry["pendingFields"] = pending
+        return entry
+
+    def test_a_slot_for_an_application_back_in_watching_is_released(self):
+        watch.park_slot("apply-2", "acme-pm")
+        result = self.reconcile(self.session("watch"))
+        self.assertEqual(
+            result["released"], [{"applicationId": "acme-pm", "slot": "apply-2"}])
+
+    def test_a_slot_parked_for_the_user_is_kept(self):
+        # This is what the reservation is for: the form is half filled and the
+        # user has to clear a CAPTCHA or sign in before it can continue.
+        watch.park_slot("apply-2", "acme-pm")
+        result = self.reconcile(
+            self.session("review", pending=[{"question": "Enter the OTP"}]))
+        self.assertEqual(result["released"], [])
+
+    def test_a_slot_for_a_live_application_is_kept(self):
+        watch.park_slot("apply-2", "acme-pm")
+        self.assertEqual(self.reconcile(self.session("inflight"))["released"], [])
+
+    def test_a_watching_application_with_a_blocker_keeps_its_slot(self):
+        # Belt and braces: status and blocker disagreeing is not a reason to
+        # throw away a form somebody may still be coming back to.
+        watch.park_slot("apply-2", "acme-pm")
+        result = self.reconcile(
+            self.session("watch", pending=[{"question": "Sign in"}]))
+        self.assertEqual(result["released"], [])
+
+
+
 if __name__ == "__main__":
     unittest.main()
