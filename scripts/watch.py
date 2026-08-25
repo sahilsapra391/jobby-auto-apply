@@ -1547,18 +1547,43 @@ def tick(force_publish=False):
                 existing_document = document_job.get_state(head_id)
             except document_job.DocumentJobError:
                 existing_document = None
-            selected_provider_ready, local_why = agent.authenticated(
-                force=not bool(existing_document), provider=selected_provider
-            )
-            if not selected_provider_ready:
+            # Walk the connections rather than standing on the newest one.
+            # activeProvider is a preference, and a preference that is not
+            # usable for document work has to hand over, not halt: this stopped
+            # at gemini, which is connected and locally healthy but not
+            # connected for local document work, and every Apply behind it
+            # waited on "Waiting for provider" while two accounts that could do
+            # the job sat idle. The tick never reached the spawn at all.
+            usable_provider = None
+            local_why = ""
+            remote_why = ""
+            considered = []
+            for candidate in [selected_provider] + providers.work_order():
+                if candidate in considered:
+                    continue
+                considered.append(candidate)
+                ready, why = agent.authenticated(
+                    force=not bool(existing_document), provider=candidate
+                )
+                if not ready:
+                    local_why = local_why or why
+                    continue
+                selected_provider_ready = True
+                remote_ready, why = document_provider_ready(candidate)
+                if not remote_ready:
+                    remote_why = remote_why or why
+                    continue
+                usable_provider = candidate
+                break
+
+            if usable_provider is None and not selected_provider_ready:
                 auth_block = agent.blocked_reason(local_why, selected_provider)
                 detail = "Reconnect the default provider on this Mac in Settings"
                 if set_phase_if_changed(head_id, "Waiting for provider", detail):
                     changed.setdefault("queued", []).append(head_id)
                 changed["waitingOnAuth"] = auth_block
             else:
-                remote_ready, remote_why = document_provider_ready(selected_provider)
-                if not remote_ready:
+                if usable_provider is None:
                     detail = remote_why + ". Open Settings to finish the connection"
                     if set_phase_if_changed(head_id, "Waiting for provider", detail):
                         changed.setdefault("queued", []).append(head_id)
@@ -1566,8 +1591,10 @@ def tick(force_publish=False):
                         "applicationId": head_id,
                         "provider": selected_provider,
                         "why": remote_why,
+                        "considered": considered,
                     }
                 else:
+                    selected_provider = usable_provider
                     document_state = prepare_document_head(apply_head, selected_provider)
                     document_provider = document_state.get("provider") or selected_provider
                     state_name = document_state.get("state")
