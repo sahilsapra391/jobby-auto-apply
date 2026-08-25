@@ -92,6 +92,15 @@ def probe(platform, token, timeout=12):
             body = response.read(READ_CAP)
     except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError):
         return False, 0
+    except ValueError:
+        # A candidate the stdlib will not even turn into a request. The one
+        # that happened was a 74-character agency strapline: half these
+        # platforms address a tenant as a subdomain, `idna` refuses a DNS label
+        # over 63 characters, and UnicodeEncodeError is a ValueError rather
+        # than an OSError, so it went straight past the clause above and killed
+        # six of the twelve platform threads. Every failure here means the same
+        # thing anyway -- we could not ask, so this is not a tenant.
+        return False, 0
     if counter is None:  # XML feeds: presence of a posting element is the signal
         return (b"<position>" in body or b"<job>" in body), 0
     try:
