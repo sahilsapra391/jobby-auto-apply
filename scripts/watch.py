@@ -573,7 +573,17 @@ def reconcile_browser_slots():
         terminal = entry.get("status") == "dropped" or latest.get(aid) in {
             "completed", "abandoned"
         }
-        if terminal:
+        # A slot is parked to hold a half-filled form for an application the
+        # user still has to act on. An application back in Watching has no form
+        # in flight and no blocker, so the reservation is holding a profile
+        # nobody is coming back to, and there are only five.
+        #
+        # Released here rather than left to whoever moved it. Four of the five
+        # slots were held this way at 22:40 by applications sitting at status
+        # watch, which starved the queue exactly as a crossed affinity did, and
+        # the applications themselves looked perfectly healthy on the board.
+        idle = entry.get("status") == "watch" and not entry.get("pendingFields")
+        if terminal or idle:
             if release_browser_slot(aid, slot, entry):
                 released.append({"applicationId": aid, "slot": slot})
             continue
