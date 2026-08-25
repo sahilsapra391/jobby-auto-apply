@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import hashlib
+import pathlib
 import json
 import os
 import sys
@@ -79,6 +81,33 @@ def _kv_value(key: str) -> bytes:
     return body
 
 
+def _renderer_fingerprint() -> str:
+    """Hash this deployment's own copy of the renderer modules."""
+    digest = hashlib.sha256()
+    here = pathlib.Path(__file__).resolve().parent.parent / "renderer"
+    names = sorted(p.name for p in here.glob("*.py") if p.name != "__init__.py")
+    for name in names:
+        try:
+            digest.update((here / name).read_bytes())
+        except OSError:
+            digest.update(b"missing:" + name.encode())
+    return digest.hexdigest()[:16]
+
+
+def _renderer_mismatch(published: str) -> dict | None:
+    """Whether the state was published by a different renderer than this one.
+
+    Absent on the state means an older publisher wrote it, so render anyway
+    rather than blocking the board on a field that is still rolling out.
+    """
+    if not published:
+        return None
+    mine = _renderer_fingerprint()
+    if mine == published:
+        return None
+    return {"publishedBy": published, "deployed": mine}
+
+
 def _state() -> tuple[dict, str]:
     envelope = json.loads(_kv_value(BOARD_STATE_KEY))
     if (
@@ -99,7 +128,8 @@ def _state() -> tuple[dict, str]:
     state = json.loads(state_bytes)
     if not isinstance(state, dict):
         raise ValueError("board state must be an object")
-    return state, str(envelope.get("generatedAt") or "")
+    return (state, str(envelope.get("generatedAt") or ""),
+            str(envelope.get("rendererFingerprint") or ""))
 
 
 def _display_time(value: str) -> str:
@@ -137,7 +167,7 @@ class handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            state, generated_at = _state()
+            state, generated_at, envelope_fingerprint = _state()
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 message = b"No board state has been published yet.\n"
@@ -149,6 +179,22 @@ class handler(BaseHTTPRequestHandler):
         except (OSError, ValueError, json.JSONDecodeError, binascii.Error, zlib.error) as error:
             print(json.dumps({"event": "board_state_read_failed", "errorType": type(error).__name__}))
             self._send(502, b"The board state could not be read.\n", "text/plain; charset=utf-8")
+            return
+        mismatch = _renderer_mismatch(envelope_fingerprint)
+        if mismatch:
+            # Say which half is behind instead of throwing. The board and the
+            # code that renders it are deployed by different routes: state is
+            # published from the user's machine every few minutes, code only on
+            # a merge. Between the two there is a window where new state meets
+            # an older renderer, and that used to surface as a bare 502 reading
+            # "The board state could not be rendered", which says nothing about
+            # what is wrong or that it will clear on its own.
+            print(json.dumps({"event": "renderer_state_mismatch", **mismatch}))
+            self._send(503,
+                       b"The board was published by a different version of the "
+                       b"renderer than this deployment. A deploy is catching up; "
+                       b"reload shortly.\n",
+                       "text/plain; charset=utf-8", {"Retry-After": "60"})
             return
         try:
             page = dashboard.build(state, _display_time(generated_at)).encode("utf-8")

@@ -38,9 +38,27 @@ class VercelPageTest(unittest.TestCase):
             "payload": payload,
         }).encode()
         with mock.patch.object(PAGE, "_kv_value", return_value=envelope):
-            actual, generated = PAGE._state()
+            actual, generated, fingerprint = PAGE._state()
         self.assertEqual(actual, state)
         self.assertEqual(generated, "2026-08-24T12:00:00Z")
+        # Absent on this envelope, which is the older publisher's shape. The
+        # board still renders; the fingerprint only blocks when it disagrees.
+        self.assertEqual(fingerprint, "")
+
+    def test_a_published_fingerprint_is_carried_out_of_the_envelope(self):
+        state = {"sessions": [], "history": []}
+        payload = base64.b64encode(gzip.compress(json.dumps(state).encode())).decode()
+        envelope = json.dumps({
+            "schemaVersion": 1,
+            "rendererSchemaVersion": 1,
+            "encoding": "gzip+base64",
+            "generatedAt": "2026-08-24T12:00:00Z",
+            "rendererFingerprint": "abc123abc123abc1",
+            "payload": payload,
+        }).encode()
+        with mock.patch.object(PAGE, "_kv_value", return_value=envelope):
+            _, _, fingerprint = PAGE._state()
+        self.assertEqual(fingerprint, "abc123abc123abc1")
 
     def test_renderer_rejects_unsupported_state_schema(self):
         envelope = json.dumps({"schemaVersion": 2, "payload": "x"}).encode()

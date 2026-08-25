@@ -27,7 +27,7 @@ const state = readFileSync(statePath, 'utf8');
 const generatedAt = new Date().toISOString();
 const providers = providersPath ? JSON.parse(readFileSync(providersPath, 'utf8')) : null;
 
-await putBoardState(env, state, generatedAt);
+await putBoardState(env, state, generatedAt, process.argv[6] || '');
 
 // Rolling migration only. A deployed renderer no longer reads this value, but
 // the current production deployment still does until the PR is merged. Preview

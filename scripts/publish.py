@@ -22,6 +22,7 @@ Design notes:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -295,12 +296,48 @@ def push_content(html, state, docs, providers=None):
         )
         r = subprocess.run([toolpath.node(), "publish-content.mjs",
                             str(html_path), str(docs_path), str(providers_path),
-                            str(state_path)],
+                            str(state_path), renderer_fingerprint()],
                            cwd=DEPLOY, capture_output=True, text=True,
                            env=toolpath.queue_env())
     if r.returncode != 0:
         raise PublishError(f"could not write board state to KV: {(r.stderr or '').strip()[:400]}")
     return json.loads(r.stdout or "{}")
+
+
+def renderer_fingerprint():
+    """A hash of the modules that render the board, stamped onto the state.
+
+    The envelope already carried a rendererSchemaVersion, but it was the
+    literal 1 in the publisher, in the Vercel function and in the KV reader,
+    and it had never once been incremented. So it could not detect anything:
+    new state always claimed to match whatever renderer was deployed, and when
+    it did not, the function threw and returned "The board state could not be
+    rendered" instead of saying the two had drifted.
+
+    A hash cannot be forgotten the way a constant can. The state is stamped
+    with the renderer that built it, the deployed function hashes its own copy
+    of the same modules, and a mismatch is reported as a mismatch.
+    """
+    digest = hashlib.sha256()
+    # Sorted on both sides. The deployed function hashes whatever .py files are
+    # in its bundle, which it can only enumerate in sorted order, so hashing
+    # here in list order would make two identical trees disagree.
+    for name in sorted(renderer_files()):
+        try:
+            digest.update((REPO / "scripts" / name).read_bytes())
+        except OSError:
+            digest.update(b"missing:" + name.encode())
+    return digest.hexdigest()[:16]
+
+
+def renderer_files():
+    """The deployed module list, from the script that does the deploying."""
+    try:
+        sys.path.insert(0, str(REPO / "scripts"))
+        import sync_vercel_renderer
+        return tuple(sync_vercel_renderer.FILES)
+    except Exception:
+        return ("dashboard.py", "found_lane.py", "settings_panel.py")
 
 
 def sync_renderer():
