@@ -421,19 +421,19 @@
     {
       "auth": "none",
       "class": "A",
-      "endpoint": "",
+      "endpoint": "https://{token}/services/rss/job/?locale=en_US",
       "id": "successfactors",
       "name": "SAP SuccessFactors",
-      "notes": "Public per-tenant JSON; fiddlier shapes.",
-      "phase": 3,
+      "notes": "Career Site Builder serves RSS at /services/rss/job/ on the employer's own career hostname, which is also the token. Not JSON. NOT a complete board listing: it carries the most recent items, so the connector reports complete=False and its postings never feed the staleness sweep. 48 other candidate career hostnames were probed and run something else at the same address.",
+      "phase": 1,
       "regions": [
         "*"
       ],
       "sourceClass": "ats",
-      "status": "planned",
+      "status": "connected",
       "statusReason": "",
       "tier": "1a",
-      "verifiedAt": null,
+      "verifiedAt": "2026-08-25",
       "verifyAtBuild": false
     },
     {

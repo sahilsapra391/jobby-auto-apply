@@ -73,7 +73,8 @@ ATS_URL_PATTERNS = [
 # in the registry is recorded but not yet reachable without a resolver.
 TIER1_PLATFORMS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable",
                    "recruitee", "personio", "breezy", "rippling", "workday",
-                   "pinpoint", "teamtailor", "jazzhr", "oracle_orc", "gem")
+                   "pinpoint", "teamtailor", "jazzhr", "oracle_orc", "gem",
+                   "successfactors")
 
 # Aggregator and search hosts. A posting reached through one of these says
 # nothing about the employer's ATS, so it must not become a board token.
@@ -127,6 +128,12 @@ def probed_tenants():
 
 
 SEED_PACK = [
+    # SuccessFactors tokens are the employer's own career hostname, because
+    # that is what serves the platform's feed. Both were confirmed answering
+    # /services/rss/job/ on 2026-08-25; 48 other candidate career hostnames
+    # were tried and run something else at the same address.
+    ("SAP", "successfactors", "jobs.sap.com", "DE"),
+    ("Bayer", "successfactors", "jobs.bayer.com", "DE"),
     ("Acronis", "workday", "acronis", "CH"),
     ("GEICO", "workday", "geico", "US"),
     ("Gem", "gem", "gem", "US"),

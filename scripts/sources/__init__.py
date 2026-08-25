@@ -8,7 +8,7 @@ rather than one nobody notices.
 """
 
 from . import adzuna, ashby, boards, careerjet, enterprise_boards, feeds, greenhouse
-from . import jooble, lever, reed, themuse, usajobs, workday
+from . import jooble, lever, reed, successfactors, themuse, usajobs, workday
 
 # Tier 1a: no key, no limit worth worrying about. These carry Phase 1 on their
 # own if every key is missing.
@@ -19,6 +19,7 @@ REGISTRY_CONNECTORS = {
     "workday": workday.fetch,
     **boards.CONNECTORS,
     **enterprise_boards.CONNECTORS,
+    **successfactors.CHANNELS,
 }
 
 FEED_CONNECTORS = dict(feeds.CONNECTORS)

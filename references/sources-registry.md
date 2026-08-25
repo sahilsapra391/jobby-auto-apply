@@ -95,6 +95,7 @@ part of Phase 1.
 | Remotive | `remotive` | C | 1a | 1 | `connected` | REMOTE | jobs[] alongside two legal-notice keys. candidate_required_location is a restriction, not a location. |
 | Rippling ATS | `rippling` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. A bare array with five keys, no description and no date, so its records are thin by construction. Lists one requisition once per location under a single URL, which canonical-URL matching folds correctly. |
 | SmartRecruiters | `smartrecruiters` | A | 1a | 1 | `connected` | * | Verified live 2026-08-20. {content:[...]}. The postings list carries NO description, so these records score on their title and report experience as not stated. A detail fetch per posting would fix that and is a Phase 2 refinement. |
+| SAP SuccessFactors | `successfactors` | A | 1a | 1 | `connected` | * | Career Site Builder serves RSS at /services/rss/job/ on the employer's own career hostname, which is also the token. Not JSON. NOT a complete board listing: it carries the most recent items, so the connector reports complete=False and its postings never feed the staleness sweep. 48 other candidate career hostnames were probed and run something else at the same address. |
 | The Muse | `themuse` | B | 1b | 1 | `connected` | US, GB, DE | CORRECTION to Appendix A, which lists this as free-key: the public endpoint answers with no key at all. A key raises the rate limit rather than unlocking access. |
 | USAJobs | `usajobs` | B | 1b | 1 | `connected` | US | Verified live 2026-08-20. Needs the key AND the registered email, which goes in the User-Agent header. |
 | We Work Remotely | `weworkremotely` | C | 1a | 1 | `connected` | REMOTE | RSS, not JSON. Title is "Company: Role" and is the only place the company name appears. |
@@ -203,7 +204,6 @@ part of Phase 1.
 | Shine | `shine` | D | 2 | 3 | `rotation` | IN | Tier-2 sweep, rotation pack B. |
 | SimplyHired | `simplyhired` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | StepStone | `stepstone` | D | 2 | 3 | `rotation` | EU | Tier-2 sweep, rotation pack C. |
-| SAP SuccessFactors | `successfactors` | A | 1a | 3 | `planned` | * | Public per-tenant JSON; fiddlier shapes. |
 | Talent.com | `talent_com` | D | 2 | 3 | `rotation` | * | Tier-2 sweep, rotation pack A. |
 | TalentReef | `talentreef` | E | 1a | 3 | `blocked` | * | No public JSON board. **Verify at build.** |
 | Tech in Asia | `techinasia` | D | 2 | 3 | `rotation` | AU, NZ, JP, KR, SG, MY, PH, ID, TH, VN | Tier-2 sweep, rotation pack D. |

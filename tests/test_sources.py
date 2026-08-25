@@ -33,6 +33,7 @@ import identity  # noqa: E402
 import sources_registry  # noqa: E402
 import sources  # noqa: E402
 from sources import adzuna, ashby, base, boards, careerjet, feeds, greenhouse  # noqa: E402
+from sources import successfactors  # noqa: E402
 from sources import enterprise_boards, jooble, lever, reed, themuse, usajobs, workday  # noqa: E402
 
 
@@ -111,7 +112,7 @@ class EnvelopeTests(unittest.TestCase):
     """Every connector answers in the same shape, whatever happened."""
 
     def test_every_registered_connector_is_callable(self):
-        self.assertEqual(len(sources.ALL), 26)
+        self.assertEqual(len(sources.ALL), 27)
         for name, fn in sources.ALL.items():
             self.assertTrue(callable(fn), name)
 
@@ -124,7 +125,8 @@ class EnvelopeTests(unittest.TestCase):
         shapes = [base.ok("x", []), base.skipped("x", "why"), base.failed("x", "why")]
         for shape in shapes:
             self.assertEqual(sorted(shape),
-                             ["errors", "postings", "reason", "requests", "source", "status"])
+                             ["errors", "listingComplete", "postings", "reason",
+                          "requests", "source", "status"])
 
     def test_a_skip_is_never_an_empty_success(self):
         # This is the whole rule. If a skipped channel returned status "ok" with
@@ -1154,6 +1156,124 @@ class LocationCountryTests(unittest.TestCase):
         # would silently take the last one written.
         names = list(base.UNAMBIGUOUS_CITIES)
         self.assertEqual(len(names), len(set(names)))
+
+
+class SuccessFactorsTests(unittest.TestCase):
+    """SAP SuccessFactors Career Site Builder boards.
+
+    The two things worth pinning are that the location is dug out of the title
+    and that the feed is never treated as a complete board listing.
+    """
+
+    FEED = """<?xml version="1.0" encoding="UTF-8" ?><rss version="2.0"><channel>
+<title>Northwind</title>
+<item>
+  <title>Senior Program Manager, Supply Chain (Dublin 24, IE, D24WA02)</title>
+  <description><![CDATA[<p>Own the platform roadmap.</p>]]></description>
+  <pubDate>Mon, 24 Aug 2026 18:00:00 -0400</pubDate>
+  <link>https://jobs.northwind.test/job/Dublin-24-Senior-PM-D24WA02/993/?feedId=null&amp;utm_source=J2WRSS&amp;utm_medium=rss</link>
+  <guid>https://jobs.northwind.test/job/Dublin-24-Senior-PM-D24WA02/993/</guid>
+</item>
+<item>
+  <title>Head of Product (EMEA)</title>
+  <description><![CDATA[Lead the region.]]></description>
+  <pubDate>Tue, 25 Aug 2026 02:00:00 GMT</pubDate>
+  <link>https://jobs.northwind.test/job/Head-of-Product/994/</link>
+</item>
+</channel></rss>"""
+
+    def companies(self):
+        return {"nw": {"name": "Northwind", "ats": "successfactors",
+                       "token": "jobs.northwind.test"}}
+
+    def run_channel(self, feed=None, status=200):
+        f = fetcher({"jobs.northwind.test/services/rss/job/":
+                     (status, (feed if feed is not None else self.FEED).encode())})
+        return successfactors.successfactors(f, companies=self.companies())
+
+    def test_a_posting_comes_back_with_role_location_and_date(self):
+        result = self.run_channel()
+        self.assertEqual(result["status"], "ok")
+        first = result["postings"][0]
+        self.assertEqual(first["title"], "Senior Program Manager, Supply Chain")
+        self.assertEqual(first["company"], "Northwind")
+        self.assertEqual(first["location"]["country"], "IE")
+        self.assertEqual(first["location"]["raw"], "Dublin 24")
+
+    def test_the_feed_date_is_converted_to_utc_not_relabelled(self):
+        """18:00 -0400 is 22:00Z. Stamping it 18:00Z is four hours of drift
+        straight into the freshness gate and every 'posted N days ago'."""
+        first = self.run_channel()["postings"][0]
+        self.assertEqual(first["postedAt"], "2026-08-24T22:00:00Z")
+
+    def test_per_request_tracking_is_stripped_from_the_url(self):
+        """feedId and utm_* rotate between requests, and the canonical URL is
+        what identity resolution matches on: left in, every run mints a new
+        record for the same job."""
+        first = self.run_channel()["postings"][0]
+        # The trailing slash goes too, but that is the store's own URL
+        # normalisation rather than this connector's doing.
+        self.assertEqual(
+            first["canonicalUrl"],
+            "https://jobs.northwind.test/job/Dublin-24-Senior-PM-D24WA02/993")
+        self.assertNotIn("utm_", first["canonicalUrl"])
+        self.assertNotIn("feedId", first["canonicalUrl"])
+
+    def test_a_parenthetical_that_is_not_a_location_is_left_in_the_title(self):
+        """(EMEA) is a region, (Contract) is a term. Neither ends in a country
+        code, and cutting the title at any trailing bracket would lose both."""
+        second = self.run_channel()["postings"][1]
+        self.assertEqual(second["title"], "Head of Product (EMEA)")
+        self.assertIsNone(second["location"].get("country"))
+
+    def test_the_listing_is_never_reported_as_complete(self):
+        """The whole safety of the staleness sweep rests on this.
+
+        The feed carries the most recent items, not every open requisition.
+        Called complete, one sweep would expire almost everything SAP has open.
+        """
+        self.assertIs(self.run_channel()["listingComplete"], False)
+
+    def test_no_tenants_is_skipped_rather_than_failed(self):
+        result = successfactors.successfactors(fetcher({}), companies={})
+        self.assertEqual(result["status"], "skipped")
+
+    def test_a_dead_board_is_reported_and_counted(self):
+        result = self.run_channel(feed="gone", status=404)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("404", " ".join(result["errors"]))
+
+    def test_a_feed_that_does_not_parse_does_not_take_the_channel_down(self):
+        result = self.run_channel(feed="<rss><channel><item></broken>")
+        self.assertEqual(result["postings"], [])
+        self.assertTrue(result["errors"])
+
+
+class Rfc822Tests(unittest.TestCase):
+    def test_offsets_are_converted_rather_than_relabelled(self):
+        self.assertEqual(base.rfc822_date("Mon, 24 Aug 2026 18:00:00 -0400"),
+                         "2026-08-24T22:00:00Z")
+        self.assertEqual(base.rfc822_date("Tue, 25 Aug 2026 09:30:00 +0530"),
+                         "2026-08-25T04:00:00Z")
+
+    def test_utc_is_left_alone(self):
+        self.assertEqual(base.rfc822_date("Tue, 25 Aug 2026 02:00:00 GMT"),
+                         "2026-08-25T02:00:00Z")
+
+    def test_nothing_and_nonsense_are_none(self):
+        for value in ("", None, "rubbish", "2026-08-25"):
+            self.assertIsNone(base.rfc822_date(value))
+
+
+class ListingCompletenessTests(unittest.TestCase):
+    """`complete` is what separates a board sweep from a recent-items feed."""
+
+    def test_a_board_sweep_is_complete_by_default(self):
+        self.assertIs(base.ok("greenhouse", [])["listingComplete"], True)
+
+    def test_a_feed_can_say_it_is_not(self):
+        self.assertIs(base.ok("successfactors", [], complete=False)["listingComplete"],
+                      False)
 
 
 if __name__ == "__main__":

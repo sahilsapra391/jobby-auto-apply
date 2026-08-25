@@ -57,6 +57,13 @@ def posting(**fields):
     return record
 
 
+def partial_channel(postings, name="greenhouse"):
+    """A channel whose answer is only the most recent items, not a whole board."""
+    def connector(fetcher, **_):
+        return base.ok(name, postings, requests=1, complete=False)
+    return connector
+
+
 def channel(postings, name="greenhouse", status="ok", reason=""):
     def connector(fetcher, **_):
         if status == "ok":
@@ -889,6 +896,20 @@ class StalenessSweepTests(IngestCase):
         self.assertEqual(report["closed"], 0)
         stored = jobs_store.load_jobs(self.root)
         self.assertTrue(all(job["state"] == "new" for job in stored.values()))
+
+    def test_an_incomplete_listing_closes_nothing(self):
+        """A recent-items feed is not evidence about what it did not mention.
+
+        SuccessFactors serves the newest twenty roles, not the whole board. If
+        that counted, one sweep would expire almost every posting a large
+        employer has open. The connector says `complete=False` and this is the
+        check that the sweep honours it.
+        """
+        a, b = self._two_postings()
+        self.run_ingest({"greenhouse": partial_channel([a, b])})
+        report, jobs = self.run_ingest({"greenhouse": partial_channel([a])})
+        self.assertEqual(report["closed"], 0)
+        self.assertTrue(all(job["state"] == "new" for job in jobs.values()))
 
     def test_a_relisted_posting_comes_back_to_found(self):
         a, b = self._two_postings()

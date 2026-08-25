@@ -328,6 +328,13 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         for problem in result.get("errors") or []:
             report["errors"].append({"channel": name, "why": problem})
 
+        # Whether this channel's answer is the whole of the boards it asked
+        # for. Only a complete listing can be evidence that a posting missing
+        # from it was taken down. A connector that omits the flag is a board
+        # sweep and complete by default; one reading a recent-items feed says
+        # so, and its postings never feed the closure pass.
+        listing_complete = result.get("listingComplete", True)
+
         found = kept = 0
         for posting in result["postings"]:
             # Learn direct ATS tenant evidence before the search gate. A role
@@ -413,9 +420,10 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
             jobs[match_id], reopened = jobs_store.reopen(jobs[match_id])
             if reopened:
                 report["reopened"] += 1
-            seen_by_board.setdefault(
-                (posting.get("canonicalSource"), _norm_company(posting.get("company"))),
-                set()).add(match_id)
+            if listing_complete:
+                seen_by_board.setdefault(
+                    (posting.get("canonicalSource"), _norm_company(posting.get("company"))),
+                    set()).add(match_id)
 
         report["byChannel"][name] = {"status": "ok", "found": found, "kept": kept,
                                      "why": result.get("reason") or ""}

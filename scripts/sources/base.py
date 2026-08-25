@@ -282,22 +282,62 @@ class Fetcher:
 
 # --- the envelope -----------------------------------------------------------
 
-def ok(source, postings, requests=0, errors=None, note=""):
+def rfc822_date(value):
+    """An RSS date as a UTC stamp, or None.
+
+    RSS dates are RFC 822, which `fromisoformat` cannot read. The conversion to
+    UTC is the part that matters: `parsedate_to_datetime` returns an aware
+    datetime in the feed's own offset, so formatting it straight to a `Z`
+    stamp writes the local wall clock and calls it UTC. A feed publishing
+    "18:00:00 -0400" was being stored as 18:00Z, four hours early, which the
+    freshness gate and every "posted N days ago" on the board then read.
+    """
+    from datetime import timezone
+    from email.utils import parsedate_to_datetime
+    if not value:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def ok(source, postings, requests=0, errors=None, note="", complete=True):
+    """A channel that answered.
+
+    `complete` says whether what came back is the whole of every board asked
+    for. It matters because absence from a complete listing is evidence a
+    posting was taken down, and the staleness sweep acts on that. A feed that
+    returns "the most recent twenty" is not complete, however direct its
+    postings are, and a connector reading one must say so or the sweep will
+    expire live jobs that simply fell out of the window.
+    """
     return {"source": source, "status": "ok", "reason": note,
             "postings": list(postings), "requests": requests,
+            "listingComplete": bool(complete),
             "errors": list(errors or [])}
 
 
 def skipped(source, reason, requests=0):
     """The channel was not asked. A missing key is normal, not a failure —
     but it is never silent, or coverage quietly shrinks and nobody knows."""
+    # Never complete: a channel that was not asked cannot be evidence that
+    # anything is gone. Same reason for `failed` below. The three envelopes
+    # carry identical keys on purpose, and False is the only safe value here.
     return {"source": source, "status": "skipped", "reason": reason,
-            "postings": [], "requests": requests, "errors": []}
+            "postings": [], "requests": requests,
+            "listingComplete": False, "errors": []}
 
 
 def failed(source, reason, requests=0, errors=None):
     return {"source": source, "status": "error", "reason": reason,
-            "postings": [], "requests": requests, "errors": list(errors or [])}
+            "postings": [], "requests": requests,
+            "listingComplete": False, "errors": list(errors or [])}
 
 
 def describe(response, what):

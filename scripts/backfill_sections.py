@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import extract  # noqa: E402
 import posting_body  # noqa: E402
 import posting_sections  # noqa: E402
+import runlock  # noqa: E402
 import store  # noqa: E402
 
 # Boards whose full posting `posting_body` knows how to read.
@@ -130,6 +131,23 @@ def main():
     args = ap.parse_args()
 
     root = store.root_dir(args.root)
+    # The same lock ingest takes, for the same reason. This script reads the
+    # whole store, works for minutes -- longer with --fetch -- and writes it
+    # back, so it is a lost-update hazard of exactly the shape runlock exists
+    # to close. On 2026-08-25 a run of this discarded a sweep's 222 closures
+    # and 113 new jobs, which is not a hypothetical. A dry run writes nothing
+    # and is left free.
+    if args.dry_run:
+        return _main(args, root)
+    try:
+        with runlock.held(root, "scan", note="backfill_sections"):
+            return _main(args, root)
+    except runlock.LockBusy as exc:
+        print(f"backfill_sections: {exc}", file=sys.stderr)
+        return 3
+
+
+def _main(args, root):
     path = root / "jobs.json"
     if not path.exists():
         print(f"no job store at {path}", file=sys.stderr)
