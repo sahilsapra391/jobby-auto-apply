@@ -4,6 +4,11 @@ Status: **plan only.** Nothing here is implemented. Written 2026-08-25 against
 `origin/main` at 76b9e2a, by the Claude session that held the design brief,
 with findings contributed by two peer sessions working the same checkout.
 
+Read against `jobby-product-north-star.md`, which is the product intent this
+plan serves. Where the two disagree, the north star wins on what to build and
+this document wins on what the code currently does. §16 records one place they
+disagree on emphasis, with the evidence.
+
 This document exists to be argued with. Several of its load-bearing pieces are
 decisions for Sahil rather than conclusions from the code, and those are marked
 as open rather than folded quietly into the design.
@@ -107,10 +112,40 @@ not be undone; "the user configures their own key in their own environment" is a
 different thing from Jobby holding it, and is explicitly permitted by the same
 Anthropic page.
 
-## 2. The open decision: hosted or self-hosted
+## 2. The open decision: four quadrants, not two options
 
-The rest of this plan describes a hosted multi-tenant service. That has not been
-chosen, and the alternative is stronger than it first looks.
+Deployment model and credential model are not independent decisions. The legal
+risk from §1 maps onto the combination almost exactly, and naming all four cells
+turns an uncomfortable finding into a choice with two safe answers.
+
+|  | **BYO subscription** | **BYO API key** |
+|---|---|---|
+| **Self-hosted** | **Safest.** A person running their own copy against their own account for their own job search is the definition of ordinary individual usage. | Works, and costs the user money for no benefit over the cell to the left. |
+| **Hosted** | **The only risky cell.** A platform orchestrating many users' consumer plans is the specific thing §1's clauses were written about. Needs the Commercial Terms signature, and "ordinary, individual usage" is the enforcement hook. Google is closed here entirely. | **Fine.** API access is the sanctioned production track for all three providers. No carve-out needed, no signature, no Google problem. |
+
+Earlier drafts of this plan designed the bottom-left cell, the only one carrying
+real risk, and never named the bottom-right. That was an error of framing rather
+than of analysis.
+
+The coherent product story is **self-hosted takes your subscription, hosted
+takes your API key.** Provider risk drops close to zero in both, and §1's
+recommendation that the provider layer treat key and subscription as equally
+first-class is exactly what makes it possible. The same page that prohibits
+intermediating subscription credentials explicitly permits a user configuring
+their own key in their own environment, billed to them.
+
+What that costs the user is the subject of §19, and it is unmeasured.
+
+### The remaining trade-off, once risk is off the table
+
+**Hosted** reaches everyone, including people who will never open a terminal. It
+is a real company. It also makes Sahil a data processor holding several hundred
+people's resumes, work-authorisation status and compensation expectations, with
+deletion obligations, export obligations, retention limits and breach exposure.
+
+**Self-hosted open source** has none of that burden and reaches technical users
+immediately. It reaches a much smaller audience and is not a business without
+something built on top.
 
 **Hosted** reaches everyone, including people who will never open a terminal. It
 is a real company. It also makes Sahil a data processor holding several hundred
@@ -126,10 +161,17 @@ because each person is running their own copy against their own subscription for
 their own job search. It reaches a much smaller audience and is not a business
 without something built on top.
 
-The honest read is that §1 pushes toward self-hosted harder than product
-ambition pushes toward hosted. This should be decided deliberately, before
-anything in §5 onward is built, because the two paths diverge at the data model:
-self-hosted needs no `users` table at all.
+With the fourth quadrant on the table, §1 no longer forces the answer. It rules
+out one cell, not one deployment model. The decision comes back to liability and
+audience, and it should be made deliberately before anything in §8 onward is
+built, because the two paths diverge at the data model: self-hosted needs no
+`users` table at all.
+
+The input that is still missing is §19. If an application costs fifteen cents,
+hosted-with-your-own-key is trivially sellable and the quadrant question is
+easy. If it costs two dollars, it is a different product with a different
+audience, and self-hosted-with-your-subscription becomes the main offering
+rather than the technical-user branch.
 
 ### What is worth doing under either answer
 
@@ -314,6 +356,39 @@ R2 layout: `u/{userId}/src/{sha}.pdf` for uploads,
 `u/{userId}/app/{applicationId}/{resume|cover}.{html|pdf}` for generated work.
 User id in the prefix so a deletion request is one prefix sweep.
 
+### Multiple identities per user
+
+`profiles` above has one row per user, and that is wrong. Sahil holds a US
+identity and an India identity, selected by the posting's country, each with its
+own base resume and contact block. Choosing the wrong one is a real bug that has
+already been prevented once, and a single profile row reintroduces it for every
+user with more than one right to work.
+
+Decide explicitly rather than by default. Either `profiles.doc_json` holds N
+identities with a selection rule, or `identities(id, user_id, country_scope,
+resume_ref, contact_json, is_default)` becomes its own table and `applications`
+carries the identity it was built from. The table is the better shape, because
+the identity used is a fact about the application that must survive the profile
+being edited afterwards.
+
+### Deletion and export
+
+Named as obligations in §2 and §14 and absent from the schema until now.
+
+Deletion is one R2 prefix sweep plus a D1 cascade. Every per-user table above
+needs `ON DELETE CASCADE` from `users`, with two deliberate exceptions:
+`jobs` and `companies` are shared and must not be touched, and `user_jobs` rows
+must go. `applications` and `app_events` are the hard case, because a submitted
+application is a record of something that happened in the world, and the honest
+behaviour is to delete the documents and the answers while retaining a minimal
+tombstone (application id, timestamp, employer) unless the user asks for that
+too. Say which, in the privacy policy, before building it.
+
+Export is the same traversal without the deletes, producing a zip of the
+documents plus a JSON of profile, answers, search config and application
+history. It is also the migration path out of hosted into self-hosted, which
+makes it worth building even if nobody ever requests one.
+
 D1 handles this scale. If it stops being enough the same schema lifts to
 Postgres, so it is not a one-way door. Stage B fan-out should run through Queues
 rather than one long Worker invocation, to stay inside CPU limits.
@@ -360,11 +435,26 @@ device's pre-account runs onto the account at signup. For Jobby that means
 someone can run a scan and see real matching jobs before making an account, then
 claim that scan when they sign up. That is a funnel rather than a cliff.
 
-One friction point. Skeptic runs argon2id via passlib in Python at m=64MiB.
-Workers cap at 128MB memory, so 64MiB argon2 in a Worker is tight. Options:
-argon2id via WASM at a reduced memory parameter (recommended, with the rate
-limits carrying the load), or running the auth path in a Cloudflare Container
-where Skeptic's module could be reused nearly verbatim.
+One friction point, with numbers rather than a hand-wave. Skeptic runs argon2id
+via passlib at RFC 9106's low-memory profile, m=64MiB, t=3, p=4. A Worker has a
+128MB memory ceiling for the whole isolate, so a 64MiB allocation per hash is
+not survivable under any concurrency.
+
+The proposal is argon2id via WASM at **m=19MiB, t=2, p=1**, which is RFC 9106's
+second recommended profile and OWASP's current minimum. Concretely that is a
+3.4x reduction in memory-hardness against a GPU or ASIC attacker compared with
+Skeptic's parameters, which is a real reduction and should be stated rather than
+glossed. What makes it acceptable here is that it is a floor recommended for
+exactly this situation, and that the compensating controls are the ones that
+actually bound online guessing: ten attempts per account per fifteen minutes,
+thirty per IP, and a global signup cap. Offline attack only matters if the
+`users` table leaks, and at m=19MiB a leaked argon2id hash of a ten-character
+minimum password is still expensive to attack at scale.
+
+If that trade is unattractive, the alternative is running the auth path in a
+Cloudflare Container, where Skeptic's module runs at its original parameters
+nearly verbatim. That is the better answer if auth volume is low, which it will
+be, and it costs one more moving part.
 
 Device pairing is separate from user login and must not reuse it. The user
 clicks "Add this Mac", the web app shows a short code, the runner generates a
@@ -441,16 +531,34 @@ history (§4), and corpus retention (§5), all inside the single-tenant app,
 serving one user. No product change, no new surface, and it retires most of the
 plan's risk.
 
+**Now, because §2 depends on it.** Wire token capture into the provider
+subprocess and add cost columns to `runstats.py` (§19). Hours of work, and it is
+an input to the hosting decision rather than a consequence of it.
+
+**Now, needs no infrastructure.** Design the questionnaire from the mined corpus
+(§16). This is analysis and product design against data that already exists, and
+it can run in parallel with everything above.
+
 **Also now, unrelated to this plan.** Sahil is job hunting on this system today.
 Per-host parallelism, the circuit breaker and stale-daemon detection cost him
-daily and conflict with nothing here.
+daily and conflict with nothing here. Stale-daemon detection is also support
+tooling for a product where every user runs their own daemon, so it is nearer to
+this plan than it looks.
 
 **Blocked on §2.** Everything from §8 onward.
 
 **Blocked on §1.** Any user-facing claim about which subscriptions work.
 
-Nothing past the first group should start until the single-tenant system is
-boring again.
+**Release gate, not a phase.** No provider becomes selectable by a user until it
+has been measured against the refusal set (§18). This gates user-visible
+provider availability, not development.
+
+**Before any hosted launch.** Deletion and export endpoints (§8). They are
+obligations, and export doubles as the migration path out of hosted into
+self-hosted.
+
+Nothing past the first four groups should start until the single-tenant system
+is boring again.
 
 ## 14. Risks
 
@@ -487,12 +595,239 @@ current.
 Submitting on someone's behalf stays honest only because of the one-use nonce
 and the visible-confirmation requirement. Both must remain per user.
 
-## 15. Open decisions
+**Provider behaviour risk, which is not the same as terms risk.** The refusals
+(no CAPTCHAs, no account creation, no passwords, no signing legal documents,
+never invent an answer to a required field, tick a truth attestation only when
+nothing was inferred) are prompt-level instructions. They were written for one
+model and validated against it across a hundred applications by one person who
+was watching.
 
-1. **Hosted or self-hosted.** §2. Blocks everything from §8 onward.
-2. **Agree Anthropic's Commercial Terms, or not.** §1. Blocks any hosted
-   offering that runs Claude Code on users' behalf.
-3. **Read OpenAI's terms in a browser.** §1. Blocks any claim about Codex.
-4. **Size the corpus cap.** §5. Requires measuring union-scope volume, which
+Multi-tenant means those instructions run on Antigravity and Codex, unattended,
+for strangers, submitting under their real names. Nobody has measured whether
+the other providers refuse what they must refuse. The failure mode is a
+stranger's application carrying an invented answer or a falsely ticked
+attestation, which is unrecoverable and is the worst thing this product could
+do. See §18; `runstats.py` is the instrument, and this is a release gate rather
+than a backlog item.
+
+**Deletion and export are obligations with no implementation.** Named here and
+in §2, absent from §8 and from sequencing until now. See §8's cascade note.
+
+## 16. What the answer corpus actually says
+
+The north star says to mine `answers.json` before designing any onboarding UI,
+because the frequency distribution of real questions is the questionnaire
+specification. Done, 2026-08-25, against the live store. Question text is
+reported here; no stored answer value is, and the sensitive ones are counted
+rather than named.
+
+### The store is smaller and more structured than "118 answers" suggests
+
+138 entries, which split cleanly:
+
+- **38 standing policy rules.** Instructions Sahil wrote, not answers to
+  employer questions. Tagged `policy` or prefixed `POLICY:`.
+- **100 real employer questions**, encountered on actual forms.
+
+The hundred break down by answer shape: 34 binary (yes/no), 16 short scalar, 24
+sentence, 22 long-form, 4 with no value stored. Tag taxonomy across the whole
+store: `policy` 34, `legal-declaration` 28, `alias` 14, `compensation` 6,
+`consent` 5, `attestation` 5, then a long tail of two-and-three-instance tags
+(work-authorization, immigration, arbitration, background-check-willingness,
+exclusion-debarment, post-employment-obligations, interview-recording,
+salary-range-acknowledgement, source-how-heard).
+
+### The genuinely hard part is narrower than a questionnaire
+
+Of the 22 long-form real questions, **twelve are story-bank entries**, not
+employer questions. They are narrative raw material with keys like "Story:
+earning trust at program scale" and "Story: root-cause conviction against
+consensus". Strip those and the internal process notes, and the genuine
+free-text employer questions number about six: what are you looking for in your
+next role, why are you leaving, what motivates you, earliest start date, do you
+have a personal AI project, how has AI changed your work.
+
+That changes the shape of the onboarding problem. Roughly fifty of the hundred
+are binary or short scalar, which is a twenty-minute form and nothing more.
+About twenty-four are sentence-length and mostly invariant. Six are free text.
+
+**The real elicitation problem is the twelve stories, not the questionnaire.**
+The policy half is a form; the story bank is an interview. A stranger arriving
+with no stories cannot answer "describe something you built" in any voice,
+their own or otherwise, and no amount of resume parsing produces one. Design
+effort should go there, and the twelve existing story keys are a usable
+taxonomy to elicit against.
+
+### Missing answers are not what stops applications
+
+87 sessions on this machine, of which 20 parked with pending fields, across 26
+distinct blockers. Almost every blocker is a one-off, and the categories are:
+CAPTCHA and hCaptcha and reCAPTCHA, email OTP and verification codes, ATS
+account creation, application quotas (Google's three-per-thirty-days, Ramp's
+cap), closed or withdrawn postings, and browser or sign-in state. Perhaps four
+of the twenty-six were an actual unanswered question.
+
+So questionnaire coverage is not the binding constraint on completing an
+application. Identity verification and anti-bot gates are, and those are exactly
+what Jobby refuses to do, correctly. This does not make the questionnaire work
+less necessary, but it does mean it should not be expected to raise the
+completion rate much on its own.
+
+The multi-tenant consequence is significant and is not in the current design:
+every one of those blockers is per-user and needs that user's own inbox and
+attention. At a hundred users, *Needs you* is not an exception lane, it is a
+primary workload, and it needs to be designed as a queue people can work
+through rather than a list that accumulates.
+
+### The three tiers, sized from the data
+
+**Tier 1, must-have before any application can complete.** Identity, contact,
+work authorisation, sponsorship, relocation, notice period, location. From the
+shape distribution this is most of the 34 binary and 16 short-scalar questions,
+call it fifteen to twenty items after collapsing aliases. Without these no
+application finishes. This is a form and should look like one.
+
+**Tier 2, high-frequency, asked during onboarding.** The sentence-length
+invariants, around twenty-four questions, plus the six genuine free-text ones.
+Offered as a conversation rather than a form, because "why are you leaving your
+last role" typed into a text input produces worse answers than the same question
+asked well.
+
+**Tier 3, the long tail, captured on first encounter.** Everything else. When an
+application meets a question the bank does not cover, it parks in *Needs you*
+exactly as it does today, the user answers once, and it is stored forever.
+
+Tier 3 is the flywheel and deserves to be treated as a feature rather than a
+fallback. **The product gets more valuable to each user the longer they use
+it**, and the price of that improvement is one question the user would have had
+to answer anyway, on a form they were filling in regardless. It is also why the
+shared question taxonomy in §17 matters: a new user's Tier 3 questions are
+mostly questions some other account has already taught Jobby to recognise, so
+the recognition is instant even though the answer is theirs alone.
+
+The 38 standing policy rules are a fourth category that does not fit the tiers.
+They are meta-answers, rules for how to respond to a *class* of question rather
+than answers to any one of them, and they are what let 100 stored questions
+cover far more than 100 form fields. A stranger cannot write them, so they need
+sensible defaults, framed as choices in Tier 1 where they carry real
+consequences (sponsorship, arbitration, background checks) and left as defaults
+where they do not.
+
+### The confidence model has never been exercised where onboarding needs it
+
+State distribution across all 138 entries: 116 `confirmed`, 22 `sensitive`,
+**zero `inferred`, zero `missing`.**
+
+`inferred` is precisely the state that resume parsing produces and that §10's
+onboarding flow depends on: parsed, not yet confirmed by the human. It exists in
+the schema and has never been used in production. Before onboarding is built on
+it, it needs the same test coverage the other states have, plus a UI that makes
+confirming a screenful of inferred fields fast rather than tedious.
+
+## 17. Principles carried from the north star
+
+Three that have architectural consequences, restated here so this document does
+not silently contradict them.
+
+**The voice lives in stored text, not in the model.** Answers are text the user
+approved, replayed verbatim, not regenerated per application. Architecturally
+this makes the answer store authoritative rather than a prompt input, and it
+means provider choice cannot change who the user sounds like. Any design that
+regenerates free-text per run breaks it. This also interacts with §1: if a
+provider is closed off tomorrow, stored answers survive the switch unchanged.
+
+**Question taxonomy is shared, answers are private.** The same line §3 draws for
+jobs. That a particular Greenhouse form asks a particular question is public
+knowledge and every account benefits from Jobby recognising it, including the
+alias mapping that collapses fourteen phrasings onto one question. What any user
+*said* is theirs alone and never crosses an account boundary. The shared half is
+a question-taxonomy table keyed by normalised question text; the private half is
+the per-user answer row. This buys matching quality from scale at no privacy
+cost, and it is the reason a new user's twenty minutes goes further than
+Sahil's first twenty minutes did.
+
+**Bring-your-own-subscription has a visible cost.** Already in §11.
+
+## 18. Provider safety parity, an untested assumption
+
+The refusal boundaries (no CAPTCHAs, no account creation, no passwords, no
+signing legal documents, never inventing an answer to a required field) live in
+prompt instructions written for and validated against one model. Applications go
+out under a real person's name.
+
+Each provider needs measuring against the same bar before it becomes anyone's
+default, and that measurement does not exist. This is a release gate for
+multi-tenancy, not a nice-to-have: the failure mode is a stranger's application
+carrying an invented answer, which is unrecoverable and is the single worst
+thing this product could do.
+
+Per §1 this is now entangled with provider availability. Gemini via `agy` is a
+different binary and a different model id from what any of these instructions
+were validated against.
+
+## 19. What an application costs, and why nobody knows
+
+The moment BYO-API-key is a product (§2), cost per application stops being a
+deferred nicety and becomes the number the pricing page depends on. It has been
+a known gap since the first backlog and is still unbuilt.
+
+### What is measured
+
+`runstats.py` reconstructs effort per run from the agent transcripts. Across 104
+run records covering 68 distinct applications, aggregating every segment and
+retry of an application together:
+
+| Per application | median | mean | p90 | max |
+|---|---|---|---|---|
+| agent tool calls | 127 | 146 | 274 | 374 |
+| wall minutes | 21.1 | 24.1 | 39.3 | 62.8 |
+| browser calls | 50 | 67 | 161 | 234 |
+| tailoring calls | 52 | 54 | 82 | 123 |
+| PDF renders | 4 | 4.2 | 8 | 11 |
+
+9,935 agent tool calls across all 68. Zero needed a document correction, which
+is the template gate doing its job.
+
+The browser/tailoring split matters for cost control: browser calls are bounded
+by the employer's form and are not ours to cut, tailoring calls are. They are
+roughly even at the median, so neither half can be ignored.
+
+### What is not measured
+
+**Tokens.** `runstats.py` counts calls, not usage, so none of the above converts
+to dollars. A tool call in a long-context agentic loop re-sends accumulated
+context, so 127 calls is not 127 units of anything, and the multiplier is
+exactly what is unknown. Any dollar figure quoted today would be invented.
+
+### How to measure it, which is small
+
+The instrument already exists at both ends and is simply not wired together.
+`claude -p --output-format json` reports usage on the response; Codex reports
+equivalents. The change is to capture that usage block where the provider
+subprocess is read, carry it into the run record, and add token and
+cost-estimate columns to `runstats.py` alongside the call counts. Cost estimates
+need a per-model price table, which should live in one place and be dated,
+because it will go stale.
+
+**Do this before answering §2.** It is a few hours of work and it is an input to
+a decision that is otherwise being made on vibes.
+
+## 20. Open decisions
+
+1. **Which quadrant.** §2. Blocks everything from §8 onward. Depends on 2 and 4
+   below, so it should not be answered first.
+2. **Measure cost per application.** §19. An input to 1, currently unmeasured,
+   and cheap to fix.
+3. **Agree Anthropic's Commercial Terms, or not.** §1. Only needed for the
+   hosted-plus-subscription cell, which §2 argues against choosing.
+4. **Read OpenAI's terms in a browser.** §1. Blocks any claim about Codex, in
+   any quadrant.
+5. **One profile or many identities per user.** §8. Sahil already needs two.
+   A single profile row reintroduces a bug that was already fixed once.
+6. **What deletion means for a submitted application.** §8. Documents and
+   answers go; whether the tombstone stays is a policy choice that belongs in
+   the privacy policy before it is code.
+7. **Size the corpus cap.** §5. Requires measuring union-scope volume, which
    nobody has done.
-5. **argon2 in a Worker, or auth in a Container.** §9.
+8. **argon2 at m=19MiB in a Worker, or Skeptic's parameters in a Container.**
+   §9. Stated with numbers there rather than as a preference.
