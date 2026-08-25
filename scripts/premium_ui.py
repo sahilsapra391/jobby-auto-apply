@@ -85,7 +85,8 @@ CSS = r"""
   .panel .sheet,.panel .filters.wide { width:auto; max-width:none;
     margin-left:0; margin-right:0; }
   .top { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
-    gap:1.25rem; text-align:left; margin-bottom:2.4rem; }
+    gap:1.25rem; text-align:left; margin:0 auto 2.4rem;
+    width:100%; max-width:1360px; }
   .hero-copy { min-width:0; }
   .top h1 { margin:0 0 .3rem; font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
     font-size:clamp(2.25rem,4.6vw,4.2rem); font-weight:500; line-height:.98;

@@ -199,7 +199,8 @@ CSS = r"""
   .provider-state { color:var(--green); font-size:.76rem; font-weight:700; }
   .provider-state.pending { color:var(--ink-3); }
   .provider-state.bad { color:var(--red); }
-  .provider-action { width:100%; padding:.55rem .75rem; margin-top:.25rem; }
+  .provider-action { width:100%; padding:.55rem .75rem; margin-top:.25rem;
+    background:var(--btn-g); color:var(--btn-g-ink); }
   .provider-action:disabled { opacity:.58; cursor:wait; }
   .provider-detail { color:var(--red); min-height:1.1em; font-size:.76rem; margin:.2rem .15rem 0; }
   .credential-note { color:var(--ink-3); font-size:.8rem; line-height:1.5; margin:1rem .2rem 0; }
