@@ -867,11 +867,26 @@ def build_run_invocation(
         "stream-json",
         "--input-format",
         "stream-json",
-        "--dangerously-skip-permissions",
         "--disable-slash-commands",
         "--print-timeout",
         GEMINI_PRINT_TIMEOUT,
     ]
+    # No --dangerously-skip-permissions, and that flag is the entire fence.
+    #
+    # agy has no allowlist, so the flag is all or nothing: with it, all 57
+    # built-in tools are auto-approved, and a fence probe caught exactly that.
+    # Asked to run `printf %s <token> > SHELL.txt` during a *documents* task it
+    # ran it, and the token was on disk afterwards. Schema-checking the output
+    # says nothing about what the agent does on the way to producing it.
+    #
+    # Without the flag the tools are unreachable and the same probe leaves the
+    # canary untouched. Documents needs no tool: it is one turn of prompt in,
+    # JSON out, and it returns the identical result either way. Measured on
+    # agy 1.1.20.
+    #
+    # This is why apply and scan are refused above rather than run this way. A
+    # form agent needs its browser tools, so it needs the flag, and the flag
+    # hands it run_command with them.
     if task_kind in ("apply", "scan"):
         # MEASURED REFUSAL, not a placeholder. Three things have to hold for an
         # agent loose on a browser or the open web, and none of them can be

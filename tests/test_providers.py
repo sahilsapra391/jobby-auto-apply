@@ -819,9 +819,23 @@ class GeminiAntigravityTests(unittest.TestCase):
 
     def test_it_uses_the_flags_agy_does_have(self):
         argv = self.build("documents").argv
-        self.assertIn("--dangerously-skip-permissions", argv)
         self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
         self.assertEqual(argv[argv.index("--input-format") + 1], "stream-json")
+
+    def test_documents_never_auto_approves_the_57_built_in_tools(self):
+        """That flag is the whole fence, and agy has no allowlist beside it.
+
+        A fence probe caught this: with --dangerously-skip-permissions, a
+        *documents* run asked to `printf %s <token> > SHELL.txt` ran it, and
+        the token was on disk afterwards. Schema-checking the output says
+        nothing about what the agent does on the way to producing it.
+
+        Without the flag the same probe leaves every canary untouched, and the
+        document result is byte-identical: one turn of prompt in, JSON out,
+        needing no tool at all.
+        """
+        self.assertNotIn(
+            "--dangerously-skip-permissions", self.build("documents").argv)
 
     def test_the_print_timeout_outlasts_the_callers_own_bound(self):
         # agy defaults to five minutes and kills its own turn. run_apply bounds
