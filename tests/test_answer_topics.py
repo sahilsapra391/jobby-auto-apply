@@ -267,27 +267,22 @@ class SkillRatingTests(unittest.TestCase):
         self.assertIsNone(self.rating("Do you know Excel?"))
 
 class AnyCountryWorkAuthorisationTests(unittest.TestCase):
-    """Sponsorship and work authorisation answer the same in every country.
+    """Sponsorship and work authorisation are recognised in every country.
 
     They used to answer only for the US, and a separate stored answer said
-    sponsorship WAS required everywhere else. Two forms from the same standing
-    instruction could therefore contradict each other, and the one that went
-    out was whichever country the posting happened to be in.
+    sponsorship WAS required everywhere else, so two forms from the same
+    standing instruction could contradict each other. One topic for all
+    countries fixed that, and then became wrong the other way on 2026-08-25,
+    when the true answer stopped being the same everywhere: sponsorship is
+    required in the US, required in the UK, and not required in India. The
+    question is still recognised wherever it is asked; the country in it now
+    picks the answer.
     """
 
-    def topic(self, question):
-        found = store.topic_answer(self.answers, question)
-        return (found or {}).get("topic")
+    def answer(self, question):
+        return (store.sponsorship_status(question) or {}).get("value")
 
-    def setUp(self):
-        self.answers = {
-            "a": {"question": "sponsorship anywhere", "value": "No",
-                  "tags": ["sponsorship-any-country"]},
-            "b": {"question": "authorised anywhere", "value": "Yes",
-                  "tags": ["work-authorisation-any-country"]},
-        }
-
-    def test_sponsorship_questions_match_in_any_country(self):
+    def test_sponsorship_questions_are_recognised_in_any_country(self):
         for question in (
             "Do you require visa sponsorship to work in the United Kingdom?",
             "Will you now or in the future require sponsorship to work in Canada?",
@@ -295,26 +290,22 @@ class AnyCountryWorkAuthorisationTests(unittest.TestCase):
             "Will you require the company to sponsor a visa?",
         ):
             with self.subTest(question=question):
-                self.assertEqual(self.topic(question), "sponsorship-any-country")
+                self.assertEqual(self.answer(question), "Yes")
 
-    def test_authorisation_questions_match_in_any_country(self):
+    def test_authorisation_questions_are_recognised_in_any_country(self):
         for question in (
             "Are you legally authorized to work in Germany?",
             "Do you have the right to work in Australia?",
             "Are you eligible to work in Ireland?",
         ):
             with self.subTest(question=question):
-                self.assertEqual(self.topic(question),
-                                 "work-authorisation-any-country")
+                self.assertEqual(self.answer(question), "No")
 
     def test_an_unrelated_question_matches_neither(self):
         for question in ("What is your notice period?",
                          "Have you worked with SQL?"):
             with self.subTest(question=question):
-                self.assertIsNone(self.topic(question))
-
-
-
+                self.assertIsNone(self.answer(question))
 
 
 STANDING_ANSWERS = {
@@ -764,8 +755,9 @@ class UsPersonTests(unittest.TestCase):
             self.assertIsNone(self.find(q).get("value"), q)
 
     def test_work_authorisation_keeps_its_own_answer(self):
-        self.assertEqual(
-            self.find("Are you authorized to work in the United States?")["value"], "Yes")
+        self.assertTrue(
+            self.find("Are you authorized to work in the United States?")["value"]
+            .startswith("Yes"))
 
     def test_the_firearms_questionnaire_is_not_swept_in_by_the_word_citizenship(self):
         # "Have you renounced your United States citizenship" is one of nine
@@ -775,6 +767,68 @@ class UsPersonTests(unittest.TestCase):
                   "Have you been dishonorably discharged from the armed forces?",
                   "Have you ever been convicted of a felony?"):
             self.assertIsNone(self.find(q).get("value"), q)
+
+
+class SponsorshipTruthTests(unittest.TestCase):
+    """Three questions that look like one, and they have different answers.
+
+    The store held twelve entries saying sponsorship would never be required
+    anywhere, next to one saying he is on a student visa. Both cannot be true.
+    The user corrected it on 2026-08-25: authorised now, sponsorship required
+    in the future. Conflating any two of these shapes puts a false statement
+    on a form he signs, so each is pinned separately.
+    """
+
+    def status(self, question):
+        return (store.sponsorship_status(question) or {}).get("value")
+
+    def test_authorised_today_is_yes_in_the_united_states(self):
+        for q in ("Are you legally authorized to work in the United States?",
+                  "Are you eligible to work in the US?",
+                  "Do you have the right to work in the United States?"):
+            self.assertTrue(self.status(q).startswith("Yes"), q)
+
+    def test_future_sponsorship_is_yes_in_the_united_states(self):
+        for q in ("Do you now or will you in the future require sponsorship for "
+                  "employment visa status?",
+                  "Will you require sponsorship in order to be employed?",
+                  "Do you require visa sponsorship?",
+                  "Will you need the company to sponsor an employment visa?"):
+            self.assertEqual(self.status(q), "Yes", q)
+
+    def test_authorised_WITHOUT_sponsorship_is_no(self):
+        # The compound one: it asks both at once, and the honest answer is No,
+        # the opposite of what the store said for months.
+        for q in ("Are you authorized to work in the United States without sponsorship?",
+                  "Are you able to work in the US without requiring sponsorship now or "
+                  "in the future?",
+                  "Are you authorized to work in the US and will not require sponsorship?",
+                  "Are you legally authorized to work here without needing sponsorship?"):
+            self.assertTrue(self.status(q).startswith("No"), q)
+
+    def test_india_flips_all_three_because_he_is_a_citizen(self):
+        self.assertTrue(self.status(
+            "Are you authorized to work in India without sponsorship?").startswith("Yes"))
+        self.assertEqual(self.status("Do you require sponsorship to work in India?"), "No")
+        self.assertTrue(self.status(
+            "Are you legally authorized to work in India?").startswith("Yes"))
+
+    def test_every_answer_carries_the_india_exception_in_its_note(self):
+        # resolve_answers has no region argument, so the note is what keeps a
+        # US answer off an India form.
+        for q in ("Do you require visa sponsorship?",
+                  "Are you legally authorized to work in the United States?"):
+            self.assertIn("India", store.sponsorship_status(q)["note"], q)
+
+    def test_an_authorisation_that_is_not_about_working_is_not_claimed(self):
+        # "authoris" alone also carries a background-check authorisation and a
+        # consumer-report authorisation. Neither is a question about being
+        # allowed to work, and both stay with the user.
+        for q in ("I acknowledge and agree to the drug screening authorisation.",
+                  "I authorize the Company to obtain a consumer report about me.",
+                  "I acknowledge the FCRA disclosure and authorise a background check.",
+                  "What is your notice period?"):
+            self.assertIsNone(store.sponsorship_status(q), q)
 
 
 if __name__ == "__main__":

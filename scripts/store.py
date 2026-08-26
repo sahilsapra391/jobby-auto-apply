@@ -303,18 +303,6 @@ TOPIC_MARKERS = [
     # answered only for the US, and a separate stored answer said sponsorship
     # WAS required everywhere else, so a UK or Canadian form got the opposite
     # answer to a US one on the same standing instruction.
-    ("sponsorship-any-country", (
-        "require sponsorship", "requires sponsorship", "need sponsorship",
-        "visa sponsorship", "sponsorship for employment", "sponsor an employment",
-        "sponsor a visa", "sponsorship now or in the future",
-        "require the company to sponsor",
-    )),
-    ("work-authorisation-any-country", (
-        "legally authorized to work", "legally authorised to work",
-        "authorized to work in", "authorised to work in",
-        "right to work in", "eligible to work in", "work authorization in",
-        "work authorisation in",
-    )),
     ("compensation-breakup-india", (
         "compensation breakup", "compensation break-up", "ctc breakup",
         "ctc break-up", "salary breakup", "salary break-up",
@@ -664,6 +652,103 @@ LICENCE_REQUIREMENT = re.compile(
     r"|need (a |an )?(deemed export )?licen[cs]e", re.I)
 
 
+# Work authorisation and sponsorship, told truthfully, are three different
+# answers that depend on the country and on which of them the form is asking.
+# The store held twelve entries saying sponsorship would never be required
+# anywhere, alongside one saying he is on a student visa, which cannot both be
+# true. The user corrected it on 2026-08-25: authorised now, will require
+# sponsorship in the future.
+#
+# Three shapes, and conflating any two of them puts a false statement on a
+# form he signs:
+#   "are you authorised to work here"          -> now.     US: yes.
+#   "will you require sponsorship"             -> future.  US: yes.
+#   "are you authorised to work WITHOUT
+#    sponsorship, now or in the future"        -> both.    US: no.
+#
+# India is the real exception rather than a special case: he is a citizen, so
+# all three flip. Everywhere else he is neither authorised nor sponsored yet.
+SPONSORSHIP_WORD = re.compile(r"sponsor", re.I)
+# Deliberately not a bare "authoris": that word also carries a background-check
+# authorisation and a consumer-report authorisation, neither of which is a
+# question about being allowed to work, and both of which stay with the user.
+WORK_AUTH_WORD = re.compile(
+    r"(authoriz\w*|authoris\w*|eligib\w*|permitted|legally able|entitled)\s+to\s+work"
+    r"|work\s+(authoriz\w*|authoris\w*|permit|eligibility|status)"
+    r"|right to work|legally (authoriz\w*|authoris\w*)\b(?!.*\b(background|consumer|credit)\b)",
+    re.I)
+WITHOUT_SPONSORSHIP = re.compile(
+    r"without (any |a |visa |employment |the need for |requiring |needing |"
+    r"the need to )?(be )?sponsor"
+    r"|(not|never) (require|need)\w*\s+(any |visa |employment )?sponsor"
+    r"|no sponsorship (required|needed|necessary)"
+    r"|do not (require|need) sponsor", re.I)
+INDIA_COUNTRY = re.compile(r"\bindia\b|\bindian\b", re.I)
+US_COUNTRY = re.compile(
+    r"united states|\bu\.?\s?s\.?\s?a?\b|\bamerica\b|\busa\b", re.I)
+THIRD_COUNTRY = re.compile(
+    r"united kingdom|\bu\.?k\.?\b|\bengland\b|\bcanada\b|\bcanadian\b|\baustralia\b"
+    r"|\bgermany\b|\bireland\b|\bsingapore\b|\bnetherlands\b|\bfrance\b|\bjapan\b"
+    r"|\bspain\b|\bpoland\b|\bswitzerland\b|\bsweden\b|\bu\.?a\.?e\.?\b"
+    r"|united arab emirates|\beurope\b|\beea\b|\bschengen\b", re.I)
+
+_IN_NOTE = ("India: he is a citizen, authorised without sponsorship. "
+            "Answer for the country the posting is in; when the field names no country, "
+            "use REGION.")
+_US_NOTE = ("United States: authorised to work now on a student visa, and sponsorship "
+            "WILL be required in the future. Standing correction from the user on "
+            "2026-08-25, replacing the earlier answer that said sponsorship would never "
+            "be required. Never answer that he needs no sponsorship in the US. " + _IN_NOTE)
+_THIRD_NOTE = ("Outside the United States and India he holds no work authorisation, so "
+               "sponsorship would be required. " + _IN_NOTE)
+
+# question shape -> (india, united states, anywhere else)
+_SPONSORSHIP_ANSWERS = {
+    # "will you require sponsorship, now or in the future"
+    "sponsorship": (("No", _IN_NOTE), ("Yes", _US_NOTE), ("Yes", _THIRD_NOTE)),
+    # "are you authorised to work here" (today)
+    "authorised-now": (("Yes, Indian citizen", _IN_NOTE),
+                       ("Yes, authorised to work now on a student visa", _US_NOTE),
+                       ("No", _THIRD_NOTE)),
+    # "are you authorised to work here WITHOUT sponsorship" (both at once)
+    "without-sponsorship": (("Yes, Indian citizen", _IN_NOTE),
+                            ("No, authorised to work now but sponsorship will be "
+                             "required in the future", _US_NOTE),
+                            ("No", _THIRD_NOTE)),
+}
+
+
+def sponsorship_status(question):
+    """Work authorisation or sponsorship, for the country the question names."""
+    text = (question or "")
+    has_sponsor = bool(SPONSORSHIP_WORD.search(text))
+    has_auth = bool(WORK_AUTH_WORD.search(text))
+    if not (has_sponsor or has_auth):
+        return None
+    if WITHOUT_SPONSORSHIP.search(text):
+        shape = "without-sponsorship"
+    elif has_sponsor:
+        shape = "sponsorship"
+    elif has_auth:
+        shape = "authorised-now"
+    else:
+        return None
+
+    if INDIA_COUNTRY.search(text):
+        index, country = 0, "India"
+    elif US_COUNTRY.search(text) or not THIRD_COUNTRY.search(text):
+        # No country named defaults to the United States, which is where the
+        # overwhelming majority of these forms are. The note names the India
+        # answer explicitly so an India posting is not answered from here.
+        index, country = 1, "the United States"
+    else:
+        index, country = 2, "a third country"
+    value, note = _SPONSORSHIP_ANSWERS[shape][index]
+    return {"match": "topic", "topic": f"{shape}-{country.split()[-1].lower()}",
+            "value": value, "answer": value, "question": question,
+            "state": "confirmed", "note": note}
+
+
 def us_person(answers, question):
     """The standing answer to "are you a US person", never to "do you need a licence"."""
     text = (question or "")
@@ -708,6 +793,9 @@ def topic_answer(answers, question):
     person = us_person(answers, question)
     if person:
         return person
+    visa = sponsorship_status(question)
+    if visa:
+        return visa
     text = (question or "").lower()
     for topic, markers in TOPIC_MARKERS:
         if not any(m in text for m in markers):
