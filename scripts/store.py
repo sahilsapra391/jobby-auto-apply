@@ -541,6 +541,7 @@ TOPIC_MARKERS = [
     # which has its own topic scanned earlier in this list.
     ("resume-history-documentation", (
         "documentation of the employment", "documentation of your employment",
+        "documentation-availability", "documentation availability",
         "documentation confirming", "documentation to confirm",
         "documentation to verify", "documentation to support",
         "documentation supporting the", "provide documentation of",
@@ -575,22 +576,78 @@ TOPIC_MARKERS = [
         "field of study", "course of study", "area of study", "your major",
         "major or field", "discipline",
     )),
-    # India before the rest, because "expected CTC" is an Indian question and
-    # the two figures are in different currencies. Both entries are sensitive,
-    # which blocks fuzzy matching on purpose; a marker is exact, not fuzzy, and
-    # a figure the user stored to be used is no use if nothing can reach it.
-    # Deliberately after salary-range-acknowledgement, which is scanned first:
-    # "does this range align with your compensation expectations" is a yes, and
-    # answering it with a number instead would be the worst mis-fill here.
-    ("expected-compensation-india", (
-        "expected ctc", "ctc expectation", "expectation ctc", "expected lpa",
-        "expected salary in lpa", "expected annual ctc",
+    # A bare field label, which is all Workday and Waymo put next to the
+    # control. The long wordings are already handled above by
+    # work-authorisation-any-country; these are the one-word ones, which that
+    # topic's phrases ("authorized to work in") cannot match.
+    ("work-authorisation-label", (
+        "work authorization", "work authorisation", "work eligibility",
+        "employment eligibility", "authorization status",
     )),
-    ("expected-compensation", (
-        "expected salary", "salary expectation", "expected compensation",
-        "compensation expectation", "desired salary", "desired compensation",
-        "expected base salary", "expected annual salary", "salary requirement",
-        "salary requirements", "expected pay", "what are your salary",
+    # The free-text bank. Eighteen answers written in the user's own words were
+    # stored with hand-assigned keys and no tags, so exact, fuzzy and topic
+    # matching all missed every one of them. Measured on 2026-08-25: thirteen
+    # of the commonest essay questions on an application form, including "what
+    # motivates you", whose answer was sitting in the store verbatim, resolved
+    # to nothing.
+    #
+    # Every value here is SOURCE MATERIAL, not paste-ready text. The entries
+    # carry prefixes addressed to the agent ("HIS OWN WORDS", "Competencies:"),
+    # and each one's note says to write the answer out to the field's length.
+    ("story-motivation", (
+        "what motivates you", "what drives you", "motivates you most",
+        "what gets you up in the morning",
+    )),
+    ("story-next-role", (
+        "looking for in your next role", "looking for in a new role",
+        "looking for in your next", "ideal next role",
+        "want in your next role", "hoping to find in your next",
+    )),
+    ("story-why-looking", (
+        "why are you looking", "why did you leave", "reason for leaving",
+        "why are you leaving", "why do you want to leave",
+        "reason for your job change", "why are you exploring",
+    )),
+    ("story-ai-in-work", (
+        "ai changed the way", "how has ai changed", "how do you use ai",
+        "use ai in your work", "ai in your day to day",
+        "ai tools in your work",
+    )),
+    ("story-side-project", (
+        "personal project", "side project", "side experiment",
+        "project you built on your own", "something you built outside work",
+    )),
+    ("story-self-description", (
+        "describe yourself in", "tell us about yourself",
+        "describe yourself", "in one sentence about you",
+    )),
+    # The fit essay. This one has no single stored answer and never can: it is
+    # different for every posting. The entry it reaches says so, and says what
+    # to build it from, which is a better answer than nothing at all. Nothing
+    # here is a figure or a claim, so a literal paste would be visibly wrong
+    # rather than quietly false.
+    ("citizenship-country", (
+        "country of citizenship", "countries of citizenship",
+        "your nationality", "what is your nationality",
+        "citizen of which country", "which country are you a citizen",
+        "country of nationality",
+    )),
+    ("travel-willingness", (
+        "willing to travel", "able to travel", "comfortable travelling",
+        "comfortable traveling", "commit to travel", "travel requirement",
+        "travel requirements", "% travel", "percent travel", "travel up to",
+        "overnight travel", "travel domestically", "travel internationally",
+        "amount of travel", "ability to travel", "open to travel",
+        "travel as needed", "travel for work",
+    )),
+    ("story-why-this-role", (
+        "why do you think you will be successful",
+        "why will you be successful", "why are you a good fit",
+        "why do you think you are a good fit", "makes you a strong candidate",
+        "why should we hire you", "why are you interested in this role",
+        "why do you want to work at", "why do you want to join",
+        "why this role", "why are you interested in joining",
+        "what interests you about this",
     )),
 ]
 
@@ -626,11 +683,210 @@ def skill_rating(question):
             "note": f"standing self-rating for {skill}, any wording of a 1-10 scale"}
 
 
+# Years of experience is answered per discipline, not once. The store holds
+# five figures and they are not the same number: 4 total, 4 in product
+# management, 3 building AI products, 1 managing people, 0 as a software
+# developer. A loose marker would hand whichever it reached first to every
+# one of those questions, and "years of experience in Java" would come back 4.
+#
+# So this answers two shapes and nothing else. A question naming exactly one
+# known discipline gets that discipline's figure. A question naming no
+# discipline at all, in the tight unqualified form below, gets the total.
+# Everything else, including every discipline the store has no figure for,
+# returns None and goes to the user.
+YEARS_EXPERIENCE = (
+    ("product-management", r"product manage", "4"),
+    ("ai-products", r"\bai\b|artificial intelligence|machine learning|\bml\b", "3"),
+    ("software-development",
+     r"software (developer|development|engineer)|programming|\bcoding\b", "0"),
+    ("people-management",
+     r"managing people|people management|managing a team|direct reports|"
+     r"leading a team|line management", "1"),
+)
+YEARS_SHAPE = re.compile(
+    r"(years?\b[^.?]{0,20}\bexperience|how many years|total years|years in the (industry|field))",
+    re.I)
+YEARS_UNQUALIFIED = re.compile(
+    r"^(how many |what (is|are) |total |please state )?"
+    r"(the |your |his )?"
+    r"(total |overall |combined )?"
+    r"(number of )?"
+    r"years?( of)?"
+    r"( total| overall| professional| work| working| relevant| full[- ]time)*"
+    r" experience"
+    r"( do you have| have you( had)?| in total)?"
+    r"[\s?.:*]*(\(required\))?[\s?.:*]*$", re.I)
+
+
+def years_experience(question):
+    """The user's stored years figure for what this question actually asks."""
+    text = (question or "").strip()
+    if not YEARS_SHAPE.search(text):
+        return None
+    named = [(topic, value) for topic, pattern, value in YEARS_EXPERIENCE
+             if re.search(pattern, text, re.I)]
+    if len(named) == 1:
+        topic, value = named[0]
+        return {"match": "topic", "topic": f"years-experience-{topic}",
+                "answer": value, "value": value, "question": question,
+                "state": "confirmed",
+                "note": f"stored years of experience for {topic.replace('-', ' ')}"}
+    if named:
+        # Two disciplines in one question is not one figure.
+        return None
+    if YEARS_UNQUALIFIED.match(text):
+        return {"match": "topic", "topic": "years-experience-total",
+                "answer": "4", "value": "4", "question": question,
+                "state": "confirmed",
+                "note": "total years of professional experience, no discipline named"}
+    # A discipline this store has no figure for. Never answered from the total.
+    return None
+
+
+# Expected pay is one figure per currency, and the store holds two: $120,000
+# for a US role and Rs. 30,00,000 for an India one. A phrase list can only add
+# questions, never withhold one, and "Expected Salary (INR)" contains every
+# phrase "Expected Salary" does. Measured on 2026-08-25 with markers alone:
+# an INR field, a rupee-symbol field and a lakhs field all resolved to the
+# dollar figure, which is a wrong number on a real application rather than a
+# near miss.
+#
+# So the currency decides, and a currency the user has no figure for parks.
+# Both entries are `sensitive`, which keeps them out of fuzzy matching; this
+# path is exact, which is what makes reaching them safe.
+EXPECTED_PAY_SHAPE = re.compile(
+    r"(expected|desired|required|preferred)\s+(base\s+|annual\s+|total\s+)?"
+    r"(salary|compensation|pay|ctc|package|remuneration)"
+    r"|salary\s+(expectation|requirement)"
+    r"|compensation\s+expectation"
+    r"|what\s+(are|is)\s+your\s+(expected\s+)?(salary|compensation|ctc)"
+    r"|expected\s+lpa|ctc\s+expectation", re.I)
+# Acknowledging a posted band is a yes, never a number, and lives one word away.
+NOT_A_FIGURE = re.compile(
+    r"acknowledge|agree that this range|range align|comfortable with (this|the) range"
+    r"|does this range", re.I)
+# "CTC" is cost-to-company, which is an Indian construction and appears on no
+# US form. It is what most Indian ATSes actually label the field.
+INDIA_PAY = re.compile(
+    r"\binr\b|₹|\blakh|\blpa\b|rupee|\brs\.?\b|indian rupee|\bctc\b", re.I)
+# Every currency he has no stored figure for. Naming one is not a near miss.
+OTHER_CURRENCY = re.compile(
+    r"\bgbp\b|£|\beur\b|€|\bcad\b|\baud\b|\bsgd\b|\baed\b|\bchf\b|\bjpy\b|¥"
+    r"|\bsek\b|\bnok\b|\bdkk\b|\bpln\b|\bzar\b|\bbrl\b|\bmxn\b|\bnzd\b"
+    r"|pounds? sterling|\beuros?\b|dirham", re.I)
+
+
+def expected_pay(answers, question):
+    """The stored expected-pay figure for the currency this field is in."""
+    text = (question or "")
+    if not EXPECTED_PAY_SHAPE.search(text) or NOT_A_FIGURE.search(text):
+        return None
+    if INDIA_PAY.search(text):
+        topic = "expected-compensation-india"
+    elif OTHER_CURRENCY.search(text):
+        # He has a US figure and an India figure and nothing else. Converting
+        # one of them is inventing a number, so this goes to the user.
+        return None
+    else:
+        topic = "expected-compensation"
+    for entry in answers.values():
+        if topic in (entry.get("tags") or []):
+            return {"match": "topic", "topic": topic, **entry}
+    return None
+
+
+# Acknowledging something and authorising something are not the same act, and
+# the difference is the whole reason this is a function rather than a phrase
+# list. "I acknowledge I have read the questionnaire" is the user's standing
+# yes. "I acknowledge and authorize the Company to obtain a consumer report"
+# uses the same first word and grants a third party the right to pull his
+# records, which has always been his to give and stays his.
+ACKNOWLEDGEMENT_SHAPE = re.compile(
+    r"acknowledge|acknowledgment|acknowledgement"
+    r"|i have read and (understand|agree)|i confirm (that )?i have read"
+    r"|i understand (and|that)"
+    r"|by (typing|signing) (my|your) name", re.I)
+# Every one of these stays with the user. An authorisation, an assignment and
+# a restrictive covenant are things he gives away, not things he confirms.
+NOT_A_BARE_ACKNOWLEDGEMENT = re.compile(
+    r"authoriz\w*|authoris\w*|consumer report|credit report|investigative report"
+    r"|fair credit reporting|\bfcra\b|background (check|investigation|screening)"
+    r"|drug (test|screen)|assignment of invention|intellectual property"
+    r"|proprietary information|confidentiality agreement|non[- ]disclosure"
+    r"|non[- ]compete|non[- ]solicitation|restrictive covenant"
+    r"|invention assignment|assignment agreement|arbitration agreement"
+    r"|power of attorney|indemnif|waive (my|any) right|class[- ]action", re.I)
+# Agreeing to be bound by something is the user's act, and no factual answer
+# in this store is an answer to it. "Do you have a non-compete?" is a question
+# about the world and resolves to No; "I acknowledge and agree to the
+# non-compete above" is a signature, and answering it No was one marker away.
+BOUND_BY_AGREEMENT = re.compile(
+    r"i acknowledge and agree|i agree to|i consent to|agree to be bound"
+    r"|by (signing|typing)[^.]{0,80}(agree|consent|bound)", re.I)
+
+
+# "US person" is a term of art, and it is not the same as being allowed to
+# work here. Under the EAR and ITAR it means a citizen, a lawful permanent
+# resident, or an asylee or refugee, and a deemed export licence turns on it.
+# A substring list is the wrong tool: "us person" appears inside ordinary
+# prose, and a false No here is a false statement on a federal export-control
+# declaration rather than a near miss. So the phrase is matched with word
+# boundaries and nothing looser.
+US_PERSON_QUESTION = re.compile(
+    r"\bu\.?\s?s\.?\s+person\b|\bunited states person\b|\bus persons?\b"
+    r"|deemed export|\bitar\b|\bear\b(?=[^a-z])|export[- ]control", re.I)
+# Asking whether a LICENCE is needed is a different question from asking what
+# he is, and it depends on the technology the role touches. He has answered
+# the first and not the second, so the second still goes to him.
+LICENCE_REQUIREMENT = re.compile(
+    r"require (a |an )?(deemed export )?licen[cs]e|licen[cs]e (be )?required"
+    r"|need (a |an )?(deemed export )?licen[cs]e", re.I)
+
+
+def us_person(answers, question):
+    """The standing answer to "are you a US person", never to "do you need a licence"."""
+    text = (question or "")
+    if not US_PERSON_QUESTION.search(text):
+        return None
+    if LICENCE_REQUIREMENT.search(text):
+        return None
+    for entry in answers.values():
+        if "us-person-status" in (entry.get("tags") or []):
+            return {"match": "topic", "topic": "us-person-status", **entry}
+    return None
+
+
+def acknowledgement(answers, question):
+    """A standing yes to an acknowledgement, never to an authorisation."""
+    text = (question or "")
+    if not ACKNOWLEDGEMENT_SHAPE.search(text):
+        return None
+    if NOT_A_BARE_ACKNOWLEDGEMENT.search(text):
+        return None
+    for entry in answers.values():
+        if "acknowledgement-standing" in (entry.get("tags") or []):
+            return {"match": "topic", "topic": "acknowledgement-standing", **entry}
+    return None
+
+
 def topic_answer(answers, question):
     """A standing answer recognised by a distinctive phrase, or None."""
     rated = skill_rating(question)
     if rated:
         return rated
+    if (BOUND_BY_AGREEMENT.search(question or "")
+            and NOT_A_BARE_ACKNOWLEDGEMENT.search(question or "")):
+        # Signing away a right. Never answered from a stored fact.
+        return None
+    years = years_experience(question)
+    if years:
+        return years
+    pay = expected_pay(answers, question)
+    if pay:
+        return pay
+    person = us_person(answers, question)
+    if person:
+        return person
     text = (question or "").lower()
     for topic, markers in TOPIC_MARKERS:
         if not any(m in text for m in markers):
@@ -676,6 +932,9 @@ def find_answer(answers, question):
     topical = topic_answer(answers, question)
     if topical is not None:
         return topical
+    ack = acknowledgement(answers, question)
+    if ack is not None:
+        return ack
 
     # Candidates carry the stored question, never the value; to use one,
     # confirm it means the same thing, then look it up by its own question.

@@ -520,6 +520,262 @@ class ExpectedCompensationTopicTests(unittest.TestCase):
     def test_the_current_salary_question_is_not_answered_with_the_expected_one(self):
         self.assertEqual(self.find("What is your current base salary?")["value"], "$90,000")
 
+    def test_the_currency_the_field_is_in_decides_which_figure(self):
+        # A phrase list cannot express this: "Expected Salary (INR)" contains
+        # every word "Expected Salary" does, so markers alone put the dollar
+        # figure on an Indian application.
+        for q in ("Expected Salary (INR)", "Expected compensation (\u20b9)",
+                  "Expected salary in lakhs per annum", "Expected CTC"):
+            self.assertTrue(self.find(q)["value"].startswith("Rs."), q)
+        for q in ("Expected salary", "What are your salary expectations?",
+                  "Expected Salary (USD)", "Desired compensation"):
+            self.assertEqual(self.find(q)["value"], "$120,000", q)
+
+    def test_a_currency_he_has_no_figure_for_goes_to_the_user(self):
+        # Two figures are stored and neither is in pounds. Converting one is
+        # inventing a number on an application, so this parks.
+        for q in ("Expected salary (GBP)", "Expected salary in EUR",
+                  "Expected salary (AED per month)", "Desired compensation in CAD"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+
+FREE_TEXT = {
+    "story-motivation": {"question": "What motivates you?",
+                         "value": "HIS OWN WORDS: motivated by the impact of the work.",
+                         "tags": ["free-text", "story-motivation"]},
+    "story-what-hes-looking-for": {
+        "question": "What are you looking for in your next role?",
+        "value": "HIS OWN WORDS: a fast-paced environment building AI-native products.",
+        "tags": ["free-text", "story-next-role"]},
+    "story-why-looking": {"question": "Why are you looking for a new role?",
+                          "value": "TRUE TIMELINE: CAMP restructured in May 2026.",
+                          "tags": ["free-text", "story-why-looking"]},
+    "story-ai-changed-work": {"question": "How has AI changed the way you work?",
+                              "value": "HIS OWN WORDS, condensed: prototypes rather than oversees.",
+                              "tags": ["free-text", "story-ai-in-work"]},
+    "story-side-projects": {"question": "Do you have a personal project in AI?",
+                            "value": "SpecHawk, an agentic QA platform.",
+                            "tags": ["free-text", "story-side-project"]},
+    "story-one-liner": {"question": "Describe yourself in a short phrase",
+                        "value": "Technical product manager who builds.",
+                        "tags": ["free-text", "story-self-description"]},
+    "why-this-role": {"question": "Why do you think you will be successful in this role?",
+                      "value": "COMPOSE IT for this posting; there is no fixed text.",
+                      "tags": ["free-text", "story-why-this-role", "policy"]},
+    "comp": {"question": "expected salary for US roles", "value": "$120,000",
+             "state": "sensitive", "tags": ["compensation", "expected-compensation"]},
+    "total-years-of-professional-experience": {
+        "question": "Total years of professional experience", "value": "4", "tags": []},
+    "years-of-experience-in-product-management": {
+        "question": "Years of experience in product management", "value": "4", "tags": []},
+    "years-of-experience-building-ai-products": {
+        "question": "Years of experience building AI products", "value": "3", "tags": []},
+    "years-of-experience-as-software-developer": {
+        "question": "Years of experience as a software developer", "value": "0", "tags": []},
+}
+
+
+class FreeTextBankTests(unittest.TestCase):
+    """Eighteen answers in the user's own words that nothing could reach.
+
+    They were stored with hand-assigned keys ("story-motivation") and no tags,
+    so the exact key never matched the question, the words did not overlap
+    enough to fuzzy-match, and no marker claimed them. Measured on 2026-08-25:
+    thirteen of the commonest essay questions on an application form resolved
+    to nothing, including "what motivates you", whose answer was in the store
+    verbatim.
+    """
+
+    def find(self, question):
+        return store.find_answer(FREE_TEXT, question)
+
+    def test_the_direct_essay_questions_reach_their_stored_answer(self):
+        pairs = [
+            ("What motivates you?", "motivated by the impact"),
+            ("What drives you?", "motivated by the impact"),
+            ("What are you looking for in your next role?", "fast-paced environment"),
+            ("Reason for leaving your current job", "CAMP restructured"),
+            ("How has AI changed the way you approach your work?", "prototypes rather than"),
+            ("Tell us about a side project.", "SpecHawk"),
+            ("Describe yourself in one sentence", "Technical product manager"),
+        ]
+        for question, expected in pairs:
+            self.assertIn(expected, self.find(question)["value"], question)
+
+    def test_the_fit_essay_says_compose_rather_than_resolving_to_nothing(self):
+        # There is no fixed text for this one and there should not be, but
+        # returning nothing is what parked Workato. The entry says what to
+        # build it from instead.
+        for q in ("Why do you think you will be successful in this role?",
+                  "Why are you interested in this role?",
+                  "What makes you a strong candidate?",
+                  "Why do you want to work at Workato?"):
+            self.assertIn("COMPOSE IT", self.find(q)["value"], q)
+
+    def test_an_unrelated_why_question_is_not_swept_into_the_fit_essay(self):
+        out = self.find("Why did you choose your university?")
+        self.assertIsNone(out.get("value"))
+
+
+class YearsOfExperienceTests(unittest.TestCase):
+    """Five stored figures, and they are not the same number.
+
+    4 total, 4 in product management, 3 building AI products, 1 managing
+    people, 0 as a software developer. One marker over all of them would
+    answer "years of experience in Java" with 4.
+    """
+
+    def find(self, question):
+        return store.find_answer(FREE_TEXT, question)
+
+    def test_an_unqualified_question_gets_the_total(self):
+        for q in ("How many years of experience do you have?",
+                  "Years of experience *",
+                  "Total years of professional experience"):
+            self.assertEqual(self.find(q)["value"], "4", q)
+
+    def test_a_named_discipline_gets_its_own_figure(self):
+        self.assertEqual(self.find("Years of experience building AI products")["value"], "3")
+        self.assertEqual(
+            self.find("How many years as a software developer do you have experience?")["value"],
+            "0")
+
+    def test_a_discipline_with_no_stored_figure_returns_nothing(self):
+        # The one that matters. Answering this from the total is a false
+        # statement on an application, not a near miss.
+        for q in ("How many years of experience do you have in Java?",
+                  "Years of experience with Salesforce administration",
+                  "How many years of experience do you have with Kubernetes?"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+    def test_a_sentence_that_merely_says_years_is_not_a_years_question(self):
+        self.assertIsNone(store.years_experience("Why do you have four years of experience only?"))
+
+
+TRAVEL_AND_ACK = {
+    "travel": {"question": "Are you able to commit to the travel this role requires?",
+               "value": "Yes", "tags": ["travel-willingness", "logistics"]},
+    "ack": {"question": "POLICY: may an acknowledgement checkbox be ticked?",
+            "value": "YES, tick it or type 'Sahil Sapra' and today's date.",
+            "tags": ["acknowledgement-standing", "signature", "policy"]},
+    "post-emp": {"question": "post-employment obligations?", "value": "No",
+                 "tags": ["legal-declaration", "post-employment-obligations"]},
+    "bg": {"question": "willing to submit to a background check?", "value": "Yes",
+           "tags": ["legal-declaration", "background-check-willingness"]},
+}
+
+
+class TravelTests(unittest.TestCase):
+    """Yes at any percentage, standing from 2026-08-25."""
+
+    def find(self, q):
+        return store.find_answer(TRAVEL_AND_ACK, q)
+
+    def test_any_stated_percentage_resolves_to_yes(self):
+        for q in ("Are you able to commit to up to 30% travel?",
+                  "Are you willing to travel up to 50%?",
+                  "This role requires 25% overnight travel. Are you comfortable with that?",
+                  "Ability to travel internationally",
+                  "Are you open to travel for work?"):
+            self.assertEqual(self.find(q)["value"], "Yes", q)
+
+    def test_an_unrelated_question_about_a_trip_is_not_swept_in(self):
+        self.assertIsNone(self.find("What is your current commute?").get("value"))
+
+
+class AcknowledgementBoundaryTests(unittest.TestCase):
+    """Acknowledging and authorising share a first word and are not the same act.
+
+    Confirming that something has been read is the user's standing yes.
+    Granting a third party the right to pull his records, assigning his
+    inventions, or agreeing to a non-compete is his to give and stays his. The
+    form puts the same word in front of both.
+    """
+
+    def find(self, q):
+        return store.find_answer(TRAVEL_AND_ACK, q)
+
+    def test_a_plain_acknowledgement_resolves(self):
+        for q in ("I acknowledge that I have read the Prohibited Possessor Questionnaire.",
+                  "I understand and acknowledge that the GEICO companies are at-will employers.",
+                  "I acknowledge receipt of the employee handbook.",
+                  "Please acknowledge the statement above."):
+            self.assertIn("tick it", self.find(q)["value"], q)
+
+    def test_an_authorisation_wearing_the_word_acknowledge_does_not(self):
+        for q in ("I acknowledge and authorize the Company to obtain a consumer report about me.",
+                  "I acknowledge the FCRA disclosure and authorise a background check.",
+                  "I acknowledge and agree to the drug screening authorisation."):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+    def test_signing_away_a_right_is_never_answered_from_a_stored_fact(self):
+        # "Do you have a non-compete?" is a question about the world and
+        # resolves to No. "I acknowledge and agree to the non-compete above" is
+        # a signature, and answering that No was one marker away.
+        self.assertEqual(self.find("Do you have a non-compete in place?")["value"], "No")
+        for q in ("I acknowledge and agree to the non-compete set out above.",
+                  "By typing my name I acknowledge and agree to the Invention Assignment Agreement.",
+                  "I agree to be bound by the Confidentiality Agreement.",
+                  "I acknowledge and agree to waive my right to a jury trial."):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+
+EXPORT_CONTROL = {
+    "us-person": {"question": "Are you a U.S. person as defined under the EAR and ITAR?",
+                  "value": "No",
+                  "tags": ["us-person-status", "legal-declaration", "immigration"]},
+    "citizenship": {"question": "What is your country of citizenship?", "value": "India",
+                    "tags": ["citizenship-country", "immigration"]},
+    "work-auth": {"question": "Are you authorized to work in the United States?",
+                  "value": "Yes", "tags": ["work-authorisation-any-country"]},
+}
+
+
+class UsPersonTests(unittest.TestCase):
+    """A term of art, and not the same as being allowed to work here.
+
+    Under the EAR and ITAR a US person is a citizen, a lawful permanent
+    resident, or an asylee or refugee. Work authorisation is a separate
+    question with a separate answer, and the two live next to each other on
+    the same export-control block.
+    """
+
+    def find(self, q):
+        return store.find_answer(EXPORT_CONTROL, q)
+
+    def test_every_wording_of_the_us_person_question_resolves_to_no(self):
+        for q in ("Are you a U.S. person as defined by the EAR?",
+                  "Are you a US Person (US citizen, lawful permanent resident, asylee "
+                  "or refugee)?",
+                  "Are you a United States person under ITAR?",
+                  "For export control purposes, are you a U.S. person?"):
+            self.assertEqual(self.find(q)["value"], "No", q)
+
+    def test_the_follow_up_country_question_resolves(self):
+        self.assertEqual(self.find("What is your country of citizenship?")["value"], "India")
+        self.assertEqual(self.find("Country of nationality")["value"], "India")
+
+    def test_whether_a_licence_is_needed_is_a_different_question_and_parks(self):
+        # What he is, and what the role's technology requires, are two
+        # questions. He has answered the first.
+        for q in ("Will you require a deemed export license?",
+                  "Is a deemed export licence required for you?",
+                  "Do you need an export license to access controlled technology?"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+    def test_work_authorisation_keeps_its_own_answer(self):
+        self.assertEqual(
+            self.find("Are you authorized to work in the United States?")["value"], "Yes")
+
+    def test_the_firearms_questionnaire_is_not_swept_in_by_the_word_citizenship(self):
+        # "Have you renounced your United States citizenship" is one of nine
+        # sworn federal declarations with no stored answer, and it must stay
+        # that way.
+        for q in ("Have you ever renounced your United States citizenship?",
+                  "Have you been dishonorably discharged from the armed forces?",
+                  "Have you ever been convicted of a felony?"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
 
 class BankEditBoundaryTests(unittest.TestCase):
     """The boundary the Memory Bank adds, which is the same boundary from a new

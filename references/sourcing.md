@@ -172,3 +172,33 @@ Sourcing has a stopping point, and recognising it is part of doing this well.
 When new searches keep returning roles already seen, the market for that profile in that geography has been covered. Say so. At that point the highest-value work shifts from finding more roles to **converting the ones already found**: referral outreach, finishing part-filled applications, tightening the resume.
 
 Volume past that point is motion, not progress. Users often ask for more roles when what they actually need is to close the loop on the roles they have.
+
+## A wrong employer is worse than a missing one
+
+The same rule as the phantom posting, one step earlier in the pipeline. A
+posting filed under the wrong company is a confident wrong answer that every
+later sweep repeats, and the user has no way to see it is wrong: the name is
+one they recognise, the job is real, and only the employer is somebody else's.
+A missing tenant costs coverage, which is visible and recoverable. A wrong one
+costs trust in every row that looks like it.
+
+So a discovered tenant is kept only when the board proves it is that company:
+
+- The board's own text names the company, **every** distinctive word of it.
+  "Sonic Automotive" is not confirmed by a board that says "sonic".
+- Generic words carry no identity. A name that reduces to "solutions",
+  "global", "services" proves nothing and is refused rather than guessed at.
+- The first word of a name is never a candidate token on its own. It is the
+  highest-yield spelling and the only unsafe one: Federal Deposit Insurance
+  Corporation becomes `federal`. The same shortcut produced federal.ai and
+  bureau.ai for logos on 2026-08-25, and for a token the cost is bad data
+  rather than a blemish.
+- A famous single-word brand on a board of three or four postings is what an
+  agency posting on a client's behalf looks like. `pinpoint/accenture`,
+  `pinpoint/bosch` and `pinpoint/mercedes-benz` all answered and all named the
+  brand; none were kept. Padding the count is not worth it.
+
+Location gets the same treatment. Match whole words, never substrings:
+"Indiana" contains "india", and two American boards were reported as Indian
+coverage before that was caught. `tests/test_confirm_tenants.py` keeps both as
+fixtures.

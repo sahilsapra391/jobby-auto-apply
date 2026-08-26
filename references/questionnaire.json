@@ -52,6 +52,12 @@
         ],
         [
           "right to work"
+        ],
+        [
+          "work authorization"
+        ],
+        [
+          "work authorisation"
         ]
       ],
       "why": "Blocks almost every application, and asked in nearly every jurisdiction's phrasing."
@@ -77,6 +83,38 @@
       "why": "Six distinct phrasings observed. Always paired with work authorisation and always required."
     },
     {
+      "id": "export-control-status",
+      "tier": 3,
+      "ask": "Are you a US person for export-control purposes, and what is your citizenship?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "sensitive": true,
+      "match": [
+        [
+          "u.s. person"
+        ],
+        [
+          "us person"
+        ],
+        [
+          "export control"
+        ],
+        [
+          "itar"
+        ],
+        [
+          "country of citizenship"
+        ],
+        [
+          "nationality"
+        ]
+      ],
+      "why": "Defence, aerospace and hardware employers ask it, and it is a different question from work authorisation. Whether a deemed export licence is required is deliberately not part of this topic: that turns on the role's technology, not on the person."
+    },
+    {
       "id": "relocation",
       "tier": 1,
       "ask": "Are you willing to relocate for the right role?",
@@ -95,6 +133,24 @@
         ]
       ],
       "why": "Five phrasings observed. Cheap to answer, blocks applications when missing."
+    },
+    {
+      "id": "travel-willingness",
+      "tier": 2,
+      "ask": "How much work travel will you accept?",
+      "type": "choice",
+      "options": [
+        "any amount",
+        "up to 50%",
+        "up to 25%",
+        "none"
+      ],
+      "match": [
+        [
+          "travel"
+        ]
+      ],
+      "why": "Asked by percentage on field and enterprise roles, and answerable once."
     },
     {
       "id": "work-setup",

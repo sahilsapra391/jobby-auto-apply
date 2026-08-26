@@ -73,6 +73,17 @@ LOCK_DIR = STATE_DIR / "locks"
 # read budget for document status and settings checks.
 DEFAULT_INTERVAL = 5
 PROVIDER_CONTROL_INTERVAL_SECONDS = 30
+# How often a connection that is failing gets probed again. A provider that
+# went unhealthy because its quota was spent stayed that way on the board until
+# somebody pressed something, because the heartbeat only republished the cached
+# row and nothing re-ran the check. A spent quota comes back on its own, so the
+# check has to as well.
+UNHEALTHY_RECHECK_SECONDS = 120
+_provider_recheck_at: dict[str, float] = {}
+# Set on the first idle poll rather than at import, so starting the watcher
+# does not immediately probe a provider it knows nothing about yet, and so the
+# thirty-second idle poll stays the inert read it is meant to be.
+_last_unhealthy_recheck: float | None = None
 _last_provider_control_poll = 0.0
 # The public API treats a local status older than fifteen minutes as offline.
 # Refresh it every ten minutes even when no settings request is waiting.
@@ -696,10 +707,41 @@ end run"""
     return True
 
 
+def _recheck_unhealthy(registry, checked_at):
+    """Re-probe connections that are connected but failing. Returns their ids.
+
+    Only the failing ones, and only every UNHEALTHY_RECHECK_SECONDS each, so a
+    healthy board costs nothing and a broken one is not hammered. A provider
+    that is not connected at all is left alone: there is nothing to check until
+    the user connects it.
+    """
+    try:
+        status = registry.public_status()
+    except providers.ProviderError:
+        return []
+    rechecked = []
+    for row in status.get("providers", []):
+        provider_id = row.get("id")
+        if not provider_id or not row.get("connected") or row.get("healthy"):
+            _provider_recheck_at.pop(provider_id, None)
+            continue
+        if checked_at < _provider_recheck_at.get(provider_id, 0.0):
+            continue
+        _provider_recheck_at[provider_id] = checked_at + UNHEALTHY_RECHECK_SECONDS
+        try:
+            registry.refresh(provider_id)
+        except providers.ProviderError:
+            # A refusal is the answer, not a fault: the row stays unhealthy and
+            # the next window tries again.
+            pass
+        rechecked.append(provider_id)
+    return rechecked
+
+
 def process_local_provider_controls(q, now=None):
     """Apply settings requests addressed to this Mac and publish safe status."""
     global _last_provider_control_poll, _last_local_status_publish
-    global _local_status_dirty
+    global _local_status_dirty, _last_unhealthy_recheck
     checked_at = time.monotonic() if now is None else float(now)
     forced = bool(q.get("providerLocal"))
     if not forced and checked_at - _last_provider_control_poll < PROVIDER_CONTROL_INTERVAL_SECONDS:
@@ -708,15 +750,25 @@ def process_local_provider_controls(q, now=None):
     claimed = claim_all("providerLocal/")
     q["providerLocal"] = []
     if not claimed:
-        if (
+        rechecked = []
+        due = (_last_unhealthy_recheck is not None
+               and checked_at - _last_unhealthy_recheck >= UNHEALTHY_RECHECK_SECONDS)
+        if _last_unhealthy_recheck is None:
+            _last_unhealthy_recheck = checked_at
+        publishing = (
             _local_status_dirty
             or checked_at - _last_local_status_publish >= LOCAL_STATUS_HEARTBEAT_SECONDS
-        ):
+        )
+        if due or publishing:
             registry = providers.ProviderRegistry()
-            if provider_login.publish_status(registry.public_status()):
+            if due:
+                _last_unhealthy_recheck = checked_at
+                rechecked = _recheck_unhealthy(registry, checked_at)
+            if (rechecked or publishing) and provider_login.publish_status(
+                    registry.public_status()):
                 _last_local_status_publish = checked_at
                 _local_status_dirty = False
-        return {}
+        return {"providersRechecked": rechecked} if rechecked else {}
     registry = providers.ProviderRegistry()
     events = []
     rejected = []

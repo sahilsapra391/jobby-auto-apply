@@ -559,6 +559,28 @@ export default {
       }, 200);
     }
 
+    // Which lane each application is in, so the board can move a card without
+    // reloading three megabytes of page to find out. Deliberately small: the
+    // status is the only thing that decides a lane, and the client already
+    // knows how to draw the card it is moving.
+    if (pathname === '/api/lanes' && request.method === 'GET') {
+      const envelope = await getBoardState(process.env).catch(() => null);
+      const state = envelope ? decodeBoardState(envelope) : null;
+      if (!state) return json({ ok: false }, 503);
+      const sessions = {};
+      for (const session of state.sessions || []) {
+        const id = session && session.applicationId;
+        if (id) sessions[String(id)] = String(session.status || '');
+      }
+      // The published state's own stamp, which is how the board tells whether
+      // the server has caught up with a move it made optimistically.
+      return json({
+        ok: true,
+        generatedAt: (envelope && envelope.generatedAt) || null,
+        sessions,
+      }, 200);
+    }
+
     if (pathname === '/api/providers' && request.method === 'GET') {
       const [board, localStatus] = await Promise.all([
         getBoard(process.env).catch(() => null),

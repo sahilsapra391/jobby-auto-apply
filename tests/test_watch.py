@@ -327,6 +327,74 @@ class ProviderControlTests(unittest.TestCase):
             watch._last_provider_control_poll = previous
             watch._last_local_status_publish = previous_publish
 
+    def test_a_failing_connection_is_probed_again_without_being_asked(self):
+        """A spent quota comes back on its own, so the check has to as well.
+
+        OpenAI showed a connection error for as long as it took someone to
+        press something, because the heartbeat republished the cached row and
+        nothing re-ran the probe.
+        """
+        previous_poll = watch._last_provider_control_poll
+        previous_publish = watch._last_local_status_publish
+        previous_recheck = watch._last_unhealthy_recheck
+        previous_due = dict(watch._provider_recheck_at)
+        registry = mock.Mock()
+        registry.public_status.return_value = {"providers": [
+            {"id": "openai", "connected": True, "healthy": False},
+            {"id": "anthropic", "connected": True, "healthy": True},
+            {"id": "gemini", "connected": False, "healthy": False},
+        ]}
+        try:
+            watch._last_provider_control_poll = 0.0
+            watch._last_local_status_publish = 0.0
+            watch._last_unhealthy_recheck = 0.0
+            watch._provider_recheck_at.clear()
+            with mock.patch.object(watch, "claim_all", return_value=[]), \
+                    mock.patch.object(watch.providers, "ProviderRegistry",
+                                      return_value=registry), \
+                    mock.patch.object(watch.provider_login, "publish_status",
+                                      return_value=True):
+                out = watch.process_local_provider_controls({}, now=1000)
+            # The failing one, and only the failing one. A healthy connection
+            # costs nothing and an unconnected one has nothing to check.
+            self.assertEqual(out, {"providersRechecked": ["openai"]})
+            registry.refresh.assert_called_once_with("openai")
+        finally:
+            watch._last_provider_control_poll = previous_poll
+            watch._last_local_status_publish = previous_publish
+            watch._last_unhealthy_recheck = previous_recheck
+            watch._provider_recheck_at.clear()
+            watch._provider_recheck_at.update(previous_due)
+
+    def test_the_recheck_backs_off_rather_than_probing_every_poll(self):
+        previous_poll = watch._last_provider_control_poll
+        previous_recheck = watch._last_unhealthy_recheck
+        previous_due = dict(watch._provider_recheck_at)
+        registry = mock.Mock()
+        registry.public_status.return_value = {"providers": [
+            {"id": "openai", "connected": True, "healthy": False}]}
+        try:
+            watch._last_unhealthy_recheck = 0.0
+            watch._provider_recheck_at.clear()
+            watch._last_provider_control_poll = 0.0
+            watch._last_local_status_publish = 1e9
+            with mock.patch.object(watch, "claim_all", return_value=[]), \
+                    mock.patch.object(watch.providers, "ProviderRegistry",
+                                      return_value=registry), \
+                    mock.patch.object(watch.provider_login, "publish_status",
+                                      return_value=True):
+                watch.process_local_provider_controls({}, now=1000)
+                watch._last_provider_control_poll = 0.0
+                watch._last_unhealthy_recheck = 1000 - watch.UNHEALTHY_RECHECK_SECONDS - 1
+                watch.process_local_provider_controls({}, now=1000)
+            # Two polls, one probe: the per-provider window has not reopened.
+            registry.refresh.assert_called_once_with("openai")
+        finally:
+            watch._last_provider_control_poll = previous_poll
+            watch._last_unhealthy_recheck = previous_recheck
+            watch._provider_recheck_at.clear()
+            watch._provider_recheck_at.update(previous_due)
+
     def test_idle_local_control_lane_refreshes_status_before_it_goes_offline(self):
         previous_poll = watch._last_provider_control_poll
         previous_publish = watch._last_local_status_publish

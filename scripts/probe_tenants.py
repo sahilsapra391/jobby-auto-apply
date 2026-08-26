@@ -21,6 +21,7 @@ they are different hosts; tokens within a platform run one at a time.
 import argparse
 import json
 import queue
+import sys
 import threading
 import time
 import urllib.error
@@ -118,19 +119,36 @@ def probe(platform, token, timeout=12):
     return count > 0, count
 
 
-def run_platform(platform, tokens, ceiling, results, lock, progress):
+def run_platform(platform, tokens, ceiling, results, lock, progress, outcome):
+    """Probe one platform's candidates, and record how far it actually got.
+
+    `outcome` is the point. A thread that dies leaves its results empty, and a
+    run that reports what it *planned* to probe then says 494 for a platform
+    that managed nine. That is not a missing column, it is a false claim of
+    coverage, and it is how six dead threads went unnoticed until the totals
+    looked wrong hours later. So the count reported is the count attempted, and
+    a worker that raises says so by name.
+    """
     sent = 0
-    for token in tokens:
-        if sent >= ceiling:
-            break
-        found, count = probe(platform, token)
-        sent += 1
-        if found:
+    try:
+        for token in tokens:
+            if sent >= ceiling:
+                break
+            found, count = probe(platform, token)
+            sent += 1
+            if found:
+                with lock:
+                    results.append({"platform": platform, "token": token, "jobs": count})
             with lock:
-                results.append({"platform": platform, "token": token, "jobs": count})
+                progress[platform] = (sent, len(tokens))
+            time.sleep(PER_HOST_DELAY)
+    except BaseException as exc:                 # noqa: BLE001 - reported, not swallowed
         with lock:
-            progress[platform] = (sent, len(tokens))
-        time.sleep(PER_HOST_DELAY)
+            outcome[platform] = {"attempted": sent, "planned": len(tokens),
+                                 "died": f"{type(exc).__name__}: {exc}"[:200]}
+        raise
+    with lock:
+        outcome[platform] = {"attempted": sent, "planned": len(tokens), "died": None}
 
 
 def main():
@@ -155,8 +173,10 @@ def main():
     plan = {k: v for k, v in plan.items() if k in PLATFORMS}
 
     results, lock, progress = [], threading.Lock(), {}
+    outcome = {}
     threads = [threading.Thread(target=run_platform,
-                                args=(name, tokens, args.ceiling, results, lock, progress),
+                                args=(name, tokens, args.ceiling, results, lock,
+                                      progress, outcome),
                                 daemon=True)
                for name, tokens in plan.items()]
     for thread in threads:
@@ -170,10 +190,27 @@ def main():
     for row in results:
         by_platform.setdefault(row["platform"], 0)
         by_platform[row["platform"]] += 1
-    print(json.dumps({"probed": {k: len(v) for k, v in plan.items()},
+    # A platform with no outcome record never reached its own final line, so
+    # it died somewhere the except clause could not name.
+    missing = {name: {"attempted": progress.get(name, (0, len(tokens)))[0],
+                      "planned": len(tokens),
+                      "died": "the worker vanished without reporting"}
+               for name, tokens in plan.items() if name not in outcome}
+    outcome.update(missing)
+    dead = {k: v for k, v in outcome.items() if v["died"]}
+    short = {k: v for k, v in outcome.items()
+             if not v["died"] and v["attempted"] < min(v["planned"], args.ceiling)}
+
+    print(json.dumps({"probed": {k: v["attempted"] for k, v in outcome.items()},
                       "found": by_platform,
                       "tenants": len(results),
-                      "jobs": sum(r["jobs"] for r in results)}, indent=2))
+                      "jobs": sum(r["jobs"] for r in results),
+                      "workersDied": dead,
+                      "workersStoppedEarly": short}, indent=2))
+    if dead:
+        print(f"probe_tenants: {len(dead)} of {len(plan)} platforms did not finish: "
+              f"{', '.join(sorted(dead))}", file=sys.stderr)
+        return 1
     return 0
 
 

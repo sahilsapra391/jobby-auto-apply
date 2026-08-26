@@ -127,8 +127,10 @@ CSS = r"""
   .card,.sheet,.empty,.note,.jb-banner,.jb-filters,.jb-addlink,.provider-card,.split-note {
     border:1px solid var(--hair); border-radius:var(--radius); box-shadow:var(--sh); }
   .card { border-radius:var(--radius); padding:1.25rem;
-    transition:border-color .24s var(--ease),background-color .3s; }
-  .card:hover { border-color:var(--hair-strong); }
+    transition:border-color .24s var(--ease),box-shadow .24s var(--ease),
+    background-color .3s; }
+  .card:hover { border-color:var(--hair-strong);
+    box-shadow:var(--sh),inset 0 0 0 2px var(--hair-strong); }
   .card.hold,.card.ready,.card.ref,.card.flight { background:var(--card); }
   .card.hold { border-top:3px solid var(--orange); }
   .card.ready { border-top:3px solid var(--green); }

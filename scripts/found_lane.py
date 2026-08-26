@@ -1865,6 +1865,7 @@ SCRIPT = r"""
     remember(WATCH_KEY, job.id);
     hidden[job.id] = true;
     bump('watch', 1);
+    if (window.jobbyRememberMove) window.jobbyRememberMove(job.id, 'watch');
     decide('/api/watch', job, article, function () { bump('watch', -1); });
     leave(article);
   }
@@ -1883,6 +1884,7 @@ SCRIPT = r"""
     hidden[job.id] = true;
     // In flight, not Watching: an Apply goes straight past the watch list.
     bump('flight', 1);
+    if (window.jobbyRememberMove) window.jobbyRememberMove(job.id, 'flight');
     post('/api/watch', { applicationId: job.id })
       .then(function () { return decide('/api/apply', job, article,
                                         function () { bump('flight', -1); }); })
