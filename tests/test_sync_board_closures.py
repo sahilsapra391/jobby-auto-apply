@@ -24,7 +24,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import jobs_store  # noqa: E402
 
 
-class SyncBoardClosureTests(unittest.TestCase):
+class SyncBoardCase(unittest.TestCase):
+    """Harness only. The real script against a temporary store."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
@@ -81,6 +83,8 @@ class SyncBoardClosureTests(unittest.TestCase):
         r = self.store("session-load", "--id", app_id)
         return json.loads(r.stdout or "{}")
 
+
+class SyncBoardClosureTests(SyncBoardCase):
     def test_a_watched_role_whose_posting_closed_leaves_watching(self):
         self.watch("alive")
         self.watch("dead")
@@ -139,6 +143,89 @@ class SyncBoardClosureTests(unittest.TestCase):
         result = self.sync()
         self.assertEqual(result["closedAndArchived"], [])
         self.assertEqual(self.live_sessions(), {"alive"})
+
+
+class ReconcileToPoolTests(SyncBoardCase):
+    """Decisions flow into the pool, and only that way.
+
+    Sessions are authoritative for lane membership: they are what the person
+    did. The pool is a corpus whose `state` is derived. Reversed, a stale pool
+    would overwrite a real decision, which is the overwrite incident wearing a
+    different hat.
+    """
+
+    def submit(self, app_id):
+        payload = self.root / f"{app_id}-event.json"
+        payload.write_text(json.dumps({
+            "event": "completed", "applicationId": app_id,
+            "company": "Northwind", "role": f"Product Manager, {app_id.title()}",
+            "at": "2026-08-25T18:00:00Z"}))
+        r = self.store("history-append", "--input", str(payload))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def pool_state(self, job_id):
+        return jobs_store.load_jobs(self.root)[job_id]["state"]
+
+    def test_submitting_moves_the_pool_off_watched(self):
+        """The bug that was manufacturing drift.
+
+        finish.py writes the completed event and never touched the pool, and
+        sync_board then deleted the session. The record stayed `watched` for
+        good, and every submission added another.
+        """
+        self.watch("sent")
+        self.pool(sent="watched")
+        self.submit("sent")
+        result = self.sync()
+        self.assertEqual([c["id"] for c in result["reconciledToPool"]], ["sent"])
+        self.assertEqual(self.pool_state("sent"), "applied")
+
+    def test_the_pool_is_reconciled_before_the_session_is_retired(self):
+        """After retirement the session carrying the decision is gone, so the
+        order is load-bearing rather than incidental."""
+        self.watch("sent")
+        self.pool(sent="watched")
+        self.submit("sent")
+        self.sync()
+        self.assertEqual(self.live_sessions(), set())
+        self.assertEqual(self.pool_state("sent"), "applied")
+
+    def test_a_needs_you_session_leaves_the_pool_watched(self):
+        """`review` is Needs you: chosen, not yet submitted."""
+        self.watch("looking", status="review")
+        self.pool(looking="new")
+        self.sync()
+        self.assertEqual(self.pool_state("looking"), "watched")
+
+    def test_a_dropped_session_moves_the_pool_to_passed(self):
+        self.watch("gone", status="dropped")
+        self.pool(gone="watched")
+        self.sync()
+        self.assertEqual(self.pool_state("gone"), "passed")
+
+    def test_a_terminal_pool_state_is_never_walked_back(self):
+        """`applied` and `passed` are terminal. A session that still says
+        `watch` must not undo an application that already went out."""
+        self.watch("done")
+        self.pool(done="applied")
+        result = self.sync()
+        self.assertEqual(result["reconciledToPool"], [])
+        self.assertEqual(self.pool_state("done"), "applied")
+
+    def test_a_decision_about_a_posting_the_pool_never_saw_creates_nothing(self):
+        """The 43 sessions with no job record. Inventing a pool entry here
+        would guess at a posting nobody has fetched."""
+        self.watch("stranger")
+        self.pool()
+        self.sync()
+        self.assertEqual(jobs_store.load_jobs(self.root), {})
+
+    def test_reconciling_twice_changes_nothing_the_second_time(self):
+        self.watch("sent")
+        self.pool(sent="watched")
+        self.submit("sent")
+        self.sync()
+        self.assertEqual(self.sync()["reconciledToPool"], [])
 
 
 if __name__ == "__main__":

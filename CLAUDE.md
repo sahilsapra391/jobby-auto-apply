@@ -506,6 +506,31 @@ any one change. Inspect diffs by path. Do not delete, rewrite, stage, or fold
 those files into your work. In particular, leave sourcing investigations,
 captured job pages, and schema experiments alone unless the user names them.
 
+## A change is done when the running system consumes it
+
+**A merged file, a written pack, or a deployed bundle that nothing reads is not
+shipped. "Demonstrably" means the consumption is observed, not inferred.**
+
+Three instances, one class:
+
+- The watcher kept running code from before a merge, because a long-lived
+  Python process does not reload modules. The arming event was the restart.
+- `deploy/renderer/` fell behind `scripts/`, so three commits of UI work were
+  merged, deployed, and invisible.
+- `references/probed-tenants.json` gained 34 verified tenants, merged and
+  deployed, and the next sweep moved one job. Nothing read the file except a
+  command someone had to remember.
+
+Each looked finished. Each passed its tests. In each the artefact existed and
+nothing consumed it, and in each the gap was found by measuring the outcome
+rather than by checking the change.
+
+So: name the consumer before calling something done, and observe it consuming.
+`sync_vercel_renderer.py` in CI, the pack applied at the start of `ingest.run`,
+the restart confirmed against the reflog. Where the consumption can be made
+structural rather than a step to remember, make it structural; a rule that
+depends on the next person remembering is a rule already broken.
+
 ## What counts as evidence
 
 **A docstring, a fixture, a test, a commit message or another session's summary
