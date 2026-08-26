@@ -203,8 +203,9 @@ class TaxonomyCoverageTests(unittest.TestCase):
         python3 scripts/lint_questionnaire_coverage.py
 
     The fixture also records the orphans known at capture time, so a real gap
-    is written down rather than deleted along with the test that found it. One
-    is open now: "Work Authorization".
+    is written down rather than deleted along with the test that found it. The
+    one it caught, "Work Authorization", was covered by a `work-authorisation`
+    topic while this branch was open, and the third test below is what said so.
     """
 
     FIXTURE = json.loads(
@@ -216,11 +217,16 @@ class TaxonomyCoverageTests(unittest.TestCase):
         self.assertEqual(orphans, [],
                          "the taxonomy lost a topic it used to cover")
 
-    def test_the_known_orphans_are_recorded_rather_than_forgotten(self):
-        """A gap with a name is a task. A gap with a deleted test is nothing."""
-        self.assertIn("Work Authorization", self.FIXTURE["knownOrphans"])
+    def test_a_recorded_orphan_that_gets_covered_is_taken_off_the_list(self):
+        """A gap with a name is a task; a gap with a deleted test is nothing.
 
-    def test_a_known_orphan_that_gets_covered_should_be_removed_from_the_list(self):
+        And when the task is done the record has to go, or the list rots into
+        a set of stale claims -- which is the failure the withdrawn-claims list
+        in section 15 exists to stop. This caught its own entry: "Work
+        Authorization" was an orphan when the fixture was captured and a peer
+        added a `work-authorisation` topic while the branch was open, so the
+        list is empty rather than carrying a gap that no longer exists.
+        """
         payload = questionnaire.load()
         _covered, still = questionnaire.coverage(self.FIXTURE["knownOrphans"], payload)
         self.assertEqual(sorted(still), sorted(self.FIXTURE["knownOrphans"]),

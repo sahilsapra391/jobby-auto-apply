@@ -3,7 +3,9 @@
   "capturedOn": "2026-08-25",
   "covered": [
     "Any past or present association with Deloitte, PwC, EY, or KPMG?",
+    "Are you a U.S. person as defined under the EAR and ITAR (citizen, lawful permanent resident, asylee or refugee)?",
     "Are you a veteran?",
+    "Are you able to commit to the travel this role requires?",
     "Are you able to provide documentation of the employment and education history listed on your resume if requested?",
     "Are you able to relocate for this position?",
     "Are you authorized to work in India without sponsorship?",
@@ -75,6 +77,7 @@
     "What is the maximum years-of-experience requirement acceptable on a role?",
     "What is your LinkedIn profile URL?",
     "What is your age range?",
+    "What is your country of citizenship?",
     "What is your current base salary?",
     "What is your ethnicity?",
     "What is your expected CTC for India roles?",
@@ -96,6 +99,7 @@
     "Will you need the company to sponsor an employment visa now or in the future?",
     "Will you now or in the future require visa sponsorship to work in the United States?",
     "Will you require sponsorship in order to be employed?",
+    "Work Authorization",
     "Would you be willing to relocate for this role?",
     "Would you require visa sponsorship in other countries?",
     "Years of experience as a software developer",
@@ -103,7 +107,5 @@
     "Years of experience in product management",
     "Years of experience managing people"
   ],
-  "knownOrphans": [
-    "Work Authorization"
-  ]
+  "knownOrphans": []
 }
