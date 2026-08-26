@@ -1,12 +1,16 @@
 // The /doc/<filename> route, which is the only thing on the board that changed
 // shape when artifacts moved to R2.
 //
-// Four behaviours are load-bearing and each of them is a way this could serve
+// Five behaviours are load-bearing and each of them is a way this could serve
 // nothing without saying so:
-//   - the index knows the file        -> redirect to a presigned URL
+//   - the index knows the file        -> the bytes, read from R2 by the function
 //   - the index does not know it yet  -> the KV copy, unchanged
-//   - presign fails and KV is empty   -> an error the reader can act on, not 404
+//   - R2 404s on an indexed key       -> KV, because the index is ahead of the bucket
+//   - R2 faults and KV is empty       -> an error the reader can act on, not 404
 //   - nothing anywhere                -> 404, which is the only honest 404 here
+//
+// And one that is a security property rather than an availability one: no
+// signed URL may appear in anything the browser receives.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,9 +25,31 @@ process.env.R2_SECRET_ACCESS_KEY = 'f'.repeat(64);
 const values = new Map();
 const originalFetch = globalThis.fetch;
 
+// Objects the fake bucket holds, by key. `r2Faults` forces a status instead.
+const objects = new Map();
+let r2Faults = null;
+let lastR2Request = null;
+
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
   const method = options.method || 'GET';
+  if (url.hostname.endsWith('.r2.cloudflarestorage.com')) {
+    lastR2Request = { url: url.toString(), headers: options.headers || {} };
+    if (r2Faults) return new Response('upstream said no', { status: r2Faults });
+    const key = decodeURIComponent(url.pathname.replace('/jobby-artifacts/', ''));
+    if (!objects.has(key)) return new Response('', { status: 404 });
+    const body = objects.get(key);
+    const range = (options.headers || {}).range;
+    if (range) {
+      const [start, end] = range.replace('bytes=', '').split('-').map(Number);
+      const slice = body.subarray(start, (end || body.length - 1) + 1);
+      return new Response(slice, { status: 206, headers: {
+        'content-range': `bytes ${start}-${end || body.length - 1}/${body.length}`,
+        'content-length': String(slice.length), 'accept-ranges': 'bytes' } });
+    }
+    return new Response(body, { status: 200, headers: {
+      'content-length': String(body.length), 'accept-ranges': 'bytes' } });
+  }
   const marker = '/storage/kv/namespaces/namespace/values/';
   const position = url.pathname.indexOf(marker);
   if (position < 0) return new Response('', { status: 404 });
@@ -66,6 +92,9 @@ test.after(() => {
 
 test.beforeEach(async () => {
   values.clear();
+  objects.clear();
+  r2Faults = null;
+  lastR2Request = null;
   process.env.R2_ACCESS_KEY_ID = '0'.repeat(32);
   process.env.R2_SECRET_ACCESS_KEY = 'f'.repeat(64);
   await index({});
@@ -76,39 +105,62 @@ test('a document link is still behind the dashboard password', async () => {
   assert.equal(response.status, 401);
 });
 
-test('an indexed artifact redirects to a presigned R2 URL', async () => {
+test('an indexed artifact is read from R2 and returned as bytes', async () => {
+  const key = 'u/account-1/app/bc839847c93d9e46/resume.pdf';
+  objects.set(key, Buffer.from('%PDF-1.4 the real resume'));
   await index({
     'Sahil_Sapra_Acme_Resume.pdf': {
-      key: 'u/account-1/app/bc839847c93d9e46/resume.pdf',
-      sha256: 'a'.repeat(64), bytes: 129909, contentType: 'application/pdf',
+      key, sha256: 'a'.repeat(64), bytes: 24, contentType: 'application/pdf',
     },
   });
   const response = await handler.fetch(get('/doc/Sahil_Sapra_Acme_Resume.pdf'));
-  assert.equal(response.status, 302);
-  const location = new URL(response.headers.get('location'));
-  assert.equal(location.hostname, 'account.r2.cloudflarestorage.com');
-  assert.equal(location.pathname,
-    '/jobby-artifacts/u/account-1/app/bc839847c93d9e46/resume.pdf');
-  assert.equal(location.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
-  assert.equal(location.searchParams.get('X-Amz-Expires'), '300');
-  assert.match(location.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
-  // The filename the reader sees comes from the link, not from the key, and it
-  // is inside the signature so nobody can rewrite it on a URL we minted.
-  assert.equal(location.searchParams.get('response-content-disposition'),
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/pdf');
+  assert.equal(response.headers.get('content-disposition'),
     'inline; filename="Sahil_Sapra_Acme_Resume.pdf"');
-  assert.equal(location.searchParams.get('response-content-type'), 'application/pdf');
+  assert.equal(await response.text(), '%PDF-1.4 the real resume');
+  // One round trip for the reader. The redirect this replaced cost two.
+  assert.equal(response.headers.get('location'), null);
 });
 
-test('the secret never appears in the redirect', async () => {
-  await index({
-    'r.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' },
-  });
+test('nothing signed reaches the browser', async () => {
+  // The whole point of proxying rather than redirecting. A signed URL in a
+  // response is one in browser history, in a screenshot, and in a shared link,
+  // and it keeps working after the reader loses access to the board.
+  const key = 'u/account-1/app/aa/resume.pdf';
+  objects.set(key, Buffer.from('%PDF'));
+  await index({ 'r.pdf': { key, contentType: 'application/pdf' } });
   const response = await handler.fetch(get('/doc/r.pdf'));
-  const location = response.headers.get('location');
-  assert.ok(!location.includes(process.env.R2_SECRET_ACCESS_KEY));
-  // The access key id is half of the credential scope and is meant to be there;
-  // the secret is what must never travel.
-  assert.ok(location.includes(process.env.R2_ACCESS_KEY_ID));
+  const serialised = JSON.stringify([...response.headers]) + (await response.text());
+  for (const secret of [process.env.R2_SECRET_ACCESS_KEY, process.env.R2_ACCESS_KEY_ID,
+                        'X-Amz-Signature', 'r2.cloudflarestorage.com']) {
+    assert.ok(!serialised.includes(secret), `leaked ${secret}`);
+  }
+  // It did happen, just on the far side of the function.
+  assert.ok(lastR2Request.url.includes('X-Amz-Signature='));
+});
+
+test('a range request is forwarded so a phone can page a PDF', async () => {
+  const key = 'u/account-1/app/aa/resume.pdf';
+  objects.set(key, Buffer.from('0123456789'));
+  await index({ 'r.pdf': { key, contentType: 'application/pdf' } });
+  const request = new Request('https://board.example/doc/r.pdf', {
+    headers: { authorization: `Basic ${Buffer.from('user:test-password').toString('base64')}`,
+               range: 'bytes=2-5' } });
+  const response = await handler.fetch(request);
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('content-range'), 'bytes 2-5/10');
+  assert.equal(await response.text(), '2345');
+});
+
+test('an indexed key the bucket does not have falls through to KV', async () => {
+  // The index is ahead of the bucket. That is emptiness, not a fault, so it
+  // must not be reported as one while KV may still hold the document.
+  await putDoc(process.env, 'Both.pdf', Buffer.from('%PDF from kv').toString('base64'));
+  await index({ 'Both.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });
+  const response = await handler.fetch(get('/doc/Both.pdf'));
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), '%PDF from kv');
 });
 
 test('a document the index has not learned yet still comes from KV', async () => {
@@ -119,11 +171,13 @@ test('a document the index has not learned yet still comes from KV', async () =>
   assert.equal(await response.text(), '%PDF-1.4 legacy');
 });
 
-test('R2 first: an indexed document does not fall back to a stale KV copy', async () => {
+test('R2 first: an indexed document does not serve a stale KV copy', async () => {
+  const key = 'u/account-1/app/aa/resume.pdf';
+  objects.set(key, Buffer.from('%PDF fresh'));
   await putDoc(process.env, 'Both.pdf', Buffer.from('%PDF stale').toString('base64'));
-  await index({ 'Both.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });
+  await index({ 'Both.pdf': { key, contentType: 'application/pdf' } });
   const response = await handler.fetch(get('/doc/Both.pdf'));
-  assert.equal(response.status, 302);
+  assert.equal(await response.text(), '%PDF fresh');
 });
 
 test('with R2 unconfigured the KV copy still serves the document', async () => {
@@ -135,24 +189,24 @@ test('with R2 unconfigured the KV copy still serves the document', async () => {
   assert.equal(await response.text(), '%PDF good');
 });
 
-test('a presign failure with nothing in KV is an error, not a dead link', async () => {
+test('an R2 fault with nothing in KV is an error, not a dead link', async () => {
   await index({ 'Gone.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });
-  const { presignGet } = await import('../deploy/r2.mjs');
-  // Force the mint itself to throw, which is the shape of a bad credential or
-  // a WebCrypto failure rather than a missing one.
-  const realSign = crypto.subtle.sign;
-  crypto.subtle.sign = async () => { throw new Error('signing unavailable'); };
-  try {
-    const response = await handler.fetch(get('/doc/Gone.pdf'));
-    assert.equal(response.status, 502);
-    const body = await response.text();
-    assert.match(body, /could not be signed/);
-    assert.match(body, /still on the machine that made it/);
-    assert.ok(!body.includes(process.env.R2_SECRET_ACCESS_KEY));
-  } finally {
-    crypto.subtle.sign = realSign;
-    void presignGet;
-  }
+  r2Faults = 403;   // a revoked or mistyped credential, the realistic case
+  const response = await handler.fetch(get('/doc/Gone.pdf'));
+  assert.equal(response.status, 502);
+  const body = await response.text();
+  assert.match(body, /could not be read/);
+  assert.match(body, /still on the machine that made it/);
+  assert.ok(!body.includes(process.env.R2_SECRET_ACCESS_KEY));
+});
+
+test('an R2 fault with a KV copy behind it still serves the document', async () => {
+  await putDoc(process.env, 'Both.pdf', Buffer.from('%PDF from kv').toString('base64'));
+  await index({ 'Both.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });
+  r2Faults = 500;
+  const response = await handler.fetch(get('/doc/Both.pdf'));
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), '%PDF from kv');
 });
 
 test('a document that exists nowhere is a plain 404', async () => {
@@ -174,13 +228,13 @@ test('a filename with spaces in it is served, not refused', async () => {
   // documents an employer received. The old guard rejected the name before
   // anything was looked up, so those two links have always been dead.
   const name = 'Sahil Sapra - Resume - Senior Project Manager.pdf';
-  await index({ [name]: { key: 'u/account-1/app/bd7c44165d98d10a/resume.pdf',
-                          contentType: 'application/pdf' } });
+  const key = 'u/account-1/app/bd7c44165d98d10a/resume.pdf';
+  objects.set(key, Buffer.from('%PDF spaced'));
+  await index({ [name]: { key, contentType: 'application/pdf' } });
   const response = await handler.fetch(get('/doc/' + encodeURIComponent(name)));
-  assert.equal(response.status, 302);
-  assert.equal(new URL(response.headers.get('location'))
-    .searchParams.get('response-content-disposition'),
-    `inline; filename="${name}"`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-disposition'), `inline; filename="${name}"`);
+  assert.equal(await response.text(), '%PDF spaced');
 });
 
 test('a hostile key in the index cannot escape the user prefix', async () => {
@@ -195,7 +249,8 @@ test('a hostile key in the index cannot escape the user prefix', async () => {
   }
 });
 
-test('a redirect is never cached and never indexed', async () => {
+test('a document is never cached and never indexed', async () => {
+  objects.set('u/account-1/app/aa/resume.pdf', Buffer.from('%PDF'));
   await index({ 'r.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });
   const response = await handler.fetch(get('/doc/r.pdf'));
   assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');

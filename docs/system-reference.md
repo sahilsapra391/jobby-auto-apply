@@ -709,7 +709,7 @@ application").
 | Board hosting | **Vercel** serverless function, `framework: other` | Stable password-gated URL |
 | Board rendering | **Vercel Python function** | UI code is atomic with the Git deployment |
 | Board state | **Cloudflare Workers KV** | Data updates without a Vercel deployment |
-| Generated documents, JD snapshots, answer records | **Cloudflare R2**, private, presigned GETs | Class 1 artifacts, off the device, served after the same password check |
+| Generated documents, JD snapshots, answer records | **Cloudflare R2**, private, proxied by the API | Class 1 artifacts, off the device, served after the same password check |
 | Control queue | **Cloudflare Workers KV**, one application key plus a local provider lane | See below |
 | Encrypted document transport | **Cloudflare Workers KV**, AES-256-GCM per request and result | Crash-safe serial leases; KV sees ciphertext and fixed status |
 | Document worker | Local **launchd** service, serial | Keeps document generation bounded on Your Device |

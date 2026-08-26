@@ -1,13 +1,25 @@
-// Mint short-lived presigned GETs for Class 1 artifacts in R2.
+// Read Class 1 artifacts out of R2, server side, for the board to serve.
 //
-// The bucket is private and has no public access and no CDN in front of it.
-// The board's document links come here, the same Basic-auth gate every other
-// route checks has already run, and this hands the browser a URL that works for
-// a few minutes and then does not. The bucket credential never reaches the page.
+// The bucket is private and has no public access and no CDN in front of it. The
+// board's document links come here, the same Basic-auth gate every other route
+// checks has already run, and the function then reads the object and returns
+// the bytes. Nothing signed ever reaches the browser.
+//
+// It used to redirect to a presigned URL, which is what the architecture plan
+// first specified, and the measurement is why it does not any more: the
+// redirect is a second round trip and the Vercel leg alone is 370 to 430ms, so
+// a 119KB resume cost about 180ms more than the KV path it replaced. Mobile is
+// the main surface and pays that twice over. Proxying is one round trip, and it
+// is also the shape the Workers-era design lands on, where an R2 binding serves
+// the object after authz with no signing at all.
+//
+// presignGet stays because signing is still how the device authenticates its
+// own uploads and how an operator gets a temporary link by hand. It is no
+// longer on the serving path.
 //
 // This is a second credential, not the KV one. The Workers KV token cannot see
-// R2, and an R2 Workers binding cannot presign; presigning needs the
-// S3-compatible token. Both live in the environment and neither is ever logged.
+// R2 and the R2 token cannot see KV. Both live in the environment and neither
+// is ever logged.
 //
 // scripts/r2.py signs the same requests on the device. The two are one contract
 // in two languages, and tests/test_r2_contract.py compares them URL for URL,
@@ -120,4 +132,26 @@ export async function presignGet(env, key, expires = DEFAULT_EXPIRY_SECONDS, now
     .map((b) => b.toString(16).padStart(2, '0')).join('');
 
   return `https://${c.host}${canonicalPath}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+/**
+ * GET one object with a signed request the caller never sees.
+ *
+ * Signing happens in the query string and the URL is consumed immediately by
+ * this same fetch, which keeps one signer rather than adding header-based SigV4
+ * as a second implementation to keep in step. The expiry is short because the
+ * URL lives for the length of one call.
+ *
+ * `range` is forwarded when the client sent one, so a phone's PDF viewer can
+ * ask for the first pages instead of waiting on the whole file.
+ *
+ * Throws when the credential is missing or the fetch itself fails. A 404 comes
+ * back as a response, not an exception, because an object the index knows and
+ * the bucket does not is a fall-through to KV rather than a fault.
+ */
+export async function fetchObject(env, key, range = null) {
+  const url = await presignGet(env, key, 60);
+  const headers = {};
+  if (range) headers.range = range;
+  return fetch(url, { headers });
 }

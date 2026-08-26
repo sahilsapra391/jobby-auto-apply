@@ -205,9 +205,11 @@ python3 scripts/queue_check.py --write
 Generated resumes and cover letters, the job description as it read when we
 applied, and the per-application answer record live in Cloudflare R2, not in
 KV and not only on the laptop. The bucket is private, has no public access and
-no CDN in front of it, and is read only through short-lived presigned GETs that
-`deploy/api/board.js` mints after the same password check every other route
-makes. The bucket credential never reaches the page.
+no CDN in front of it. A document link makes the same password check every
+other route makes, and then `deploy/api/board.js` reads the object out of R2 and
+returns the bytes. Nothing signed reaches the browser, and a `Range` header is
+forwarded so a phone's PDF viewer can page a large file instead of waiting on
+the whole download.
 
 R2 prices operations in the same shape KV does and with the same trap: writes
 and **listing** are Class A, a million a month; reads are Class B, ten million.
