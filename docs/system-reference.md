@@ -828,6 +828,25 @@ remembers to run is how it drifts.
 
 ## 15. Known gaps
 
+### Withdrawn claims
+
+**Check this list before citing a number in a plan or a work order.** A
+withdrawn figure is not a harmless mistake once it is in writing: on 2026-08-25
+the India share below was withdrawn from this section in the morning and cited
+back as the premise of a work order in the evening, having travelled through a
+summary that carried the claim but not the correction. It very nearly judged
+correct work a failure, because it set a success test the true numbers made
+unreachable. Claims propagate faster than corrections, and the more sessions
+are running the wider the gap.
+
+Each row says what was claimed, why it fell, and what to measure instead. An
+entry never leaves this list; it is the correction's only durable home.
+
+| Withdrawn | Claimed | Why it fell | Measure this instead |
+|---|---|---|---|
+| 2026-08-25 | India is 20.4% direct listings against the US at 59.1%, so India is a coverage gap | Two connector landings and a keyword gate, not a property of India. Re-measured the same day at 99.7% / 82.9%, and again on 2026-08-25 evening at **98.2% (742 jobs) / 88.9% (5,968)** | `scripts/market_coverage.py`, taken the same way each time. India's real gap is **size**: 111 distinct employers against 721. Share is already near ceiling and can only be held, not improved |
+
+
 - **~~India is a registry-coverage gap~~ — WITHDRAWN, 2026-08-25.** I wrote this
   entry the same day and the measurement behind it does not survive. It said
   India was 20.4% direct listings against the United States' 59.1%, and argued
