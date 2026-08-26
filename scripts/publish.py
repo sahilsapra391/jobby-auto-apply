@@ -34,6 +34,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import answer_record  # noqa: E402
 import toolpath  # noqa: E402
 import settings_panel  # noqa: E402
 
@@ -100,11 +101,17 @@ def build_dashboard(root):
 
 
 def build_documents(root):
-    """Inline the resume and cover letter each submitted application used.
+    """Inline the resume, cover letter and answer record each submission used.
 
     They live outside the deployment, so the board could not otherwise link to
     them. Only documents referenced by a completed event are included, which
     keeps the bundle to what the Submitted tab can actually show.
+
+    The answer records ride here rather than in the board state for a measured
+    reason: the state was 19.1 MB of its 20 MB ceiling on 2026-08-25, and a
+    record averages a couple of kilobytes. The documents bundle is keyed
+    per file and written only when a file changes, so a record costs one KV
+    write once and nothing on any board load that does not open it.
     """
     import base64
 
@@ -113,10 +120,12 @@ def build_documents(root):
         store += ["--root", root]
     hist = subprocess.run(store + ["history-list"], capture_output=True, text=True)
     events = json.loads(hist.stdout or "[]")
-    wanted = set()
+    wanted, submitted_ids = set(), set()
     for e in events:
         if e.get("event") != "completed":
             continue
+        if e.get("applicationId"):
+            submitted_ids.add(str(e["applicationId"]))
         for key in ("resumeVariant", "coverLetter"):
             value = e.get(key) or ""
             if value.endswith(".pdf"):
@@ -135,7 +144,23 @@ def build_documents(root):
         total += len(raw)
         docs[name] = base64.b64encode(raw).decode()
 
-    return {"documents": len(docs), "bytes": total, "docs": docs}
+    # Only records belonging to something the board actually lists as submitted.
+    # A record for an application still in flight has nothing to link from, and
+    # publishing it would put answers in KV before the form was even sent.
+    records, record_bytes = 0, 0
+    filed = answer_record.index()
+    for aid in sorted(set(filed) & submitted_ids):
+        public = answer_record.public_record(answer_record.load(aid, filed[aid]))
+        if not public:
+            continue
+        raw = json.dumps(public, separators=(",", ":"),
+                         ensure_ascii=False).encode("utf-8")
+        docs[f"answers-{aid}.json"] = base64.b64encode(raw).decode()
+        records += 1
+        record_bytes += len(raw)
+
+    return {"documents": len(docs), "bytes": total + record_bytes, "docs": docs,
+            "answerRecords": records, "answerRecordBytes": record_bytes}
 
 
 def logged_in(base):
@@ -416,7 +441,9 @@ def cmd_publish(args, base):
     docs = build_documents(args.root)
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
-          f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
+          f"({docs['bytes'] / 1024 / 1024:.1f} MB), "
+          f"{docs['answerRecords']} answer records "
+          f"({docs['answerRecordBytes'] / 1024:.0f} KB)")
 
     guard_render(summary, args.root)
 

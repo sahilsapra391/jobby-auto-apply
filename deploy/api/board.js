@@ -444,13 +444,40 @@ export default {
       return handleSearchConfig(request);
     }
 
+    // What the employer's form asked, and what went into it. Fetched when a
+    // Submitted row's Answers modal opens rather than embedded, because the
+    // board state sits at 19.1 MB of its 20 MB ceiling and the page at 3.3 MB
+    // of 3.7. Records are published as documents, so this is the same KV
+    // lookup /doc/ does, returned as JSON instead of a PDF.
+    if (pathname === '/api/answers' && (request.method === 'GET' || request.method === 'HEAD')) {
+      const id = String(requestUrl.searchParams.get('id') || '');
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false }, 400);
+      const b64 = await getDoc(process.env, `answers-${id}.json`).catch(() => null);
+      if (!b64) return json({ ok: false, captured: false }, 404);
+      let record = null;
+      try {
+        record = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+      } catch {
+        return json({ ok: false, captured: false }, 404);
+      }
+      if (!record || typeof record !== 'object' || !Array.isArray(record.fields)) {
+        return json({ ok: false, captured: false }, 404);
+      }
+      // The record was already trimmed by answer_record.public_record before it
+      // was published. It is re-read here as data, never as anything the page
+      // will treat as markup: every value reaches the DOM through textContent.
+      return json({ ok: true, captured: true, record }, 200);
+    }
+
     // Application documents: the exact resume and cover letter an employer
     // received. Same password gate as the board, never cached, never indexed.
     if (pathname.startsWith('/doc/')) {
       const name = decodeURIComponent(pathname.slice('/doc/'.length));
       // The name comes off the board but arrives as a URL path, so treat it as
-      // untrusted: only a plain filename may become a KV key.
-      if (!/^[A-Za-z0-9._-]+$/.test(name)) return text('No such document.\n', 404);
+      // untrusted: only a plain filename may become a KV key. It must also end
+      // in .pdf: the same KV space now holds answer records, and serving one of
+      // those under this route would label JSON as application/pdf.
+      if (!/^[A-Za-z0-9._-]+\.pdf$/.test(name)) return text('No such document.\n', 404);
       const b64 = await getDoc(process.env, name).catch(() => null);
       if (!b64) return text('No such document.\n', 404);
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

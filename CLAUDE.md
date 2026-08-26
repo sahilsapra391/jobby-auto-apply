@@ -109,6 +109,35 @@ them from. Both sides of that comparison go through `_words`, because
 and only normalising one side matches neither. A posting with no recognisable
 heading returns empty buckets rather than a guess.
 
+`scripts/answer_record.py` writes what the employer's form asked and what went
+into it, one JSON record per application, filed in `applications/<Company>/` next
+to that application's PDFs. SKILL.md had told the agent to build that manifest
+and then to throw it away, so 102 submitted applications could show the resume
+and cover letter an employer received and nothing about the twenty questions
+underneath them. Nothing before 2026-08-26 has a record and none is
+reconstructed; the Submitted row says "not captured" and means it.
+
+Three things that file owns rather than trusts the caller for. It withholds
+one-time codes, passwords and national or bank identifiers, keeping the question
+and dropping the value, so a secret never reaches the disk that record is about
+to migrate off. It decides which rows are masked from the question text *and*
+from the stored answer's own `sensitive` state, which is the half question text
+cannot see. And a `stored` source has to cite a key the answer store actually
+holds, because a source badge that cannot be checked is decoration. Each of
+those is covered by a test that fails when the guard is disabled, not only by
+one that passes while it works.
+
+Records are fetched by `/api/answers`, not embedded. Measured on 2026-08-25 at
+101 submitted applications: the column, the modal and its script cost the page
+15,641 bytes, a captured row adds 198, and embedding a realistic 15-field record
+for every application instead would have cost 263,509 against roughly 380 KB of
+headroom under the embed cap. The board state has no room at all for them: it
+measured 19.1 MB against its own 20 MB ceiling that day, so what travels in the
+state is the list of captured ids and nothing else, 4,137 bytes at 101. The
+records themselves ride the documents bundle, keyed like the PDFs and written
+only when they change, which is also why `/doc/` now requires a `.pdf` name:
+without it that route served a JSON record labelled `application/pdf`.
+
 Those sections are what an expanded card shows, and they are fetched from
 `/api/posting` rather than embedded. Sections average about 265 bytes a record,
 the page is capped at 4MB and has about 21 bytes a job spare, and the published
@@ -278,6 +307,7 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/browser.py`: trusted Chrome lifecycle and per-run MCP configuration.
 - `scripts/browser_mcp_proxy.py`: application browser firewall.
 - `scripts/run_apply.py`: form-only provider task and staged upload binding.
+- `scripts/answer_record.py`: the application answer transcript, its secret and sensitivity gates.
 - `scripts/finish.py` and `scripts/application_mcp.py`: submission nonce state machine.
 - `references/oci-worker.md`: retired historical recovery path, not current setup.
 

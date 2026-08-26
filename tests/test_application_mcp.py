@@ -46,7 +46,7 @@ class ApplicationMcpTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_exactly_eight_narrow_tools_are_exposed(self):
+    def test_exactly_nine_narrow_tools_are_exposed(self):
         names = {tool["name"] for tool in application_mcp.TOOLS}
         self.assertEqual(names, {
             "set_phase",
@@ -55,6 +55,7 @@ class ApplicationMcpTests(unittest.TestCase):
             "experience_plan",
             "salary_midpoint",
             "park_application",
+            "record_answers",
             "pre_submit",
             "record_completed",
         })
@@ -252,6 +253,99 @@ class ApplicationMcpTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual({tool["name"] for tool in listed["result"]["tools"]},
                          application_mcp.TOOL_NAMES)
+
+
+class RecordAnswersToolTests(unittest.TestCase):
+    """The manifest tool: bounded, checked, and unable to store a secret."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name)
+        self.store_root = root / "state"
+        (self.store_root / "sessions").mkdir(parents=True)
+        (self.store_root / "answers.json").write_text(json.dumps({
+            "expected-compensation": {
+                "key": "expected-compensation", "question": "Expected pay?",
+                "state": "sensitive", "value": "165000", "tags": ["compensation"]},
+        }))
+        (self.store_root / "sessions" / "acme-pm.json").write_text(json.dumps({
+            "applicationId": "acme-pm", "company": "Acme", "role": "Product Manager"}))
+        self.resume = root / "Sahil_Acme_PM_Resume.pdf"
+        self.cover = root / "Sahil_Acme_PM_CoverLetter.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\nresume")
+        self.cover.write_bytes(b"%PDF-1.4\ncover")
+        self.apps = root / "applications"
+        self.apps.mkdir()
+        self._real_apps = application_mcp.answer_record.APPS
+        application_mcp.answer_record.APPS = self.apps
+        self.tools = application_mcp.ApplicationTools(
+            application_mcp.ApplicationContext.create(
+                "acme-pm", str(self.resume), str(self.cover), None,
+                str(self.store_root)))
+
+    def tearDown(self):
+        application_mcp.answer_record.APPS = self._real_apps
+        self.temp.cleanup()
+
+    def record(self):
+        return json.loads((self.apps / "Acme" / "answers-acme-pm.json").read_text())
+
+    def test_the_tool_files_the_record_for_its_own_bound_application(self):
+        # The application id is bound when the server starts and is not an
+        # argument, so a run cannot file a manifest against a different job.
+        result = self.tools.call("record_answers", {"fields": [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"},
+        ]})
+        self.assertEqual(result["fields"], 1)
+        self.assertEqual(self.record()["applicationId"], "acme-pm")
+
+    def test_the_tool_takes_no_application_id_and_no_sensitive_flag(self):
+        schema = next(t["inputSchema"] for t in application_mcp.TOOLS
+                      if t["name"] == "record_answers")
+        self.assertEqual(set(schema["properties"]), {"fields"})
+        self.assertFalse(schema["additionalProperties"])
+        field = schema["properties"]["fields"]["items"]
+        self.assertFalse(field["additionalProperties"])
+        for absent in ("sensitive", "applicationId", "withheld", "path"):
+            self.assertNotIn(absent, field["properties"])
+
+    def test_a_verification_code_is_withheld_even_though_the_caller_sent_it(self):
+        self.tools.call("record_answers", {"fields": [
+            {"question": "Enter the verification code", "answer": "884213",
+             "source": "provided", "readBack": "match"},
+        ]})
+        raw = (self.apps / "Acme" / "answers-acme-pm.json").read_text()
+        self.assertNotIn("884213", raw)
+        self.assertEqual(json.loads(raw)["fields"][0]["withheld"],
+                         "one-time or verification code")
+
+    def test_pay_is_flagged_sensitive_without_the_caller_saying_so(self):
+        self.tools.call("record_answers", {"fields": [
+            {"question": "Expected pay?", "answer": "165000", "source": "stored",
+             "sourceKey": "expected-compensation", "readBack": "match"},
+        ]})
+        self.assertTrue(self.record()["fields"][0]["sensitive"])
+
+    def test_a_bad_manifest_is_refused_with_a_reason_the_caller_can_act_on(self):
+        with self.assertRaises(application_mcp.ToolInputError) as caught:
+            self.tools.call("record_answers", {"fields": [
+                {"question": "Authorized?", "answer": "Yes", "source": "stored",
+                 "sourceKey": "not-a-real-key"},
+            ]})
+        self.assertIn("not in the answer store", str(caught.exception))
+        self.assertFalse(list(self.apps.rglob("answers-*.json")))
+
+    def test_an_extra_argument_is_refused(self):
+        with self.assertRaises(application_mcp.ToolInputError):
+            self.tools.call("record_answers", {"fields": [], "applicationId": "other"})
+
+    def test_the_schema_is_an_object_schema_like_every_other_tool(self):
+        # A bare top-level oneOf makes a client drop the whole server's tool
+        # list rather than the one tool.
+        for tool in application_mcp.TOOLS:
+            self.assertEqual(tool["inputSchema"]["type"], "object")
+            self.assertNotIn("oneOf", tool["inputSchema"])
 
 
 if __name__ == "__main__":

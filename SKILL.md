@@ -192,7 +192,19 @@ Work in order, and **verify every few fields rather than at the end.** Long form
 
 Prefer element references over coordinates. When you must click by coordinate, screenshot immediately before and confirm immediately after.
 
-**Before final review, produce the manifest.** Read every filled field back into a field → value table and diff it against the fill plan; fix mismatches before anything else. When the user's review is needed, show them the manifest — it is faster for them to check than a screenshot pass, and it is the audit trail for what the application actually said. Do not persist it: values live in the answer store, not in sessions.
+**Before final review, produce the manifest.** Read every filled field back into a field → value table and diff it against the fill plan; fix mismatches before anything else. When the user's review is needed, show them the manifest — it is faster for them to check than a screenshot pass, and it is the audit trail for what the application actually said.
+
+**Then file it.** The manifest used to be thrown away with the process, so a hundred submitted applications could show the resume and cover letter an employer received and nothing about the twenty questions it asked underneath them. It is now written down, once, before submitting:
+
+```bash
+python3 scripts/answer_record.py write --id <application-id> --input manifest.json
+```
+
+The input is a list of `{question, answer, source, sourceKey, readBack, readBackValue}`. `source` is one of `stored` (with the answer store's own key), `profile`, `generated` or `provided`. `readBack` is `match`, `differs` or `unverified`, and `unverified` is an honest answer where reading a value back was not possible. Record every question the form asked, including ones left blank. The record is filed beside that application's documents and is what the board shows under Answers.
+
+The command owns three things you do not: it withholds one-time codes, passwords and national identifiers rather than storing them, it decides which rows are sensitive from the question and the stored entry rather than from what you claim, and it refuses a `stored` source citing a key the answer store does not hold. A refusal writes nothing at all and names what is wrong. Under the local MCP server the same thing is `jobby.record_answers`, which takes the fields and nothing else.
+
+Values still live in the answer store, not in sessions. This record is per application and is the exception the store cannot serve: it says what *this* form asked and what *this* submission said.
 
 Recurring mechanics:
 - Native selects inside iframes often won't open a visible menu. Focus the field and type the exact option label.

@@ -376,5 +376,68 @@ class RendererSyncOnPublishTests(unittest.TestCase):
             publish.sync_renderer()
 
 
+class AnswerRecordBundleTest(unittest.TestCase):
+    """Records ride the documents bundle, not the board state.
+
+    The state was 19.1 MB against a 20 MB ceiling on 2026-08-25. A record is a
+    couple of kilobytes; a hundred of them is not something the state has room
+    for, and the documents bundle already writes only what changed.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store_root = pathlib.Path(self.tmp) / "store"
+        store(self.store_root, "init")
+        self.apps = pathlib.Path(self.tmp) / "applications"
+        self.apps.mkdir()
+        self._real_apps = publish.answer_record.APPS
+        publish.answer_record.APPS = self.apps
+        self.addCleanup(setattr, publish.answer_record, "APPS", self._real_apps)
+
+        for aid, company, role in (("done-1", "Acme", "PM"), ("live-1", "Beta", "PM")):
+            entry = pathlib.Path(self.tmp) / f"{aid}.json"
+            entry.write_text(json.dumps(
+                {"applicationId": aid, "company": company, "role": role}))
+            store(self.store_root, "session-save", "--id", aid, "--input", str(entry))
+        event = pathlib.Path(self.tmp) / "event.json"
+        event.write_text(json.dumps({"event": "completed", "applicationId": "done-1",
+                                     "company": "Acme", "role": "PM"}))
+        store(self.store_root, "history-append", "--input", str(event))
+
+        for aid in ("done-1", "live-1"):
+            publish.answer_record.write(aid, [
+                {"question": "First name", "answer": "Sahil", "source": "profile",
+                 "readBack": "match"},
+                {"question": "Verification code", "answer": "884213",
+                 "source": "provided", "readBack": "match"},
+            ], root=self.store_root)
+
+    def bundle(self):
+        return publish.build_documents(str(self.store_root))
+
+    def test_a_submitted_application_s_record_is_published(self):
+        docs = self.bundle()
+        self.assertIn("answers-done-1.json", docs["docs"])
+        self.assertEqual(docs["answerRecords"], 1)
+        self.assertGreater(docs["answerRecordBytes"], 0)
+
+    def test_an_application_still_in_flight_publishes_nothing(self):
+        # Its form has not been sent. There is nothing on the board to link
+        # from, and the answers would be in KV before the submission was.
+        self.assertNotIn("answers-live-1.json", self.bundle()["docs"])
+
+    def test_a_withheld_value_is_absent_from_what_reaches_kv(self):
+        import base64
+        blob = base64.b64decode(self.bundle()["docs"]["answers-done-1.json"]).decode()
+        self.assertNotIn("884213", blob)
+        self.assertIn("Verification code", blob)
+
+    def test_the_published_record_carries_no_answer_store_keys(self):
+        import base64
+        blob = base64.b64decode(self.bundle()["docs"]["answers-done-1.json"]).decode()
+        self.assertNotIn("sourceKey", blob)
+
+
 if __name__ == "__main__":
     unittest.main()

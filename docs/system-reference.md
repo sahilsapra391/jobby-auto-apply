@@ -309,6 +309,7 @@ Everything lives in `~/.job-application/`, mode 700.
 | `profile.json` | object | Identity, work history, education, and `resumes[]` — one base per region, each with its own `identity` (phone, location, full address) and exactly one marked `default`. |
 | `answers.json` | key → entry | 118 reusable answers. Keys are normalised question slugs. Entries carry `question`, `value`, `state`, `tags`. |
 | `applications.jsonl` | append-only | 107 events. `started`, `reviewed`, `submitting`, `completed`, `abandoned`, plus outcomes `response` / `interview` / `offer` / `rejected`. |
+| `applications/<Company>/answers-<id>.json` | one file per application | The form's own questions and what went into each: value, source (`stored` / `profile` / `generated` / `provided`) and read-back state. Written before submitting, filed beside that application's documents, owner-only. Secrets are withheld at the door and never enter the file. Added 2026-08-26; nothing before it has one. |
 | `sessions/<id>.json` | one file per role | The working state of a role, including its sticky `documentJob` id, provider, state, and installed filenames while document work exists. Deleted once submitted. |
 | `roles.json` | id → role | Durable index of all 96 roles ever seen. Exists because sessions are deleted on completion, which would otherwise lose the posting URL. |
 | `jobs.json` | id → job | The discovery pool. One record per job description however many boards carry it, each with its sightings, its score and its state (`new` / `watched` / `passed` / `applied` / `expired`). Capped at 3,000; only `new` records are prunable. |
@@ -359,7 +360,7 @@ commit that Vercel reports for that deployment.
 |---|---|---|
 | **Found** | Everything the last scans turned up, newest-and-best first, each with an explainable % match | 👁 Watch, Apply, Pass, Details, Posting |
 | **Needs you** | Blocked applications, each card naming the blocker and what clearing it buys | Retry, Open & finish, Mark submitted, Drop |
-| **Submitted** | Everything sent, with the exact resume and cover letter each employer received | Posting, Proof, Resume, Cover letter |
+| **Submitted** | Everything sent, with the exact resume, cover letter and answer transcript each employer received | Posting, Proof, Resume, Cover letter, Answers |
 | **Watching** | Roles found, newest first: posted date, experience bar, location, core skills, honest fit read | View posting, Apply, × |
 | **In flight** | Live progress through six phases | Posting, Stop |
 | **Dropped** | Roles the user said no to, with the lane they came from and how far they got | View posting, Restore |

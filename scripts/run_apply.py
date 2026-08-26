@@ -345,7 +345,21 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    needs action and call `jobby.park_application` once with every short blocker plus the
    exact action the user should take. Once parked, stop.
 
-6. Before clicking Submit, call `jobby.pre_submit` exactly once. Submit only when it returns
+6. Once every field on the last step is filled and read back, call `jobby.record_answers`
+   exactly once with the whole manifest: one entry per question the form asked, in the order
+   it asked, carrying the question exactly as worded, the value entered, `source` (`stored`
+   when it came from `jobby.resolve_answers`, with that answer's `sourceKey`; `profile` for
+   identity and work history; `generated` for anything built from the tailored documents,
+   the posting or `jobby.salary_midpoint`; `provided` for anything the user supplied), and
+   `readBack` (`match`, `differs` with the page's value in `readBackValue`, or `unverified`).
+   This is the manifest from step 4 written down, and it is what the user sees under Answers
+   next to the resume and cover letter. Record what the form actually asked, including
+   questions you left blank. Do not omit a question because its answer was sensitive: the
+   server flags and masks those. Do not send a one-time code, a password or a national
+   identifier; the server withholds them, but they should not be sent at all. A refusal
+   names what is wrong with the manifest, so fix it and call once more.
+
+7. Before clicking Submit, call `jobby.pre_submit` exactly once. Submit only when it returns
    `proceed: true`. Keep its `submissionNonce`. Click Submit once. After the page visibly
    confirms success, call `jobby.record_completed` with that exact nonce and the exact visible
    confirmation text. The tool is bound to this application and these two fixed artifacts.

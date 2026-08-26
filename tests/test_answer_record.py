@@ -1,0 +1,384 @@
+"""The application answer record: what it stores, what it refuses to store.
+
+Every guard here is checked negatively. A rule that has only ever been shown
+passing its own happy path has not been shown to bind at all, and the three that
+matter -- secrets never written, sensitivity derived rather than declared, a
+cited answer-store key actually existing -- are each the sort of thing a caller
+would quietly get wrong on a form nobody re-reads.
+"""
+
+import json
+import pathlib
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import answer_record  # noqa: E402
+
+
+ANSWERS = {
+    "legally-authorized-to-work-in-the-us": {
+        "key": "legally-authorized-to-work-in-the-us",
+        "question": "Are you legally authorized to work in the US?",
+        "state": "confirmed", "value": "Yes",
+    },
+    "expected-compensation": {
+        "key": "expected-compensation",
+        "question": "What are your compensation expectations?",
+        "state": "sensitive", "value": "165000", "tags": ["compensation"],
+    },
+    "how-did-you-hear-about-us": {
+        "key": "how-did-you-hear-about-us",
+        "question": "How did you hear about us?",
+        "state": "confirmed", "value": "The company website",
+        "tags": ["source-how-heard"],
+    },
+    # An ordinary-looking question whose stored entry is sensitive. The whole
+    # point of deriving the flag is that the question text alone cannot see it.
+    "what-is-your-preferred-arrangement": {
+        "key": "what-is-your-preferred-arrangement",
+        "question": "What is your preferred arrangement?",
+        "state": "sensitive", "value": "Something private",
+    },
+}
+
+
+class RecordFileTests(unittest.TestCase):
+    """Writing a record, with the repo's applications/ folder redirected."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name)
+        self.apps = root / "applications"
+        self.apps.mkdir()
+        self.store = root / "state"
+        self.store.mkdir()
+        (self.store / "answers.json").write_text(json.dumps(ANSWERS))
+        (self.store / "sessions").mkdir()
+        (self.store / "sessions" / "app-1.json").write_text(json.dumps({
+            "applicationId": "app-1", "company": "Acme", "role": "Product Manager",
+            "url": "https://boards.example/acme/1", "ats": "greenhouse",
+        }))
+        self._real_apps = answer_record.APPS
+        answer_record.APPS = self.apps
+
+    def tearDown(self):
+        answer_record.APPS = self._real_apps
+        self.temp.cleanup()
+
+    def write(self, fields, application_id="app-1"):
+        return answer_record.write(application_id, fields, root=self.store)
+
+    def read(self, application_id="app-1", company="Acme"):
+        path = self.apps / company / f"answers-{application_id}.json"
+        return json.loads(path.read_text())
+
+    # --- the four sources, and the record they produce ---------------------
+
+    def test_a_run_with_all_four_source_types_produces_one_complete_record(self):
+        result = self.write([
+            {"question": "Are you legally authorized to work in the US?",
+             "answer": "Yes", "source": "stored",
+             "sourceKey": "legally-authorized-to-work-in-the-us",
+             "readBack": "match"},
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"},
+            {"question": "Why do you want this role?",
+             "answer": "Written from the tailored resume.", "source": "generated",
+             "readBack": "match"},
+            {"question": "Can you be in the London office three days a week?",
+             "answer": "Yes", "source": "provided", "readBack": "match"},
+        ])
+        self.assertEqual(result["fields"], 4)
+        self.assertEqual(result["sources"],
+                         {"stored": 1, "profile": 1, "generated": 1, "provided": 1})
+
+        record = self.read()
+        self.assertEqual(record["applicationId"], "app-1")
+        self.assertEqual(record["company"], "Acme")
+        self.assertEqual(record["role"], "Product Manager")
+        self.assertEqual(record["ats"], "greenhouse")
+        self.assertEqual(record["schema"], answer_record.SCHEMA_VERSION)
+        self.assertEqual([f["source"] for f in record["fields"]],
+                         ["stored", "profile", "generated", "provided"])
+        self.assertTrue(record["capturedAt"].endswith("Z"))
+
+    def test_the_record_is_filed_beside_that_company_s_documents(self):
+        self.write([{"question": "First name", "answer": "Sahil",
+                     "source": "profile", "readBack": "match"}])
+        self.assertTrue((self.apps / "Acme" / "answers-app-1.json").exists())
+        self.assertEqual(answer_record.captured_ids(), {"app-1"})
+        self.assertEqual(answer_record.load("app-1")["company"], "Acme")
+
+    def test_a_record_is_written_owner_only(self):
+        self.write([{"question": "First name", "answer": "Sahil",
+                     "source": "profile", "readBack": "match"}])
+        mode = (self.apps / "Acme" / "answers-app-1.json").stat().st_mode & 0o777
+        self.assertEqual(mode, 0o600)
+
+    def test_two_roles_at_one_company_keep_separate_records(self):
+        (self.store / "sessions" / "app-2.json").write_text(json.dumps({
+            "applicationId": "app-2", "company": "Acme", "role": "Staff PM"}))
+        self.write([{"question": "First name", "answer": "Sahil",
+                     "source": "profile", "readBack": "match"}])
+        self.write([{"question": "Last name", "answer": "Sapra",
+                     "source": "profile", "readBack": "match"}], "app-2")
+        self.assertEqual(answer_record.captured_ids(), {"app-1", "app-2"})
+        self.assertEqual(self.read("app-2")["fields"][0]["question"], "Last name")
+
+    # --- secrets are never written ----------------------------------------
+
+    def test_a_verification_code_never_reaches_the_file(self):
+        self.write([
+            {"question": "Enter the verification code we emailed you",
+             "answer": "884213", "source": "provided", "readBack": "match"},
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"},
+        ])
+        raw = (self.apps / "Acme" / "answers-app-1.json").read_text()
+        # The bytes are the test. Not the parsed field, not the counter: the
+        # file on disk, which is what migrates to object storage later.
+        self.assertNotIn("884213", raw)
+        record = json.loads(raw)
+        blocked = record["fields"][0]
+        self.assertEqual(blocked["answer"], "")
+        self.assertEqual(blocked["withheld"], "one-time or verification code")
+        self.assertTrue(blocked["sensitive"])
+        # The row survives. A form that asked must not read as a form that did
+        # not, or the record lies by omission instead of by content.
+        self.assertEqual(blocked["question"],
+                         "Enter the verification code we emailed you")
+
+    def test_every_secret_class_is_withheld_and_ordinary_questions_are_not(self):
+        withheld = [
+            "Enter the one-time password sent to your phone",
+            "What is the OTP?",
+            "Verification code",
+            "Please supply the confirmation code",
+            "Enter your security code",
+            "Two-factor authentication code",
+            "Enter your authenticator code",
+            "Create a password for your candidate account",
+            "Choose a password",
+            "Account passphrase",
+            "PIN number",
+            "Social Security Number",
+            "What is your SSN?",
+            "National insurance number",
+            "Passport number",
+            "Aadhaar",
+            "Taxpayer identification number",
+            "Driver's licence number",
+            "Bank account number",
+            "Card number",
+            "CVV",
+        ]
+        for question in withheld:
+            with self.subTest(question=question):
+                self.assertIsNotNone(answer_record.withheld_reason(question),
+                                     f"{question!r} should never be stored")
+        allowed = [
+            "Do you hold a valid driver's licence?",
+            "Are you authorized to work in the United States?",
+            "How many years of product management experience do you have?",
+            "What is your current job title?",
+            "Do you have a security clearance?",
+            "Which coding languages do you use?",
+            "What is your notice period?",
+        ]
+        for question in allowed:
+            with self.subTest(question=question):
+                self.assertIsNone(answer_record.withheld_reason(question),
+                                  f"{question!r} is an ordinary question")
+
+    def test_a_withheld_field_keeps_no_read_back_value_either(self):
+        # readBackValue is the other place a secret could ride in, because it
+        # holds whatever the page showed rather than whatever was typed.
+        self.write([{"question": "One-time password", "answer": "111111",
+                     "source": "provided", "readBack": "differs",
+                     "readBackValue": "222222"}])
+        raw = (self.apps / "Acme" / "answers-app-1.json").read_text()
+        self.assertNotIn("111111", raw)
+        self.assertNotIn("222222", raw)
+
+    # --- sensitivity is derived, never declared ----------------------------
+
+    def test_pay_and_demographic_questions_are_flagged_whatever_the_caller_says(self):
+        # The caller cannot pass `sensitive` at all -- the schema has no such
+        # key -- so the flag can only come from here.
+        self.write([
+            {"question": "What are your salary expectations?", "answer": "165000",
+             "source": "stored", "sourceKey": "expected-compensation",
+             "readBack": "match"},
+            {"question": "Race / ethnicity", "answer": "Asian",
+             "source": "provided", "readBack": "unverified"},
+            {"question": "Date of birth", "answer": "1 January 1990",
+             "source": "profile", "readBack": "match"},
+            {"question": "Are you a protected veteran?", "answer": "No",
+             "source": "provided", "readBack": "unverified"},
+            {"question": "What is your current job title?", "answer": "PM",
+             "source": "profile", "readBack": "match"},
+        ])
+        record = self.read()
+        flags = {f["question"]: f["sensitive"] for f in record["fields"]}
+        self.assertTrue(flags["What are your salary expectations?"])
+        self.assertTrue(flags["Race / ethnicity"])
+        self.assertTrue(flags["Date of birth"])
+        self.assertTrue(flags["Are you a protected veteran?"])
+        self.assertFalse(flags["What is your current job title?"])
+        # Flagged, but stored: the user asking what the form said about pay is
+        # the whole reason this record exists.
+        pay = record["fields"][0]
+        self.assertEqual(pay["answer"], "165000")
+        self.assertNotIn("withheld", pay)
+
+    def test_an_ordinary_question_is_flagged_when_its_stored_entry_is_sensitive(self):
+        self.write([{"question": "What is your preferred arrangement?",
+                     "answer": "Something private", "source": "stored",
+                     "sourceKey": "what-is-your-preferred-arrangement",
+                     "readBack": "match"}])
+        field = self.read()["fields"][0]
+        self.assertTrue(field["sensitive"])
+        self.assertIn("answer store", field["sensitiveReason"])
+
+    def test_a_sensitive_tag_flags_a_row_the_wording_would_have_missed(self):
+        answers = dict(ANSWERS)
+        answers["quiet"] = {"key": "quiet", "question": "Any preferences?",
+                            "state": "confirmed", "value": "x",
+                            "tags": ["political-contributions"]}
+        (self.store / "answers.json").write_text(json.dumps(answers))
+        self.write([{"question": "Any preferences?", "answer": "None",
+                     "source": "stored", "sourceKey": "quiet", "readBack": "match"}])
+        self.assertTrue(self.read()["fields"][0]["sensitive"])
+
+    # --- a cited source has to exist ---------------------------------------
+
+    def test_a_stored_source_naming_a_key_that_does_not_exist_is_refused(self):
+        with self.assertRaises(answer_record.RecordError) as caught:
+            self.write([{"question": "Are you authorized to work?", "answer": "Yes",
+                         "source": "stored", "sourceKey": "invented-key",
+                         "readBack": "match"}])
+        self.assertIn("not in the answer store", str(caught.exception))
+        self.assertEqual(answer_record.captured_ids(), set())
+
+    def test_a_stored_source_with_no_key_is_refused(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([{"question": "Authorized?", "answer": "Yes",
+                         "source": "stored", "readBack": "match"}])
+
+    def test_a_key_on_a_source_that_is_not_the_store_is_refused(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([{"question": "First name", "answer": "Sahil",
+                         "source": "profile", "readBack": "match",
+                         "sourceKey": "legally-authorized-to-work-in-the-us"}])
+
+    # --- shape ------------------------------------------------------------
+
+    def test_an_unknown_source_is_refused(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([{"question": "Q", "answer": "A", "source": "guessed"}])
+
+    def test_an_unknown_read_back_state_is_refused(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([{"question": "Q", "answer": "A", "source": "profile",
+                         "readBack": "probably"}])
+
+    def test_an_unsupported_key_is_refused_rather_than_dropped(self):
+        with self.assertRaises(answer_record.RecordError) as caught:
+            self.write([{"question": "Q", "answer": "A", "source": "profile",
+                         "sensitive": False}])
+        self.assertIn("unsupported keys", str(caught.exception))
+
+    def test_the_same_question_twice_is_refused(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([
+                {"question": "First name", "answer": "Sahil", "source": "profile"},
+                {"question": "first name", "answer": "Other", "source": "profile"},
+            ])
+
+    def test_a_refused_manifest_writes_nothing_at_all(self):
+        with self.assertRaises(answer_record.RecordError):
+            self.write([
+                {"question": "First name", "answer": "Sahil", "source": "profile"},
+                {"question": "Bad", "answer": "x", "source": "nonsense"},
+            ])
+        self.assertFalse((self.apps / "Acme").exists())
+
+    def test_an_application_with_no_known_company_is_refused(self):
+        with self.assertRaises(answer_record.RecordError) as caught:
+            self.write([{"question": "Q", "answer": "A", "source": "profile"}],
+                       "unknown-app")
+        self.assertIn("cannot be filed", str(caught.exception))
+
+    def test_the_history_names_the_company_once_the_session_is_gone(self):
+        # Submission deletes the session. A record written afterwards still has
+        # to land in the right folder.
+        (self.store / "sessions" / "app-1.json").unlink()
+        (self.store / "applications.jsonl").write_text(json.dumps({
+            "event": "completed", "applicationId": "app-1", "company": "Acme",
+            "role": "Product Manager"}) + "\n")
+        self.write([{"question": "First name", "answer": "Sahil",
+                     "source": "profile"}])
+        self.assertTrue((self.apps / "Acme" / "answers-app-1.json").exists())
+
+    def test_a_control_character_in_a_question_does_not_survive(self):
+        self.write([{"question": "Full\x07 name", "answer": "Sahil\x00x",
+                     "source": "profile"}])
+        field = self.read()["fields"][0]
+        self.assertEqual(field["question"], "Full name")
+        self.assertEqual(field["answer"], "Sahilx")
+
+    def test_a_record_over_the_ceiling_is_refused(self):
+        with self.assertRaises(answer_record.RecordError) as caught:
+            self.write([{"question": f"Question {i}", "answer": "x" * 3_000,
+                         "source": "generated"} for i in range(40)])
+        self.assertIn("ceiling", str(caught.exception))
+
+    def test_a_read_back_that_differs_keeps_what_the_page_showed(self):
+        self.write([{"question": "Country", "answer": "United Kingdom",
+                     "source": "profile", "readBack": "differs",
+                     "readBackValue": "United Arab Emirates"}])
+        field = self.read()["fields"][0]
+        self.assertEqual(field["readBack"], "differs")
+        self.assertEqual(field["readBackValue"], "United Arab Emirates")
+
+
+class PublicRecordTests(unittest.TestCase):
+    """What the board is served, which is not quite what is on disk."""
+
+    def test_a_withheld_answer_cannot_be_reintroduced_by_a_hand_edited_file(self):
+        # public_record is the last gate before a record reaches KV. A file
+        # edited by hand, or written by an older revision, does not get to put a
+        # value back next to a withheld marker.
+        public = answer_record.public_record({
+            "applicationId": "app-1", "company": "Acme", "fields": [
+                {"question": "One-time password", "answer": "884213",
+                 "source": "provided", "readBack": "match", "sensitive": True,
+                 "withheld": "one-time or verification code"},
+            ]})
+        self.assertEqual(public["fields"][0]["answer"], "")
+        self.assertNotIn("884213", json.dumps(public))
+
+    def test_an_unknown_source_or_read_back_falls_back_rather_than_leaking(self):
+        public = answer_record.public_record({
+            "applicationId": "a", "company": "b", "fields": [
+                {"question": "Q", "answer": "A", "source": "<script>",
+                 "readBack": "<script>", "sensitive": False}]})
+        self.assertEqual(public["fields"][0]["source"], "generated")
+        self.assertEqual(public["fields"][0]["readBack"], "unverified")
+
+    def test_stray_keys_do_not_survive_into_the_published_record(self):
+        public = answer_record.public_record({
+            "applicationId": "a", "company": "b", "secretInternalPath": "/Users/x",
+            "fields": [{"question": "Q", "answer": "A", "source": "profile",
+                        "sourceKey": "k", "sensitive": False}]})
+        self.assertNotIn("secretInternalPath", public)
+        # The key names a row in the local answer store. The board shows a
+        # source badge, not a store index, so it stays on the laptop.
+        self.assertNotIn("sourceKey", public["fields"][0])
+
+
+if __name__ == "__main__":
+    unittest.main()
