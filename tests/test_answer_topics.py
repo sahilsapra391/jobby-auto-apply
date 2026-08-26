@@ -720,5 +720,62 @@ class AcknowledgementBoundaryTests(unittest.TestCase):
             self.assertIsNone(self.find(q).get("value"), q)
 
 
+EXPORT_CONTROL = {
+    "us-person": {"question": "Are you a U.S. person as defined under the EAR and ITAR?",
+                  "value": "No",
+                  "tags": ["us-person-status", "legal-declaration", "immigration"]},
+    "citizenship": {"question": "What is your country of citizenship?", "value": "India",
+                    "tags": ["citizenship-country", "immigration"]},
+    "work-auth": {"question": "Are you authorized to work in the United States?",
+                  "value": "Yes", "tags": ["work-authorisation-any-country"]},
+}
+
+
+class UsPersonTests(unittest.TestCase):
+    """A term of art, and not the same as being allowed to work here.
+
+    Under the EAR and ITAR a US person is a citizen, a lawful permanent
+    resident, or an asylee or refugee. Work authorisation is a separate
+    question with a separate answer, and the two live next to each other on
+    the same export-control block.
+    """
+
+    def find(self, q):
+        return store.find_answer(EXPORT_CONTROL, q)
+
+    def test_every_wording_of_the_us_person_question_resolves_to_no(self):
+        for q in ("Are you a U.S. person as defined by the EAR?",
+                  "Are you a US Person (US citizen, lawful permanent resident, asylee "
+                  "or refugee)?",
+                  "Are you a United States person under ITAR?",
+                  "For export control purposes, are you a U.S. person?"):
+            self.assertEqual(self.find(q)["value"], "No", q)
+
+    def test_the_follow_up_country_question_resolves(self):
+        self.assertEqual(self.find("What is your country of citizenship?")["value"], "India")
+        self.assertEqual(self.find("Country of nationality")["value"], "India")
+
+    def test_whether_a_licence_is_needed_is_a_different_question_and_parks(self):
+        # What he is, and what the role's technology requires, are two
+        # questions. He has answered the first.
+        for q in ("Will you require a deemed export license?",
+                  "Is a deemed export licence required for you?",
+                  "Do you need an export license to access controlled technology?"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+    def test_work_authorisation_keeps_its_own_answer(self):
+        self.assertEqual(
+            self.find("Are you authorized to work in the United States?")["value"], "Yes")
+
+    def test_the_firearms_questionnaire_is_not_swept_in_by_the_word_citizenship(self):
+        # "Have you renounced your United States citizenship" is one of nine
+        # sworn federal declarations with no stored answer, and it must stay
+        # that way.
+        for q in ("Have you ever renounced your United States citizenship?",
+                  "Have you been dishonorably discharged from the armed forces?",
+                  "Have you ever been convicted of a felony?"):
+            self.assertIsNone(self.find(q).get("value"), q)
+
+
 if __name__ == "__main__":
     unittest.main()

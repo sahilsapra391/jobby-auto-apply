@@ -83,6 +83,38 @@
       "why": "Six distinct phrasings observed. Always paired with work authorisation and always required."
     },
     {
+      "id": "export-control-status",
+      "tier": 3,
+      "ask": "Are you a US person for export-control purposes, and what is your citizenship?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "sensitive": true,
+      "match": [
+        [
+          "u.s. person"
+        ],
+        [
+          "us person"
+        ],
+        [
+          "export control"
+        ],
+        [
+          "itar"
+        ],
+        [
+          "country of citizenship"
+        ],
+        [
+          "nationality"
+        ]
+      ],
+      "why": "Defence, aerospace and hardware employers ask it, and it is a different question from work authorisation. Whether a deemed export licence is required is deliberately not part of this topic: that turns on the role's technology, not on the person."
+    },
+    {
       "id": "relocation",
       "tier": 1,
       "ask": "Are you willing to relocate for the right role?",
