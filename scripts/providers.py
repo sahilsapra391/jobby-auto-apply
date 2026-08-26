@@ -62,11 +62,12 @@ TASK_CAPABILITIES = {
     # apply and scan put an agent on a browser or the open web and need a fence
     # PROVEN to bind by scripts/fence_probe.py. Inconclusive means no.
     #
-    # openai: documents only. Its probe returned three clean canaries while the
-    # CLI answered "You've hit your usage limit", so nothing was attempted and
-    # nothing was proved. Re-probe when quota resets and restore apply and scan
-    # only on `bound`.
-    "openai": frozenset(("documents",)),
+    # openai: probed bound on all three once its quota returned, 2026-08-26.
+    # It was documents-only before that, not because of the quota error but
+    # because a probe that never reached the model proves nothing: three clean
+    # canaries against "You've hit your usage limit" is an absence of evidence.
+    # Restored on a `bound` result, which is the only thing that restores one.
+    "openai": frozenset(TASK_KINDS),
     # anthropic: probed bound on all three, 2026-08-25.
     "anthropic": frozenset(TASK_KINDS),
     # gemini: documents only, and not for want of probing. The Antigravity CLI

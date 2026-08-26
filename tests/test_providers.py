@@ -902,6 +902,13 @@ class TaskCapabilityTests(unittest.TestCase):
             with self.subTest(provider=provider):
                 self.assertTrue(providers.supports(provider, "documents"))
 
+    def test_openai_and_anthropic_are_cleared_for_every_task(self):
+        # Both probed bound on documents, apply and scan against the real CLIs.
+        for provider in ("openai", "anthropic"):
+            for task in providers.TASK_KINDS:
+                with self.subTest(provider=provider, task=task):
+                    self.assertTrue(providers.supports(provider, task))
+
     def test_gemini_is_documents_only(self):
         self.assertTrue(providers.supports("gemini", "documents"))
         self.assertFalse(providers.supports("gemini", "apply"))
