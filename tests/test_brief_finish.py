@@ -423,6 +423,32 @@ class BriefTests(unittest.TestCase):
             self.assertTrue(docs["coverLetter"].endswith("CoverLetter.pdf"))
             self.assertNotIn("html", json.dumps(docs))
 
+    def test_identity_carries_the_profile_links(self):
+        # A required LinkedIn field parked the Justworks application on
+        # 2026-08-25 while profile.links.linkedin was set the whole time. The
+        # prompt sends an agent to IDENTITY, so the links have to be in it.
+        profile = {"firstName": "Sahil", "links": {
+            "linkedin": "https://www.linkedin.com/in/example-person/", "website": ""}}
+        identity = brief.run_identity(profile, {"identity": {"phone": "5550001234"}})
+        self.assertEqual(identity["links"]["linkedin"],
+                         "https://www.linkedin.com/in/example-person/")
+        self.assertNotIn("website", identity["links"], "an empty link is not a link")
+        self.assertEqual(identity["phone"], "5550001234")
+
+    def test_identity_carries_the_education_the_form_asks_for(self):
+        # Greenhouse asks School, Degree and Discipline as required dropdowns.
+        # The Workato application parked on the degree one on 2026-08-25 with
+        # every one of these fields set in the profile.
+        profile = {"education": [{"school": "Miami University",
+                                  "degree": "BS Quantitative Economics",
+                                  "start": "2019-08", "end": "2023-05"}]}
+        identity = brief.run_identity(profile, {})
+        self.assertEqual(identity["education"][0]["school"], "Miami University")
+
+    def test_a_profile_with_no_links_adds_nothing(self):
+        self.assertIsNone(brief.run_identity({}, {}))
+        self.assertEqual(brief.run_identity({}, {"identity": {"phone": "1"}}), {"phone": "1"})
+
     def test_an_empty_folder_reports_no_documents(self):
         with tempfile.TemporaryDirectory() as d:
             docs = brief.find_documents(pathlib.Path(d), "Product Manager")

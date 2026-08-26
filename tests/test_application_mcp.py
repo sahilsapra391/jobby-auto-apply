@@ -46,11 +46,12 @@ class ApplicationMcpTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_exactly_seven_narrow_tools_are_exposed(self):
+    def test_exactly_eight_narrow_tools_are_exposed(self):
         names = {tool["name"] for tool in application_mcp.TOOLS}
         self.assertEqual(names, {
             "set_phase",
             "resolve_answers",
+            "story_facts",
             "experience_plan",
             "salary_midpoint",
             "park_application",
@@ -62,6 +63,28 @@ class ApplicationMcpTests(unittest.TestCase):
         rendered = json.dumps(application_mcp.TOOLS).lower()
         for forbidden in ("bash", "shell", "read_file", "write_file", "command"):
             self.assertNotIn(forbidden, rendered)
+
+    def test_story_facts_serves_the_bank_the_prompt_already_names(self):
+        # The prompt has always listed story facts as a source for a free-text
+        # answer, and the brief carried the PATH to a file the agent cannot
+        # open. Nothing served the text until this tool.
+        (self.store_root / "story-facts.txt").write_text(
+            "## Story: a migration\nMoved 75 customers with zero downtime.\n")
+        out = self.tools.call("story_facts", {})
+        self.assertIn("zero downtime", out["storyFacts"])
+        self.assertIn("Do not invent", out["note"])
+
+    def test_story_facts_takes_no_arguments_and_reads_no_other_file(self):
+        (self.store_root / "story-facts.txt").write_text("## Story: one\n")
+        with self.assertRaises(application_mcp.ToolInputError):
+            self.tools.call("story_facts", {"path": "/etc/passwd"})
+
+    def test_story_facts_says_so_when_there_are_none(self):
+        with self.assertRaises(application_mcp.ToolExecutionError):
+            self.tools.call("story_facts", {})
+        (self.store_root / "story-facts.txt").write_text("   \n")
+        with self.assertRaises(application_mcp.ToolExecutionError):
+            self.tools.call("story_facts", {})
 
     def test_context_requires_safe_id_absolute_real_pdfs(self):
         with self.assertRaises(application_mcp.ToolInputError):
@@ -181,7 +204,8 @@ class ApplicationMcpTests(unittest.TestCase):
         application_mcp.serve(self.tools, source, sink)
         replies = [json.loads(line) for line in sink.getvalue().splitlines()]
         self.assertEqual([reply["id"] for reply in replies], [1, 2, 3])
-        self.assertEqual(len(replies[1]["result"]["tools"]), 7)
+        self.assertEqual({tool["name"] for tool in replies[1]["result"]["tools"]},
+                         application_mcp.TOOL_NAMES)
         self.assertTrue(replies[2]["result"]["isError"])
         self.assertNotIn("command", replies[2]["result"]["structuredContent"]["error"])
 
@@ -209,7 +233,8 @@ class ApplicationMcpTests(unittest.TestCase):
             "params": {"_meta": meta},
         }, self.tools)
         self.assertEqual(listed["result"]["resultType"], "complete")
-        self.assertEqual(len(listed["result"]["tools"]), 7)
+        self.assertEqual({tool["name"] for tool in listed["result"]["tools"]},
+                         application_mcp.TOOL_NAMES)
 
 
 if __name__ == "__main__":

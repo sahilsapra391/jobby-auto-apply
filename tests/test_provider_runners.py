@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import agent
 import providers
+import application_mcp  # noqa: E402
 import run_apply
 import run_scan
 
@@ -209,6 +210,15 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
         self.assertNotIn("Building documents", prompt)
         self.assertIn("Provider CLIs may prefix MCP tool names", prompt)
         self.assertIn("no shell or general file access", prompt)
+
+    def test_the_prompt_points_a_free_text_answer_at_the_story_bank(self):
+        # The prompt named story facts as a source for years while nothing
+        # served them, so an essay question parked every time. The tool it
+        # names has to be one the jobby server actually exposes.
+        prompt = run_apply.build_prompt(self.summary, run_apply.artifact_snapshot(self.summary))
+        self.assertIn("jobby.story_facts", prompt)
+        self.assertIn("story_facts", application_mcp.TOOL_NAMES)
+        self.assertIn("invent no number", prompt)
 
     def test_runner_uses_a_temporary_empty_cwd_and_fixed_application_context(self):
         observed = {}

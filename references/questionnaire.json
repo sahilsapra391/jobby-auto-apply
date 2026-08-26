@@ -189,6 +189,33 @@
       "why": "Asked as a bare number and as per-skill variants. Also feeds the experience gate."
     },
     {
+      "id": "education",
+      "tier": 1,
+      "ask": "What is your highest degree, and from which school and field of study?",
+      "type": "text-short",
+      "match": [
+        [
+          "highest level of education"
+        ],
+        [
+          "degree"
+        ],
+        [
+          "school"
+        ],
+        [
+          "discipline"
+        ],
+        [
+          "field of study"
+        ],
+        [
+          "university"
+        ]
+      ],
+      "why": "Three required dropdowns on every Greenhouse education block, and the answer never changes. One of them parked a real application."
+    },
+    {
       "id": "links",
       "tier": 1,
       "ask": "Which profile links should applications include?",
@@ -198,7 +225,7 @@
           "github"
         ],
         [
-          "linkedin url"
+          "linkedin"
         ],
         [
           "portfolio"
@@ -354,6 +381,12 @@
         ],
         [
           "limit your ability to perform"
+        ],
+        [
+          "post-employment restriction"
+        ],
+        [
+          "employment agreements"
         ]
       ],
       "why": "Four phrasings observed. A legal declaration, so a wrong answer matters more than a missing one."
@@ -449,8 +482,8 @@
     {
       "id": "prior-relationship-with-employer",
       "tier": 3,
-      "ask": "Have you interviewed here before, or do you know anyone who works here?",
-      "type": "per-application",
+      "ask": "Have you worked at, or consulted for, the company you are applying to, and do you know anyone who works there?",
+      "type": "choice",
       "match": [
         [
           "interviewed at this company"
@@ -460,9 +493,74 @@
         ],
         [
           "association with deloitte"
+        ],
+        [
+          "previously worked at"
+        ],
+        [
+          "worked at or consulted for"
+        ],
+        [
+          "previously been employed"
+        ],
+        [
+          "former employee"
         ]
       ],
-      "why": "Depends on the employer, so it cannot be answered in advance. Parks in Needs you."
+      "why": "Asked by name on the employer's own form. The prior-employment half has a standing answer; who you know there still depends on the employer.",
+      "options": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "id": "in-office-acknowledgement",
+      "tier": 2,
+      "ask": "Will you accept the in-office schedule a posting states, whatever it is?",
+      "type": "policy",
+      "match": [
+        [
+          "flexwork"
+        ],
+        [
+          "in the office at least"
+        ],
+        [
+          "days per week in the office"
+        ],
+        [
+          "office attendance"
+        ],
+        [
+          "return to office policy"
+        ]
+      ],
+      "why": "Distinct from work-setup, which is a preference. This one is the employer's stated arrangement asked as an acceptance, and it blocks submission when it goes unanswered."
+    },
+    {
+      "id": "resume-history-documentation",
+      "tier": 2,
+      "ask": "Can you provide documentation of the employment and education on your resume?",
+      "type": "choice",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "match": [
+        [
+          "documentation of the employment"
+        ],
+        [
+          "documentation confirming"
+        ],
+        [
+          "provide documentation of"
+        ],
+        [
+          "verify the information on your resume"
+        ]
+      ],
+      "why": "A required screening field on Greenhouse forms and answerable once. Not the same as authorising a background check, which stays separate."
     },
     {
       "id": "how-did-you-hear",

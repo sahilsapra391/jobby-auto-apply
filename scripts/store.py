@@ -224,6 +224,13 @@ TOPIC_MARKERS = [
         "non-solicitation", "nonsolicitation", "non solicitation",
         "non-dealing", "restrictive covenant", "post-employment obligation",
         "post employment obligation", "garden leave",
+        # GitLab asks it as a restriction rather than an obligation, and asks
+        # about the agreement itself rather than naming a clause. Measured on
+        # 2026-08-25: the real question resolved to nothing and parked the
+        # application on a topic the user answered on 2026-08-19.
+        "post-employment restriction", "post employment restriction",
+        "employment agreements and/or", "employment agreement and/or",
+        "subject to any employment agreement",
     )),
     ("political-contributions", (
         "political contribution", "political contributions",
@@ -321,6 +328,90 @@ TOPIC_MARKERS = [
         "close associate", "conflict of interest", "conflicts of interest",
         "related to, by birth", "related by birth", "birth, adoption or marriage",
         "immediate family member employed", "relative employed by",
+    )),
+    # Deliberately AFTER relationships-conflicts, which is scanned first and
+    # wins: "is a relative of yours a former employee here" is a question about
+    # a relative, and only the ones about the applicant belong to this topic.
+    # Every marker therefore carries the applicant with it. "ever worked at" is
+    # absent on purpose, because "have you ever worked at a startup" is a
+    # different question with a different answer.
+    ("prior-employment-with-this-employer", (
+        "previously worked at or consulted for", "worked at or consulted for",
+        "previously worked for or consulted", "previously worked at",
+        "previously worked for", "previously been employed",
+        "previously employed by", "ever been employed by",
+        "prior employment with", "worked for us before", "worked here before",
+        "applied to or worked at", "been an employee of this company",
+        "are you a former employee", "a former employee of this",
+    )),
+    # Accepting the office arrangement the posting already states. This is not
+    # the work-setup preference question: the employer has decided, and the
+    # user's standing instruction is to accept whatever it is. The answer text
+    # carries the field shape, because some of these ask for a number of days.
+    ("in-office-acknowledgement", (
+        "flexwork", "flex work policy", "in the office at least",
+        "in office at least", "days per week in the office",
+        "days a week in the office", "days per week in office",
+        "days in the office per week", "days onsite per week",
+        "onsite at least", "in-office requirement", "office attendance",
+        "hybrid work policy", "return to office policy",
+        "work from the office at least", "report to the office at least",
+    )),
+    # Can he show papers for what the resume says. He can, and the answer is
+    # about the resume's own history rather than about work authorisation,
+    # which has its own topic scanned earlier in this list.
+    ("resume-history-documentation", (
+        "documentation of the employment", "documentation of your employment",
+        "documentation confirming", "documentation to confirm",
+        "documentation to verify", "documentation to support",
+        "documentation supporting the", "provide documentation of",
+        "verify the information on your resume", "verify your employment history",
+        "proof of your employment history", "documentation of the education",
+        "documentation of your education",
+    )),
+    # A URL, not a declaration. Placed last so "how did you hear about us",
+    # whose options list LinkedIn, keeps its own topic.
+    ("linkedin-profile-url", (
+        "linkedin profile", "linkedin url", "linkedin.com/in", "linkedin link",
+        "linkedin page", "your linkedin", "linkedin account",
+    )),
+    # Greenhouse education blocks are three separate dropdowns, so they are
+    # three topics: one answer cannot serve School, Degree and Discipline.
+    # Bare one-word labels are matched by their own stored key rather than by a
+    # marker here, because "degree" on its own also appears in "do you have a
+    # degree in political science", which is a yes/no question and not this.
+    ("education-degree", (
+        "highest level of education", "level of education", "highest degree",
+        "highest qualification", "highest education", "degree earned",
+        "degree obtained", "degree completed", "degree type",
+        "select your degree", "what degree did you",
+    )),
+    ("education-school", (
+        "school did you attend", "university did you attend",
+        "college did you attend", "name of your school",
+        "name of the university", "name of your university",
+        "institution attended", "school or university", "which school",
+    )),
+    ("education-discipline", (
+        "field of study", "course of study", "area of study", "your major",
+        "major or field", "discipline",
+    )),
+    # India before the rest, because "expected CTC" is an Indian question and
+    # the two figures are in different currencies. Both entries are sensitive,
+    # which blocks fuzzy matching on purpose; a marker is exact, not fuzzy, and
+    # a figure the user stored to be used is no use if nothing can reach it.
+    # Deliberately after salary-range-acknowledgement, which is scanned first:
+    # "does this range align with your compensation expectations" is a yes, and
+    # answering it with a number instead would be the worst mis-fill here.
+    ("expected-compensation-india", (
+        "expected ctc", "ctc expectation", "expectation ctc", "expected lpa",
+        "expected salary in lpa", "expected annual ctc",
+    )),
+    ("expected-compensation", (
+        "expected salary", "salary expectation", "expected compensation",
+        "compensation expectation", "desired salary", "desired compensation",
+        "expected base salary", "expected annual salary", "salary requirement",
+        "salary requirements", "expected pay", "what are your salary",
     )),
 ]
 

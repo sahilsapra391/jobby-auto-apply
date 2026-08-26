@@ -329,6 +329,12 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    `jobby.salary_midpoint` with the exact stated range. With no stated band, use only a
    confirmed stored answer.
 
+   For a free-text question about why the user fits, why they want the role, or an
+   accomplishment, call `jobby.story_facts` once and answer from that bank, the tailored
+   documents and the posting. Match the field's stated length, write in the first person,
+   and invent no number, date, employer or outcome that is not in those sources. A free-text
+   question those sources cannot answer is still a blocker; park it.
+
 5. Account creation, passwords, OTPs, and CAPTCHAs belong to the user. Do not create an
    account, type a password, read a one-time code, or solve a CAPTCHA. Do not agree to a
    background-check authorisation, consumer-report authorisation, non-compete, or IP
