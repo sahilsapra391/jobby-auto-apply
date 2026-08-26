@@ -435,6 +435,16 @@ class BriefTests(unittest.TestCase):
         self.assertNotIn("website", identity["links"], "an empty link is not a link")
         self.assertEqual(identity["phone"], "5550001234")
 
+    def test_identity_carries_the_education_the_form_asks_for(self):
+        # Greenhouse asks School, Degree and Discipline as required dropdowns.
+        # The Workato application parked on the degree one on 2026-08-25 with
+        # every one of these fields set in the profile.
+        profile = {"education": [{"school": "Miami University",
+                                  "degree": "BS Quantitative Economics",
+                                  "start": "2019-08", "end": "2023-05"}]}
+        identity = brief.run_identity(profile, {})
+        self.assertEqual(identity["education"][0]["school"], "Miami University")
+
     def test_a_profile_with_no_links_adds_nothing(self):
         self.assertIsNone(brief.run_identity({}, {}))
         self.assertEqual(brief.run_identity({}, {"identity": {"phone": "1"}}), {"phone": "1"})

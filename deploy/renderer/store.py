@@ -375,6 +375,44 @@ TOPIC_MARKERS = [
         "linkedin profile", "linkedin url", "linkedin.com/in", "linkedin link",
         "linkedin page", "your linkedin", "linkedin account",
     )),
+    # Greenhouse education blocks are three separate dropdowns, so they are
+    # three topics: one answer cannot serve School, Degree and Discipline.
+    # Bare one-word labels are matched by their own stored key rather than by a
+    # marker here, because "degree" on its own also appears in "do you have a
+    # degree in political science", which is a yes/no question and not this.
+    ("education-degree", (
+        "highest level of education", "level of education", "highest degree",
+        "highest qualification", "highest education", "degree earned",
+        "degree obtained", "degree completed", "degree type",
+        "select your degree", "what degree did you",
+    )),
+    ("education-school", (
+        "school did you attend", "university did you attend",
+        "college did you attend", "name of your school",
+        "name of the university", "name of your university",
+        "institution attended", "school or university", "which school",
+    )),
+    ("education-discipline", (
+        "field of study", "course of study", "area of study", "your major",
+        "major or field", "discipline",
+    )),
+    # India before the rest, because "expected CTC" is an Indian question and
+    # the two figures are in different currencies. Both entries are sensitive,
+    # which blocks fuzzy matching on purpose; a marker is exact, not fuzzy, and
+    # a figure the user stored to be used is no use if nothing can reach it.
+    # Deliberately after salary-range-acknowledgement, which is scanned first:
+    # "does this range align with your compensation expectations" is a yes, and
+    # answering it with a number instead would be the worst mis-fill here.
+    ("expected-compensation-india", (
+        "expected ctc", "ctc expectation", "expectation ctc", "expected lpa",
+        "expected salary in lpa", "expected annual ctc",
+    )),
+    ("expected-compensation", (
+        "expected salary", "salary expectation", "expected compensation",
+        "compensation expectation", "desired salary", "desired compensation",
+        "expected base salary", "expected annual salary", "salary requirement",
+        "salary requirements", "expected pay", "what are your salary",
+    )),
 ]
 
 

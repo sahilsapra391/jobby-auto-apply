@@ -189,6 +189,33 @@
       "why": "Asked as a bare number and as per-skill variants. Also feeds the experience gate."
     },
     {
+      "id": "education",
+      "tier": 1,
+      "ask": "What is your highest degree, and from which school and field of study?",
+      "type": "text-short",
+      "match": [
+        [
+          "highest level of education"
+        ],
+        [
+          "degree"
+        ],
+        [
+          "school"
+        ],
+        [
+          "discipline"
+        ],
+        [
+          "field of study"
+        ],
+        [
+          "university"
+        ]
+      ],
+      "why": "Three required dropdowns on every Greenhouse education block, and the answer never changes. One of them parked a real application."
+    },
+    {
       "id": "links",
       "tier": 1,
       "ask": "Which profile links should applications include?",

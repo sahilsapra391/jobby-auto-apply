@@ -46,6 +46,7 @@ MAX_QUESTIONS = 100
 MAX_QUESTION_CHARS = 4_000
 MAX_TOTAL_QUESTION_CHARS = 64_000
 MAX_TEXT_CHARS = 1_000
+MAX_STORY_FACT_BYTES = 200_000
 APPLICATION_ID = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 ALLOWED_PHASES = ("Filling the form",)
 
@@ -209,6 +210,15 @@ TOOLS = [
                 }
             },
             "required": ["questions"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "story_facts",
+        "description": "Return the user's confirmed story bank, for free-text questions only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
             "additionalProperties": False,
         },
     },
@@ -392,6 +402,35 @@ class ApplicationTools:
         answers_path = Path(store.paths(store.root_dir(self.context.root))["answers"])
         answers = store.read_json(answers_path, {})
         return {question: store.find_answer(answers, question) for question in cleaned}
+
+    def _story_facts(self, args: dict[str, Any]) -> dict[str, Any]:
+        """The confirmed story bank, which the prompt names and nothing served.
+
+        The form prompt has always listed story facts as one of the sources a
+        free-text answer may draw on, and the brief has always carried the
+        story bank. It carried the PATH, and a form agent has no file access,
+        so the source named in its own instructions was unreachable. Measured
+        on 2026-08-25: the Workato application parked on "why do you think you
+        will be successful in this role" with a ten-story bank on disk.
+
+        Read-only, one fixed file, no arguments. The document worker reads the
+        same file for the cover letter.
+        """
+        _closed(args, set())
+        path = Path(store.root_dir(self.context.root)) / "story-facts.txt"
+        if not path.is_file():
+            raise ToolExecutionError("no story facts are recorded for this user")
+        if path.stat().st_size > MAX_STORY_FACT_BYTES:
+            raise ToolExecutionError("the story facts file is too large to serve")
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        if not text:
+            raise ToolExecutionError("no story facts are recorded for this user")
+        return {
+            "storyFacts": text,
+            "note": ("Confirmed facts, in the user's own words. Use them for free-text "
+                     "answers together with the posting. Do not invent a number, a date, "
+                     "an employer or an outcome that is not here or in the resume."),
+        }
 
     def _experience_plan(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, {"style", "maxChars"})

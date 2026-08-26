@@ -437,5 +437,89 @@ class StandingAnswerOverMatchTests(unittest.TestCase):
         self.assertNotEqual(self.find("What is your expected compensation?").get("value"), "Yes")
 
 
+EDUCATION_AND_PAY = {
+    "degree": {"question": "Degree", "value": "Bachelor's Degree",
+               "tags": ["education", "education-degree"]},
+    "school": {"question": "School", "value": "Miami University",
+               "tags": ["education", "education-school"]},
+    "discipline": {"question": "Discipline", "value": "Economics",
+                   "tags": ["education", "education-discipline"]},
+    "pay-us": {"question": "expected salary for US roles", "value": "$120,000",
+               "state": "sensitive", "tags": ["compensation", "expected-compensation"]},
+    "pay-in": {"question": "expected CTC for India roles", "value": "Rs. 30,00,000 (30 LPA)",
+               "state": "sensitive", "tags": ["compensation", "expected-compensation-india"]},
+    # Keyed the way the real store keys it, so the exact-key path is the one
+    # under test: this question has its own answer and must never take the
+    # expected figure.
+    "current-base-salary": {"question": "What is your current base salary?",
+                            "value": "$90,000", "state": "sensitive",
+                            "tags": ["compensation"]},
+    "range": {"question": "agree this range aligns", "value": "Yes",
+              "tags": ["compensation", "salary-range-acknowledgement"]},
+    "political": {"question": "political contributions?", "value": "No",
+                  "tags": ["legal-declaration", "political-contributions"]},
+}
+
+
+class EducationTopicTests(unittest.TestCase):
+    """Three dropdowns, three answers.
+
+    Greenhouse asks School, Degree and Discipline as separate required fields,
+    so they cannot share one topic. The Workato application parked on the
+    degree one on 2026-08-25 with all three facts in the profile.
+    """
+
+    def find(self, question):
+        return store.find_answer(EDUCATION_AND_PAY, question)
+
+    def test_the_three_bare_dropdown_labels_each_resolve(self):
+        self.assertEqual(self.find("Degree")["value"], "Bachelor's Degree")
+        self.assertEqual(self.find("School")["value"], "Miami University")
+        self.assertEqual(self.find("Discipline")["value"], "Economics")
+
+    def test_the_longer_wordings_resolve_too(self):
+        self.assertEqual(self.find("Highest degree earned")["value"], "Bachelor's Degree")
+        self.assertEqual(self.find("Which school did you attend?")["value"], "Miami University")
+        self.assertEqual(self.find("What was your field of study?")["value"], "Economics")
+
+    def test_a_yes_no_question_that_says_degree_is_not_answered_with_one(self):
+        # The marker list holds phrases, never the bare word, precisely so this
+        # question keeps going to the user.
+        out = self.find("Do you have a degree in political science?")
+        self.assertNotEqual(out.get("value"), "Bachelor's Degree")
+
+
+class ExpectedCompensationTopicTests(unittest.TestCase):
+    """A sensitive figure that nothing could reach.
+
+    Both figures were stored and both were unreachable: an expected-salary
+    question worded any other way scored under the fuzzy bar, and sensitive
+    entries never fuzzy-match by design. A marker is exact rather than fuzzy,
+    which is what makes it safe here.
+    """
+
+    def find(self, question):
+        return store.find_answer(EDUCATION_AND_PAY, question)
+
+    def test_the_us_figure_resolves_in_the_wordings_employers_use(self):
+        for q in ("Expected compensation", "What are your salary expectations?",
+                  "Desired salary", "Expected base salary", "Salary requirements"):
+            self.assertEqual(self.find(q)["value"], "$120,000", q)
+
+    def test_a_ctc_question_gets_the_rupee_figure_not_the_dollar_one(self):
+        self.assertEqual(self.find("What is your expected CTC?")["value"],
+                         "Rs. 30,00,000 (30 LPA)")
+
+    def test_acknowledging_a_posted_range_is_still_a_yes_not_a_number(self):
+        # One word apart from the question above it, and the worst mis-fill
+        # this store can produce.
+        q = ("Our base salary range for this role is $70,000 - $90,000. Do you acknowledge "
+             "and agree that this range aligns with your compensation expectations?")
+        self.assertEqual(self.find(q)["value"], "Yes")
+
+    def test_the_current_salary_question_is_not_answered_with_the_expected_one(self):
+        self.assertEqual(self.find("What is your current base salary?")["value"], "$90,000")
+
+
 if __name__ == "__main__":
     unittest.main()

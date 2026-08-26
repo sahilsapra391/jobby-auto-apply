@@ -130,6 +130,14 @@ def run_identity(profile, base):
     links = {k: v for k, v in ((profile or {}).get("links") or {}).items() if v}
     if links and not identity.get("links"):
         identity["links"] = links
+    # And the education, for the same reason again. Greenhouse asks for School,
+    # Degree and Discipline as three required dropdowns, and on 2026-08-25 the
+    # Workato application parked on the degree one while the profile carried
+    # the school, the degree, the major, the minor and both dates.
+    education = [entry for entry in ((profile or {}).get("education") or [])
+                 if isinstance(entry, dict) and entry]
+    if education and not identity.get("education"):
+        identity["education"] = education
     return identity or None
 
 
