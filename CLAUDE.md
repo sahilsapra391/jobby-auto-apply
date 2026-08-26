@@ -221,9 +221,9 @@ on the Mac. KV receives ciphertext and fixed status metadata.
 Generated resumes and cover letters (PDF and HTML), cached job descriptions and
 per-application answer records are Class 1 data in
 `docs/plans/multi-tenant-architecture.md` section 6: not secrets the way a
-provider key is, so they sit in a private R2 bucket in plaintext and are served
-through short-lived presigned GETs after the board's own password check. The
-relational store did not move and is not in scope; that is the plan's Phase 2.
+provider key is, so they sit in a private R2 bucket in plaintext and are read
+back by the API after the board's own password check. The relational store did
+not move and is not in scope; that is the plan's Phase 2.
 
 The key layout is `u/{userId}/app/{applicationId}/{kind}.{ext}` with
 `u/account-1/` today, so a deletion request stays one prefix sweep and
@@ -245,10 +245,25 @@ resolves through `jobby:doc-index` in KV, one small key mapping filename to R2
 key, so no published board and no saved copy has a stale link. A name that
 occurs twice in the tree is left out of the index rather than resolved
 arbitrarily: `posting.txt` exists in a dozen company folders and means something
-different in each. The route reads R2 first, falls back to the KV copy for
-anything the index has not learned, and returns a 502 naming the fault when a
-presign fails with no KV copy behind it. It never answers 404 for a document
-that exists.
+different in each.
+
+**The function reads the object and returns the bytes. It does not redirect.**
+The first version minted a presigned GET and redirected, which is what the
+architecture plan then said, and it was measured: a second round trip, and the
+Vercel leg alone is 370 to 430ms whatever it is doing, so a 119KB resume cost
+about 180ms more than the KV path it replaced. Proxying is one round trip and
+the function's own read beats KV's, 104ms against 122ms at 119KB and 145ms
+against 301ms at 540KB, because KV carries base64 and R2 carries bytes. Range
+is forwarded so a phone's PDF viewer can page a large file. No signed URL
+reaches the browser, so none lands in history or in a shared link. Do not put
+the redirect back; the Workers-era design serves through an R2 binding, which
+is this shape with less machinery, not the redirect.
+
+Dual-read order: R2 first, then the KV copy for anything the index has not
+learned. An R2 404 on an indexed key falls through to KV, because the index
+being ahead of the bucket is emptiness rather than a fault. Any other R2 failure
+with no KV copy behind it returns a 502 naming the fault. It never answers 404
+for a document that exists.
 
 SigV4 is written twice, in `scripts/r2.py` for the device and `deploy/r2.mjs`
 for the function, because presigning needs the S3 credential and the deployment
@@ -331,7 +346,7 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/r2.py`: R2 access and SigV4, stdlib only, device side.
 - `scripts/r2_artifacts.py`: which local file is a Class 1 artifact, and its key.
 - `scripts/r2_sync.py`: upload, verify, prune, and the filename index.
-- `deploy/r2.mjs`: the same signing, for minting presigned links in the function.
+- `deploy/r2.mjs`: the same signing, and the server-side read the board serves from.
 - `deploy/api/page.py`: password-gated server render using sanitized KV state and deployed code.
 - `deploy/api/board.js`: queue, document, logo, health, and provider endpoints.
 - `deploy/renderer/`: generated deployment copy of the renderer. Never edit it directly.
