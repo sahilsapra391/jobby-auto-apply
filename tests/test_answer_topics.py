@@ -315,5 +315,127 @@ class AnyCountryWorkAuthorisationTests(unittest.TestCase):
 
 
 
+
+
+STANDING_ANSWERS = {
+    "linkedin": {"question": "What is your LinkedIn profile URL?",
+                 "value": "https://www.linkedin.com/in/example-person/",
+                 "tags": ["links", "linkedin-profile-url"]},
+    "post-emp": {"question": "post-employment obligations?", "value": "No",
+                 "tags": ["legal-declaration", "post-employment-obligations"]},
+    "prior": {"question": "worked here before?", "value": "No",
+              "tags": ["prior-employment-with-this-employer"]},
+    "office": {"question": "office attendance requirement", "value": "Yes",
+               "tags": ["in-office-acknowledgement"]},
+    "docs": {"question": "documentation of resume history", "value": "Yes",
+             "tags": ["resume-history-documentation"]},
+    "source": {"question": "how did you hear about us?", "value": "Company website",
+               "tags": ["sourcing", "source-how-heard"]},
+    "conflicts": {"question": "related to an employee?", "value": "No",
+                  "tags": ["legal-declaration", "relationships-conflicts"]},
+    "comp": {"question": "expected compensation", "value": "$120,000",
+             "state": "sensitive", "tags": ["compensation"]},
+}
+
+# The questions that parked Justworks and GitLab on 2026-08-25, shared by the
+# resolve tests and the over-match tests so both read the same fixture.
+
+
+class StandingAnswerTopicTests(unittest.TestCase):
+    """The four topics that parked two real applications on 2026-08-25.
+
+    Justworks and GitLab were both filled to the last field and then parked:
+    Justworks on a LinkedIn URL, a flexwork acknowledgement and a
+    resume-documentation confirmation; GitLab on a post-employment restriction
+    and on whether he had worked there before. Every one of those had an answer
+    the user considers standing, and none of them resolved.
+
+    Each question below is the wording the real form used, taken from the
+    parked session's own pendingFields.
+    """
+
+    ANSWERS = STANDING_ANSWERS
+
+    def find(self, question):
+        return store.find_answer(self.ANSWERS, question)
+
+    def test_the_real_gitlab_restriction_question_resolves(self):
+        q = ("Are you subject to any employment agreements and/or post-employment "
+             "restrictions with your current employer or a past employer?")
+        self.assertEqual(self.find(q)["value"], "No")
+
+    def test_the_real_gitlab_prior_employment_question_resolves(self):
+        self.assertEqual(
+            self.find("Have you previously worked at or consulted for GitLab?")["value"], "No")
+
+    def test_the_real_justworks_flexwork_question_resolves(self):
+        q = ("Justworks has a flexwork policy which requires employees to work in the "
+             "office at least 2 days per week. Does this work for you?")
+        self.assertEqual(self.find(q)["value"], "Yes")
+
+    def test_the_real_justworks_documentation_question_resolves(self):
+        q = ("Are you able to provide documentation of the employment and education "
+             "history listed on your resume if requested?")
+        self.assertEqual(self.find(q)["value"], "Yes")
+
+    def test_a_bare_linkedin_label_resolves_to_the_url(self):
+        for q in ("LinkedIn Profile URL", "LinkedIn URL", "Link to your LinkedIn page"):
+            self.assertTrue(self.find(q)["value"].endswith("/example-person/"), q)
+
+    def test_the_company_name_in_the_question_does_not_break_prior_employment(self):
+        for q in ("Have you previously worked for Datadog?",
+                  "Have you previously been employed by Stripe?",
+                  "Are you a former employee of this organisation?"):
+            self.assertEqual(self.find(q)["value"], "No", q)
+
+    def test_any_number_of_office_days_still_resolves_to_yes(self):
+        for q in ("This role requires 3 days per week in the office. Are you able to meet that?",
+                  "Our return to office policy requires 4 days onsite per week. Does this work?"):
+            self.assertEqual(self.find(q)["value"], "Yes", q)
+
+
+class StandingAnswerOverMatchTests(unittest.TestCase):
+    """The neighbours each new topic must not claim.
+
+    Every one of these was a real possibility while writing the markers, and
+    each is a question whose answer is either different or not the agent's to
+    give.
+    """
+
+    ANSWERS = STANDING_ANSWERS
+
+    def find(self, question):
+        return store.find_answer(self.ANSWERS, question)
+
+    def test_a_relatives_question_is_not_answered_as_his_own_history(self):
+        # A relative working there is the conflicts topic, which is scanned
+        # first, and it is a question about someone else either way.
+        out = self.find("Do you have any relatives who are current or former "
+                        "employees of GitLab?")
+        self.assertNotEqual(out.get("topic"), "prior-employment-with-this-employer")
+
+    def test_having_worked_at_a_kind_of_company_is_not_swept_in(self):
+        out = self.find("Have you ever worked at a startup?")
+        self.assertNotEqual(out.get("value"), "No")
+
+    def test_the_work_setup_preference_is_not_the_office_acknowledgement(self):
+        # He accepts whatever a posting requires; that is not the same as
+        # saying which setup he wants, which has its own answer.
+        out = self.find("Which work setup do you prefer: remote, hybrid or onsite?")
+        self.assertNotEqual(out.get("value"), "Yes")
+
+    def test_a_source_question_mentioning_linkedin_keeps_its_own_answer(self):
+        out = self.find("How did you hear about this role? (LinkedIn, Indeed, referral)")
+        self.assertEqual(out["value"], "Company website")
+
+    def test_documentation_does_not_become_a_background_check_authorisation(self):
+        out = self.find("I authorize the Company to obtain a consumer report about me "
+                        "for employment purposes.")
+        self.assertNotEqual(out.get("value"), "Yes")
+
+    def test_compensation_is_still_untouched(self):
+        self.assertNotEqual(self.find("What is your expected compensation?").get("value"), "Yes")
+
+
 if __name__ == "__main__":
     unittest.main()

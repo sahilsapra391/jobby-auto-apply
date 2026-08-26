@@ -122,6 +122,14 @@ def run_identity(profile, base):
         value = (profile or {}).get(key)
         if value and not identity.get(key):
             identity[key] = value
+    # The profile links, for the same reason. A LinkedIn URL field is required
+    # on a large share of forms and the profile has carried the URL the whole
+    # time; the prompt just never showed it to an agent. Measured on
+    # 2026-08-25: the Justworks application parked on a required LinkedIn field
+    # while profile.links.linkedin was set.
+    links = {k: v for k, v in ((profile or {}).get("links") or {}).items() if v}
+    if links and not identity.get("links"):
+        identity["links"] = links
     return identity or None
 
 

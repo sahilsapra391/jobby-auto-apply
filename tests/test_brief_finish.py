@@ -423,6 +423,22 @@ class BriefTests(unittest.TestCase):
             self.assertTrue(docs["coverLetter"].endswith("CoverLetter.pdf"))
             self.assertNotIn("html", json.dumps(docs))
 
+    def test_identity_carries_the_profile_links(self):
+        # A required LinkedIn field parked the Justworks application on
+        # 2026-08-25 while profile.links.linkedin was set the whole time. The
+        # prompt sends an agent to IDENTITY, so the links have to be in it.
+        profile = {"firstName": "Sahil", "links": {
+            "linkedin": "https://www.linkedin.com/in/example-person/", "website": ""}}
+        identity = brief.run_identity(profile, {"identity": {"phone": "5550001234"}})
+        self.assertEqual(identity["links"]["linkedin"],
+                         "https://www.linkedin.com/in/example-person/")
+        self.assertNotIn("website", identity["links"], "an empty link is not a link")
+        self.assertEqual(identity["phone"], "5550001234")
+
+    def test_a_profile_with_no_links_adds_nothing(self):
+        self.assertIsNone(brief.run_identity({}, {}))
+        self.assertEqual(brief.run_identity({}, {"identity": {"phone": "1"}}), {"phone": "1"})
+
     def test_an_empty_folder_reports_no_documents(self):
         with tempfile.TemporaryDirectory() as d:
             docs = brief.find_documents(pathlib.Path(d), "Product Manager")
