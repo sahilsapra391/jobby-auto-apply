@@ -181,7 +181,9 @@ class ApplicationMcpTests(unittest.TestCase):
             self.tools.call("park_application", {
                 "pending": ["CAPTCHA"], "detail": "Solve the visible CAPTCHA"
             })
-        park.assert_called_once_with("acme-pm", ["CAPTCHA"], "Solve the visible CAPTCHA")
+        # A CAPTCHA is a blocker, not a question, so nothing is tagged for the
+        # Memory Bank and the fourth argument comes through empty.
+        park.assert_called_once_with("acme-pm", ["CAPTCHA"], "Solve the visible CAPTCHA", [])
         with mock.patch.object(
             application_mcp.finish, "pre_submit", return_value={"proceed": False}
         ) as guard:

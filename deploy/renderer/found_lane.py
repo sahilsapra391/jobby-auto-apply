@@ -41,9 +41,18 @@ import search_config  # noqa: E402
 # explanations are interned and the duplicated excerpt is dropped — down from
 # 1,576. Measured on a real 12,855-job pool, the whole rendered board comes to
 # 3.24 MB at 3,400 including the pool census, and 3.47 MB at 3,800 without it.
-# 3,400 is the largest that leaves real margin under the 4 MB target rather
-# than grazing it. Do not raise this past what has been measured.
-EMBED_CAP = 3400
+# 3,400 was the largest that left real margin under the 4 MB target rather than
+# grazing it. Do not raise this past what has been measured.
+#
+# Lowered to 3,350 on 2026-08-25, because that measurement was taken against a
+# page carrying one feature and the page now carries two. The Profile page's
+# shell costs 35,713 bytes of shared document whichever lane a reader opens,
+# and at 3,400 that put the whole board at 3,879,904 bytes: past the 3.7 MB
+# margin line, grazing the ceiling this cap exists to keep clear of. Fifty
+# records buy it back and then some -- measured at 3,825,578 bytes, which is
+# 14,879 *below* where the board sat before any of this. The alternative was
+# moving the margin line, which is the same thing as not having one.
+EMBED_CAP = 3350
 # One slice of the description, used by the card and by Details. It used to be
 # two overlapping slices of the same text.
 EMBED_EXCERPT_CHARS = 320

@@ -521,5 +521,93 @@ class ExpectedCompensationTopicTests(unittest.TestCase):
         self.assertEqual(self.find("What is your current base salary?")["value"], "$90,000")
 
 
+class BankEditBoundaryTests(unittest.TestCase):
+    """The boundary the Memory Bank adds, which is the same boundary from a new
+    direction.
+
+    Everything above protects against a *marker* that is too loose. This
+    protects against an *entry* that is too close: the Profile page lets a
+    person write their own question text, and a question one word away from an
+    act the product refuses would answer it for them without ever naming it.
+    The failure would be silent, which is the worst kind here: the form gets
+    filled instead of parked, and the clause the user was supposed to read never
+    appears.
+    """
+
+    def resolved(self, answers, question):
+        return store._resolved(answers, question)
+
+    def test_the_probes_all_resolve_to_nothing_against_the_real_shape(self):
+        for probe in store.REFUSAL_PROBES:
+            with self.subTest(probe=probe[:44]):
+                self.assertIsNone(self.resolved(ANSWERS, probe))
+
+    def added(self, question, value):
+        """A new entry keyed the way the real writer keys it.
+
+        The key is what the lookup scores against, not the question, so a
+        fixture that names its own key tests nothing that can happen.
+        """
+        after = dict(ANSWERS)
+        after[store.answer_key(question)] = {"question": question, "value": value}
+        return after
+
+    def test_an_added_entry_that_answers_a_probe_is_a_shadow(self):
+        shadow = self.added(
+            "Please acknowledge the disclosure and sign to permit a check to be "
+            "conducted.", "Confirmed")
+        self.assertIsNotNone(store.refusal_shadow(ANSWERS, shadow))
+
+    def test_an_ordinary_new_entry_is_not(self):
+        fine = self.added("Why do you want to work here?",
+                          "The problem is real and unglamorous.")
+        self.assertIsNone(store.refusal_shadow(ANSWERS, fine))
+
+    def test_removing_an_entry_is_never_treated_as_a_shadow(self):
+        """Deleting can only ever take an answer away, so it cannot put one
+        behind a refusal. Refusing a delete here would leave a user unable to
+        clear their own bank."""
+        fewer = {k: v for k, v in ANSWERS.items() if k != "notice"}
+        self.assertIsNone(store.refusal_shadow(ANSWERS, fewer))
+
+    def test_the_refusal_categories_read_the_act_not_the_word(self):
+        # Willingness is a stored standing answer; authorising is an act.
+        self.assertIsNone(store.refusal_category(
+            "Would you be willing to undergo a background check?"))
+        self.assertEqual(store.refusal_category(
+            "I authorize the Company to obtain a consumer report about me."),
+            "consumer-report-authorisation")
+        # And a conviction is not always a criminal one. Measured against the
+        # real store on 2026-08-25, the bare word caught a story-bank entry
+        # about arguing a root-cause conviction against consensus.
+        self.assertIsNone(store.refusal_category(
+            "Story: root-cause conviction against consensus"))
+        self.assertEqual(store.refusal_category(
+            "Have you ever been convicted of a felony?"), "criminal-history")
+
+    def test_an_unanswered_entry_never_satisfies_a_lookup(self):
+        """The grow-only loop writes the question into the same file the lookup
+        reads. If an opened question counted as an answer it would fill fields
+        with nothing and never be asked again."""
+        question = "How many days in the office?"
+        opened = dict(ANSWERS)
+        opened[store.answer_key(question)] = {"question": question, "value": None,
+                                              "state": "missing",
+                                              "tags": ["unanswered"]}
+        found = store.find_answer(opened, question)
+        self.assertEqual(found["match"], "none")
+        self.assertTrue(found["open"])
+
+    def test_an_unanswered_entry_cannot_be_reached_by_topic_either(self):
+        opened = dict(ANSWERS)
+        opened["new-noncompete"] = {"question": "any post-employment obligations?",
+                                    "value": None, "state": "missing",
+                                    "tags": ["post-employment-obligations"]}
+        # The real stored one still answers it; the empty one never does.
+        self.assertEqual(
+            store.find_answer(opened, "Do you have a non-compete?")["value"], "No")
+        self.assertIsNone(store.topic_answer(
+            {"new-noncompete": opened["new-noncompete"]}, "Do you have a non-compete?"))
+
 if __name__ == "__main__":
     unittest.main()

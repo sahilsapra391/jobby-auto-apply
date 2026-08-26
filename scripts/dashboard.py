@@ -30,7 +30,9 @@ import clock  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
 import premium_ui  # noqa: E402
+import profile_panel  # noqa: E402
 import settings_panel  # noqa: E402
+import store  # noqa: E402
 
 
 def root_dir(override=None):
@@ -88,6 +90,11 @@ def load_state(root):
         # Connection metadata only. Provider CLIs retain all account tokens in
         # their own local stores, so nothing credential-shaped reaches HTML.
         "providers": read_json(root / "providers.json", {}),
+        # The Memory Bank and the base resume wording. Neither is rendered into
+        # the page: they travel in the published state and the Profile panel
+        # fetches them. See publishable_state for why that is not optional.
+        "answers": read_json(root / "answers.json", {}),
+        "resumeContent": store.resume_content(root),
     }
 
 
@@ -122,6 +129,83 @@ def _public_records(records, fields):
     ]
 
 
+# The account this board belongs to. One today, and the payload says which so
+# the API can refuse to serve a board published by a different account rather
+# than trusting that there is only ever one. §8 of the multi-tenant plan puts a
+# user_id on every per-user row; this is that column, arriving early where it
+# costs nothing.
+USER_ID = os.environ.get("JOBBY_USER_ID", "account-1")
+
+# What an identity is, per §8: one right to work, its own contact block, its own
+# base document, exactly one marked default. `profile.resumes[]` already holds
+# this, so the published shape mirrors the eventual table rather than inventing
+# a second vocabulary for the same thing.
+def _identities(profile):
+    out = []
+    for entry in (profile.get("resumes") or []):
+        if not isinstance(entry, dict):
+            continue
+        identity = entry.get("identity") or {}
+        address = identity.get("fullAddress") or {}
+        out.append({
+            "key": entry.get("key"),
+            "countryScope": [str(a).upper() for a in (entry.get("appliesTo") or [])],
+            "isDefault": bool(entry.get("default")),
+            "contact": {
+                "location": identity.get("location"),
+                "phone": identity.get("phone"),
+                "oneLine": address.get("oneLine"),
+                "country": address.get("country"),
+            },
+            # The name only. The path is a directory layout on one person's
+            # machine and says nothing a reader of the board needs.
+            "resumeRef": PurePosixPath(str(entry.get("path") or "")).name or None,
+        })
+    return out
+
+
+def _memory_bank(state):
+    """The Profile page's data, as the API will hand it out.
+
+    Not page material, and that is measured rather than assumed: the board at
+    its embed cap is 3.66 MB against a 3.7 MB budget, and the bank is 74 KB. It
+    would not fit even if nothing else were true.
+
+    What is also true is that it should not fit. Twenty-two of these entries are
+    compensation and demographic answers. Keeping them out of the HTML means
+    they are never in a saved copy of the page, never in a browser cache of it,
+    and never in the view-source of a board left open on a screen. They arrive
+    over an authenticated fetch, for the panel that asked.
+    """
+    answers = state.get("answers") or {}
+    entries = []
+    for key, entry in answers.items():
+        if not isinstance(entry, dict):
+            continue
+        record = dict(entry)
+        record["key"] = record.get("key") or key
+        entries.append(store.classify(record))
+    entries.sort(key=lambda e: str(e.get("question") or "").lower())
+    return {
+        "userId": USER_ID,
+        "answers": entries,
+        "identities": _identities(state.get("profile") or {}),
+        "resumeContent": state.get("resumeContent") or {},
+    }
+
+
+def bank_counts(bank):
+    """The three numbers the board is allowed to render: counts, never text."""
+    entries = bank.get("answers") or []
+    return {
+        "total": len(entries),
+        "unanswered": sum(1 for e in entries
+                          if not store.answered(e) and e.get("remembered") is not False),
+        "sensitive": sum(1 for e in entries if e.get("sensitive")),
+        "identities": len(bank.get("identities") or []),
+    }
+
+
 def publishable_state(state):
     """Return the minimum renderer input safe to persist as board state.
 
@@ -137,8 +221,15 @@ def publishable_state(state):
         state.get("jobs") or {}, state.get("searchConfig"))
     meta["poolTotal"] = pool_total
     meta["poolCensus"] = pool_census
+    bank = _memory_bank(state)
+    meta["memoryBank"] = bank_counts(bank)
     return {
+        "userId": USER_ID,
         "profile": {"firstName": (state.get("profile") or {}).get("firstName")},
+        # Served by /api/profile, never rendered. Kept a sibling of the render
+        # input rather than a field inside it, so "the renderer must not touch
+        # this" is visible in the shape and not only in a comment.
+        "memoryBank": bank,
         "sessions": _public_records(state.get("sessions") or [], SESSION_PUBLIC_FIELDS),
         "history": _public_records(state.get("history") or [], HISTORY_PUBLIC_FIELDS),
         "roles": {
@@ -326,6 +417,17 @@ def build(state, generated):
     }
 
     name = profile.get("firstName") or "there"
+
+    # Counts, and only counts. The Profile page's data is fetched, not embedded;
+    # a number is the one thing about the Memory Bank that is cheap enough to
+    # render and safe enough to render. An outstanding question is the only
+    # thing in there that is costing the user anything, so it gets the badge.
+    bank_counts_public = (state.get("meta") or {}).get("memoryBank") or {}
+    open_questions = int(bank_counts_public.get("unanswered") or 0)
+    profile_badge = (
+        f'<span class="nav-n" data-profile-open>{open_questions}</span>'
+        if open_questions else '<span class="nav-n" data-profile-open hidden>0</span>'
+    )
 
     cards = []
     for s in blocked:
@@ -1054,6 +1156,7 @@ def build(state, generated):
   .sysbanner strong {{ font-weight:650; }}
 {found_lane.CSS}
 {settings_panel.CSS}
+{profile_panel.CSS}
 {premium_ui.CSS}
 </style>
 
@@ -1065,6 +1168,7 @@ def build(state, generated):
   <a class="brand" href="/" data-home-found aria-label="Jobby home">{brand.lockup()}</a>
   <nav class="primary-nav" aria-label="Primary">
     <a href="/" data-primary-view="home">Home</a>
+    <a href="/profile" data-primary-view="profile">Profile{profile_badge}</a>
     <a href="/settings" data-primary-view="settings">Settings</a>
   </nav>
   <div class="themeseg" role="radiogroup" aria-label="Colour theme">
@@ -1126,6 +1230,8 @@ def build(state, generated):
       <thead><tr><th>Role</th><th>Posted</th><th>Experience</th><th>Location</th><th>Core skills</th><th>How you line up</th><th></th></tr></thead>
       <tbody>{watch_rows}</tbody></table></div></div>''' if watch else empty_state("watch")}
   </div>
+
+  {profile_panel.panel(bank_counts_public)}
 
   {settings_panel.panel(state.get("providers") or {})}
 </div>
@@ -1796,6 +1902,7 @@ def build(state, generated):
   ['act', 'flight', 'done', 'watch'].forEach(applyFilter);
 
 {found_lane.SCRIPT}
+{profile_panel.SCRIPT}
 {settings_panel.SCRIPT}
 {premium_ui.SCRIPT}
   document.querySelectorAll('.copy').forEach(function (b) {{
