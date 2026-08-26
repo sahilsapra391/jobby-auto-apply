@@ -201,7 +201,10 @@ class BrandTest(unittest.TestCase):
     def test_job_cards_answer_hover_with_their_outline_not_a_lift(self):
         # The controls are still allowed to leave the card; the card is not.
         html = build()
-        self.assertIn(".card:hover { border-color:var(--hair-strong); }", html)
+        self.assertIn(".card:hover { border-color:var(--hair-strong);", html)
+        # Weighted to match the status rule along the top, drawn as an inset
+        # shadow so thickening it cannot move the card.
+        self.assertIn("inset 0 0 0 2px var(--hair-strong)", html)
         self.assertIn(".jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }", html)
         for rule in (".card:hover", ".jb-card:hover"):
             start = html.index(rule)

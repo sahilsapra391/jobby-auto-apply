@@ -1225,6 +1225,120 @@ def build(state, generated):
     if (found) activateTab(found);
   }});
 
+  // Live lanes. The board is a static render of a published snapshot, and the
+  // watcher republishes at most every two minutes, so a card moved by clicking
+  // Apply used to sit in the wrong lane until the page was reloaded, and a
+  // reload inside that window put it back where it started. Two things fix
+  // that: this poll, which moves cards without a reload, and a record of the
+  // moves this browser made, which outranks the snapshot until the snapshot is
+  // newer than the move.
+  var LANE_FOR_STATUS = {{
+    active: 'act', review: 'act', inflight: 'flight', watch: 'watch'
+  }};
+  var PENDING_KEY = 'jobby.pendingLanes';
+  var LANE_POLL_MS = 5000;
+
+  function readPending() {{
+    try {{
+      var raw = JSON.parse(localStorage.getItem(PENDING_KEY) || '{{}}');
+      return (raw && typeof raw === 'object') ? raw : {{}};
+    }} catch (e) {{ return {{}}; }}
+  }}
+  function writePending(value) {{
+    try {{ localStorage.setItem(PENDING_KEY, JSON.stringify(value)); }} catch (e) {{}}
+  }}
+  // Called the moment the user acts, before anything has reached the server.
+  function rememberMove(id, lane) {{
+    if (!id || !lane) return;
+    var pending = readPending();
+    pending[id] = {{ lane: lane, at: new Date().toISOString() }};
+    writePending(pending);
+  }}
+  window.jobbyRememberMove = rememberMove;
+
+  function cardFor(id) {{
+    return document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
+  }}
+  function laneOf(card) {{
+    var panel = card.closest ? card.closest('.panel') : null;
+    return panel ? panel.id.replace('p-', '') : '';
+  }}
+  function gridFor(lane) {{
+    var panel = document.getElementById('p-' + lane);
+    if (!panel) return null;
+    var grid = panel.querySelector('.grid');
+    if (!grid) {{
+      grid = document.createElement('div');
+      grid.className = 'grid';
+      var empty = panel.querySelector('.empty');
+      if (empty) panel.insertBefore(grid, empty);
+      else panel.appendChild(grid);
+    }}
+    return grid;
+  }}
+  function paintEmptyState(lane) {{
+    var panel = document.getElementById('p-' + lane);
+    if (!panel) return;
+    var grid = panel.querySelector('.grid');
+    var empty = panel.querySelector('.empty');
+    if (empty) empty.hidden = !!(grid && grid.children.length);
+  }}
+  function moveCard(card, lane) {{
+    var target = gridFor(lane);
+    if (!target || card.parentNode === target) return false;
+    var from = laneOf(card);
+    target.appendChild(card);
+    if (from) {{ tabCount(from, -1); paintEmptyState(from); }}
+    tabCount(lane, 1);
+    paintEmptyState(lane);
+    return true;
+  }}
+
+  function applyLanes(data) {{
+    if (!data || !data.ok) return;
+    var pending = readPending();
+    var stamp = Date.parse(data.generatedAt || '') || 0;
+    var keep = {{}};
+    var moved = 0;
+    Object.keys(data.sessions || {{}}).forEach(function (id) {{
+      var lane = LANE_FOR_STATUS[data.sessions[id]];
+      var mine = pending[id];
+      // A move this browser made outranks the snapshot until the snapshot is
+      // newer than the move. Without that, a reload inside the publish window
+      // reads the stale lane back and the card jumps home.
+      if (mine && Date.parse(mine.at) > stamp) {{
+        keep[id] = mine;
+        lane = mine.lane;
+      }}
+      if (!lane) return;
+      var card = cardFor(id);
+      if (card && laneOf(card) !== lane && moveCard(card, lane)) moved += 1;
+    }});
+    // Anything still pending that the snapshot has not caught up with stays.
+    Object.keys(pending).forEach(function (id) {{
+      if (keep[id]) return;
+      if (Date.parse(pending[id].at) > stamp) keep[id] = pending[id];
+    }});
+    writePending(keep);
+    return moved;
+  }}
+
+  function pollLanes() {{
+    if (document.hidden) return Promise.resolve();
+    return fetch('/api/lanes', {{ credentials: 'same-origin', cache: 'no-store' }})
+      .then(function (r) {{ return r.ok ? r.json() : null; }})
+      .then(applyLanes)
+      // A saved copy of the board has no route to ask, and a dropped request is
+      // not worth a message; the next tick tries again.
+      .catch(function () {{}});
+  }}
+  pollLanes();
+  setInterval(pollLanes, LANE_POLL_MS);
+  // Coming back to the tab should not wait out the interval.
+  document.addEventListener('visibilitychange', function () {{
+    if (!document.hidden) pollLanes();
+  }});
+
   var tabs = document.querySelectorAll('.tab');
   function activateTab(t) {{
     tabs.forEach(function (o) {{ o.classList.remove('on'); o.setAttribute('aria-selected','false'); }});
@@ -1364,7 +1478,11 @@ def build(state, generated):
       }})
         .then(function (r) {{ return r.json().then(function (x) {{ return {{ s: r.status, b: x }}; }}); }})
         .then(function (res) {{
-          if (res.b && res.b.ok) {{ rememberMark(card.dataset.id); moveToSubmitted(card); }}
+          if (res.b && res.b.ok) {{
+            rememberMark(card.dataset.id);
+            rememberMove(card.dataset.id, 'done');
+            moveToSubmitted(card);
+          }}
           else {{
             b.disabled = false;
             b.textContent = 'Confirm submitted';
@@ -1710,6 +1828,7 @@ def build(state, generated):
         if (res && res.ok) {{
           removeItem(b);
           tabCount('flight', 1);
+          rememberMove(id, 'flight');
           placeholderCard(b.dataset.company || '', b.dataset.role || '', b.dataset.id);
         }} else {{
           b.disabled = false; b.textContent = 'Retry';
