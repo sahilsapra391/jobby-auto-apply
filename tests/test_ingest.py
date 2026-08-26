@@ -834,6 +834,43 @@ class SavedSearchMergeTests(unittest.TestCase):
                     self.assertEqual(after[key], saved[key])
 
 
+class VerifiedTenantPackTests(IngestCase):
+    """A confirmed tenant reaches the registry without a second command.
+
+    Tenant discovery writes what it confirmed to
+    `references/probed-tenants.json`, and for a while nothing read that file
+    except `seed_companies.py` run by hand. A block added 34 boards, merged,
+    deployed and swept, and moved one job: the data file was inert and the
+    second command was a thing to remember. The same shape as merging not
+    being deploying, and it fails the same silent way.
+    """
+
+    def test_a_sweep_seeds_the_verified_pack_before_it_fetches(self):
+        report, _ = self.run_ingest({"greenhouse": channel([])})
+        self.assertIn("tenantsSeeded", report)
+        self.assertGreater(report["tenantsSeeded"], 0)
+        registry = jobs_store.load_companies(self.root)
+        self.assertTrue(any(c.get("ats") and c.get("token") for c in registry.values()))
+
+    def test_the_pack_lands_early_enough_for_the_same_sweep_to_use_it(self):
+        """A tenant seeded after the channel loop is one nobody fetches until
+        the sweep after next, which is a whole cycle of nothing happening."""
+        seen = {}
+
+        def watching(fetcher, companies=None, **_):
+            seen["count"] = len([c for c in (companies or {}).values()
+                                 if c.get("ats") == "greenhouse" and c.get("token")])
+            return base.ok("greenhouse", [], requests=0, complete=True)
+
+        self.run_ingest({"greenhouse": watching})
+        self.assertGreater(seen.get("count", 0), 0,
+                           "the connector was handed a registry with no boards")
+
+    def test_a_dry_run_seeds_nothing(self):
+        self.run_ingest({"greenhouse": channel([])}, dry_run=True)
+        self.assertEqual(jobs_store.load_companies(self.root), {})
+
+
 class StalenessSweepTests(IngestCase):
     """The closure pass, driven through the real run() rather than in isolation.
 

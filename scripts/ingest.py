@@ -296,6 +296,24 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     jobs = jobs_store.load_jobs(root)
     passed = jobs_store.load_passed(root)
     companies = jobs_store.load_companies(root)
+
+    # Apply the verified-tenant pack before the channels run, not after.
+    #
+    # `references/probed-tenants.json` is where tenant discovery puts what it
+    # confirmed, and until now nothing read it except `seed_companies.py` run
+    # by hand. So a discovery block could add 34 boards, merge, deploy, sweep,
+    # and move one job: the file was inert and the second command was a thing
+    # to remember. This is the same shape as merging not being deploying.
+    #
+    # At the start rather than the end because a tenant seeded after the
+    # channel loop is a tenant nobody fetches until the sweep after next.
+    packed, pack_summary = seed_companies.seed(companies, seed_companies.from_pack())
+    if packed != companies:
+        companies = packed
+        if not dry_run:
+            jobs_store.save_companies(root, companies)
+    report["tenantsSeeded"] = pack_summary["added"]
+
     decided = applied_index(root)
     tombstones = tombstone_index(passed)
     index = identity.Index(jobs, companies)
