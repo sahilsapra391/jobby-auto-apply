@@ -376,5 +376,93 @@ class RendererSyncOnPublishTests(unittest.TestCase):
             publish.sync_renderer()
 
 
+class ArtifactUploadTests(unittest.TestCase):
+    """Publishing puts the artifacts in R2 first, and stops if it cannot.
+
+    A board that published successfully while its documents did not arrive is a
+    board full of links to nothing, and "reports success while doing nothing" is
+    the failure mode this project's whole health apparatus exists because of.
+    """
+
+    class Args:
+        root = None
+        deploy = False
+        preview = False
+        dry_run = False
+
+    def setUp(self):
+        self.calls = []
+        self.original = {
+            "sync_renderer": publish.sync_renderer,
+            "build_dashboard": publish.build_dashboard,
+            "build_documents": publish.build_documents,
+            "guard_render": publish.guard_render,
+            "push_content": publish.push_content,
+            "provider_payload": publish.provider_payload,
+            "configured": publish.r2.configured,
+            "r2_sync": publish.r2_sync.sync,
+            "current_url": publish.current_url,
+        }
+        publish.sync_renderer = lambda: []
+        publish.build_dashboard = lambda root: {
+            "blocked": 0, "inflight": 0, "submitted": 3,
+            "html": "<html></html>", "state": {"jobs": {}}, "greeting": "Sahil"}
+        publish.build_documents = lambda root: {
+            "documents": 2, "bytes": 10, "docs": {"A.pdf": "eA=="}}
+        publish.guard_render = lambda summary, root: None
+        publish.provider_payload = lambda root=None: {}
+        publish.current_url = lambda root: "https://board.example"
+        publish.push_content = lambda *a, **k: (
+            self.calls.append(("push_content", a, k)) or {
+                "state": {"bytes": 1024},
+                "documents": {"written": 0, "skipped": 0},
+                "docIndex": {"entries": 0}})
+
+    def tearDown(self):
+        publish.sync_renderer = self.original["sync_renderer"]
+        publish.build_dashboard = self.original["build_dashboard"]
+        publish.build_documents = self.original["build_documents"]
+        publish.guard_render = self.original["guard_render"]
+        publish.push_content = self.original["push_content"]
+        publish.provider_payload = self.original["provider_payload"]
+        publish.r2.configured = self.original["configured"]
+        publish.r2_sync.sync = self.original["r2_sync"]
+        publish.current_url = self.original["current_url"]
+
+    def test_an_upload_failure_fails_the_publish_and_writes_nothing_to_kv(self):
+        publish.r2.configured = lambda env=None: True
+
+        def explode(*a, **k):
+            raise publish.r2.R2Error("R2 PUT u/account-1/app/a/resume.pdf failed: 403")
+
+        publish.r2_sync.sync = explode
+        with self.assertRaises(publish.PublishError) as caught:
+            publish.cmd_publish(self.Args(), [])
+        message = str(caught.exception)
+        self.assertIn("refusing to publish", message)
+        self.assertIn("still on this machine", message)
+        self.assertEqual(self.calls, [])
+
+    def test_a_successful_upload_sends_the_index_and_no_document_bundle(self):
+        publish.r2.configured = lambda env=None: True
+        publish.r2_sync.sync = lambda root, apply=False, **k: {
+            "objects": 621, "bytes": 31137308, "uploaded": 4,
+            "matchedRemote": 0, "skippedByManifest": 617,
+            "index": {"A.pdf": {"key": "u/account-1/app/a/resume.pdf"}}}
+        self.assertEqual(publish.cmd_publish(self.Args(), []), 0)
+        (_name, args, _kw) = self.calls[0]
+        _html, _state, bundle, _providers, doc_index = args
+        # The documents no longer travel through KV; only the filename index does.
+        self.assertEqual(bundle, {})
+        self.assertEqual(doc_index["A.pdf"]["key"], "u/account-1/app/a/resume.pdf")
+
+    def test_without_r2_the_old_kv_document_path_still_works(self):
+        publish.r2.configured = lambda env=None: False
+        self.assertEqual(publish.cmd_publish(self.Args(), []), 0)
+        (_name, args, _kw) = self.calls[0]
+        _html, _state, bundle, _providers, doc_index = args
+        self.assertEqual(bundle, {"A.pdf": "eA=="})
+        self.assertIsNone(doc_index)
+
 if __name__ == "__main__":
     unittest.main()

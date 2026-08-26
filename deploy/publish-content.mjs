@@ -5,14 +5,19 @@
 // afternoon, and why a build from GitHub had nothing to serve: the board was
 // generated into an untracked module that only ever existed on this machine.
 //
-//   node publish-content.mjs <board.html> <documents.json> <providers.json> <board-state.json>
+//   node publish-content.mjs <board.html> <documents.json> <providers.json> \
+//        <board-state.json> <renderer-fingerprint> <doc-index.json>
 //
 // documents.json is {name: base64}. Only documents whose contents changed are
 // written, because KV allows a thousand writes a day and republishing forty
-// unchanged PDFs on every board refresh would spend that by lunchtime.
+// unchanged PDFs on every board refresh would spend that by lunchtime. Once R2
+// holds the artifacts, publish.py stops sending documents here at all and sends
+// a doc-index instead: filename -> R2 key, which is what lets /doc/<filename>
+// links that are already published keep working against a layout keyed by
+// application id. The KV copies stay readable until the retirement commit.
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { putBoard, putBoardState, putDoc, docKey } from './kvcontent.mjs';
+import { putBoard, putBoardState, putDoc, putDocIndex, docKey, DOC_INDEX_KEY } from './kvcontent.mjs';
 import { kvGet } from './kv.mjs';
 
 const [htmlPath, docsPath, providersPath, statePath] = process.argv.slice(2);
@@ -42,7 +47,22 @@ const out = {
   state: { bytes: storedState, generatedAt },
   legacyBoard: env.JOBBY_SKIP_LEGACY_HTML === '1' ? null : { bytes: html.length, generatedAt },
   documents: { written: 0, skipped: 0 },
+  docIndex: { entries: 0, written: false },
 };
+
+// The filename index for artifacts served out of R2. Written only when it
+// changes, for the same reason the documents are: a thousand KV writes a day
+// is not many when the board republishes dozens of times.
+const indexPath = process.argv[7];
+if (indexPath) {
+  const docs = JSON.parse(readFileSync(indexPath, 'utf8'));
+  out.docIndex.entries = Object.keys(docs).length;
+  const existing = JSON.parse((await kvGet(env, DOC_INDEX_KEY)) || 'null');
+  if (!existing || JSON.stringify(existing.docs) !== JSON.stringify(docs)) {
+    await putDocIndex(env, docs, generatedAt);
+    out.docIndex.written = true;
+  }
+}
 
 if (docsPath) {
   const docs = JSON.parse(readFileSync(docsPath, 'utf8'));

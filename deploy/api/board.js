@@ -9,7 +9,8 @@
 // board.
 
 import { gunzipSync } from 'node:zlib';
-import { getBoard, getBoardState, getDoc, getLocalStatus } from '../kvcontent.mjs';
+import { getBoard, getBoardState, getDoc, getDocIndex, getLocalStatus } from '../kvcontent.mjs';
+import { presignGet, configured as r2Configured, DEFAULT_EXPIRY_SECONDS } from '../r2.mjs';
 
 const REALM = 'Application board';
 
@@ -321,6 +322,81 @@ async function handleCompanyLogo(request, requestUrl) {
   return text('No company logo.\n', 404);
 }
 
+// Application documents: the exact resume and cover letter an employer
+// received. They live in R2 now, and the board still links to them by filename
+// because that is what every published board and every saved copy already
+// says. jobby:doc-index bridges the two.
+//
+// Dual-read, in this order and for this reason. R2 is where new artifacts are
+// written, so it is asked first. KV still holds every document published before
+// the migration, so it answers for anything the index has not learned yet, and
+// it keeps answering until the retirement commit deletes those copies. And when
+// both are out, the reply says what went wrong: a presign that failed is a
+// configuration or credential problem someone can fix, and returning 404 for it
+// would report it as a document that does not exist.
+async function handleDocument(request, pathname) {
+  const name = decodeURIComponent(pathname.slice('/doc/'.length));
+  // The name comes off the board but arrives as a URL path, so treat it as
+  // untrusted: only a plain filename may become a KV key or reach the index.
+  //
+  // The space is deliberate and was a real bug. Ten of the 426 stored artifacts
+  // are named like "Sahil Sapra - Resume - Senior Project Manager.pdf", from
+  // before document_contract owned the naming, and two of them are documents an
+  // employer actually received and the Submitted tab actually links to. The
+  // guard rejected them before anything was even looked up, so those two links
+  // have always been dead. A space cannot escape a path segment, cannot open a
+  // second KV key, and never reaches the R2 key, which comes from the index and
+  // is validated separately below.
+  if (!/^[A-Za-z0-9._ -]{1,200}$/.test(name)) return text('No such document.\n', 404);
+
+  let presignError = null;
+  if (r2Configured(process.env)) {
+    const index = await getDocIndex(process.env).catch(() => null);
+    const entry = index && index.docs ? index.docs[name] : null;
+    // The key is ours, written by the publisher, but it arrives through KV and
+    // ends up in a signed URL, so it is checked rather than trusted. The dot
+    // segments matter: S3 keys are opaque strings and R2 would happily store
+    // one containing "..", but an intermediary that normalises the path would
+    // then be signing one key and fetching another.
+    if (entry && typeof entry.key === 'string'
+        && /^u\/[A-Za-z0-9._-]+\/[\x20-\x7e]{1,900}$/.test(entry.key)
+        && !entry.key.split('/').includes('..')) {
+      try {
+        const url = await presignGet(process.env, entry.key, DEFAULT_EXPIRY_SECONDS, Date.now(), {
+          'response-content-type': entry.contentType || 'application/pdf',
+          'response-content-disposition': `inline; filename="${name}"`,
+        });
+        return new Response(null, {
+          status: 302,
+          headers: { location: url, ...BASE_HEADERS },
+        });
+      } catch (err) {
+        presignError = String(err.message || err);
+      }
+    }
+  }
+
+  const b64 = await getDoc(process.env, name).catch(() => null);
+  if (b64) {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(request.method === 'HEAD' ? null : bytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/pdf',
+        // inline so it opens in the browser rather than forcing a save
+        'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
+        ...BASE_HEADERS,
+      },
+    });
+  }
+  if (presignError) {
+    return text(
+      `This document is in R2 but the link could not be signed, so there is nothing to open.\n` +
+      `${presignError}\nThe file is still on the machine that made it.\n`, 502);
+  }
+  return text('No such document.\n', 404);
+}
+
 export default {
   async fetch(request) {
     const requestUrl = new URL(request.url);
@@ -447,22 +523,7 @@ export default {
     // Application documents: the exact resume and cover letter an employer
     // received. Same password gate as the board, never cached, never indexed.
     if (pathname.startsWith('/doc/')) {
-      const name = decodeURIComponent(pathname.slice('/doc/'.length));
-      // The name comes off the board but arrives as a URL path, so treat it as
-      // untrusted: only a plain filename may become a KV key.
-      if (!/^[A-Za-z0-9._-]+$/.test(name)) return text('No such document.\n', 404);
-      const b64 = await getDoc(process.env, name).catch(() => null);
-      if (!b64) return text('No such document.\n', 404);
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      return new Response(request.method === 'HEAD' ? null : bytes, {
-        status: 200,
-        headers: {
-          'content-type': 'application/pdf',
-          // inline so it opens in the browser rather than forcing a save
-          'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
-          ...BASE_HEADERS,
-        },
-      });
+      return handleDocument(request, pathname);
     }
 
     // Apply request from the Watching tab: build the documents and drive the
