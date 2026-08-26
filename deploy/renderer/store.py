@@ -447,6 +447,12 @@ TOPIC_MARKERS = [
     # to build it from, which is a better answer than nothing at all. Nothing
     # here is a figure or a claim, so a literal paste would be visibly wrong
     # rather than quietly false.
+    ("citizenship-country", (
+        "country of citizenship", "countries of citizenship",
+        "your nationality", "what is your nationality",
+        "citizen of which country", "which country are you a citizen",
+        "country of nationality",
+    )),
     ("travel-willingness", (
         "willing to travel", "able to travel", "comfortable travelling",
         "comfortable traveling", "commit to travel", "travel requirement",
@@ -640,6 +646,37 @@ BOUND_BY_AGREEMENT = re.compile(
     r"|by (signing|typing)[^.]{0,80}(agree|consent|bound)", re.I)
 
 
+# "US person" is a term of art, and it is not the same as being allowed to
+# work here. Under the EAR and ITAR it means a citizen, a lawful permanent
+# resident, or an asylee or refugee, and a deemed export licence turns on it.
+# A substring list is the wrong tool: "us person" appears inside ordinary
+# prose, and a false No here is a false statement on a federal export-control
+# declaration rather than a near miss. So the phrase is matched with word
+# boundaries and nothing looser.
+US_PERSON_QUESTION = re.compile(
+    r"\bu\.?\s?s\.?\s+person\b|\bunited states person\b|\bus persons?\b"
+    r"|deemed export|\bitar\b|\bear\b(?=[^a-z])|export[- ]control", re.I)
+# Asking whether a LICENCE is needed is a different question from asking what
+# he is, and it depends on the technology the role touches. He has answered
+# the first and not the second, so the second still goes to him.
+LICENCE_REQUIREMENT = re.compile(
+    r"require (a |an )?(deemed export )?licen[cs]e|licen[cs]e (be )?required"
+    r"|need (a |an )?(deemed export )?licen[cs]e", re.I)
+
+
+def us_person(answers, question):
+    """The standing answer to "are you a US person", never to "do you need a licence"."""
+    text = (question or "")
+    if not US_PERSON_QUESTION.search(text):
+        return None
+    if LICENCE_REQUIREMENT.search(text):
+        return None
+    for entry in answers.values():
+        if "us-person-status" in (entry.get("tags") or []):
+            return {"match": "topic", "topic": "us-person-status", **entry}
+    return None
+
+
 def acknowledgement(answers, question):
     """A standing yes to an acknowledgement, never to an authorisation."""
     text = (question or "")
@@ -668,6 +705,9 @@ def topic_answer(answers, question):
     pay = expected_pay(answers, question)
     if pay:
         return pay
+    person = us_person(answers, question)
+    if person:
+        return person
     text = (question or "").lower()
     for topic, markers in TOPIC_MARKERS:
         if not any(m in text for m in markers):
