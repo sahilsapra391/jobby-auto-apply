@@ -2,6 +2,12 @@
   "tenants": [
     {
       "ats": "ashby",
+      "name": "Airwallex",
+      "region": "SG",
+      "token": "airwallex"
+    },
+    {
+      "ats": "ashby",
       "jobsWhenVerified": 1,
       "name": "Arthur",
       "region": "unknown",
@@ -27,6 +33,12 @@
       "name": "Bureau",
       "region": "unknown",
       "token": "bureau"
+    },
+    {
+      "ats": "ashby",
+      "name": "Camunda",
+      "region": "AE",
+      "token": "camunda"
     },
     {
       "ats": "ashby",
@@ -61,6 +73,12 @@
       "name": "Clickup",
       "region": "unknown",
       "token": "clickup"
+    },
+    {
+      "ats": "ashby",
+      "name": "Coinhako",
+      "region": "SG",
+      "token": "coinhako"
     },
     {
       "ats": "ashby",
@@ -105,6 +123,12 @@
     },
     {
       "ats": "ashby",
+      "name": "eMagine Solutions",
+      "region": "AE",
+      "token": "emagine"
+    },
+    {
+      "ats": "ashby",
       "jobsWhenVerified": 4,
       "name": "Evolve",
       "region": "unknown",
@@ -123,6 +147,12 @@
       "name": "Foundation",
       "region": "unknown",
       "token": "foundation"
+    },
+    {
+      "ats": "ashby",
+      "name": "GRVT",
+      "region": "SG",
+      "token": "grvt"
     },
     {
       "ats": "ashby",
@@ -158,6 +188,12 @@
       "name": "Lightspeed",
       "region": "unknown",
       "token": "lightspeed"
+    },
+    {
+      "ats": "ashby",
+      "name": "Lumilens",
+      "region": "SG",
+      "token": "lumilens"
     },
     {
       "ats": "ashby",
@@ -260,6 +296,12 @@
     },
     {
       "ats": "ashby",
+      "name": "sentient foundation",
+      "region": "SG",
+      "token": "sentient-foundation"
+    },
+    {
+      "ats": "ashby",
       "jobsWhenVerified": 7,
       "name": "Sisense",
       "region": "unknown",
@@ -277,6 +319,18 @@
       "name": "Supabase",
       "region": "unknown",
       "token": "supabase"
+    },
+    {
+      "ats": "ashby",
+      "name": "Symbiotic",
+      "region": "AE",
+      "token": "symbiotic"
+    },
+    {
+      "ats": "ashby",
+      "name": "Teamworks",
+      "region": "AE",
+      "token": "teamworks"
     },
     {
       "ats": "ashby",
@@ -352,6 +406,12 @@
       "name": "Zip",
       "region": "unknown",
       "token": "zip"
+    },
+    {
+      "ats": "breezy",
+      "name": "Bitdeer",
+      "region": "SG",
+      "token": "bitdeer"
     },
     {
       "ats": "breezy",
@@ -485,10 +545,28 @@
     },
     {
       "ats": "greenhouse",
+      "name": "ASM",
+      "region": "SG",
+      "token": "asm"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "AvePoint",
+      "region": "SG",
+      "token": "avepoint"
+    },
+    {
+      "ats": "greenhouse",
       "jobsWhenVerified": 58,
       "name": "Beyondtrust",
       "region": "unknown",
       "token": "beyondtrust"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "Binance",
+      "region": "AE",
+      "token": "binance"
     },
     {
       "ats": "greenhouse",
@@ -502,6 +580,12 @@
       "name": "Boston",
       "region": "unknown",
       "token": "boston"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "Bybit",
+      "region": "AE",
+      "token": "bybit"
     },
     {
       "ats": "greenhouse",
@@ -590,6 +674,12 @@
       "name": "Cornerstone",
       "region": "unknown",
       "token": "cornerstone"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "Coupang",
+      "region": "SG",
+      "token": "coupang"
     },
     {
       "ats": "greenhouse",
@@ -738,10 +828,22 @@
     },
     {
       "ats": "greenhouse",
+      "name": "Moloco",
+      "region": "SG",
+      "token": "moloco"
+    },
+    {
+      "ats": "greenhouse",
       "jobsWhenVerified": 405,
       "name": "Mongodb",
       "region": "unknown",
       "token": "mongodb"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "Motional",
+      "region": "SG",
+      "token": "motional"
     },
     {
       "ats": "greenhouse",
@@ -822,6 +924,12 @@
     },
     {
       "ats": "greenhouse",
+      "name": "Ping Identity",
+      "region": "SG",
+      "token": "pingidentity"
+    },
+    {
+      "ats": "greenhouse",
       "name": "Remote",
       "region": "unknown",
       "token": "remote"
@@ -852,6 +960,12 @@
       "name": "Seed",
       "region": "unknown",
       "token": "seed"
+    },
+    {
+      "ats": "greenhouse",
+      "name": "Selini Capital",
+      "region": "SG",
+      "token": "selinicapital"
     },
     {
       "ats": "greenhouse",
@@ -952,6 +1066,12 @@
     },
     {
       "ats": "greenhouse",
+      "name": "Veeamsoftware",
+      "region": "AE",
+      "token": "veeamsoftware"
+    },
+    {
+      "ats": "greenhouse",
       "jobsWhenVerified": 15,
       "name": "Veterans",
       "region": "unknown",
@@ -1026,10 +1146,22 @@
     },
     {
       "ats": "lever",
+      "name": "Binance",
+      "region": "AE",
+      "token": "binance"
+    },
+    {
+      "ats": "lever",
       "jobsWhenVerified": 42,
       "name": "Capital",
       "region": "unknown",
       "token": "capital"
+    },
+    {
+      "ats": "lever",
+      "name": "Certik",
+      "region": "SG",
+      "token": "certik"
     },
     {
       "ats": "lever",
@@ -1421,6 +1553,12 @@
     },
     {
       "ats": "pinpoint",
+      "name": "Tabby",
+      "region": "AE",
+      "token": "tabby"
+    },
+    {
+      "ats": "pinpoint",
       "jobsWhenVerified": 3,
       "name": "Tealium",
       "region": "unknown",
@@ -1742,6 +1880,12 @@
     },
     {
       "ats": "smartrecruiters",
+      "name": "Delivery Hero",
+      "region": "SG",
+      "token": "deliveryhero"
+    },
+    {
+      "ats": "smartrecruiters",
       "jobsWhenVerified": 1,
       "name": "Edsstrategy",
       "region": "unknown",
@@ -1752,6 +1896,12 @@
       "name": "Entain",
       "region": "IN",
       "token": "entain"
+    },
+    {
+      "ats": "smartrecruiters",
+      "name": "Expeditors",
+      "region": "SG",
+      "token": "expeditors"
     },
     {
       "ats": "smartrecruiters",
@@ -1853,6 +2003,12 @@
     },
     {
       "ats": "smartrecruiters",
+      "name": "NMC Healthcare",
+      "region": "AE",
+      "token": "nmchealthcare"
+    },
+    {
+      "ats": "smartrecruiters",
       "jobsWhenVerified": 69,
       "name": "Northwesternmutual",
       "region": "unknown",
@@ -1885,6 +2041,12 @@
       "name": "Rewardsnetwork",
       "region": "unknown",
       "token": "rewardsnetwork"
+    },
+    {
+      "ats": "smartrecruiters",
+      "name": "Roland Berger",
+      "region": "SG",
+      "token": "rolandberger"
     },
     {
       "ats": "smartrecruiters",
@@ -2053,6 +2215,12 @@
     },
     {
       "ats": "teamtailor",
+      "name": "NAFFCO",
+      "region": "AE",
+      "token": "naffco"
+    },
+    {
+      "ats": "teamtailor",
       "name": "Oatly",
       "region": "SE",
       "token": "oatly"
@@ -2076,6 +2244,12 @@
       "name": "Platypus",
       "region": "unknown",
       "token": "platypus"
+    },
+    {
+      "ats": "teamtailor",
+      "name": "Property Finder",
+      "region": "AE",
+      "token": "propertyfinder"
     },
     {
       "ats": "teamtailor",
