@@ -417,19 +417,41 @@ class ApplicationTools:
         same file for the cover letter.
         """
         _closed(args, set())
-        path = Path(store.root_dir(self.context.root)) / "story-facts.txt"
-        if not path.is_file():
-            raise ToolExecutionError("no story facts are recorded for this user")
-        if path.stat().st_size > MAX_STORY_FACT_BYTES:
-            raise ToolExecutionError("the story facts file is too large to serve")
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
-        if not text:
+        root = Path(store.root_dir(self.context.root))
+        text = ""
+        path = root / "story-facts.txt"
+        if path.is_file() and path.stat().st_size <= MAX_STORY_FACT_BYTES:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+
+        # The answers already given on other applications, in the user's own
+        # words. The file and the store overlap but neither contains the other:
+        # measured on 2026-08-25 the store held two competency stories the file
+        # did not, and six direct answers ("what motivates you", "why are you
+        # looking") that exist nowhere else.
+        answers = store.read_json(Path(store.paths(root)["answers"]), {})
+        previous = []
+        for key in sorted(answers):
+            entry = answers[key]
+            if not isinstance(entry, dict):
+                continue
+            if "free-text" not in (entry.get("tags") or []):
+                continue
+            value = str(entry.get("value") or "").strip()
+            if not value:
+                continue
+            previous.append({"question": str(entry.get("question") or key),
+                             "answer": value})
+        if not text and not previous:
             raise ToolExecutionError("no story facts are recorded for this user")
         return {
             "storyFacts": text,
-            "note": ("Confirmed facts, in the user's own words. Use them for free-text "
-                     "answers together with the posting. Do not invent a number, a date, "
-                     "an employer or an outcome that is not here or in the resume."),
+            "previousAnswers": previous,
+            "note": ("Confirmed facts and the answers already given on other applications, "
+                     "in the user's own words. Source material, not paste-ready text: write "
+                     "the answer out in the first person to the length the field asks for, "
+                     "and never paste a prefix addressed to you such as 'HIS OWN WORDS' or "
+                     "'Competencies:'. Invent no number, date, employer or outcome that is "
+                     "not here or in the resume."),
         }
 
     def _experience_plan(self, args: dict[str, Any]) -> dict[str, Any]:

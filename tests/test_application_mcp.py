@@ -64,6 +64,23 @@ class ApplicationMcpTests(unittest.TestCase):
         for forbidden in ("bash", "shell", "read_file", "write_file", "command"):
             self.assertNotIn(forbidden, rendered)
 
+    def test_story_facts_also_carries_the_answers_given_on_other_applications(self):
+        # The file and the store overlap and neither contains the other, so an
+        # essay composed from the file alone loses six answers written in the
+        # user's own words that exist nowhere else.
+        (self.store_root / "story-facts.txt").write_text("## Story: a migration\n")
+        (self.store_root / "answers.json").write_text(json.dumps({
+            "story-motivation": {"question": "What motivates you?",
+                                 "value": "The impact of the work.",
+                                 "tags": ["free-text", "story-motivation"]},
+            "notice": {"question": "Notice period", "value": "15 days", "tags": []},
+        }))
+        out = self.tools.call("story_facts", {})
+        questions = [item["question"] for item in out["previousAnswers"]]
+        self.assertEqual(questions, ["What motivates you?"])
+        self.assertNotIn("Notice period", questions, "only the free-text bank travels")
+        self.assertIn("never paste a prefix", out["note"])
+
     def test_story_facts_serves_the_bank_the_prompt_already_names(self):
         # The prompt has always listed story facts as a source for a free-text
         # answer, and the brief carried the PATH to a file the agent cannot
@@ -72,7 +89,7 @@ class ApplicationMcpTests(unittest.TestCase):
             "## Story: a migration\nMoved 75 customers with zero downtime.\n")
         out = self.tools.call("story_facts", {})
         self.assertIn("zero downtime", out["storyFacts"])
-        self.assertIn("Do not invent", out["note"])
+        self.assertIn("Invent no number", out["note"])
 
     def test_story_facts_takes_no_arguments_and_reads_no_other_file(self):
         (self.store_root / "story-facts.txt").write_text("## Story: one\n")
