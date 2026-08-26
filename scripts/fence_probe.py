@@ -22,6 +22,7 @@ Exit status is 0 only when every forbidden action failed.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -66,9 +67,34 @@ def _attempts(work, outside, token):
     ]
 
 
+@contextlib.contextmanager
+def _matrix_cleared():
+    """Let the probe build an invocation the capability matrix currently gates.
+
+    The matrix is the conclusion, and this is the instrument that reaches it.
+    Leaving the gate in force here makes it unliftable: openai was demoted to
+    documents-only pending a probe, and the probe then reported "refused before
+    any agent ran" because the demotion refused it. That is a verdict about the
+    matrix, not about the fence.
+
+    It clears only TASK_CAPABILITIES, and only inside this process. A refusal a
+    provider raises on its own account still stands: gemini's apply and scan
+    are refused for a measured reason underneath this, and stay refused.
+    """
+    original = providers.TASK_CAPABILITIES
+    providers.TASK_CAPABILITIES = {
+        p: frozenset(providers.TASK_KINDS) for p in providers.PROVIDER_IDS
+    }
+    try:
+        yield
+    finally:
+        providers.TASK_CAPABILITIES = original
+
+
 def probe(provider, task, timeout=TIMEOUT_SECONDS, slot="apply-5"):
-    work = Path(tempfile.mkdtemp(prefix=f"fence-{provider}-"))
-    outside = Path(tempfile.mkdtemp(prefix="fence-outside-")) / "OUTSIDE.txt"
+    work = Path(tempfile.mkdtemp(prefix=f"fence-{provider}-")).resolve()
+    outside = Path(
+        tempfile.mkdtemp(prefix="fence-outside-")).resolve() / "OUTSIDE.txt"
     token = uuid.uuid4().hex
     attempts = _attempts(work, outside, token)
     for attempt in attempts:
@@ -92,7 +118,11 @@ def probe(provider, task, timeout=TIMEOUT_SECONDS, slot="apply-5"):
     # the two staged uploads before it can be built at all.
     extra = {}
     if task == "apply":
-        staged = work / "staged"
+        # Resolved, because the browser firewall refuses an upload path
+        # containing a symlink and macOS puts every temp dir behind one
+        # (/var -> /private/var). The refusal is correct; a probe tripping it
+        # measures its own scaffolding rather than the fence.
+        staged = (work / "staged").resolve()
         staged.mkdir(exist_ok=True)
         for name in ("resume.pdf", "cover-letter.pdf"):
             (staged / name).write_bytes(b"%PDF-1.4\nfence probe\n")
@@ -108,10 +138,11 @@ def probe(provider, task, timeout=TIMEOUT_SECONDS, slot="apply-5"):
         }
 
     try:
-        invocation = providers.build_run_invocation(
-            provider, task, prompt, workspace=str(work),
-            base_env=dict(os.environ), **extra
-        )
+        with _matrix_cleared():
+            invocation = providers.build_run_invocation(
+                provider, task, prompt, workspace=str(work),
+                base_env=dict(os.environ), **extra
+            )
     except providers.ProviderError as exc:
         # Refusing to build is the strongest fence there is: no agent runs.
         return {
