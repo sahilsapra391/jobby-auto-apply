@@ -447,6 +447,14 @@ TOPIC_MARKERS = [
     # to build it from, which is a better answer than nothing at all. Nothing
     # here is a figure or a claim, so a literal paste would be visibly wrong
     # rather than quietly false.
+    ("travel-willingness", (
+        "willing to travel", "able to travel", "comfortable travelling",
+        "comfortable traveling", "commit to travel", "travel requirement",
+        "travel requirements", "% travel", "percent travel", "travel up to",
+        "overnight travel", "travel domestically", "travel internationally",
+        "amount of travel", "ability to travel", "open to travel",
+        "travel as needed", "travel for work",
+    )),
     ("story-why-this-role", (
         "why do you think you will be successful",
         "why will you be successful", "why are you a good fit",
@@ -602,11 +610,58 @@ def expected_pay(answers, question):
     return None
 
 
+# Acknowledging something and authorising something are not the same act, and
+# the difference is the whole reason this is a function rather than a phrase
+# list. "I acknowledge I have read the questionnaire" is the user's standing
+# yes. "I acknowledge and authorize the Company to obtain a consumer report"
+# uses the same first word and grants a third party the right to pull his
+# records, which has always been his to give and stays his.
+ACKNOWLEDGEMENT_SHAPE = re.compile(
+    r"acknowledge|acknowledgment|acknowledgement"
+    r"|i have read and (understand|agree)|i confirm (that )?i have read"
+    r"|i understand (and|that)"
+    r"|by (typing|signing) (my|your) name", re.I)
+# Every one of these stays with the user. An authorisation, an assignment and
+# a restrictive covenant are things he gives away, not things he confirms.
+NOT_A_BARE_ACKNOWLEDGEMENT = re.compile(
+    r"authoriz\w*|authoris\w*|consumer report|credit report|investigative report"
+    r"|fair credit reporting|\bfcra\b|background (check|investigation|screening)"
+    r"|drug (test|screen)|assignment of invention|intellectual property"
+    r"|proprietary information|confidentiality agreement|non[- ]disclosure"
+    r"|non[- ]compete|non[- ]solicitation|restrictive covenant"
+    r"|invention assignment|assignment agreement|arbitration agreement"
+    r"|power of attorney|indemnif|waive (my|any) right|class[- ]action", re.I)
+# Agreeing to be bound by something is the user's act, and no factual answer
+# in this store is an answer to it. "Do you have a non-compete?" is a question
+# about the world and resolves to No; "I acknowledge and agree to the
+# non-compete above" is a signature, and answering it No was one marker away.
+BOUND_BY_AGREEMENT = re.compile(
+    r"i acknowledge and agree|i agree to|i consent to|agree to be bound"
+    r"|by (signing|typing)[^.]{0,80}(agree|consent|bound)", re.I)
+
+
+def acknowledgement(answers, question):
+    """A standing yes to an acknowledgement, never to an authorisation."""
+    text = (question or "")
+    if not ACKNOWLEDGEMENT_SHAPE.search(text):
+        return None
+    if NOT_A_BARE_ACKNOWLEDGEMENT.search(text):
+        return None
+    for entry in answers.values():
+        if "acknowledgement-standing" in (entry.get("tags") or []):
+            return {"match": "topic", "topic": "acknowledgement-standing", **entry}
+    return None
+
+
 def topic_answer(answers, question):
     """A standing answer recognised by a distinctive phrase, or None."""
     rated = skill_rating(question)
     if rated:
         return rated
+    if (BOUND_BY_AGREEMENT.search(question or "")
+            and NOT_A_BARE_ACKNOWLEDGEMENT.search(question or "")):
+        # Signing away a right. Never answered from a stored fact.
+        return None
     years = years_experience(question)
     if years:
         return years
@@ -651,6 +706,9 @@ def find_answer(answers, question):
     topical = topic_answer(answers, question)
     if topical is not None:
         return topical
+    ack = acknowledgement(answers, question)
+    if ack is not None:
+        return ack
 
     # Candidates carry the stored question, never the value; to use one,
     # confirm it means the same thing, then look it up by its own question.

@@ -103,6 +103,24 @@
       "why": "Five phrasings observed. Cheap to answer, blocks applications when missing."
     },
     {
+      "id": "travel-willingness",
+      "tier": 2,
+      "ask": "How much work travel will you accept?",
+      "type": "choice",
+      "options": [
+        "any amount",
+        "up to 50%",
+        "up to 25%",
+        "none"
+      ],
+      "match": [
+        [
+          "travel"
+        ]
+      ],
+      "why": "Asked by percentage on field and enterprise roles, and answerable once."
+    },
+    {
       "id": "work-setup",
       "tier": 1,
       "ask": "Which work setups will you take?",
