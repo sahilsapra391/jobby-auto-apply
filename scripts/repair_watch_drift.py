@@ -41,6 +41,37 @@ import runlock  # noqa: E402
 from sync_board import STATUS_STATE  # noqa: E402
 
 
+# What a backup is for: the store's own data. Chrome profiles are runtime
+# scratch, they are gigabytes, and `copytree` dies on their live sockets and
+# dangling lock symlinks -- which is how the first attempt failed. It failed
+# safely, before any write, because the backup runs first; but a backup step
+# that cannot complete is a repair that can never run.
+BACKUP_ITEMS = ("jobs.json", "passed.json", "companies.json", "roles.json",
+                "meta.json", "answers.json", "profile.json", "history.json",
+                "sessions")
+SKIP_DIRS = ("browser-profile",)
+
+
+def back_up(root, backup):
+    """Copy the store's data files. Returns what was copied."""
+    backup.mkdir(parents=True, exist_ok=False)
+    copied = []
+    for name in BACKUP_ITEMS:
+        source = root / name
+        if not source.exists():
+            continue
+        if source.is_dir():
+            shutil.copytree(source, backup / name,
+                            ignore=shutil.ignore_patterns(*SKIP_DIRS),
+                            ignore_dangling_symlinks=True)
+        else:
+            shutil.copy2(source, backup / name)
+        copied.append(name)
+    if "jobs.json" not in copied:
+        raise SystemExit("repair: refusing to run, the pool was not backed up")
+    return copied
+
+
 def store(*args):
     out = subprocess.run([sys.executable, str(REPO / "scripts" / "store.py"), *args],
                          capture_output=True, text=True)
@@ -128,8 +159,8 @@ def main():
 
     if args.apply:
         backup = root.parent / f"{root.name}-backup-{jobs_store.now_stamp().replace(':', '')}"
-        shutil.copytree(root, backup)
         diff["backup"] = str(backup)
+        diff["backedUp"] = back_up(root, backup)
         with runlock.held(root, jobs_store.POOL_LOCK, note="repair_watch_drift"):
             live = jobs_store.load_jobs(root)
             for change in changes:
