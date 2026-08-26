@@ -263,6 +263,13 @@ SCRIPT = r"""
       root.classList.add('jb-vt');
       var transition = document.startViewTransition(run);
       transition.finished.then(clear, clear);
+      // `ready` rejects on its own when a transition is superseded or the
+      // document is hidden, and nothing was listening: two nav clicks in quick
+      // succession printed "Transition was aborted because of invalid state"
+      // as an unhandled rejection. Harmless to the switch, which `finished`
+      // already settles, but a console error on a healthy board is a console
+      // error nobody reads the next time.
+      if (transition.ready && transition.ready.catch) transition.ready.catch(function () {});
       function clear() { root.classList.remove('jb-vt'); }
     }
     document.querySelectorAll('[data-primary-view]').forEach(function (link) {

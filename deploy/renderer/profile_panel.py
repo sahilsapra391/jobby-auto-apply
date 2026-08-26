@@ -642,7 +642,10 @@ SCRIPT = r"""
             : 'No answer yet.';
         } else if (entry.sensitive && !revealed) {
           body.className = 'bank-a masked';
-          body.textContent = '•'.repeat(Math.min(24, String(entry.value).length));
+          // Fixed width, not the answer's. A mask that is as long as what it
+          // hides is not a mask: measured on the real store, "Are you a
+          // veteran?" came back as two dots, which is "No" written in dots.
+          body.textContent = '••••••••';
         } else {
           body.className = 'bank-a';
           body.textContent = entry.value;
@@ -804,6 +807,17 @@ SCRIPT = r"""
     // The waiting ones lead visually even though policies lead in order,
     // because an open question is the only thing here that is costing anything.
     function groupsFor(entries) {
+      // Under a filter the grouping is the filter. Splitting a Sensitive
+      // filter into "Standing policies" and "Everything else" labels 22
+      // sensitive answers as everything else, which is worse than no heading.
+      if (filter !== 'all') {
+        var titles = { open: 'Needs your answer', policy: 'Standing policies',
+                       sensitive: 'Sensitive answers' };
+        return [{ key: filter, title: titles[filter] || 'Matching', rows: entries,
+                  note: filter === 'sensitive'
+                    ? 'Hidden until you ask. Revealing one shows it on this screen only.'
+                    : '' }];
+      }
       var open = [], policy = [], rest = [];
       entries.forEach(function (entry) {
         if (isOpen(entry)) open.push(entry);

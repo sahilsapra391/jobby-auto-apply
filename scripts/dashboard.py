@@ -184,6 +184,17 @@ def _memory_bank(state):
             continue
         record = dict(entry)
         record["key"] = record.get("key") or key
+        # `answer` is where this field started and four real entries still use
+        # it. Normalise once, here, on the machine that owns the store.
+        #
+        # It was normalised in the API route instead, and that put "is this
+        # answered" in three places in two languages: store.answered(), the
+        # route, and the browser. Measured on 2026-08-25 against the real
+        # store, the browser then counted four answered entries as open and
+        # badged the nav with a 4 that nothing could ever clear. One
+        # normalisation, before anything reads it.
+        if not record.get("value") and record.get("answer"):
+            record["value"] = record.pop("answer")
         entries.append(store.classify(record))
     entries.sort(key=lambda e: str(e.get("question") or "").lower())
     return {

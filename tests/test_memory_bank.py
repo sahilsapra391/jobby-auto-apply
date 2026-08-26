@@ -494,6 +494,25 @@ class PublishedShapeTests(BankTest):
         self.assertEqual(published["memoryBank"]["userId"], dashboard.USER_ID)
         self.assertEqual(len(published["memoryBank"]["answers"]), 3)
 
+    def test_the_legacy_answer_field_is_normalised_before_anything_reads_it(self):
+        """One normalisation, on the machine that owns the store.
+
+        Doing it in the API route instead put "is this answered" in three
+        places in two languages, and the browser's copy disagreed: measured
+        against the real store, it counted four answered entries as open and
+        badged the nav with a number nothing could clear.
+        """
+        state = self.state()
+        state["answers"]["rate-sql"] = {"key": "rate-sql",
+                                        "question": "Rate yourself on SQL",
+                                        "answer": "9", "state": "confirmed"}
+        published = dashboard.publishable_state(state)
+        entry = next(a for a in published["memoryBank"]["answers"]
+                     if a["key"] == "rate-sql")
+        self.assertEqual(entry["value"], "9")
+        self.assertNotIn("answer", entry)
+        self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 1)
+
     def test_the_counts_ride_in_meta_and_the_values_do_not(self):
         published = dashboard.publishable_state(self.state())
         counts = published["meta"]["memoryBank"]
