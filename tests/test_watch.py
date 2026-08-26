@@ -1019,7 +1019,14 @@ class SourcingSchedulerTests(unittest.TestCase):
         stamp = watch.schedule_next_tier1(now)
         when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         delta = (when - now).total_seconds()
-        self.assertGreaterEqual(delta, 3600 - watch.TIER1_JITTER_SECONDS)
+        # One second of slack, for truncation rather than for jitter. The stamp
+        # is formatted to whole seconds, so it discards up to 999ms of `now`,
+        # and a jitter landing on the minimum then measured just under the
+        # bound. Intermittent, roughly one run in a thousand, and an
+        # occasionally red test costs more than the bound's last second is
+        # worth. `test_the_configured_interval_is_respected` below already
+        # carries the same allowance.
+        self.assertGreaterEqual(delta, 3600 - watch.TIER1_JITTER_SECONDS - 1)
         self.assertLessEqual(delta, 3600 + watch.TIER1_JITTER_SECONDS)
 
     def test_the_jitter_actually_varies(self):

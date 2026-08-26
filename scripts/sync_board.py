@@ -48,6 +48,55 @@ def read(args):
         raise SystemExit(f"sync_board: store {' '.join(args)} returned junk")
 
 
+# What a session's status means about the posting, in the pool's vocabulary.
+# The same map ingest already uses to decide whether an incoming posting is
+# spoken for, kept identical on purpose: two vocabularies for one fact is how
+# the halves drift apart in the first place.
+STATUS_STATE = {"inflight": "applied", "review": "watched", "active": "watched",
+                "watch": "watched", "dropped": "passed"}
+
+
+def reconcile_pool(sessions, latest):
+    """Move pool records to match the decisions. Returns what changed.
+
+    A submitted application outranks its session status: `completed` is the
+    last thing that happened to it whatever lane it was sitting in.
+
+    `applied` and `passed` are terminal in the pool's own state machine, so a
+    record already in one is left alone and an illegal move is skipped rather
+    than forced. Nothing here creates a job record; a decision about a posting
+    the corpus has never seen is the separate, larger problem.
+    """
+    want = {}
+    for session in sessions:
+        state = STATUS_STATE.get(session.get("status"))
+        if state:
+            want[session["applicationId"]] = state
+    for aid, event in latest.items():
+        if event.get("event") == "completed":
+            want[aid] = "applied"
+
+    changed = []
+    try:
+        root = jobs_store.root_dir()
+        with jobs_store.edit(root, note="sync_board reconcile") as (jobs, edit_state):
+            for aid, state in sorted(want.items()):
+                job = jobs.get(aid)
+                if job is None or job.get("state") == state:
+                    continue
+                if state not in jobs_store.TRANSITIONS.get(job.get("state"), set()):
+                    continue
+                changed.append({"id": aid, "from": job.get("state"), "to": state})
+                jobs[aid] = jobs_store.transition(job, state)
+            if not changed:
+                edit_state["write"] = False
+    except Exception as exc:                      # noqa: BLE001 - reported, not fatal
+        # Publishing the board matters more than reconciling it, and a busy
+        # lock is the ordinary case rather than a fault.
+        return {"changed": [], "why": f"{type(exc).__name__}: {exc}"[:160]}
+    return {"changed": changed}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Sync the board with submitted applications.")
     ap.add_argument("--no-publish", action="store_true", help="tidy the store, do not deploy")
@@ -81,6 +130,26 @@ def main():
         # nothing is the safe answer; retiring everything is not.
         closed = {}
 
+    # Flow the user's decisions into the pool, before anything is retired.
+    #
+    # Sessions are authoritative for lane membership: they are what the person
+    # did, and the pool is a corpus whose `state` is derived from them.
+    # Reconciliation therefore runs one way only, decisions to pool, and never
+    # back. That direction is the whole ruling; reversed, a stale pool would
+    # overwrite a real decision.
+    #
+    # This exists because nothing did it. `finish.py` writes the `completed`
+    # event and never touches the pool, and the loop below then deletes the
+    # session, so a submitted role's pool record stayed `watched` for good.
+    # Every submission added one, which is why fourteen of them had piled up.
+    # Doing it here rather than in finish.py makes it continuous: any drift
+    # from any cause is corrected on the next publish, rather than only the
+    # drift created from now on.
+    #
+    # Before the retirement loop, deliberately: after it, the session that
+    # carries the decision is already gone.
+    reconciled = reconcile_pool(sessions, latest)
+
     retired, dropped_closed = [], []
     for s in sessions:
         aid = s["applicationId"]
@@ -102,10 +171,13 @@ def main():
             if not drop.drop(aid, reason).get("error"):
                 dropped_closed.append(aid)
 
-    result = {"retiredFromWatching": retired,
+    result = {"reconciledToPool": reconciled.get("changed", []),
+              "retiredFromWatching": retired,
               "closedAndArchived": dropped_closed,
               "watchingNow": len(sessions) - len(retired) - len(dropped_closed),
               "submitted": len(submitted)}
+    if reconciled.get("why"):
+        result["reconcileSkipped"] = reconciled["why"]
 
     if not args.no_publish:
         pub = subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
