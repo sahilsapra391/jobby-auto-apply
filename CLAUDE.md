@@ -798,6 +798,49 @@ any one change. Inspect diffs by path. Do not delete, rewrite, stage, or fold
 those files into your work. In particular, leave sourcing investigations,
 captured job pages, and schema experiments alone unless the user names them.
 
+## A pull of the production checkout is a deploy
+
+**Announce it before it happens, restart every service immediately after, and
+verify each service's own start time against the reflog. A pull without the
+restart and the verification is a half-deploy, and half-deploys are forbidden.**
+
+Not because they leave the system on old code. Because they leave it running
+**two commits at once**. The three long-lived daemons hold whatever SHA they
+started on in resident memory. Every subprocess they spawn from that moment on,
+every publish and ingest and sync, loads the new SHA off disk.
+
+That split is why the mistake is easy to make and hard to see. A change that
+lives in a spawned path really is delivered by the pull alone, so whoever pulled
+can test their own change, watch it work, and report it live in production
+without having said anything untrue about it. A change resident in a daemon is
+not delivered at all. Both halves are true at once and nobody chose the
+configuration.
+
+It stays benign while the two commits are additive. It stops being benign the
+first time the resident half and the spawned half share a contract, and that day
+will not announce itself.
+
+Measured on 2026-08-27: the checkout moved to `260048d` at 17:16:04 while all
+three services still carried 16:07 start times from the previous deploy to
+`18e70c3`. Found by comparing start times against the reflog, which is the only
+way any instance of this has ever been found. It is the fifth of this shape in a
+week and the first caught while it was still live.
+
+So: one owner per deploy, announced before, and these four in one action rather
+than one of them.
+
+```
+1. announce it, and say which services are going down
+2. pull the production checkout, staying on main
+3. restart all three services, dependencies before the orchestrator
+4. verify each service's start time postdates the reflog entry for the new SHA
+```
+
+**A held deploy that is announced is completely fine.** If there is a reason to
+stop halfway, a run about to start or a collision you can see, say so where the
+other sessions will read it. What is forbidden is the silent half. The rule is
+not about the pause, it is about nobody knowing the system is in two states.
+
 ## A change is done when the running system consumes it
 
 **A merged file, a written pack, or a deployed bundle that nothing reads is not
