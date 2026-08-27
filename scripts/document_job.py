@@ -597,6 +597,20 @@ def _install(application_id, state, payload, root=None):
     except (Exception, SystemExit):
         return _record_failure(application_id, state, "result_invalid", root)
 
+    # Straight to R2, not at the next publish. Between rendering and publishing
+    # the only copy is the local one, and that window is the thing this is meant
+    # to close. Never fatal: the documents are installed and valid, and a failure
+    # here means the next publish or `r2_sync.py --apply` picks them up. Losing
+    # a verified install over a network blip would be the worse trade.
+    try:
+        import r2
+        import r2_sync
+        if r2.configured():
+            r2_sync.push_application(application_id, root)
+    except Exception as exc:  # noqa: BLE001 - storage must not fail an install
+        print(json.dumps({"event": "r2_push_failed", "applicationId": application_id,
+                          "error": type(exc).__name__}), file=sys.stderr)
+
     updated = _clear_errors(_changed(
         state,
         state="ready",

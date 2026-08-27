@@ -404,6 +404,30 @@ R2 refuses a body that disagrees with its signed `x-amz-content-sha256`, so
 corrupted bytes cannot be uploaded through this client at all. Verified against
 the live bucket on 2026-08-25.
 
+R2 is the system of record for application artifacts, and the local
+`applications/` tree is a working set rather than storage. Documents go up when
+they are installed and again when the application finishes, not at the next
+publish, because the window between rendering and publishing is the one where
+the only copy is local.
+
+Local files cannot be abolished, and it is worth knowing why before someone
+tries. The form agent uploads a PDF to the employer by path, and
+`browser_mcp_proxy` pins that path by device, inode, size and sha256. A file
+handed to a file chooser has to exist on a filesystem, so R2 cannot be the
+source at submit time. What can be true, and now is, is that nothing is
+*retained* locally: `r2_sync.py --evict` removes a local artifact only when the
+application has reached a terminal outcome, R2 verifiably holds the same bytes
+(re-downloaded and hashed, not trusted from the manifest), and the board can
+still resolve the name. `--get NAME DEST` brings one back for a retry.
+
+**The publish index reads the manifest, not the tree, and that is what makes
+eviction safe.** It used to be derived from the files the collector walks, so
+deleting a local file after uploading it would have dropped its entry on the
+next publish and turned a live board link into a 404 with the object sitting
+safely in R2. `doc_index_from_manifest` survives the file being removed. Do not
+put the tree-derived version back, and do not evict from a checkout whose
+publish still uses it.
+
 The KV document copies under `jobby:doc:*` are still there and still served as
 the fallback. Retiring them is its own commit after a week of clean serving,
 and it re-does the KV write-budget math.
