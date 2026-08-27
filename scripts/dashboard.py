@@ -30,7 +30,8 @@ import clock  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
 import premium_ui  # noqa: E402
-import settings_panel  # noqa: E402
+import settings_panel
+import state_slim  # noqa: E402
 
 
 def root_dir(override=None):
@@ -148,7 +149,11 @@ def publishable_state(state):
             if isinstance(record, dict)
         },
         "meta": meta,
-        "jobs": jobs,
+        # Slimmed, not whole. The records keep every field the deployed
+        # renderer reads, so filter and scoring stay identical, and lose the
+        # ones nothing draws. That was 20.66 MB of jobs against a 20 MB
+        # ceiling, and the ceiling won for 22 hours. See scripts/state_slim.py.
+        "jobs": state_slim.slim_jobs(jobs),
         "searchConfig": state.get("searchConfig"),
         "providers": settings_panel.public_payload(state.get("providers") or {}),
     }

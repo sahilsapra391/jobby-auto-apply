@@ -26,6 +26,7 @@ FILES = (
     "runlock.py",
     "search_config.py",
     "settings_panel.py",
+    "state_slim.py",
     "store.py",
 )
 BRAND_ASSETS = (
