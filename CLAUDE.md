@@ -114,8 +114,32 @@ into it, one JSON record per application, filed in `applications/<Company>/` nex
 to that application's PDFs. SKILL.md had told the agent to build that manifest
 and then to throw it away, so 102 submitted applications could show the resume
 and cover letter an employer received and nothing about the twenty questions
-underneath them. Nothing before 2026-08-26 has a record and none is
-reconstructed; the Submitted row says "not captured" and means it.
+underneath them.
+
+**No answers survive from before capture existed, and none are invented.** The
+whole store was swept on 2026-08-27: `answers.json` is the only file in it
+holding answers, 156 entries keyed by question slug with no application in them.
+The 41 `questions*.json` files scattered through `applications/` hold question
+text and nothing else. So a record has a `capture` level. `full` is a real run.
+`questions-only` is a salvage: `answer_record.py salvage-questions` turns those
+lists into records whose rows carry the question, `unrecorded: true`, and no
+answer, no source and no read-back state, because all three would be invented.
+It recovered 16 of 102 submitted applications, 224 questions.
+
+The one thing that must never be built here is a join against `answers.json` to
+fill those rows in. It is keyed by question slug with no application, and its
+entries keep being edited — many were last touched months after the applications
+they would be attributed to. Resolving a salvaged question against it produces
+what the store would say today, presented as what the employer received then.
+That is a fabricated audit trail, and a fabricated audit trail is worse than
+none. A test asserts no stored value reaches a salvaged record.
+
+Attribution follows `r2_artifacts`' rule rather than a new one: the id in the
+filename when the store knows it, otherwise the company folder and only when
+that company has exactly one application. 25 files were skipped on those
+grounds and the reasons are printed, because a company with four open roles
+gets four different forms and filing one role's questions under another's is a
+stranger's logo on someone's card.
 
 Three things that file owns rather than trusts the caller for. It withholds
 one-time codes, passwords and national or bank identifiers, keeping the question

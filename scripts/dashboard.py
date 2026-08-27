@@ -1539,7 +1539,12 @@ def build(state, generated):
     // friction with no reader it protected against. The flag stays on the
     // record and is what a second account's board will key its own masking on.
     var value = ansEl('div', 'ans-a');
-    if (field.withheld) {{
+    if (field.unrecorded) {{
+      // A salvaged question. The form asked it; nothing wrote down the answer,
+      // and nothing ever will. Saying so per row matters as much as the banner,
+      // because a blank next to a question reads as a field left empty.
+      value.appendChild(ansEl('span', 'ans-unrecorded', 'Answer not recorded'));
+    }} else if (field.withheld) {{
       value.appendChild(ansEl('span', 'ans-withheld',
         'Not recorded \\u2014 ' + field.withheld));
     }} else {{
@@ -1547,6 +1552,11 @@ def build(state, generated):
     }}
     row.appendChild(value);
 
+    if (field.unrecorded) {{
+      // No source badge and no read-back badge: both would be invented.
+      row.appendChild(ansEl('div', 'ans-meta'));
+      return row;
+    }}
     var meta = ansEl('div', 'ans-meta');
     var source = field.source || 'generated';
     var badge = ansEl('span', 'ans-badge ans-src-' + source,
@@ -1575,6 +1585,15 @@ def build(state, generated):
   function renderAnswers(record) {{
     answersBody.textContent = '';
     var fields = (record && record.fields) || [];
+    if (record && record.capture === 'questions-only') {{
+      // Said before the rows rather than after, because someone scanning a
+      // column of "Answer not recorded" should already know why.
+      var salvage = ansEl('p', 'ans-salvage',
+        'These are the questions this form asked, kept by the session that '
+        + 'filled it. The answers were never written down, and nothing here '
+        + 'guesses at them.');
+      answersBody.appendChild(salvage);
+    }}
     if (!fields.length) {{
       answersBody.appendChild(ansEl('p', 'answers-loading',
         'The record was written but lists no fields.'));

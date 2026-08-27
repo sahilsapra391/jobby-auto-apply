@@ -273,6 +273,11 @@ CSS = r"""
      identifier. Not a covered value, so it gets no affordance suggesting there
      is something behind it. There is nothing behind it. */
   .ans-withheld { font-size:.9rem; color:var(--orange); }
+  /* A question salvaged from before answers were recorded. Quieter than a
+     withheld row, because nothing was refused here; the value is simply gone. */
+  .ans-unrecorded { font-size:.9rem; color:var(--ink-3); font-style:italic; }
+  .ans-salvage { margin:0 0 .9rem; padding:.6rem .8rem; border-radius:10px;
+    background:var(--sunk); color:var(--ink-2); font-size:.84rem; line-height:1.5; }
   .ans-meta { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
   .ans-badge { padding:.16rem .5rem; border-radius:999px; font-size:.68rem;
     font-weight:700; letter-spacing:.03em; text-transform:uppercase; }

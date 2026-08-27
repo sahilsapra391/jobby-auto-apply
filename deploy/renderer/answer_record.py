@@ -81,6 +81,25 @@ def _apps(root=None):
 
 SCHEMA_VERSION = 1
 
+# How much of the form this record actually holds.
+#
+# `full` is a run that recorded questions, values and where each came from.
+# `questions-only` is a salvage: the question list a past session wrote to
+# applications/<Company>/questions*.json before answer capture existed. Those
+# files are real -- they are what the form asked, in its own words -- and the
+# values that went with them were never written down by anybody. So the record
+# carries the questions and says plainly that the answers are gone, which is
+# worth more than "not captured" and is the most that can be said honestly.
+#
+# The one thing this must never become is a join against answers.json. That
+# store is keyed by question slug with no application in it, and its entries go
+# on being edited: many were last touched on 2026-08-26, months after the
+# applications they would be attributed to. Resolving a question against it
+# today produces what the store would answer now, presented as what the form
+# received then. That is a fabricated audit trail, and an audit trail nobody
+# can trust is worse than none.
+CAPTURE_LEVELS = ("full", "questions-only")
+
 # Where a value came from. The four the board draws a badge for, and the only
 # four a caller may name.
 SOURCES = ("stored", "profile", "generated", "provided")
@@ -240,6 +259,39 @@ def sensitive_reason(question, entry=None):
         if pattern.search(text):
             return reason
     return None
+
+
+def normalise_questions(questions):
+    """Validate a bare question list into unrecorded rows.
+
+    Deliberately not `normalise_fields` with the requirements relaxed. That
+    function's strictness is the feature -- a source that has to exist, a
+    read-back state that has to be named -- and loosening it so a salvage can
+    pass would loosen it for every real run too. This is a separate, narrower
+    door with its own shape on the other side.
+    """
+    if not isinstance(questions, list) or not questions:
+        raise RecordError("questions must be a non-empty list")
+    if len(questions) > MAX_FIELDS:
+        raise RecordError(f"questions must hold at most {MAX_FIELDS} entries")
+    rows, seen = [], set()
+    for index, raw in enumerate(questions):
+        question = _text(raw, f"questions[{index}]", MAX_QUESTION_CHARS)
+        marker = question.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        row = {"question": question, "unrecorded": True}
+        # Withholding still applies. These lists predate the guard, and one of
+        # them asking for a verification code must not put the question in a
+        # published record with a reason implying a value was dropped -- but
+        # the flag is what keeps the row honest either way.
+        blocked = withheld_reason(question)
+        row["sensitive"] = bool(blocked or sensitive_reason(question))
+        rows.append(row)
+    return rows, {"fields": len(rows),
+                  "sensitive": sum(1 for r in rows if r["sensitive"]),
+                  "unrecorded": len(rows)}
 
 
 def _text(value, name, maximum, *, required=True):
@@ -421,12 +473,17 @@ def record_path(application_id, company=None, root=None):
     return index(root).get(application_id)
 
 
-def build(application_id, fields, *, root=None, answers=None):
+def build(application_id, fields, *, root=None, answers=None, capture="full"):
+    if capture not in CAPTURE_LEVELS:
+        raise RecordError(f"capture must be one of {', '.join(CAPTURE_LEVELS)}")
     root = Path(root) if root else root_dir()
-    answers = answers if answers is not None else _read_json(root / "answers.json", {})
-    if not isinstance(answers, dict):
-        answers = {}
-    rows, counts = normalise_fields(fields, answers)
+    if capture == "questions-only":
+        rows, counts = normalise_questions(fields)
+    else:
+        answers = answers if answers is not None else _read_json(root / "answers.json", {})
+        if not isinstance(answers, dict):
+            answers = {}
+        rows, counts = normalise_fields(fields, answers)
     company, role, url, ats = _identity(root, application_id)
     if not company:
         raise RecordError(
@@ -437,6 +494,7 @@ def build(application_id, fields, *, root=None, answers=None):
         "applicationId": application_id,
         "company": company,
         "role": role or "",
+        "capture": capture,
         "capturedAt": now_stamp(),
         "counts": counts,
         "fields": rows,
@@ -448,8 +506,8 @@ def build(application_id, fields, *, root=None, answers=None):
     return record
 
 
-def write(application_id, fields, *, root=None):
-    record = build(application_id, fields, root=root)
+def write(application_id, fields, *, root=None, capture="full"):
+    record = build(application_id, fields, root=root, capture=capture)
     payload = json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False)
     encoded = payload.encode("utf-8")
     if len(encoded) > MAX_RECORD_BYTES:
@@ -498,6 +556,16 @@ def public_record(record):
     for raw in (record.get("fields") or [])[:MAX_FIELDS]:
         if not isinstance(raw, dict):
             continue
+        if raw.get("unrecorded"):
+            # No value was ever written for this one, so it gets no answer, no
+            # source and no read-back state. Inventing a source badge for a
+            # salvaged question is exactly the fabrication this refuses.
+            rows.append({
+                "question": str(raw.get("question") or "")[:MAX_QUESTION_CHARS],
+                "unrecorded": True,
+                "sensitive": bool(raw.get("sensitive")),
+            })
+            continue
         row = {
             "question": str(raw.get("question") or "")[:MAX_QUESTION_CHARS],
             "answer": str(raw.get("answer") or "")[:MAX_ANSWER_CHARS],
@@ -514,8 +582,10 @@ def public_record(record):
         if raw.get("note"):
             row["note"] = str(raw["note"])[:500]
         rows.append(row)
+    capture = record.get("capture")
     return {
         "schema": SCHEMA_VERSION,
+        "capture": capture if capture in CAPTURE_LEVELS else "full",
         "applicationId": str(record.get("applicationId") or "")[:64],
         "company": str(record.get("company") or "")[:200],
         "role": str(record.get("role") or "")[:300],
@@ -523,6 +593,101 @@ def public_record(record):
         "ats": str(record.get("ats") or "")[:80],
         "fields": rows,
     }
+
+
+QUESTION_FILE = re.compile(r"^\.?questions[0-9]*(?:-(.+))?\.json$")
+
+
+def _company_key(value):
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def salvage_plan(root=None):
+    """Old question lists, and which application each one belongs to.
+
+    Sessions were deleted on submission and the manifest was never persisted, so
+    for everything submitted before capture existed the only surviving trace of
+    what a form asked is a questions*.json a past session happened to write into
+    the company folder. There are 41 of them. They hold question text and no
+    answers, which is the whole finding: the values are gone and no join
+    recovers them.
+
+    Attribution follows r2_artifacts' rule rather than inventing one. The id in
+    the filename wins when the store knows it. Otherwise the company folder
+    decides, and only when that company has exactly one application -- a
+    company with four open roles gets four different forms, and filing one
+    role's questions under another role's application is the same mistake as a
+    stranger's logo on their card. Ambiguous ones are reported, not guessed.
+    """
+    root_path = Path(root) if root else root_dir()
+    apps = _apps(root)
+    known, submitted, by_company = {}, set(), {}
+
+    def remember(aid, company, submitted_flag):
+        if not aid:
+            return
+        known.setdefault(aid, company)
+        if company:
+            by_company.setdefault(_company_key(company), set()).add(aid)
+        if submitted_flag:
+            submitted.add(aid)
+
+    sessions_dir = root_path / "sessions"
+    if sessions_dir.is_dir():
+        for path in sorted(sessions_dir.glob("*.json")):
+            entry = _read_json(path, {}) or {}
+            remember(entry.get("applicationId") or path.stem, entry.get("company"), False)
+    history = root_path / "applications.jsonl"
+    if history.exists():
+        for line in history.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            remember(event.get("applicationId"), event.get("company"),
+                     event.get("event") in ("completed", "response", "interview",
+                                            "offer", "rejected"))
+
+    planned, skipped = [], []
+    if not apps.is_dir():
+        return {"plan": [], "skipped": []}
+    for path in sorted(apps.rglob("*.json")):
+        match = QUESTION_FILE.match(path.name)
+        if not match:
+            continue
+        payload = _read_json(path, None)
+        if not (isinstance(payload, list) and payload
+                and all(isinstance(item, str) for item in payload)):
+            skipped.append({"path": str(path), "why": "not a list of questions"})
+            continue
+        stem = (match.group(1) or "").strip()
+        if stem in known:
+            aid, how = stem, "id in the filename"
+        else:
+            candidates = sorted(by_company.get(_company_key(path.parent.name), ()))
+            if len(candidates) == 1:
+                aid, how = candidates[0], "the only application at this company"
+            elif candidates:
+                skipped.append({"path": str(path), "questions": len(payload),
+                                "why": f"{len(candidates)} applications at this "
+                                       "company and the filename names none of them"})
+                continue
+            else:
+                skipped.append({"path": str(path), "questions": len(payload),
+                                "why": "no application at this company in the store"})
+                continue
+        if aid not in submitted:
+            skipped.append({"path": str(path), "questions": len(payload),
+                            "applicationId": aid,
+                            "why": "not a submitted application"})
+            continue
+        planned.append({"path": str(path), "applicationId": aid,
+                        "company": known.get(aid), "questions": payload,
+                        "attributedBy": how})
+    return {"plan": planned, "skipped": skipped}
 
 
 def _load_input(source):
@@ -553,7 +718,20 @@ def main():
 
     sub.add_parser("list", help="print every application id that has a record")
 
+    sp = sub.add_parser("salvage-questions",
+                        help="file questions-only records from old questions*.json")
+    sp.add_argument("--apply", action="store_true",
+                    help="write the records (default is a dry run)")
+    sp.add_argument("--root")
+    # The same escape r2_artifacts.collect already takes, for the same reason:
+    # applications/ is gitignored, so a worktree has none and the salvage has to
+    # be pointed at the checkout that does.
+    sp.add_argument("--apps-dir")
+
     args = ap.parse_args()
+    global APPS
+    if getattr(args, "apps_dir", None):
+        APPS = Path(args.apps_dir).expanduser()
     try:
         if args.command == "write":
             out = write(args.id, _load_input(args.input), root=args.root)
@@ -561,6 +739,30 @@ def main():
             out = load(args.id)
             if out is None:
                 raise SystemExit(f"answer_record: no record for {args.id}")
+        elif args.command == "salvage-questions":
+            found = salvage_plan(args.root)
+            existing = index(args.root)
+            written, held = [], []
+            for item in found["plan"]:
+                aid = item["applicationId"]
+                if aid in existing:
+                    # A real record already says what went in. Never replace one
+                    # with a salvage that only knows the questions.
+                    held.append({"applicationId": aid, "why": "already has a record"})
+                    continue
+                if not args.apply:
+                    written.append({"applicationId": aid, "company": item["company"],
+                                    "questions": len(item["questions"]),
+                                    "attributedBy": item["attributedBy"],
+                                    "from": item["path"]})
+                    continue
+                result = write(aid, item["questions"], root=args.root,
+                               capture="questions-only")
+                written.append({"applicationId": aid, "company": item["company"],
+                                "attributedBy": item["attributedBy"],
+                                "from": item["path"], **result})
+            out = {"applied": bool(args.apply), "records": written,
+                   "held": held, "skipped": found["skipped"]}
         else:
             out = sorted(captured_ids())
     except RecordError as exc:

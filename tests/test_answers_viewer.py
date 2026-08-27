@@ -227,6 +227,40 @@ class ValueDisplayTests(unittest.TestCase):
         self.assertIn("ans-differs", premium_ui.CSS)
 
 
+class SalvagedRecordTests(unittest.TestCase):
+    """A questions-only record must not read as an application with blank answers."""
+
+    def block(self):
+        page = build(captured=["app-captured"])
+        return page[page.index("function answerRow"):page.index("function openAnswers")]
+
+    def test_an_unrecorded_row_says_so_instead_of_rendering_blank(self):
+        block = self.block()
+        self.assertIn("if (field.unrecorded)", block)
+        self.assertIn("Answer not recorded", block)
+
+    def test_an_unrecorded_row_gets_no_source_or_read_back_badge(self):
+        # Both would be invented. The row returns before the badge block.
+        block = self.block()
+        head = block[:block.index("var meta = ansEl")]
+        self.assertIn("row.appendChild(ansEl('div', 'ans-meta'));", head)
+        self.assertIn("return row;", head)
+
+    def test_the_modal_explains_a_salvaged_record_before_the_rows(self):
+        page = build(captured=["app-captured"])
+        script = page[page.index("function renderAnswers"):page.index("function openAnswers")]
+        self.assertIn("record.capture === 'questions-only'", script)
+        self.assertIn("never written down", script)
+        self.assertIn("nothing here", script)
+        # Before the list, so a column of "Answer not recorded" is explained
+        # by the time it is read.
+        self.assertLess(script.index("ans-salvage"), script.index("ans-list"))
+
+    def test_the_salvage_styles_exist_in_the_stylesheet(self):
+        for name in (".ans-unrecorded", ".ans-salvage"):
+            self.assertIn(name, premium_ui.CSS)
+
+
 class ThemeTests(unittest.TestCase):
     """The modal adds no colour of its own, so it cannot miss a theme block."""
 

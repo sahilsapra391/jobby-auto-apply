@@ -505,6 +505,138 @@ class ArtifactContractTests(unittest.TestCase):
                          "u/account-1/unfiled/Acme/questions-app-1.json")
 
 
+class SalvagedQuestionTests(unittest.TestCase):
+    """Old question lists become questions-only records, and never answers.
+
+    41 questions*.json files survive from before capture existed. They hold what
+    the form asked and no values at all. Turning them into rows is honest;
+    resolving them against answers.json to produce values would not be, and the
+    refusal is the point of these tests.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = pathlib.Path(self.temp.name)
+        self.store = root / "state"
+        (self.store / "sessions").mkdir(parents=True)
+        (self.store / "answers.json").write_text(json.dumps(ANSWERS))
+        (self.store / "applications.jsonl").write_text("\n".join(json.dumps(e) for e in [
+            {"event": "completed", "applicationId": "sent-1", "company": "Acme",
+             "role": "PM"},
+            {"event": "completed", "applicationId": "twin-a", "company": "Twin",
+             "role": "PM"},
+            {"event": "completed", "applicationId": "twin-b", "company": "Twin",
+             "role": "Staff PM"},
+            {"event": "submitting", "applicationId": "inflight-1",
+             "company": "Pending", "role": "PM"},
+        ]) + "\n")
+        self.apps = root / "applications"
+        for company in ("Acme", "Twin", "Pending", "Stranger"):
+            (self.apps / company).mkdir(parents=True)
+        (self.apps / "Acme" / "questions.json").write_text(json.dumps([
+            "Are you legally authorized to work in the US?",
+            "What are your salary expectations?",
+            "Enter the verification code we emailed you",
+            "Are you legally authorized to work in the US?",
+        ]))
+        (self.apps / "Twin" / "questions.json").write_text(
+            json.dumps(["Which role are you applying for?"]))
+        (self.apps / "Pending" / "questions.json").write_text(
+            json.dumps(["Anything else?"]))
+        (self.apps / "Stranger" / "questions.json").write_text(
+            json.dumps(["Who are you?"]))
+        self._real = answer_record.APPS
+        answer_record.APPS = self.apps
+        self.addCleanup(setattr, answer_record, "APPS", self._real)
+
+    def plan(self):
+        return answer_record.salvage_plan(self.store)
+
+    def test_a_submitted_application_with_one_company_folder_is_attributed(self):
+        planned = {p["applicationId"]: p for p in self.plan()["plan"]}
+        self.assertEqual(set(planned), {"sent-1"})
+        self.assertEqual(planned["sent-1"]["attributedBy"],
+                         "the only application at this company")
+
+    def test_a_company_with_two_applications_is_skipped_not_guessed(self):
+        # Two open roles at one company get two different forms. Filing one
+        # role's questions under the other role's application is the same
+        # mistake as putting a stranger's logo on their card.
+        why = {s["path"]: s["why"] for s in self.plan()["skipped"]}
+        twin = [w for p, w in why.items() if "Twin" in p]
+        self.assertEqual(len(twin), 1)
+        self.assertIn("2 applications at this company", twin[0])
+
+    def test_an_unsubmitted_application_is_skipped(self):
+        why = [s["why"] for s in self.plan()["skipped"] if "Pending" in s["path"]]
+        self.assertEqual(why, ["not a submitted application"])
+
+    def test_a_company_the_store_does_not_know_is_skipped(self):
+        why = [s["why"] for s in self.plan()["skipped"] if "Stranger" in s["path"]]
+        self.assertEqual(why, ["no application at this company in the store"])
+
+    def test_the_record_carries_questions_and_no_answers_at_all(self):
+        item = self.plan()["plan"][0]
+        answer_record.write("sent-1", item["questions"], root=self.store,
+                            capture="questions-only")
+        record = json.loads(
+            (self.apps / "Acme" / "answers-sent-1.json").read_text())
+        self.assertEqual(record["capture"], "questions-only")
+        # The duplicate question collapses; three distinct ones survive.
+        self.assertEqual(len(record["fields"]), 3)
+        for field in record["fields"]:
+            self.assertTrue(field["unrecorded"])
+            self.assertNotIn("answer", field)
+            self.assertNotIn("source", field)
+            self.assertNotIn("readBack", field)
+
+    def test_no_value_from_the_answer_store_leaks_into_a_salvaged_record(self):
+        # The store holds "165000" under expected-compensation and the salvaged
+        # list asks for salary expectations. Joining them would produce what the
+        # store would say today, presented as what the form received months ago.
+        item = self.plan()["plan"][0]
+        answer_record.write("sent-1", item["questions"], root=self.store,
+                            capture="questions-only")
+        raw = (self.apps / "Acme" / "answers-sent-1.json").read_text()
+        for value in ("165000", "Yes", "Something private"):
+            self.assertNotIn(value, raw, f"{value!r} was reconstructed from the store")
+
+    def test_a_salvaged_record_still_flags_sensitive_questions(self):
+        item = self.plan()["plan"][0]
+        answer_record.write("sent-1", item["questions"], root=self.store,
+                            capture="questions-only")
+        record = json.loads((self.apps / "Acme" / "answers-sent-1.json").read_text())
+        flags = {f["question"]: f["sensitive"] for f in record["fields"]}
+        self.assertTrue(flags["What are your salary expectations?"])
+        self.assertFalse(flags["Are you legally authorized to work in the US?"])
+
+    def test_the_published_shape_carries_the_level_and_no_invented_badges(self):
+        item = self.plan()["plan"][0]
+        record = answer_record.build("sent-1", item["questions"], root=self.store,
+                                     capture="questions-only")
+        public = answer_record.public_record(record)
+        self.assertEqual(public["capture"], "questions-only")
+        for field in public["fields"]:
+            self.assertTrue(field["unrecorded"])
+            self.assertNotIn("source", field)
+            self.assertNotIn("readBack", field)
+
+    def test_a_full_record_is_never_replaced_by_a_salvage(self):
+        # A real record knows what went in. A salvage knows only the questions.
+        # Downgrading one to the other loses the only copy of the answers.
+        answer_record.write("sent-1", [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"}], root=self.store)
+        existing = answer_record.index(self.store)
+        self.assertIn("sent-1", existing)
+        planned = [p for p in self.plan()["plan"] if p["applicationId"] in existing]
+        self.assertEqual(len(planned), 1, "the plan still finds it")
+        # The CLI holds it back; the guard is that `index` already knows.
+        record = json.loads((self.apps / "Acme" / "answers-sent-1.json").read_text())
+        self.assertEqual(record["capture"], "full")
+
+
 class HistoryStaysClosedTests(unittest.TestCase):
     def test_the_history_still_refuses_to_carry_answers(self):
         """The per-application record is the sanctioned path *because* this holds.
