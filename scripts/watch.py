@@ -1478,6 +1478,12 @@ def _bank_command(item):
 
 def _resume_command(item):
     action = item.get("action")
+    if action in ("add", "update"):
+        payload = {k: item[k] for k in ("key", "label", "countries", "copyFrom", "priority")
+                   if item.get(k) is not None}
+        if not payload.get("key"):
+            return None, None
+        return [f"resume-{action}", "--input", "-"], json.dumps(payload)
     if action in ("default", "remove"):
         key = item.get("key")
         if not key:
