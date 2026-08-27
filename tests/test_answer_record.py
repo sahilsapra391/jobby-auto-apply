@@ -637,6 +637,96 @@ class SalvagedQuestionTests(unittest.TestCase):
         self.assertEqual(record["capture"], "full")
 
 
+class NeverBackfillsFromTheStoreTests(unittest.TestCase):
+    """The line between replaying an approved answer and inventing history.
+
+    Two operations live one keystroke apart. Filling a live form from
+    answers.json is the whole point of the answer store: the user approved that
+    value and the agent is replaying it into a field. Writing that same value
+    into a *historical* record's answer is a fabricated audit trail, because the
+    record claims to say what an employer received and the store says what the
+    user would answer now. Many entries were last edited 2026-08-26, months
+    after the applications they would be attributed to.
+
+    This file does the second thing to nobody, on either capture path. The proof
+    is a sentinel: every stored value is replaced with a string that appears
+    nowhere else, so if any code path ever copies one out it shows up in the
+    bytes.
+    """
+
+    SENTINEL = "SENTINEL-STORED-VALUE-DO-NOT-COPY"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = pathlib.Path(self.temp.name)
+        self.store = root / "state"
+        (self.store / "sessions").mkdir(parents=True)
+        poisoned = {}
+        for key, entry in ANSWERS.items():
+            poisoned[key] = {**entry, "value": self.SENTINEL,
+                             "answer": self.SENTINEL, "note": self.SENTINEL}
+        (self.store / "answers.json").write_text(json.dumps(poisoned))
+        (self.store / "sessions" / "app-1.json").write_text(json.dumps({
+            "applicationId": "app-1", "company": "Acme", "role": "PM"}))
+        self.apps = root / "applications"
+        self.apps.mkdir()
+        real = answer_record.APPS
+        answer_record.APPS = self.apps
+        self.addCleanup(setattr, answer_record, "APPS", real)
+
+    def written(self):
+        return (self.apps / "Acme" / "answers-app-1.json").read_text()
+
+    def test_a_full_record_citing_a_stored_key_never_copies_its_value(self):
+        # The record cites the key, so the store is read -- for the key's
+        # existence and its sensitive state, and for nothing else.
+        answer_record.write("app-1", [
+            {"question": "What are your compensation expectations?",
+             "answer": "what actually went into the form",
+             "source": "stored", "sourceKey": "expected-compensation",
+             "readBack": "match"},
+        ], root=self.store)
+        raw = self.written()
+        self.assertNotIn(self.SENTINEL, raw)
+        self.assertIn("what actually went into the form", raw)
+        # And the store was still consulted, or the sensitivity would be wrong.
+        self.assertTrue(json.loads(raw)["fields"][0]["sensitive"])
+
+    def test_a_salvaged_record_never_resolves_its_questions(self):
+        # Every question here has a matching entry in the store. None is filled.
+        answer_record.write("app-1", [
+            entry["question"] for entry in ANSWERS.values()
+        ], root=self.store, capture="questions-only")
+        raw = self.written()
+        self.assertNotIn(self.SENTINEL, raw)
+        for field in json.loads(raw)["fields"]:
+            self.assertTrue(field["unrecorded"])
+            self.assertNotIn("answer", field)
+
+    def test_an_empty_answer_stays_empty_rather_than_being_filled_in(self):
+        # The tempting shortcut: a blank answer, a known key, an obvious value
+        # sitting right there. It stays blank, because blank is what happened.
+        answer_record.write("app-1", [
+            {"question": "Are you legally authorized to work in the US?",
+             "answer": "", "source": "stored",
+             "sourceKey": "legally-authorized-to-work-in-the-us",
+             "readBack": "unverified"},
+        ], root=self.store)
+        raw = self.written()
+        self.assertNotIn(self.SENTINEL, raw)
+        self.assertEqual(json.loads(raw)["fields"][0]["answer"], "")
+
+    def test_the_module_reads_no_value_field_off_an_answer_store_entry(self):
+        """Structural, because 'nothing reads it today' is one refactor from false."""
+        source = pathlib.Path(answer_record.__file__).read_text()
+        body = source[source.index("def normalise_fields"):]
+        for banned in ('entry["value"]', "entry.get(\"value\")",
+                       'entry["answer"]', "entry.get(\"answer\")"):
+            self.assertNotIn(banned, body,
+                             f"{banned} would copy a stored answer into a record")
+
+
 class HistoryStaysClosedTests(unittest.TestCase):
     def test_the_history_still_refuses_to_carry_answers(self):
         """The per-application record is the sanctioned path *because* this holds.

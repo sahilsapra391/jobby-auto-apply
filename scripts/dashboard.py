@@ -31,8 +31,10 @@ import answer_record  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
 import premium_ui  # noqa: E402
-import settings_panel
+import profile_panel  # noqa: E402
+import settings_panel  # noqa: E402
 import state_slim  # noqa: E402
+import store  # noqa: E402
 
 
 def root_dir(override=None):
@@ -107,6 +109,11 @@ def load_state(root, apps_root=None):
         # Connection metadata only. Provider CLIs retain all account tokens in
         # their own local stores, so nothing credential-shaped reaches HTML.
         "providers": read_json(root / "providers.json", {}),
+        # The Memory Bank and the base resume wording. Neither is rendered into
+        # the page: they travel in the published state and the Profile panel
+        # fetches them. See publishable_state for why that is not optional.
+        "answers": read_json(root / "answers.json", {}),
+        "resumeContent": store.resume_content(root),
     }
 
 
@@ -141,6 +148,121 @@ def _public_records(records, fields):
     ]
 
 
+# The account this board belongs to. One today, and the payload says which so
+# the API can refuse to serve a board published by a different account rather
+# than trusting that there is only ever one. §8 of the multi-tenant plan puts a
+# user_id on every per-user row; this is that column, arriving early where it
+# costs nothing.
+USER_ID = os.environ.get("JOBBY_USER_ID", "account-1")
+
+# What an identity is, per §8: one right to work, its own contact block, its own
+# base document, exactly one marked default. `profile.resumes[]` already holds
+# this, so the published shape mirrors the eventual table rather than inventing
+# a second vocabulary for the same thing.
+def _identities(profile):
+    out = []
+    for entry in (profile.get("resumes") or []):
+        if not isinstance(entry, dict):
+            continue
+        identity = entry.get("identity") or {}
+        address = identity.get("fullAddress") or {}
+        out.append({
+            "key": entry.get("key"),
+            "countryScope": [str(a).upper() for a in (entry.get("appliesTo") or [])],
+            "isDefault": bool(entry.get("default")),
+            "contact": {
+                "location": identity.get("location"),
+                "phone": identity.get("phone"),
+                "oneLine": address.get("oneLine"),
+                "country": address.get("country"),
+            },
+            # The name only. The path is a directory layout on one person's
+            # machine and says nothing a reader of the board needs.
+            "resumeRef": PurePosixPath(str(entry.get("path") or "")).name or None,
+        })
+    return out
+
+
+def _memory_bank(state):
+    """The Profile page's data, as the API will hand it out.
+
+    Not page material, and that is measured rather than assumed: the board at
+    its embed cap is 3.65 MB against a 3.7 MB budget, and the bank is 74 KB. It
+    would not fit even if nothing else were true.
+
+    **A sensitive answer's value never leaves the device.** Not masked here, not
+    encrypted here: absent. Twenty-two of these are compensation and
+    demographic answers, and masking is a display choice that does nothing for
+    the copy sitting in the KV blob. The board can say a sensitive answer
+    exists, when it was last touched, and which questions it covers, and it can
+    take a new one. It cannot read the old one back, because it never receives
+    it. That keeps the pre-Profile privacy posture exactly: before this page,
+    nothing from answers.json left the Mac.
+
+    The cost is real and one-directional: you cannot check a stored salary from
+    your phone. Reveal-on-tap without storing was considered and is not
+    available -- the board runs on Vercel and its only source is Cloudflare KV,
+    which this machine writes to, so anything the page could reveal would have
+    to be at rest there first.
+    """
+    answers = state.get("answers") or {}
+    entries = []
+    for key, entry in answers.items():
+        if not isinstance(entry, dict):
+            continue
+        record = dict(entry)
+        record["key"] = record.get("key") or key
+        # `answer` is where this field started and four real entries still use
+        # it. Normalise once, here, on the machine that owns the store.
+        #
+        # It was normalised in the API route instead, and that put "is this
+        # answered" in three places in two languages: store.answered(), the
+        # route, and the browser. Measured on 2026-08-25 against the real
+        # store, the browser then counted four answered entries as open and
+        # badged the nav with a 4 that nothing could ever clear. One
+        # normalisation, before anything reads it.
+        if not record.get("value") and record.get("answer"):
+            record["value"] = record.pop("answer")
+        store.classify(record)
+        if record.get("sensitive"):
+            # Whether it is answered has to be decided before the value goes,
+            # or every sensitive entry would publish as an open question and
+            # the board would ask you to answer things you answered months ago.
+            record["heldOnDevice"] = store.answered(record)
+            record["value"] = None
+            record.pop("answer", None)
+            # `dataClass` stays and travels: it is what the multi-tenant
+            # encryption path selects on, and #82 is where that work is owed
+            # from. Reading one of these back on a phone comes back with the
+            # encryption rather than being given up.
+        entries.append(record)
+    entries.sort(key=lambda e: str(e.get("question") or "").lower())
+    return {
+        "userId": USER_ID,
+        "answers": entries,
+        "identities": _identities(state.get("profile") or {}),
+        "resumeContent": state.get("resumeContent") or {},
+    }
+
+
+def bank_counts(bank):
+    """The three numbers the board is allowed to render: counts, never text."""
+    entries = bank.get("answers") or []
+    return {
+        "total": len(entries),
+        # A withheld sensitive value reads as unanswered to `answered()`, because
+        # there is no value left to look at. `heldOnDevice` is what says the
+        # difference between "we are not showing you this" and "nobody has
+        # answered this".
+        "unanswered": sum(1 for e in entries
+                          if not store.answered(e)
+                          and not e.get("heldOnDevice")
+                          and e.get("remembered") is not False),
+        "sensitive": sum(1 for e in entries if e.get("sensitive")),
+        "identities": len(bank.get("identities") or []),
+    }
+
+
 def publishable_state(state):
     """Return the minimum renderer input safe to persist as board state.
 
@@ -153,11 +275,19 @@ def publishable_state(state):
     roles = state.get("roles") or {}
     meta = dict(state.get("meta") or {})
     jobs, pool_total, pool_census = publishable_jobs(
-        state.get("jobs") or {}, state.get("searchConfig"))
+        state.get("jobs") or {}, state.get("searchConfig"),
+        cap=state.get("_embedCap"))
     meta["poolTotal"] = pool_total
     meta["poolCensus"] = pool_census
+    bank = _memory_bank(state)
+    meta["memoryBank"] = bank_counts(bank)
     return {
+        "userId": USER_ID,
         "profile": {"firstName": (state.get("profile") or {}).get("firstName")},
+        # Served by /api/profile, never rendered. Kept a sibling of the render
+        # input rather than a field inside it, so "the renderer must not touch
+        # this" is visible in the shape and not only in a comment.
+        "memoryBank": bank,
         "sessions": _public_records(state.get("sessions") or [], SESSION_PUBLIC_FIELDS),
         "history": _public_records(state.get("history") or [], HISTORY_PUBLIC_FIELDS),
         "roles": {
@@ -212,7 +342,7 @@ def _trim_sections(job):
     return trimmed
 
 
-def publishable_jobs(jobs, config):
+def publishable_jobs(jobs, config, cap=None):
     """(jobs, total, census) — the slice the board can draw, and the pool behind it.
 
     The store holds tens of thousands of postings and KV will not: the envelope
@@ -233,7 +363,7 @@ def publishable_jobs(jobs, config):
     couple of hundred, they never age out, and they are where Watching and
     Submitted find their company marks, so dropping them would blank a logo.
     """
-    selected, total = found_lane.select(jobs, config)
+    selected, total = found_lane.select(jobs, config, cap=cap)
     census = found_lane.pool_census(jobs)
     keep = {str(job.get("id") or "") for job in selected}
     # Filtered in the pool's own order rather than rebuilt selection-first.
@@ -392,6 +522,17 @@ def build(state, generated):
     }
 
     name = profile.get("firstName") or "there"
+
+    # Counts, and only counts. The Profile page's data is fetched, not embedded;
+    # a number is the one thing about the Memory Bank that is cheap enough to
+    # render and safe enough to render. An outstanding question is the only
+    # thing in there that is costing the user anything, so it gets the badge.
+    bank_counts_public = (state.get("meta") or {}).get("memoryBank") or {}
+    open_questions = int(bank_counts_public.get("unanswered") or 0)
+    profile_badge = (
+        f'<span class="nav-n" data-profile-open>{open_questions}</span>'
+        if open_questions else '<span class="nav-n" data-profile-open hidden>0</span>'
+    )
 
     cards = []
     for s in blocked:
@@ -1142,6 +1283,7 @@ def build(state, generated):
   .sysbanner strong {{ font-weight:650; }}
 {found_lane.CSS}
 {settings_panel.CSS}
+{profile_panel.CSS}
 {premium_ui.CSS}
 </style>
 
@@ -1153,6 +1295,7 @@ def build(state, generated):
   <a class="brand" href="/" data-home-found aria-label="Jobby home">{brand.lockup()}</a>
   <nav class="primary-nav" aria-label="Primary">
     <a href="/" data-primary-view="home">Home</a>
+    <a href="/profile" data-primary-view="profile">Profile{profile_badge}</a>
     <a href="/settings" data-primary-view="settings">Settings</a>
   </nav>
   <div class="themeseg" role="radiogroup" aria-label="Colour theme">
@@ -1215,6 +1358,8 @@ def build(state, generated):
       <thead><tr><th>Role</th><th>Posted</th><th>Experience</th><th>Location</th><th>Core skills</th><th>How you line up</th><th></th></tr></thead>
       <tbody>{watch_rows}</tbody></table></div></div>''' if watch else empty_state("watch")}
   </div>
+
+  {profile_panel.panel(bank_counts_public)}
 
   {settings_panel.panel(state.get("providers") or {})}
 </div>
@@ -2218,6 +2363,7 @@ def build(state, generated):
   ['act', 'flight', 'done', 'watch'].forEach(applyFilter);
 
 {found_lane.SCRIPT}
+{profile_panel.SCRIPT}
 {settings_panel.SCRIPT}
 {premium_ui.SCRIPT}
   document.querySelectorAll('.copy').forEach(function (b) {{
@@ -2236,6 +2382,9 @@ def main():
     ap = argparse.ArgumentParser(description="Build the job-application dashboard.")
     ap.add_argument("--out", required=True, help="output HTML path")
     ap.add_argument("--root", help="store directory")
+    ap.add_argument("--embed-cap", type=int,
+                    help="how many Found records to embed; publish lowers this "
+                         "when the state would not fit KV's ceiling")
     ap.add_argument("--state-out", help="optional sanitized renderer-state JSON path")
     args = ap.parse_args()
 
@@ -2244,7 +2393,16 @@ def main():
         print("job-application dashboard: no store found; run store.py init first", file=sys.stderr)
         return 2
 
+    # Both sides of this: main's embed cap, and this branch's raw --root
+    # override. The override is the raw argument rather than the resolved store
+    # path because that is what publish.py hands r2_artifacts, and the two have
+    # to resolve applications/ to the same directory.
     state = load_state(root, args.root)
+    if args.embed_cap:
+        # Only the published state honours this. The local HTML is a file on
+        # disk with no ceiling over it, and shrinking it would hide records for
+        # no reason.
+        state["_embedCap"] = args.embed_cap
     generated = clock.now_label()
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)

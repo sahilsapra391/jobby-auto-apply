@@ -307,3 +307,165 @@ test('live Mac status takes precedence over the last board publication', async (
   const body = await response.json();
   assert.deepEqual(body.local, live);
 });
+
+// --- the Profile page ------------------------------------------------------
+//
+// Everything the Profile page shows arrives here rather than in the page. The
+// board at its embed cap measured 3,825,578 bytes against a 3.7 MB margin and
+// the Memory Bank is 74 KB, so it never fitted; and 22 of those entries are
+// compensation and demographic answers, so it should not have.
+
+async function publishBank(bank) {
+  await putBoardState(process.env, JSON.stringify({
+    userId: 'account-1',
+    profile: { firstName: 'Sahil' },
+    sessions: [], history: [], roles: {}, meta: {}, jobs: {},
+    memoryBank: {
+      userId: 'account-1',
+      identities: [{ key: 'us', countryScope: ['US'], isDefault: true,
+                     contact: { location: 'Charlotte, NC' }, resumeRef: 'Resume.pdf' }],
+      resumeContent: { banner: 'PRODUCT MANAGER' },
+      answers: bank,
+    },
+  }), '2026-08-25T12:00:00Z');
+}
+
+test('the Memory Bank stays behind the dashboard password', async () => {
+  await publishBank([{ key: 'expected-comp', question: 'Expected compensation?',
+                       value: '$185,000', state: 'sensitive', sensitive: true }]);
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET', false));
+  assert.equal(response.status, 401);
+  // And nothing leaked into the challenge body on the way past.
+  assert.equal((await response.text()).includes('185,000'), false);
+});
+
+test('an authenticated read gets the answers, the identities and the wording', async () => {
+  await publishBank([
+    { key: 'notice-period', question: 'Notice period?', value: '15 days',
+      state: 'confirmed', version: 2 },
+    { key: 'office-days', question: 'Days in office?', value: null, state: 'missing',
+      tags: ['unanswered'], askedBy: ['acme-pm'] },
+  ]);
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.ok, true);
+  assert.equal(payload.answers.length, 2);
+  assert.equal(payload.answers[0].value, '15 days');
+  assert.equal(payload.answers[1].value, null);
+  assert.deepEqual(payload.answers[1].askedBy, ['acme-pm']);
+  assert.equal(payload.identities[0].isDefault, true);
+  assert.equal(payload.resumeContent.banner, 'PRODUCT MANAGER');
+});
+
+test('a withheld sensitive answer says it exists and nothing more', async () => {
+  // The device publishes no value for a sensitive entry. The route's job is to
+  // carry that distinction, so the page can offer to replace an answer without
+  // ever being told what it says.
+  await publishBank([{ key: 'expected-comp', question: 'Expected compensation?',
+                       value: null, state: 'sensitive', sensitive: true,
+                       heldOnDevice: true, dataClass: 'class-2' }]);
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
+  const payload = await response.json();
+  assert.equal(payload.answers[0].value, null);
+  assert.equal(payload.answers[0].heldOnDevice, true);
+  assert.equal(payload.answers[0].sensitive, true);
+});
+
+test('the legacy answer field is served as a value', async () => {
+  // Four real entries put theirs in `answer`, which is where the field started.
+  await publishBank([{ key: 'rate-sql', question: 'Rate yourself on SQL', answer: '9' }]);
+  const payload = await (await handler.fetch(request('/api/profile', undefined, 'GET'))).json();
+  assert.equal(payload.answers[0].value, '9');
+});
+
+test('a bank published by another account is refused, not served', async () => {
+  // Single-user today. This is the check that fails closed rather than serving
+  // a stranger's answers the day per-user state arrives.
+  await putBoardState(process.env, JSON.stringify({
+    memoryBank: { userId: 'account-9', answers: [
+      { key: 'x', question: 'Q', value: 'someone else’s answer' }] },
+  }), '2026-08-25T12:00:00Z');
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
+  assert.equal(response.status, 403);
+  assert.equal((await response.text()).includes('someone'), false);
+});
+
+test('a board published before the Profile page existed says so', async () => {
+  await putBoardState(process.env, JSON.stringify({ sessions: [] }),
+                      '2026-08-25T12:00:00Z');
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /Publish again/);
+});
+
+test('an answer edit is queued with its version', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'ans-1', action: 'save', key: 'notice-period',
+    question: 'Notice period?', value: '15 days', version: 2,
+  }));
+  assert.equal(response.status, 202);
+  const queue = JSON.parse(values.get('jobby:queue'));
+  assert.equal(queue.answerEdits.length, 1);
+  assert.equal(queue.answerEdits[0].version, 2);
+  assert.equal(queue.answerEdits[0].value, '15 days');
+});
+
+test('an answer edit cannot be sent from another site', async () => {
+  const bad = new Request('https://board.example/api/answer', {
+    method: 'POST',
+    headers: { authorization: auth(), origin: 'https://evil.example',
+               'content-type': 'application/json', 'x-jobby-request': '1' },
+    body: JSON.stringify({ editId: 'ans-1', action: 'save', question: 'Q', value: 'V' }),
+  });
+  const response = await handler.fetch(bad);
+  assert.equal(response.status, 403);
+  assert.equal(values.has('jobby:queue'), false);
+});
+
+test('an unbounded answer is refused rather than parked in the shared queue', async () => {
+  // Every poll reads this key. An unbounded field here is a way to make the
+  // whole board slow for everyone.
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'ans-1', action: 'save', question: 'Tell us about yourself',
+    value: 'x'.repeat(4001),
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(values.has('jobby:queue'), false);
+});
+
+test('an edit id that is not a plain token is refused', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: '../../etc/passwd', action: 'save', question: 'Q', value: 'V',
+  }));
+  assert.equal(response.status, 400);
+});
+
+test('a delete needs the key it is deleting', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'del-1', action: 'delete', version: 1,
+  }));
+  assert.equal(response.status, 400);
+});
+
+test('a base resume action is queued and an unknown one is not', async () => {
+  const good = await handler.fetch(request('/api/resume', {
+    editId: 'res-1', action: 'default', key: 'in',
+  }));
+  assert.equal(good.status, 202);
+  assert.equal(JSON.parse(values.get('jobby:queue')).resumeEdits[0].key, 'in');
+
+  const bad = await handler.fetch(request('/api/resume', {
+    editId: 'res-2', action: 'delete-everything', key: 'in',
+  }));
+  assert.equal(bad.status, 400);
+  assert.equal(JSON.parse(values.get('jobby:queue')).resumeEdits.length, 1);
+});
+
+test('oversized resume wording is refused', async () => {
+  const response = await handler.fetch(request('/api/resume', {
+    editId: 'res-3', action: 'content',
+    content: { summary: 'x'.repeat(70 * 1024) },
+  }));
+  assert.equal(response.status, 400);
+});

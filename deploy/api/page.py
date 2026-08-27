@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -132,6 +132,39 @@ def _state() -> tuple[dict, str]:
             str(envelope.get("rendererFingerprint") or ""))
 
 
+# How old a board may be before it says so. The publish floor is 15 minutes and
+# the watcher's own alarm fires at twice that, so this is deliberately looser:
+# it is the reader's last line, for the case where the alarm has fired and
+# nobody was looking.
+STALE_AFTER_SECONDS = 3 * 60 * 60
+
+
+def _freshness(value: str):
+    """(label, is_stale) for the board's own timestamp, measured at render.
+
+    This is computed here, per request, and not carried in the state, which is
+    the whole point. On 2026-08-27 the board served a 23-hour-old snapshot and
+    its status line said "Search v21 is live, every 4 hours, next run 19:31" --
+    accurate for the moment that snapshot was built and useless afterwards,
+    because it had frozen along with everything else around it.
+
+    A freshness indicator that can freeze with the page is theatre. `now` here
+    is request time, so this keeps counting up whatever has happened to
+    publishing.
+    """
+    try:
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return _display_time(value), False
+    age = (datetime.now(timezone.utc) - when).total_seconds()
+    if age < STALE_AFTER_SECONDS:
+        return _display_time(value), False
+    hours = age / 3600
+    how_old = f"{hours:.0f} hours" if hours < 48 else f"{hours / 24:.0f} days"
+    return (f"{_display_time(value)} \u2014 {how_old} old. "
+            f"The board has stopped updating; new jobs are not reaching it."), True
+
+
 def _display_time(value: str) -> str:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime(
@@ -195,7 +228,8 @@ class handler(BaseHTTPRequestHandler):
         # bare "could not be rendered" that cost a day.
         drift = _renderer_mismatch(envelope_fingerprint)
         try:
-            page = dashboard.build(state, _display_time(generated_at)).encode("utf-8")
+            label, is_stale = _freshness(generated_at)
+            page = dashboard.build(state, label).encode("utf-8")
         except (OSError, ValueError, KeyError, TypeError) as error:
             failure = {"event": "board_render_failed", "errorType": type(error).__name__}
             print(json.dumps({**failure, **(drift or {})}))

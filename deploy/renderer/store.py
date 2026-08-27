@@ -64,6 +64,10 @@ def paths(root):
         # leave the board unable to link to what was applied to.
         "roles": str(root / "roles.json"),
         "meta": str(root / "meta.json"),
+        # The base resume's editable wording. The template it renders through is
+        # tracked in the repository and the board cannot write there, so an edit
+        # lands here and the document worker prefers it when it exists.
+        "resumeContent": str(root / "resume-content.json"),
     }
 
 
@@ -126,6 +130,244 @@ def answer_key(question):
     cleaned = "".join(c.lower() if c.isalnum() else " " for c in question)
     words = [w for w in cleaned.split() if w not in {"the", "a", "an", "your", "you", "do", "is", "are", "what", "please", "indicate"}]
     return "-".join(words)[:80]
+
+
+def answered(entry):
+    """True when this entry actually carries an answer.
+
+    Four of the stored entries put theirs in `answer` rather than `value`,
+    which is where the field started, and an unanswered entry written by the
+    park loop has neither. Both doors have to be checked, or the loop's own
+    placeholders would read back as answers and stop parking the question they
+    exist to keep asking.
+    """
+    if not isinstance(entry, dict):
+        return False
+    for field in ("value", "answer"):
+        text = entry.get(field)
+        if text is not None and str(text).strip():
+            return True
+    return False
+
+
+# A one-time code is worthless a minute after it arrives and dangerous for as
+# long as it is written down, so it is not Memory Bank material however it
+# reaches the store. Both doors are checked: an employer can label a field
+# "Verification code", and a user can paste one into an ordinary box.
+OTP_MARKERS = (
+    "one-time code", "one time code", "one-time password", "one time password",
+    "onetime code", "onetime password", "verification code", "confirmation code",
+    "security code", "authentication code", "auth code", "sms code",
+    "login code", "access code", "one-time pin", "one time pin",
+    " otp", "otp ", "otp:", "(otp", "2fa", "two-factor", "two factor",
+    "passcode",
+)
+
+# What a bare code looks like once the wording is gone: six to eight digits and
+# nothing else. Checked on the value only, because a question can legitimately
+# contain a number and an answer of exactly this shape almost never can.
+BARE_CODE = re.compile(r"^\s*\d{4,8}\s*$")
+
+
+def otp_shaped(question, value=""):
+    """Why this looks like a one-time code, or None."""
+    text = f" {(question or '').lower()} "
+    for marker in OTP_MARKERS:
+        if marker in text:
+            return f"{marker.strip()!r} makes this a one-time code"
+    if BARE_CODE.match(str(value or "")):
+        return "the answer is a bare numeric code"
+    return None
+
+
+# The acts the product refuses to perform on the user's behalf. A bank edit
+# that made one of these resolve would not remove the refusal, it would make it
+# silent: the form gets filled instead of parked, and the user never sees the
+# clause they were supposed to read. So an edit is measured against these
+# before it is written, and refused by name if it moves any of them.
+#
+# Note the shape of the check. It does not assert these resolve to nothing --
+# "What is your expected compensation?" already resolves today, by topic, and
+# pinning an expectation here would encode one corpus forever. It asserts that
+# an edit does not *change* what they resolve to, which stays true as the
+# corpus grows and needs no maintenance.
+REFUSAL_PROBES = (
+    "I authorize the Company to obtain a consumer report about me for employment purposes.",
+    "Please acknowledge the FCRA disclosure and sign to permit a background check to be conducted.",
+    "Have you ever been convicted of a felony?",
+    "Have you ever been convicted of a crime?",
+    "Please enter the one-time verification code we sent to your email.",
+)
+# "Do you have a degree in political science?" is deliberately not here. It is a
+# boundary against an *accidental* match with the political-contributions topic,
+# owned by tests/test_answer_topics.py, and not an act the product refuses. A
+# user who is asked it and answers No is entitled to store that; treating it as
+# a refusal would make a legitimate answer unstorable to protect a boundary that
+# is already tested elsewhere.
+
+
+# Questions the Memory Bank must not hold an answer to at all, as opposed to
+# questions it must not let another entry answer by accident. Two different
+# failures: the guard below refuses the entry, refusal_shadow() refuses the
+# side effect.
+#
+# The line is the one §11 already draws and it is narrow on purpose. Being
+# *willing* to undergo a background check is a statement of intent and is a
+# stored standing answer; *authorising* one is an act performed on the user's
+# behalf, and no stored text may perform it.
+REFUSAL_CATEGORIES = (
+    ("consumer-report-authorisation", (
+        ("authorize", "authorise", "authorization", "authorisation", "i consent", "i hereby"),
+        ("consumer report", "consumer credit", "investigative report",
+         "background check", "background investigation", "background screening"),
+    )),
+    ("fcra-disclosure", (("fcra", "fair credit reporting act"), ())),
+    # "conviction" on its own is not this category. Measured against the real
+    # store on 2026-08-25: it caught a story-bank entry about arguing a
+    # root-cause conviction against consensus, which is a belief, not a record.
+    ("criminal-history", ((
+        "convicted of", "been convicted", "criminal conviction",
+        "criminal history", "criminal record", "criminal offence",
+        "criminal offense", "felony", "misdemeanor", "misdemeanour",
+        "plead guilty", "pled guilty", "pleaded guilty",
+    ), ())),
+    ("captcha", (("captcha", "recaptcha", "hcaptcha"), ())),
+    ("credentials", ((
+        "password", "passphrase", "security question", "create an account",
+        "create your account",
+    ), ())),
+)
+
+
+# What the loop must open as sensitive rather than as an ordinary question.
+#
+# An opened entry is born with no value and no tags, so without this a parked
+# "What is your expected compensation?" becomes a plain entry, the Profile page
+# offers it as an ordinary answer, and a salary gets stored unflagged and
+# unmasked. The state has to be right at the moment the question is recorded,
+# because that is the only moment anything knows what the question was about.
+#
+# The set is §4's, from the north star: compensation, demographics, work
+# authorisation and date of birth.
+# Word-bounded, and that is not a detail. Measured against the real 156-entry
+# store on 2026-08-26, a substring list flagged "What is your average deal
+# size?", "How do you manage a team?" and "Do you embrace ambiguity?" as
+# sensitive, because "age " lives inside "average" and "manage", and "race"
+# inside "embrace". A classifier that masks half the bank is worse than none.
+SENSITIVE_SHAPE = re.compile(
+    r"\b("
+    r"compensation|salary|salaries|ctc|remuneration|"
+    r"(?:expected|current|desired|base|hourly|target)\s+pay|pay\s+rate|"
+    r"race|ethnicity|ethnic\s+origin|hispanic|latino|"
+    r"gender|sex|sexual\s+orientation|lgbt\w*|transgender|"
+    r"disability|disabled|veteran|"
+    r"date\s+of\s+birth|birth\s+date|age\s+(?:range|bracket|group)|"
+    r"marital\s+status|religion|"
+    r"national\s+origin|visa\s+sponsorship|sponsorship"
+    r")\b",
+    re.I,
+)
+
+
+def sensitive_question(question):
+    """True when a question is one the store must treat as Class 2 on sight."""
+    return bool(SENSITIVE_SHAPE.search(question or ""))
+
+
+# Questions the boundary suite is actively protecting, which the loop must
+# never plant on its own.
+#
+# This is a narrower rule than refusal_category, and a different one. Nothing
+# here is an act the product refuses; a person may answer any of it deliberately
+# from the Profile page. What must not happen is Jobby *planting* the question
+# unprompted, because each of these sits one word from a topic that already has
+# a standing answer, and an entry here is the shortest path to a wrong field
+# being filled quietly. §10 lists them as tested boundaries and they stay that
+# way.
+BOUNDARY_QUESTIONS = (
+    "Do you have a degree in political science?",
+)
+
+
+def boundary_question(question):
+    """True when the loop must not open this question by itself."""
+    target = answer_key(question)
+    return any(answer_key(probe) == target for probe in BOUNDARY_QUESTIONS)
+
+
+def refusal_category(question):
+    """The refusal this question belongs to, or None.
+
+    A group with a second tuple needs a term from each: "authorize" alone is an
+    ordinary word and "background check" alone is the willingness question the
+    user has answered Yes to for months. Together they are the act.
+    """
+    text = f" {(question or '').lower()} "
+    for name, groups in REFUSAL_CATEGORIES:
+        first, second = groups
+        if not any(m in text for m in first):
+            continue
+        if second and not any(m in text for m in second):
+            continue
+        return name
+    return None
+
+
+def _resolved(answers, question):
+    """What find_answer would fill for this question, as a comparable value."""
+    found = find_answer(answers, question) or {}
+    if found.get("match") == "none":
+        return None
+    return found.get("value") if found.get("value") is not None else found.get("answer")
+
+
+def refusal_shadow(before, after):
+    """The refusal probe an edit would change the answer to, or None.
+
+    Run against the answers as they *would be*, not as they are, so a shadow is
+    refused at the edit rather than discovered on a real form months later.
+    """
+    for probe in REFUSAL_PROBES:
+        was = _resolved(before, probe)
+        now_value = _resolved(after, probe)
+        if was != now_value:
+            return probe
+    return None
+
+
+def bank_version(entry):
+    """The monotonic version of a stored entry. Absent means never edited."""
+    try:
+        return int((entry or {}).get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def classify(entry):
+    """Add the data-class marking the multi-tenant plan's Class 2 work reads.
+
+    Sensitive answers (compensation, demographics, work authorisation, date of
+    birth) are the fields destined for per-user envelope encryption, per §6 of
+    docs/plans/multi-tenant-architecture.md. Nothing here encrypts anything; it
+    marks which records that work has to reach, so the migration has something
+    to select on rather than re-deriving the set from tag spellings.
+
+    That work is issue #82, which also carries the reason a sensitive answer's
+    value is withheld from the board entirely today rather than published and
+    masked. The marker points at a task with an acceptance list, not at an
+    intention.
+    """
+    sensitive = entry.get("state") == "sensitive" or bool(entry.get("sensitive"))
+    entry["sensitive"] = sensitive
+    entry["dataClass"] = "class-2" if sensitive else "class-1"
+    # There is deliberately no `encryption` field beside this. It existed, held
+    # the constant "pending" on every sensitive record and "none" on every other
+    # one, was written by nobody else and read by nothing. A status field with
+    # one value and no writer is not a status, it is a promise, and it ages into
+    # a lie the longer it sits there looking like it is tracking something.
+    # `dataClass` says what the record is, #82 says what is owed about it, and
+    # neither of those pretends to be a state machine.
+    return entry
 
 
 # --- commands ---------------------------------------------------------------
@@ -196,6 +438,10 @@ def cmd_answer_put(args):
         # Permission to fill is not permission to remember.
         entry["value"] = None
         entry["note"] = "value not stored; user did not consent to remembering"
+        # Structured, not just prose, because the Memory Bank has to tell this
+        # apart from a question nobody has answered yet. Both hold no value;
+        # only one of them is something to go and ask the user about.
+        entry["remembered"] = False
 
     key = entry.get("key") or answer_key(question)
     entry["key"] = key
@@ -801,21 +1047,38 @@ def topic_answer(answers, question):
         if not any(m in text for m in markers):
             continue
         for entry in answers.values():
-            if topic in (entry.get("tags") or []):
+            # An entry the park loop opened carries the topic tag but no answer
+            # yet. Returning it would fill a field with nothing and stop the
+            # question ever being asked again.
+            if topic in (entry.get("tags") or []) and answered(entry):
                 return {"match": "topic", "topic": topic, **entry}
     return None
 
 
 def find_answer(answers, question):
     key = answer_key(question)
-    if key in answers:
-        return answers[key]
+    held = answers.get(key)
+    # An entry with no answer is a question the bank is tracking, not an answer
+    # to it. It has to fall through to "none" or the grow-only loop would close
+    # its own question the moment it opened it.
+    if held is not None and answered(held):
+        return held
+    # Every resolver below sees only entries that actually carry an answer.
+    #
+    # Filtered once, here, rather than guarded inside each resolver. Guarding
+    # them one at a time is exactly how this broke: the grow-only loop added
+    # the rule, `topic_answer` was taught it, and the next merge brought
+    # `acknowledgement`, `expected_pay` and `us_person` from another branch,
+    # each iterating `answers.values()` with no idea there was a rule to
+    # follow. A resolver added tomorrow inherits the guard by construction.
+    usable = {k: v for k, v in answers.items() if answered(v)}
+
     # Fall back to overlap scoring so slightly different phrasings still match.
     # The bar is deliberately high: "product management" vs "project management"
     # scores 0.71 — one word apart, and the wrong answer.
     target = set(key.split("-"))
     scored = []
-    for k, v in answers.items():
+    for k, v in usable.items():
         other = set(k.split("-"))
         if not other:
             continue
@@ -831,10 +1094,10 @@ def find_answer(answers, question):
             return {"match": "fuzzy", "score": round(score, 2), **entry}
     # Before giving up, try recognising the question by a distinctive phrase.
     # Overlap scoring cannot see a non-compete clause buried in a paragraph.
-    topical = topic_answer(answers, question)
+    topical = topic_answer(usable, question)
     if topical is not None:
         return topical
-    ack = acknowledgement(answers, question)
+    ack = acknowledgement(usable, question)
     if ack is not None:
         return ack
 
@@ -844,7 +1107,13 @@ def find_answer(answers, question):
         {"key": k, "question": v.get("question"), "state": v.get("state"), "score": round(s, 2)}
         for s, k, v in scored[:3] if s >= 0.4
     ]
-    return {"match": "none", "key": key, "candidates": candidates}
+    out = {"match": "none", "key": key, "candidates": candidates}
+    # Say when the bank already knows this question and is still waiting on an
+    # answer, so a second application does not open a second entry for it.
+    if held is not None:
+        out["open"] = True
+        out["askedBy"] = list(held.get("askedBy") or [])
+    return out
 
 
 def cmd_answer_find(args):
@@ -863,6 +1132,363 @@ def cmd_answers_resolve(args):
 
 def cmd_answer_list(args):
     return read_json(paths(root_dir(args.root))["answers"], {})
+
+
+# --- the Memory Bank --------------------------------------------------------
+#
+# Two doors write here and they have to converge on one record. The board edits
+# an answer directly; an application that parks on a question it cannot answer
+# opens the same question as an unanswered entry. A question answered through
+# both doors must not leave two entries behind, so every path keys on
+# answer_key() and checks for the existing record first.
+#
+# Idempotency is a version plus the id of the edit that produced it. The board
+# re-sends clicks it remembers, so the same edit arrives more than once: the
+# replay carries the same editId, sees it already recorded, and does nothing.
+# A genuinely concurrent edit carries a different id at the same version and is
+# refused rather than allowed to clobber, because the board can re-read and the
+# store cannot un-lose an answer.
+
+MAX_ANSWER_BYTES = 4000
+MAX_QUESTION_BYTES = 600
+
+
+def _bank_text(value, field, maximum):
+    text = "" if value is None else str(value)
+    if len(text.encode("utf-8")) > maximum:
+        raise StoreError(f"{field} is longer than {maximum} bytes")
+    return text
+
+
+def _bank_write(root, key, entry, before):
+    """Write one entry after the guards that apply to every door."""
+    after = dict(before)
+    if entry is None:
+        after.pop(key, None)
+    else:
+        after[key] = entry
+    shadowed = refusal_shadow(before, after)
+    if shadowed:
+        raise StoreError(
+            "that would answer a question this product refuses to answer for "
+            f"you: {shadowed!r}. The entry was not written.")
+    write_private(paths(root)["answers"], after)
+    return after
+
+
+def cmd_answer_edit(args):
+    """Save one Memory Bank entry, from the board.
+
+    The edit carries the version it was made against. Matching means it applies
+    and the version moves; not matching means either this exact edit already
+    landed (same editId, so a replay) or something else moved first (refused).
+    """
+    payload = load_input(args.input)
+    if not isinstance(payload, dict):
+        raise StoreError("an answer edit must be a JSON object")
+    question = _bank_text(payload.get("question"), "question", MAX_QUESTION_BYTES).strip()
+    if not question:
+        raise StoreError("an answer edit requires a question")
+    value = _bank_text(payload.get("value"), "value", MAX_ANSWER_BYTES).strip()
+    state = payload.get("state") or ("sensitive" if payload.get("sensitive") else "confirmed")
+    if state not in ANSWER_STATES:
+        raise StoreError(f"state must be one of {sorted(ANSWER_STATES)}")
+    edit_id = _bank_text(payload.get("editId"), "editId", 120).strip()
+    if not edit_id:
+        raise StoreError("an answer edit requires an editId")
+
+    reason = otp_shaped(question, value)
+    if reason:
+        raise StoreError(
+            f"one-time codes are never stored: {reason}. Nothing was written.")
+    # The category guard stops a *new* answer being created for an act the
+    # product refuses to perform. It deliberately does not re-litigate an entry
+    # the user already curated: the store holds a policy note titled "background
+    # check, willingness versus authorisation" whose whole subject is this
+    # distinction, and a guard that made that note uneditable would be reading
+    # the word rather than the situation. Every edit still passes the shadow
+    # check below, so a grandfathered entry cannot be turned into one that
+    # answers a refusal probe.
+    refused = refusal_category(question)
+
+    root = root_dir(args.root)
+    path = paths(root)["answers"]
+    answers = read_json(path, {})
+    key = _bank_text(payload.get("key"), "key", 120).strip() or answer_key(question)
+    stored = answers.get(key)
+    if refused and (stored is None or stored.get("question") != question):
+        raise StoreError(
+            f"this is a {refused.replace('-', ' ')} question. Jobby does not "
+            "answer these for you and will not store an answer to one.")
+    seen = int(payload.get("version") or 0)
+    if stored is not None and stored.get("lastEditId") == edit_id:
+        return {"key": key, "applied": False, "reason": "already applied",
+                "version": bank_version(stored)}
+    if bank_version(stored) != seen:
+        return {"key": key, "applied": False, "reason": "conflict",
+                "version": bank_version(stored), "seen": seen}
+
+    entry = dict(stored or {})
+    entry.update({
+        "key": key,
+        "question": question,
+        "value": value or None,
+        "state": state,
+        "updatedAt": now(),
+        "version": seen + 1,
+        "lastEditId": edit_id,
+    })
+    # `answer` was where the field started and four entries still use it. An
+    # edit that set `value` and left `answer` behind would show the new text and
+    # fill the old one.
+    entry.pop("answer", None)
+    tags = payload.get("tags")
+    if isinstance(tags, list):
+        entry["tags"] = [str(t)[:60] for t in tags][:20]
+    if value:
+        # Answering closes the loop's own placeholder. The record stays, so the
+        # question is still recognised; it simply stops being outstanding.
+        entry["tags"] = [t for t in (entry.get("tags") or []) if t != "unanswered"]
+        entry.pop("openedAt", None)
+        entry["answeredAt"] = now()
+    classify(entry)
+    _bank_write(root, key, entry, answers)
+    return {"key": key, "applied": True, "version": entry["version"],
+            "state": entry["state"], "stored": entry["value"] is not None}
+
+
+def cmd_answer_open(args):
+    """Open a question the bank cannot answer yet, from a parked application.
+
+    This is the grow-only loop. It never overwrites an answer, and a question
+    asked by a second employer joins the entry that already exists rather than
+    creating a second one, which is what makes the two doors converge.
+    """
+    payload = load_input(args.input)
+    if not isinstance(payload, dict):
+        raise StoreError("an opened question must be a JSON object")
+    question = _bank_text(payload.get("question"), "question", MAX_QUESTION_BYTES).strip()
+    if not question:
+        raise StoreError("opening a question requires the question")
+    application = _bank_text(payload.get("applicationId"), "applicationId", 120).strip()
+
+    reason = otp_shaped(question)
+    if reason:
+        return {"opened": False, "reason": f"one-time code: {reason}"}
+    refused = refusal_category(question)
+    if refused:
+        # Not bank material, so it stays a blocker on the card and nothing
+        # invites the user to answer it here and be refused a step later.
+        return {"opened": False, "reason": f"refusal category: {refused}"}
+    if boundary_question(question):
+        return {"opened": False, "reason": "tested boundary: the loop does not plant this"}
+
+    root = root_dir(args.root)
+    path = paths(root)["answers"]
+    answers = read_json(path, {})
+    key = answer_key(question)
+    stored = answers.get(key)
+    if stored is not None and answered(stored):
+        return {"key": key, "opened": False, "reason": "already answered"}
+    if stored is not None and stored.get("remembered") is False:
+        # The user filled this once and chose not to have it kept. Opening it
+        # as an outstanding question would ask them to reverse that decision
+        # every time an employer asks.
+        return {"key": key, "opened": False,
+                "reason": "the user chose not to store this value"}
+
+    entry = dict(stored or {})
+    asked = [a for a in (entry.get("askedBy") or []) if isinstance(a, str)]
+    if application and application not in asked:
+        asked.append(application)
+    entry.update({
+        "key": key,
+        "question": entry.get("question") or question,
+        "value": None,
+        # `missing` unless the question itself is Class 2, in which case it is
+        # born sensitive and the Profile page masks it from the first render.
+        # Deciding this later, when someone answers it, means deciding it with
+        # the question's subject already forgotten.
+        "state": "sensitive" if sensitive_question(question) else "missing",
+        "askedBy": asked[:50],
+        "openedAt": entry.get("openedAt") or now(),
+        "lastAskedAt": now(),
+        "updatedAt": now(),
+        "version": bank_version(entry),
+    })
+    tags = [t for t in (entry.get("tags") or []) if t != "unanswered"]
+    entry["tags"] = tags + ["unanswered"]
+    classify(entry)
+    _bank_write(root, key, entry, answers)
+    return {"key": key, "opened": stored is None, "joined": stored is not None,
+            "askedBy": entry["askedBy"]}
+
+
+# --- base resumes -----------------------------------------------------------
+#
+# `profile.resumes[]` is already the identities table the multi-tenant plan
+# names in §8: one entry per right to work, each with its own contact block and
+# base document, exactly one marked default. The commands below keep that
+# contract rather than replacing it, so the later migration is a lift.
+
+RESUME_TEMPLATE_CONTENT = (
+    Path(__file__).resolve().parents[1] / "templates" / "resume-content.json"
+)
+
+
+def resume_content(root):
+    """The editable resume wording: the device's copy, else the shipped base."""
+    override = read_json(paths(root)["resumeContent"], None)
+    if isinstance(override, dict) and override:
+        return override
+    try:
+        return json.loads(RESUME_TEMPLATE_CONTENT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # The deployed renderer carries no templates directory. It never calls
+        # this, but an import-time surprise there is expensive and a missing
+        # base is simply nothing to edit.
+        return {}
+
+
+def cmd_resume_content_get(args):
+    return resume_content(root_dir(args.root))
+
+
+def _same_shape(base, candidate):
+    """Why the edited wording does not fit the template, or None.
+
+    The template has a fixed number of slots and the layout gate measures the
+    render against the base, so a list that grows or shrinks does not produce a
+    worse resume, it produces one that fails to render at all. Refusing here
+    names the field; refusing at render time names a slot count.
+    """
+    for field in ("banner", "summary"):
+        if not isinstance(candidate.get(field), str):
+            return f"{field} must be text"
+    for field in ("areasOfExpertise", "technical", "roles"):
+        got, want = candidate.get(field), base.get(field)
+        if not isinstance(got, list):
+            return f"{field} must be a list"
+        if isinstance(want, list) and len(got) != len(want):
+            return (f"{field} has {len(got)} entries and the template has "
+                    f"{len(want)}; the wording can change, the count cannot")
+    for index, row in enumerate(candidate.get("technical") or []):
+        if not isinstance(row, dict) or not isinstance(row.get("label"), str) \
+                or not isinstance(row.get("items"), str):
+            return f"technical row {index + 1} needs a label and items"
+    for index, role in enumerate(candidate.get("roles") or []):
+        if not isinstance(role, dict):
+            return f"role {index + 1} must be an object"
+        bullets = role.get("bullets")
+        if not isinstance(bullets, list):
+            return f"role {index + 1} needs a list of bullets"
+        want = ((base.get("roles") or [{}] * (index + 1))[index] or {}).get("bullets")
+        if isinstance(want, list) and len(bullets) != len(want):
+            return (f"role {index + 1} has {len(bullets)} bullets and the template "
+                    f"has {len(want)}; the wording can change, the count cannot")
+    return None
+
+
+def cmd_resume_content_put(args):
+    candidate = load_input(args.input)
+    if not isinstance(candidate, dict):
+        raise StoreError("resume content must be a JSON object")
+    root = root_dir(args.root)
+    base = resume_content(root)
+    problem = _same_shape(base, candidate)
+    if problem:
+        raise StoreError(problem)
+    candidate["updatedAt"] = now()
+    write_private(paths(root)["resumeContent"], candidate)
+    return {"saved": True, "updatedAt": candidate["updatedAt"]}
+
+
+def _profile_resumes(root):
+    profile = read_json(paths(root)["profile"], {})
+    resumes = profile.get("resumes")
+    if not isinstance(resumes, list) or not resumes:
+        raise StoreError("this profile has no base resumes")
+    return profile, resumes
+
+
+def cmd_resume_default(args):
+    root = root_dir(args.root)
+    profile, resumes = _profile_resumes(root)
+    if not any(entry.get("key") == args.key for entry in resumes):
+        raise StoreError(f"no base resume with key {args.key!r}")
+    for entry in resumes:
+        entry["default"] = entry.get("key") == args.key
+    profile["updatedAt"] = now()
+    write_private(paths(root)["profile"], profile)
+    return {"default": args.key,
+            "resumes": [e.get("key") for e in resumes]}
+
+
+def _open_regions(root):
+    """Regions with work still running, from the sessions on disk."""
+    live = set()
+    sessions = Path(paths(root)["sessions"])
+    if not sessions.exists():
+        return live
+    for f in sessions.glob("*.json"):
+        entry = read_json(f, {})
+        if entry.get("status") in ("dropped", "completed", "abandoned"):
+            continue
+        region = entry.get("region")
+        if region:
+            live.add(str(region).upper())
+    return live
+
+
+def cmd_resume_remove(args):
+    """Remove a base resume, unless something still depends on it.
+
+    Both refusals are about not orphaning work already under way. The default is
+    what every posting without a region match falls back to, and the last base
+    for a region is what every open application in that region will render from.
+    """
+    root = root_dir(args.root)
+    profile, resumes = _profile_resumes(root)
+    target = next((e for e in resumes if e.get("key") == args.key), None)
+    if target is None:
+        raise StoreError(f"no base resume with key {args.key!r}")
+    if target.get("default"):
+        raise StoreError(
+            "that is the default base resume. Make another one the default "
+            "first, then remove this one.")
+    regions = {str(r).upper() for r in (target.get("appliesTo") or [])}
+    remaining = {
+        str(r).upper()
+        for entry in resumes if entry is not target
+        for r in (entry.get("appliesTo") or [])
+    }
+    stranded = sorted((regions - remaining) & _open_regions(root))
+    if stranded:
+        raise StoreError(
+            f"it is the only base resume for {', '.join(stranded)} and there is "
+            "open work there. Finish or drop those applications first.")
+    profile["resumes"] = [e for e in resumes if e is not target]
+    profile["updatedAt"] = now()
+    write_private(paths(root)["profile"], profile)
+    return {"removed": args.key,
+            "resumes": [e.get("key") for e in profile["resumes"]]}
+
+
+def cmd_answer_delete(args):
+    root = root_dir(args.root)
+    path = paths(root)["answers"]
+    answers = read_json(path, {})
+    key = args.key
+    stored = answers.get(key)
+    if stored is None:
+        return {"key": key, "deleted": False, "reason": "no such entry"}
+    edit_id = (args.edit_id or "").strip()
+    seen = int(args.version or 0)
+    if bank_version(stored) != seen:
+        return {"key": key, "deleted": False, "reason": "conflict",
+                "version": bank_version(stored), "seen": seen}
+    _bank_write(root, key, None, answers)
+    return {"key": key, "deleted": True, "editId": edit_id or None}
 
 
 def cmd_history_append(args):
@@ -1102,6 +1728,13 @@ COMMANDS = {
     "answer-find": cmd_answer_find,
     "answers-resolve": cmd_answers_resolve,
     "answer-list": cmd_answer_list,
+    "answer-edit": cmd_answer_edit,
+    "answer-open": cmd_answer_open,
+    "answer-delete": cmd_answer_delete,
+    "resume-content-get": cmd_resume_content_get,
+    "resume-content-put": cmd_resume_content_put,
+    "resume-default": cmd_resume_default,
+    "resume-remove": cmd_resume_remove,
     "history-append": cmd_history_append,
     "history-list": cmd_history_list,
     "history-status": cmd_history_status,
@@ -1123,12 +1756,20 @@ def build_parser():
     p.add_argument("--root", help="store directory (default ~/.job-application)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    for name in ("init", "paths", "profile-get", "answer-list", "history-status", "stats", "roles-list"):
+    for name in ("init", "paths", "profile-get", "answer-list", "history-status",
+                 "stats", "roles-list", "resume-content-get"):
         sub.add_parser(name)
 
     sp = sub.add_parser("profile-replace"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("answer-put"); sp.add_argument("--input", required=True); sp.add_argument("--remember-sensitive", action="store_true")
     sp = sub.add_parser("answer-find"); sp.add_argument("--question", required=True)
+    sp = sub.add_parser("answer-edit"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("answer-open"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("answer-delete"); sp.add_argument("--key", required=True)
+    sp.add_argument("--version", default=0); sp.add_argument("--edit-id")
+    sp = sub.add_parser("resume-content-put"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("resume-default"); sp.add_argument("--key", required=True)
+    sp = sub.add_parser("resume-remove"); sp.add_argument("--key", required=True)
     sp = sub.add_parser("answers-resolve"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("history-append"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("role-put"); sp.add_argument("--input", required=True)

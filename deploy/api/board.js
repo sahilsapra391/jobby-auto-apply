@@ -239,6 +239,142 @@ async function handleSearchConfig(request) {
   return text('Method not allowed.\n', 405, { allow: 'GET, POST, DELETE' });
 }
 
+// --- the Profile page ------------------------------------------------------
+//
+// The Memory Bank is 150 entries and about 74 KB. Measured on 2026-08-25, the
+// board at its embed cap is 3,840,457 bytes against a 3.7 MB budget, which
+// leaves 39,274 bytes: the bank does not fit in the page and never will. So it
+// travels in the published state and is fetched by the panel that needs it,
+// the same bargain /api/posting already makes for posting sections.
+//
+// It falls out well for privacy too, though the stronger rule is upstream: a
+// sensitive answer's value is never published at all, so this route cannot
+// serve one and no masking here is load-bearing. It carries `heldOnDevice` so
+// the page can say an answer exists without being told what it is.
+//
+// Single-user today. The payload names the account it belongs to and this
+// route refuses one that names a different account, so the day per-user state
+// arrives this fails closed instead of serving a stranger's answers.
+const VIEWER_USER_ID = process.env.JOBBY_USER_ID || 'account-1';
+
+const ANSWER_FIELDS = ['key', 'question', 'state', 'tags', 'updatedAt', 'version',
+  'sensitive', 'dataClass', 'askedBy', 'openedAt', 'lastAskedAt',
+  // `heldOnDevice` says an answer exists that this side has never been given.
+  // Without it a withheld sensitive answer is indistinguishable from a question
+  // nobody has answered, and the board would ask for answers it already has.
+  'heldOnDevice', 'answeredAt', 'note', 'remembered'];
+
+function profilePayload(state) {
+  const bank = (state && state.memoryBank) || null;
+  if (!bank) return null;
+  const owner = bank.userId || VIEWER_USER_ID;
+  if (owner !== VIEWER_USER_ID) return { mismatch: owner };
+  const answers = (Array.isArray(bank.answers) ? bank.answers : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => {
+      const out = {};
+      for (const field of ANSWER_FIELDS) {
+        if (entry[field] !== undefined) out[field] = entry[field];
+      }
+      // `answer` is where the field started and four entries still use it.
+      const value = entry.value !== undefined && entry.value !== null
+        ? entry.value : entry.answer;
+      out.value = value === undefined || value === null ? null : String(value).slice(0, 4000);
+      return out;
+    });
+  return {
+    userId: owner,
+    answers,
+    identities: Array.isArray(bank.identities) ? bank.identities : [],
+    resumeContent: bank.resumeContent && typeof bank.resumeContent === 'object'
+      ? bank.resumeContent : null,
+  };
+}
+
+// Bounded because every one of these rides the single queue key the watcher
+// polls every few seconds, and an unbounded field there is a way to make the
+// whole board slow for everyone.
+const LIMITS = { editId: 120, key: 120, question: 600, value: 4000, state: 20 };
+
+function boundedString(value, limit) {
+  if (typeof value !== 'string') return null;
+  return value.length <= limit ? value : null;
+}
+
+const ANSWER_ACTIONS = new Set(['save', 'delete']);
+const RESUME_ACTIONS = new Set(['default', 'content', 'remove']);
+
+async function handleAnswerEdit(request) {
+  if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
+  if (request.method !== 'POST') return text('Method not allowed.\n', 405, { allow: 'POST' });
+  try {
+    const body = await request.json().catch(() => ({}));
+    const editId = boundedString(body.editId, LIMITS.editId);
+    if (!editId || !/^[A-Za-z0-9._-]+$/.test(editId)) {
+      return json({ ok: false, error: 'bad editId' }, 400);
+    }
+    const action = String(body.action || 'save');
+    if (!ANSWER_ACTIONS.has(action)) return json({ ok: false, error: 'unknown action' }, 400);
+    const version = Number.isInteger(body.version) && body.version >= 0 ? body.version : 0;
+    const extra = { action, version };
+    const key = boundedString(body.key, LIMITS.key);
+    if (key !== null && key !== '') extra.key = key;
+    if (action === 'save') {
+      const question = boundedString(body.question, LIMITS.question);
+      const value = boundedString(body.value, LIMITS.value);
+      if (!question || !question.trim()) return json({ ok: false, error: 'the question is required' }, 400);
+      if (value === null) return json({ ok: false, error: 'that answer is too long' }, 400);
+      extra.question = question;
+      extra.value = value;
+      const state = boundedString(body.state, LIMITS.state);
+      if (state) extra.state = state;
+      if (Array.isArray(body.tags)) {
+        extra.tags = body.tags.filter((t) => typeof t === 'string').slice(0, 20)
+          .map((t) => t.slice(0, 60));
+      }
+    } else if (!extra.key) {
+      return json({ ok: false, error: 'delete needs the key' }, 400);
+    }
+    return json({ ok: true, ...(await kvEnqueue(process.env, 'answerEdits', editId, extra)) }, 202);
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+}
+
+async function handleResumeEdit(request) {
+  if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
+  if (request.method !== 'POST') return text('Method not allowed.\n', 405, { allow: 'POST' });
+  try {
+    const body = await request.json().catch(() => ({}));
+    const editId = boundedString(body.editId, LIMITS.editId);
+    if (!editId || !/^[A-Za-z0-9._-]+$/.test(editId)) {
+      return json({ ok: false, error: 'bad editId' }, 400);
+    }
+    const action = String(body.action || '');
+    if (!RESUME_ACTIONS.has(action)) return json({ ok: false, error: 'unknown action' }, 400);
+    const extra = { action };
+    if (action === 'default' || action === 'remove') {
+      const key = boundedString(body.key, LIMITS.key);
+      if (!key || !/^[A-Za-z0-9._-]+$/.test(key)) return json({ ok: false, error: 'bad base resume key' }, 400);
+      extra.key = key;
+    } else {
+      // The wording, not the layout. Validated against the template's own slot
+      // counts on the machine that owns the template; refused here only for
+      // size, because the queue is shared and a huge value slows every poll.
+      const content = body.content;
+      if (!content || typeof content !== 'object' || Array.isArray(content)) {
+        return json({ ok: false, error: 'resume content must be an object' }, 400);
+      }
+      const encoded = JSON.stringify(content);
+      if (encoded.length > 64 * 1024) return json({ ok: false, error: 'that resume content is too large' }, 400);
+      extra.content = content;
+    }
+    return json({ ok: true, ...(await kvEnqueue(process.env, 'resumeEdits', editId, extra)) }, 202);
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+}
+
 const LOGO_HOSTS = new Set([
   'cdn-images.himalayas.app',
   'remotive.com',
@@ -492,6 +628,31 @@ export default {
     if (pathname === '/api/provider') {
       return handleProviderAction(request);
     }
+
+    // The Profile page's own data. Fetched rather than embedded; see
+    // profilePayload above for the measurement that forced that.
+    if (pathname === '/api/profile' && request.method === 'GET') {
+      const envelope = await getBoardState(process.env).catch(() => null);
+      const state = envelope ? decodeBoardState(envelope) : null;
+      if (!state) {
+        return json({ ok: false, error: 'the board state could not be read' }, 503);
+      }
+      const payload = profilePayload(state);
+      if (payload && payload.mismatch) {
+        return json({ ok: false, error: 'this profile belongs to another account' }, 403);
+      }
+      if (!payload) {
+        return json({
+          ok: false,
+          error: 'this board was published before the Profile page existed. '
+                 + 'Publish again from Your Device to fill it.',
+        }, 409);
+      }
+      return json({ ok: true, ...payload }, 200);
+    }
+
+    if (pathname === '/api/answer') return handleAnswerEdit(request);
+    if (pathname === '/api/resume') return handleResumeEdit(request);
 
     // What the posting listed under its own headings, for one expanded card.
     // On demand rather than in the page, because the embedded payload is capped
