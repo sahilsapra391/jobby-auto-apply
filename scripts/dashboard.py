@@ -122,7 +122,8 @@ SESSION_PUBLIC_FIELDS = {
     "comp", "coreSkills", "coverLetter", "datePosted", "discipline",
     "droppedAt", "droppedFrom", "droppedReason", "droppedStage", "fitScore",
     "foundAt", "jobNumber", "linkedinUrl", "location", "note", "pendingFields",
-    "pendingNote", "phase", "phaseAt", "phaseDetail", "postedAgo", "postedDate",
+    "parkClass", "pendingNote", "phase", "phaseAt", "phaseDetail",
+    "postedAgo", "postedDate",
     "postedDays", "postingUrl", "previousStatus", "promotedFrom", "realLocation",
     "region", "requisition", "resumeVariant", "role", "seenOnBoards", "source",
     "sponsorshipStance", "status", "step", "sweptAt", "updatedAt", "url",
@@ -531,9 +532,14 @@ def build(state, generated):
     for s in blocked:
         pending = s.get("pendingFields", [])
         aid = s.get("applicationId") or f"{s.get('company','')}-{s.get('role','')}"
+        # A park because the agent had no browser and a park on a real blocker
+        # both land here looking like work for the user. One of them is not.
+        capability = s.get("parkClass") == "capability"
         badge = "ready" if not pending else f"{len(pending)} to do"
         cls = "ready" if not pending else "hold"
         chip = "ready" if not pending else "hold"
+        if capability:
+            badge, cls, chip = "system fault", "fault", "fault"
         hay = " ".join(str(x) for x in [
             s.get("company"), s.get("role"), s.get("ats"),
             s.get("location") or s.get("realLocation"),
@@ -549,6 +555,9 @@ def build(state, generated):
             </div>
             <span class="chip {chip}">{esc(badge)}</span>
           </header>
+          {'<p class="fault-note">Nothing was filled: the agent started without '
+           'browser tools. This is a fault in Jobby, not a step for you. '
+           'Retry once the browser server is healthy.</p>' if capability else ''}
           <ul class="todo">{render_pending(pending)}</ul>
           <p class="stub">&#10003; Marked submitted <button class="undo" data-id="{esc(aid)}">Undo</button></p>
           <div class="act">
@@ -899,6 +908,15 @@ def build(state, generated):
         ("done", "Submitted", len(submitted)),
     ]
 
+    # Capacity gone is not the same as automation stopped, so it gets its own
+    # line rather than the alarm banner. It appears where the question is asked:
+    # the last time the fleet filled up, the way it surfaced was the user asking
+    # how many applications were in flight.
+    parked_note = str((state.get("meta") or {}).get("slotsParked") or "").strip()
+    parked_banner = (
+        f'<p class="capacity" role="status">{esc(parked_note)}</p>'
+    ) if parked_note else ""
+
     stopped = str((state.get("meta") or {}).get("blocked") or "").strip()
     blocked_banner = (
         f'<div class="sysbanner" role="alert"><strong>Automation is stopped.</strong> '
@@ -1123,6 +1141,9 @@ def build(state, generated):
   .chip.hold {{ color:var(--orange); background:var(--t-o); }}
   .chip.ready {{ color:var(--green); background:var(--t-g); }}
   .chip.warm {{ color:var(--purple); background:var(--t-p); }}
+  .chip.fault {{ color:var(--red-ink); background:var(--t-red); }}
+  .capacity {{ margin:0 0 .85rem; padding:.6rem .85rem; border-radius:var(--radius);
+    background:var(--t-o); color:var(--orange); font-size:.9rem; line-height:1.45; }}
 
   ul.todo {{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.45rem; }}
   ul.todo li {{ font-size:.92rem; line-height:1.38; padding-left:1.25rem; position:relative;
@@ -1325,6 +1346,7 @@ def build(state, generated):
   </div>
 
   <div class="panel" id="p-flight" role="tabpanel">
+    {parked_banner}
     {'<p class="hint">Applications being worked on right now. Updates as each stage completes.</p>' if flight_cards else ''}
     {filter_bar("flight", [], len(flight_cards))}
     {f'<div class="grid">{"".join(flight_cards)}</div>' if flight_cards else empty_state("flight")}

@@ -32,6 +32,7 @@ happened, and pushed to healthchecks.io so silence itself is an alert.
 """
 
 import argparse
+import calendar
 import hashlib
 import json
 import os
@@ -1176,6 +1177,63 @@ def stale_board_warning():
             "`python3 scripts/publish.py` to see the reason.")
 
 
+# A parked slot is a designed state: an agent filled what it could and left the
+# page open for the user. A fleet of them is an outage wearing that state's
+# clothes. On 2026-08-27 all five were parked at once with none running, and the
+# way that surfaced was the user asking how many applications were in flight.
+# Counted by browser calls, four had reached the form and one had made zero, so
+# most of them were working as designed and the fleet was still stopped. That is
+# the point: no single park was wrong, and capacity was gone anyway.
+PARKED_SLOT_STALE_SECONDS = 6 * 3600
+PARKED_SLOT_FRACTION = 0.6
+
+
+def parked_apply_slots():
+    """Each parked slot with its age in seconds, oldest first."""
+    now = time.time()
+    parked = []
+    for name in APPLY_LOCKS:
+        held = lock_holder(name)
+        if not held or held.get("parked") is not True:
+            continue
+        try:
+            # The stamps are UTC. time.mktime reads local, so it lands hours out
+            # and an alarm that is hours out is an alarm nobody keeps.
+            at = calendar.timegm(
+                time.strptime(str(held.get("at")), "%Y-%m-%dT%H:%M:%SZ")
+            )
+            age = max(0.0, now - at)
+        except (TypeError, ValueError):
+            age = 0.0
+        parked.append({"slot": name, "applicationId": held.get("note") or "",
+                       "ageSeconds": int(age)})
+    return sorted(parked, key=lambda entry: -entry["ageSeconds"])
+
+
+def parked_slot_warning():
+    """The message for the dead-man ping, or empty while the fleet is working.
+
+    Two ways to earn it, because they are different failures. Most of the fleet
+    parked at once is capacity gone whatever the reason. One slot parked for
+    most of a day is a page nobody is coming back to.
+    """
+    parked = parked_apply_slots()
+    if not parked:
+        return ""
+    oldest = parked[0]
+    share = len(parked) / float(APPLY_SLOTS or 1)
+    if share >= PARKED_SLOT_FRACTION:
+        return (f"{len(parked)} of {APPLY_SLOTS} browser slots are parked, oldest "
+                f"{oldest['ageSeconds'] / 3600:.1f}h ({oldest['applicationId']}). "
+                "New applications cannot start until some are finished or released.")
+    if oldest["ageSeconds"] >= PARKED_SLOT_STALE_SECONDS:
+        return (f"browser slot {oldest['slot']} has been parked for "
+                f"{oldest['ageSeconds'] / 3600:.1f}h on {oldest['applicationId']}, "
+                f"against a {PARKED_SLOT_STALE_SECONDS / 3600:.0f}h limit. "
+                "It is holding capacity for a page nobody has come back to.")
+    return ""
+
+
 def publishing_paused():
     if not COOLDOWN.exists():
         return None
@@ -2006,6 +2064,16 @@ def tick(force_publish=False):
             store(["meta-set", "--key", "blocked", "--value", ""])
             changed["unblocked"] = True
 
+    # The phone alarm tells the user something is wrong. The board has to tell
+    # them what, in the place they are already looking when they ask how many
+    # applications are running, because that is the question this answers and
+    # asking it out loud is how the last one surfaced. Written every tick, so
+    # it clears itself the moment a slot frees.
+    parked_now = parked_slot_warning()
+    if parked_now != (meta_value("slotsParked") or ""):
+        store(["meta-set", "--key", "slotsParked", "--value", parked_now])
+        changed["slotsParked"] = parked_now or "cleared"
+
     # One scan at a time. The runner claims its own scan request only after its
     # forced provider preflight passes.
     if scan_ok and q.get("scan") and not lock_holder("scan"):
@@ -2135,8 +2203,11 @@ def status():
         out["queues"] = {"error": str(exc)}
     for name in APPLY_LOCKS + ["scan"]:
         out["locks"][name] = lock_holder(name)
+    parked = parked_apply_slots()
     out["slots"] = {"total": APPLY_SLOTS, "free": len(free_apply_slots()),
-                    "running": running_applications()}
+                    "running": running_applications(),
+                    "parked": parked,
+                    "parkedWarning": parked_slot_warning() or None}
     out["blocked"] = blocked_message() or None
     try:
         out["providers"] = providers.public_status()
@@ -2385,13 +2456,16 @@ def main():
             if line and line != prev_line:
                 print(f"{now_stamp()} {line}", flush=True)
             last_line = line
-            stale = stale_board_warning()
+            stale = "; ".join(
+                message for message in
+                (stale_board_warning(), parked_slot_warning()) if message
+            )
             if stale:
                 # Fails the dead-man check rather than pinging healthy. A quiet
                 # tick over a day-old board is the exact shape of the outage
                 # this exists for, and "idle" would have reported it as fine.
                 if consecutive_failures == 0:
-                    print(f"{now_stamp()} STALE BOARD: {stale}", file=sys.stderr, flush=True)
+                    print(f"{now_stamp()} STALLED: {stale}", file=sys.stderr, flush=True)
                 ping_health("fail", stale)
                 last_ping = time.time()
             elif heartbeat_due(line, prev_line, time.time() - last_ping):

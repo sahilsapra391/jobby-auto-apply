@@ -444,6 +444,101 @@ confirmation text. Direct completion, reuse, and cross-application use fail.
 Generated nonces begin with `jobby_`. Keep that prefix because an unprefixed
 URL-safe token can begin with `-` and argparse then reads it as an option.
 
+## The apply path fails loud, 2026-08-27
+
+Two faults were found by looking, not by any alarm, with three of five slots
+parked and nothing saying so. Both are fixed and both left a guard behind.
+
+**A provider that fails open turns a capability fault into a silent park.** One
+run held a browser server that had passed `mcp_preflight` ninety seconds
+earlier and was dead by the time a provider built its session. Codex named it
+(`required MCP servers failed to initialize`) and refused to start, which is
+correct. Claude Code took the same dead server, started the session anyway, ran
+two turns, and parked the application on a blocker addressed to a person who
+could do nothing about it. Do not read that as "Anthropic cannot fill forms":
+the server was broken for both, and what differs is only who says so.
+
+So the fence is re-checked immediately before each provider attempt rather than
+once before the loop. It costs about 1.3 seconds against a 45-minute run. And a
+park is classified after the fact: the firewall counts every accepted tool call
+into `uploads/<id>/activity.json`, and a park with zero browser calls is
+recorded as `parkClass: capability`, which the board draws in red saying the
+fault is Jobby's. A park where the agent worked the form stays a park.
+
+`mcp_preflight.REQUIRED` and `_tool_definitions` are one contract in two files,
+pinned by `FenceSurfaceContractTests`. A tool in one and not the other is either
+unguarded or impossible, and both fail quietly.
+
+The browser proxy no longer sends the Playwright child's stderr to `/dev/null`.
+That is why this fault survived so long: the client saw `connection closed:
+initialize response` and the reason was destroyed as it was produced, so every
+hand probe afterwards succeeded and the cause was never named. It is drained on
+a thread, kept to the last 40 lines, and printed when a run ends badly.
+
+**`browser_file_upload` cannot attach a file to most application forms.** It
+answers only while a file chooser is open, and the click that opens one is the
+click that hangs: the real input is usually a 1px transparent element behind a
+styled button, so Playwright waits for actionability that never arrives. A real
+GitLab run made six upload calls, got "can only be used when there is related
+modal state present" every time, and parked with both PDFs unattached.
+
+`browser_attach_file` is the replacement and it needs no chooser. It reaches the
+page as `browser_run_code_unsafe`, the one tool the firewall most deliberately
+removes, so the code is written in `ATTACH_FILE_CODE` and never assembled from
+client text: the agent chooses a target and which of its own two bound PDFs, and
+both cross into JavaScript as JSON literals. The unsafe tool stays unreachable
+by name. Two behaviours are deliberate. With no target and several file inputs
+it refuses and names them, because taking the first is how a cover letter lands
+in the resume field on a form nobody reads back. And the input is described
+before the attach, not after: a React form swaps the field out the moment it
+accepts a file, which made a working upload report a 30-second timeout on the
+live Justworks posting, and an agent told its upload failed retries it.
+
+**A parked application may retry into its own slot, and only its own.**
+`candidate_apply_slots` returns the affinity slot when it is parked under the
+same application id, and `choose_apply_head` lets such an application pass the
+head when the head has no slot. That pairing is what the refusal must not be
+drawn wider than: a guard that refuses everything parked would refuse the one
+retry that costs nothing, since an application already holding its slot consumes
+nothing anyone else is waiting for. Verified against the live fleet on
+2026-08-27 with zero free slots: the parked application sitting last in a queue
+of five was chosen as the head, into `apply-2`, its own.
+
+**A fleet of parked slots is an outage wearing a designed state's clothes.**
+`parked_slot_warning` fails the same dead-man ping the board staleness uses, one
+alarm with two reasons rather than two alarms, when most of the fleet is parked
+or one slot has been held most of a day. Ages are parsed as UTC; `time.mktime`
+reads local and an alarm that is hours out is an alarm nobody keeps.
+
+Measured on 2026-08-27, when all five slots were parked with none running: by
+browser-call count, four had reached the form and one had made zero. So four of
+the five parks were correct and the pipeline was stopped regardless. No single
+park being wrong is exactly why nothing said anything.
+
+The same sentence goes to two places, because they answer different questions.
+The ping tells the user something is wrong wherever they are. `meta.slotsParked`
+puts it at the top of the In flight panel, which is where they were already
+looking the last time this happened; the way it surfaced was the user asking how
+many applications were running. It is written every tick rather than only when
+it appears, so it clears itself when a slot frees. It is not the "Automation is
+stopped" banner: capacity gone and automation stopped are different facts and
+merging them costs the distinction.
+
+**Known gap, and which guard covers it.** The preflight proves the server
+answers, not that Chrome behind it is reachable. Playwright MCP connects to the
+browser lazily, on the first tool call, so a dead Chrome still advertises all
+thirteen tools and passes the fence. `browser.open_application` is the guard
+that catches that one step later, failing with "the posting would not open in
+apply-N". Stating which guard covers which case is what makes a failure
+readable: without it, a preflight pass followed by a dead browser looks like the
+fence lying, and the fence is not lying, it is answering a different question.
+
+`tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
+the real firewall against a real Chrome and attaches real files to a form whose
+input is hidden. Both faults were invisible to the whole suite because every
+test stopped at a seam. It is excluded from CI beside the resume render tests,
+and skips rather than fails when no browser slot is running.
+
 ## Application worker repair, 2026-08-24
 
 Read `docs/handoffs/claude-application-worker-2026-08-24.md` before changing
@@ -787,6 +882,56 @@ than the fact that it passed. A classifier is not verified by reading it. The
 word-bounded version above went from 4 of 4 generic questions wrongly flagged to
 0 of 7, measured against the 156 real answers, and that measurement is the only
 reason anyone knows it works.
+
+## No diagnostic path is ever discarded
+
+**Stderr, health-check results, error branches: none of them may be dropped,
+swallowed or routed to `/dev/null`. The failure nobody can reproduce is almost
+always the one whose evidence was thrown away at the source.**
+
+Three instances, and they are the same instance:
+
+- `ping_health` returned `None` on any network error and a status every caller
+  ignored. An unreachable or misconfigured `HEALTHCHECKS_URL` was therefore
+  indistinguishable, from inside the watcher, from a healthy system with a
+  working alarm.
+- The tick's `STALE BOARD` branch was never reached across a 22-hour outage,
+  because the publish raised first and the exception handler ran instead. Hours
+  of pings said "tick 4620: publish failed" and not one said the board was a day
+  old. `STALE BOARD` appears zero times in `watch.err` for that entire day.
+- `browser_mcp_proxy` passed `stderr=subprocess.DEVNULL` to the Playwright
+  child. When the backend died during initialize, the client saw only
+  "connection closed: initialize response" and the reason ceased to exist in the
+  same instant it was produced. Every hand probe afterwards succeeded, so for
+  two days the fault was "not reproduced" when it had in fact explained itself
+  once and been silenced.
+
+The component whose job is noticing keeps being the one that says nothing, and
+each time it took a person reading code to find what an alarm should have said.
+So, concretely: a `subprocess` gets its stderr captured and reported, never
+`DEVNULL`. A probe returns its outcome and something reads it. An `except` that
+ends a story writes down which story it ended. Where a check can fail before a
+later check runs, the later check's message is attached to the failure rather
+than skipped, because the first thing to go wrong is rarely the important thing.
+
+`tests/test_diagnostics_are_kept.py` enforces the stderr half by walking the AST
+of every module in `scripts/` rather than trusting anyone to remember, because a
+rule that depends on the next person remembering is a rule already broken. It
+counts the launches it inspected, so a matcher that quietly stops matching fails
+rather than passes. Measured after this change: 80 subprocess launches, 73
+captured, 6 inheriting into a service log, 1 merged, none discarded. `DISCARD_
+ALLOWED` exists for a launch that genuinely must throw its child's output away,
+and takes the reason with it.
+
+Chrome was the last holdout and is not an exception. It is launched detached to
+outlive its runner, so a pipe would have no reader and could fill and block it.
+Its output goes to `~/.job-application/logs/chrome-<slot>.log`, truncated at
+each launch so it describes the browser now running rather than growing across
+restarts.
+
+The cost of this is a few kilobytes a run. The cost of not doing it, measured
+three times now, is that the one occurrence able to name the cause is the one
+occurrence guaranteed not to.
 
 ## Checking a peer's number is not the slow path
 

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import pathlib
 import tempfile
+import time
 import unittest
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -1574,6 +1575,64 @@ class DocumentProviderWalkTests(TickHarnessMixin, unittest.TestCase):
         self.assertEqual(
             changed["waitingOnDocumentProvider"]["considered"], ["gemini", "openai"])
 
+
+class ParkedSlotAlarmTests(unittest.TestCase):
+    """A parked slot is designed. A fleet of them is an outage in its costume.
+
+    On 2026-08-27 three of five slots were parked from that afternoon and the
+    way it surfaced was the user asking how many applications were in flight.
+    Two of the three had parked because their browser server advertised nothing,
+    which is not a state anyone was going to come back and finish.
+    """
+
+    def parked(self, ages):
+        """lock_holder answers for each slot, given ages in seconds."""
+        now = time.time()
+
+        def holder(name):
+            if name not in ages:
+                return None
+            stamp = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - ages[name])
+            )
+            return {"pid": 0, "at": stamp, "note": f"app-{name}", "parked": True}
+
+        return mock.patch.object(watch, "lock_holder", side_effect=holder)
+
+    def test_a_working_fleet_says_nothing(self):
+        with self.parked({"apply-1": 60}):
+            self.assertEqual(watch.parked_slot_warning(), "")
+
+    def test_most_of_the_fleet_parked_is_capacity_gone_whatever_the_reason(self):
+        with self.parked({"apply-1": 60, "apply-2": 120, "apply-3": 90}):
+            warning = watch.parked_slot_warning()
+        self.assertIn("3 of 5", warning)
+        self.assertIn("cannot start", warning)
+
+    def test_one_slot_held_most_of_a_day_earns_it_alone(self):
+        with self.parked({"apply-1": 7 * 3600}):
+            warning = watch.parked_slot_warning()
+        self.assertIn("apply-1", warning)
+        self.assertIn("7.0h", warning)
+
+    def test_ages_are_read_as_utc_not_local(self):
+        """An alarm that is hours out is an alarm nobody keeps."""
+        with self.parked({"apply-1": 3600}):
+            entry = watch.parked_apply_slots()[0]
+        self.assertLess(abs(entry["ageSeconds"] - 3600), 30)
+
+    def test_an_unreadable_stamp_does_not_take_the_alarm_down(self):
+        with mock.patch.object(watch, "lock_holder", side_effect=lambda name: (
+                {"pid": 0, "at": "not a date", "note": "x", "parked": True}
+                if name == "apply-1" else None)):
+            self.assertEqual(watch.parked_apply_slots()[0]["ageSeconds"], 0)
+
+    def test_the_ping_carries_it_alongside_board_staleness_not_instead(self):
+        """One alarm, two reasons. Two alarms is how one stops being read."""
+        source = (pathlib.Path(watch.__file__).read_text())
+        block = source[source.index("stale = "):source.index("stale = ") + 400]
+        self.assertIn("stale_board_warning()", block)
+        self.assertIn("parked_slot_warning()", block)
 
 
 if __name__ == "__main__":

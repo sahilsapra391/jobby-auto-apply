@@ -14,6 +14,7 @@ bounded JSON-RPC line is never copied to stdout.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import copy
 import hashlib
 import json
@@ -321,6 +322,38 @@ def _tool_definitions(upload_paths: Sequence[str]) -> tuple[dict[str, Any], ...]
             }, ["paths"]),
         },
         {
+            "name": "browser_attach_file",
+            # Playwright MCP's own browser_file_upload only answers while a
+            # file chooser is open, and the click that opens one is exactly the
+            # click that hangs: a file input is usually zero-sized and covered,
+            # so Playwright waits for actionability that never arrives and the
+            # call times out. Measured on GitLab on 2026-08-27, where every
+            # upload returned "can only be used when there is related modal
+            # state present" and the application parked with both PDFs
+            # unattached. `setInputFiles` needs no chooser and no visibility,
+            # which is why this exists.
+            #
+            # It reaches the page through browser_run_code_unsafe, the one tool
+            # the firewall most deliberately removes, so the code string is
+            # written here and never assembled from anything the agent sent.
+            # The agent chooses a target and which of its own two bound PDFs,
+            # and both cross into JavaScript as JSON literals.
+            "description": (
+                "Attach the fixed resume or cover letter PDF to a file input "
+                "directly, without opening a file chooser. Prefer this over "
+                "browser_file_upload, which needs an open chooser dialog."
+            ),
+            "inputSchema": _schema({
+                "target": TARGET,
+                "element": ELEMENT,
+                "paths": {
+                    "type": "array", "minItems": 1, "maxItems": 2,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "enum": list(upload_paths)},
+                },
+            }, ["paths"]),
+        },
+        {
             "name": "browser_tabs",
             "description": "List tabs or select one existing tab.",
             # Object schema for the same reason as browser_find. The pairing of
@@ -400,6 +433,105 @@ def _complete_result(
     return result
 
 
+# Written here, never assembled from client text. The two values the agent
+# chooses arrive as `paths` and `ref`, both injected as JSON literals by
+# _attach_file_code, so no client string is ever concatenated into source.
+#
+# A ref resolves through Playwright's aria-ref selector, the same handle the
+# accessibility snapshot hands the agent. What the ref points at is usually the
+# visible button rather than the input, so the input is looked for at the ref,
+# under it, and beside it before the search widens to the page. Order matters:
+# a page with several file inputs would otherwise take whichever came first.
+ATTACH_FILE_CODE = """async (page) => {
+  const paths = %(paths)s;
+  const ref = %(ref)s;
+  const describe = (node) => {
+    const bits = ['input'];
+    for (const name of ['id', 'name', 'accept']) {
+      const value = node.getAttribute(name);
+      if (value) bits.push(name + '=' + value);
+    }
+    if (node.multiple) bits.push('multiple');
+    return bits.join(' ');
+  };
+  let inputs = [];
+  if (ref) {
+    const at = /^e[0-9]+$/.test(ref) ? page.locator('aria-ref=' + ref) : page.locator(ref);
+    for (const scope of [at, at.locator('input[type=file]'),
+                         at.locator('xpath=./ancestor::*[position()<=3]//input[@type=\"file\"]')]) {
+      let total = 0;
+      try { total = await scope.count(); } catch (error) { continue; }
+      for (let index = 0; index < total; index++) {
+        const candidate = scope.nth(index);
+        let shape = '';
+        try {
+          shape = await candidate.evaluate((node) =>
+            node.tagName.toLowerCase() + ':' + (node.getAttribute('type') || ''));
+        } catch (error) { continue; }
+        if (shape === 'input:file') inputs.push(candidate);
+      }
+      if (inputs.length) break;
+    }
+    if (!inputs.length) throw new Error('the target resolved to no file input');
+  } else {
+    const all = page.locator('input[type=file]');
+    const total = await all.count();
+    if (total === 0) throw new Error('the page has no file input');
+    // Choosing the first of several is how a cover letter lands in the resume
+    // field, silently, on a form nobody reads back. Name them and let the
+    // caller say which; the hidden ones carry no accessibility ref, so a CSS
+    // selector in `target` is the handle that always exists.
+    if (total > 1) {
+      const seen = [];
+      for (let index = 0; index < total; index++) {
+        seen.push(await all.nth(index).evaluate(describe));
+      }
+      throw new Error('the page has ' + total + ' file inputs; pass target to choose one: '
+                      + seen.join(' ; '));
+    }
+    inputs = [all.first()];
+  }
+  const input = inputs[0];
+  // Described before the attach, not after. A React form swaps the input out
+  // for its own "file.pdf / Remove file" view the moment it accepts a file, so
+  // the handle held here is detached by the time anything asks it a question.
+  // On a real Greenhouse form that made a working upload report a 30s timeout,
+  // which is worse than failing: the agent retries an attach that already
+  // landed.
+  const described = await input.evaluate(describe);
+  const multiple = await input.evaluate((node) => Boolean(node.multiple));
+  if (paths.length > 1 && !multiple) {
+    throw new Error('this input takes one file; call once per input (' + described + ')');
+  }
+  await input.setInputFiles(paths);
+  const names = paths.map((path) => path.split('/').pop()).join(', ');
+  try {
+    const landed = await input.evaluate((node) =>
+      Array.from(node.files || []).map((file) => file.name + ' (' + file.size + ' bytes)').join(', '),
+      undefined, { timeout: 3000 });
+    if (landed) return 'attached to ' + described + ': ' + landed;
+  } catch (error) {
+    return 'attached ' + names + ' to ' + described
+           + '; the page replaced the field, which is what it does when it takes the file';
+  }
+  throw new Error('the input reported no file after the attachment (' + described + ')');
+}"""
+
+
+def _js_literal(value: Any) -> str:
+    """A JSON value as JavaScript source, safe for the two separators JSON allows raw."""
+    return (json.dumps(value)
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029"))
+
+
+def _attach_file_code(paths: Sequence[str], ref: str | None) -> str:
+    return ATTACH_FILE_CODE % {
+        "paths": _js_literal(list(paths)),
+        "ref": _js_literal(ref) if ref else "null",
+    }
+
+
 def _tool_error(request_id: Any, message: str) -> dict[str, Any]:
     return _response(request_id, {
         "content": [{"type": "text", "text": message}],
@@ -428,6 +560,11 @@ class BrowserPolicy:
         self.binding_by_path = {str(binding.path): binding for binding in bindings}
         self.tool_definitions = _tool_definitions(tuple(self.binding_by_path))
         self.tool_names = frozenset(tool["name"] for tool in self.tool_definitions)
+        # What the agent actually reached for. An agent that touched the form
+        # and an agent that never had a browser tool both end as "parked", and
+        # only this tells them apart. It counts accepted calls, which is the
+        # question being asked: whether the surface was there to use.
+        self.calls: dict[str, int] = {}
 
     def validate_tool_call(self, name: Any, raw_arguments: Any) -> dict[str, Any]:
         if not isinstance(name, str) or name not in self.tool_names:
@@ -525,7 +662,17 @@ class BrowserPolicy:
 
     def _validate_browser_file_upload(self, arguments: dict[str, Any]) -> None:
         _closed(arguments, {"paths"})
-        paths = arguments.get("paths")
+        self._validate_bound_paths(arguments.get("paths"))
+
+    def _validate_browser_attach_file(self, arguments: dict[str, Any]) -> None:
+        _closed(arguments, {"target", "element", "paths"})
+        if "target" in arguments:
+            _string(arguments["target"], "target")
+        if "element" in arguments:
+            _string(arguments["element"], "element")
+        self._validate_bound_paths(arguments.get("paths"))
+
+    def _validate_bound_paths(self, paths: Any) -> None:
         if not isinstance(paths, list) or not 1 <= len(paths) <= 2:
             raise PolicyError("upload paths must be a nonempty bounded array")
         if any(not isinstance(path, str) for path in paths) or len(set(paths)) != len(paths):
@@ -614,16 +761,40 @@ class BrowserPolicy:
                     request_id, "Browser tool arguments were rejected by the firewall."
                 ))
             try:
-                self.validate_tool_call(params.get("name"), params.get("arguments", {}))
+                arguments = self.validate_tool_call(
+                    params.get("name"), params.get("arguments", {})
+                )
             except PolicyError:
                 return ClientDecision(response=_tool_error(
                     request_id, "Browser tool call was rejected by the firewall."
                 ))
+            self.calls[str(params.get("name"))] = (
+                self.calls.get(str(params.get("name")), 0) + 1
+            )
+            if params.get("name") == "browser_attach_file":
+                message = self._as_attach_file_call(message, arguments)
             return ClientDecision(forward=message, pending_method=method,
                                   modern=_modern_request(params))
         return ClientDecision(response=_response(
             request_id, error={"code": -32601, "message": "Method not found"}
         ))
+
+    def _as_attach_file_call(
+        self, message: dict[str, Any], arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Rewrite one validated attach into the upstream call that performs it.
+
+        The arguments read here have already been through the validator, so the
+        paths are the bound ones and nothing else survives _closed. Only the
+        rewritten message reaches the child; the agent's own is discarded.
+        """
+        code = _attach_file_code(arguments["paths"], arguments.get("target"))
+        rewritten = copy.deepcopy(message)
+        rewritten["params"] = {
+            "name": "browser_run_code_unsafe",
+            "arguments": {"code": code},
+        }
+        return rewritten
 
     def filter_tools_result(self, result: Any) -> dict[str, Any]:
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
@@ -632,6 +803,12 @@ class BrowserPolicy:
             tool.get("name") for tool in result["tools"]
             if isinstance(tool, dict) and isinstance(tool.get("name"), str)
         }
+        # browser_attach_file has no upstream of its own. It is carried by
+        # browser_run_code_unsafe, so that is what its presence is judged on;
+        # advertising it against a child that cannot perform it would hand the
+        # agent a tool that fails at the form.
+        if "browser_run_code_unsafe" in supported:
+            supported.add("browser_attach_file")
         return {
             "tools": [
                 copy.deepcopy(tool) for tool in self.tool_definitions
@@ -955,7 +1132,78 @@ def build_parser() -> argparse.ArgumentParser:
         "child", nargs=argparse.REMAINDER,
         help="Playwright MCP command and arguments after --",
     )
+    parser.add_argument(
+        "--activity",
+        default="",
+        help="write a per-tool call count here when the run ends",
+    )
     return parser
+
+
+BACKEND_STDERR_LINES = 40
+BACKEND_STDERR_LINE_CHARS = 400
+
+
+def _drain_backend_stderr(stream, sink: "deque[str]") -> None:
+    try:
+        for line in stream:
+            sink.append(line.decode("utf-8", "replace").rstrip()[:BACKEND_STDERR_LINE_CHARS])
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _report_backend_stderr(lines: "deque[str]", exit_code: int | None) -> None:
+    """Say what the backend said, on the one stream a failing run keeps."""
+    kept = [line for line in lines if line]
+    if not kept:
+        print(
+            "jobby browser firewall: the browser backend ended "
+            f"(exit {exit_code}) and wrote nothing to stderr",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"jobby browser firewall: the browser backend ended (exit {exit_code}); "
+        f"its last {len(kept)} stderr line(s) follow",
+        file=sys.stderr,
+    )
+    for line in kept:
+        print(f"  backend: {line}", file=sys.stderr)
+
+
+def _write_activity(path: str, policy: "BrowserPolicy", errors: "deque[str]",
+                    exit_code: int | None) -> None:
+    """Record what the agent reached for, for the runner that outlives it.
+
+    A parked application looks identical whether the agent worked the form and
+    hit a real blocker or never had a browser tool at all. The firewall is the
+    only part of the run that sees every call, so it is what says which.
+    Best-effort: a run must not fail because its own bookkeeping could not.
+    """
+    if not path:
+        return
+    try:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({
+            "calls": dict(sorted(policy.calls.items())),
+            "totalCalls": sum(policy.calls.values()),
+            "backendExit": exit_code,
+            "backendStderr": [line for line in errors if line][-5:],
+        }, separators=(",", ":"))
+        descriptor = os.open(
+            target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
 
 
 def main() -> int:
@@ -971,21 +1219,38 @@ def main() -> int:
     if not child_argv or not child_argv[0]:
         print("jobby browser firewall: a child command is required", file=sys.stderr)
         return 2
+    # The child's stderr used to go to DEVNULL. When the backend died the
+    # client saw only "connection closed: initialize response" and the reason
+    # was destroyed at the moment it was produced, which is why a browser
+    # server that failed a real run on 2026-08-27 answered every hand probe
+    # afterwards and was never reproduced. It is drained on a thread so a full
+    # pipe can never block the backend, kept to the last few kilobytes, and
+    # printed only if the run ends badly.
     try:
         process = subprocess.Popen(
             child_argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             start_new_session=True,
         )
     except OSError:
         print("jobby browser firewall: browser backend could not start", file=sys.stderr)
         return 2
+    backend_errors: deque[str] = deque(maxlen=BACKEND_STDERR_LINES)
+    drain = threading.Thread(
+        target=_drain_backend_stderr, args=(process.stderr, backend_errors), daemon=True
+    )
+    drain.start()
     try:
-        return StdioProxy(policy, process, sys.stdin.buffer, sys.stdout.buffer).run()
+        code = StdioProxy(policy, process, sys.stdin.buffer, sys.stdout.buffer).run()
     finally:
         _terminate(process)
+    drain.join(timeout=1)
+    if code != 0 or process.poll() not in (0, None):
+        _report_backend_stderr(backend_errors, process.poll())
+    _write_activity(args.activity, policy, backend_errors, process.poll())
+    return code
 
 
 if __name__ == "__main__":

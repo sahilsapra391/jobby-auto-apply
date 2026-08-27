@@ -269,6 +269,7 @@ def server_config(slot=None, application_context=None):
             str(BROWSER_MCP_PROXY),
             "--upload", resume_upload,
             "--upload", cover_upload,
+            "--activity", str(activity_path(slot, application_context)),
             "--",
             *child,
         ],
@@ -278,6 +279,28 @@ def server_config(slot=None, application_context=None):
             "PYTHONNOUSERSITE": "1",
         },
     }
+
+
+def _chrome_log_path(slot):
+    """Where a slot's browser writes what it has to say about itself."""
+    return STATE / "logs" / f"chrome-{slot}.log"
+
+
+def activity_path(slot, application_context):
+    """Where the firewall records what the agent reached for.
+
+    Per slot and application, beside the staged uploads, so it is removed with
+    them and never outlives the run it describes.
+    """
+    application_id = _application_value(application_context, "applicationId")
+    # _application_value bars nulls and newlines and nothing else, which is
+    # enough for a command argument and not enough for a path segment. The
+    # staging check is the one that matters here, so it is the one used.
+    if (len(application_id) > 128 or ".." in application_id
+            or not all(character.isalnum() or character in "-_."
+                       for character in application_id)):
+        raise ValueError("application id is unsafe for an activity path")
+    return artifact_root_for(slot) / "uploads" / application_id / "activity.json"
 
 
 def _application_value(application_context, name):
@@ -444,15 +467,26 @@ def serve(slot=None):
     profile = _profile_dir(slot)
     for d in (profile, ARTIFACTS):
         d.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(
-        [CHROME,
-         f"--remote-debugging-port={port_for(slot)}",
-         f"--user-data-dir={profile}",
-         "--no-first-run", "--no-default-browser-check",
-         # Keep it alive with a window even when the agent closes its last tab.
-         "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True, env=toolpath.enriched_env())
+    # Chrome's own output goes to a per-slot file rather than DEVNULL. It is
+    # detached and outlives its parent, so a pipe would have no reader and could
+    # fill and block it; a file has neither problem and keeps the reason a
+    # browser refused to start. Truncated at each launch, so it describes the
+    # browser that is running rather than growing across restarts.
+    log = _chrome_log_path(slot)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(log, "wb")
+    try:
+        subprocess.Popen(
+            [CHROME,
+             f"--remote-debugging-port={port_for(slot)}",
+             f"--user-data-dir={profile}",
+             "--no-first-run", "--no-default-browser-check",
+             # Keep it alive with a window even when the agent closes its last tab.
+             "about:blank"],
+            stdout=handle, stderr=subprocess.STDOUT,
+            start_new_session=True, env=toolpath.enriched_env())
+    finally:
+        handle.close()
     for _ in range(READY_TIMEOUT * 4):
         if running(slot):
             return {"started": True, "slot": slot, "cdp": cdp_for(slot)}
