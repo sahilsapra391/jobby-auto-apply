@@ -152,6 +152,42 @@ class AbsentEvidenceIsNotEvidenceTests(unittest.TestCase):
                 self.assertEqual(run_apply.read_browser_activity("apply-1", {}), {})
 
 
+class CapacityReachesTheBoardTests(unittest.TestCase):
+    """The phone alarm says something is wrong; the board has to say what.
+
+    Written to meta every tick rather than only when it appears, so it clears
+    itself when a slot frees. A warning that has to be cleared by the code that
+    raised it is a warning that outlives its cause.
+    """
+
+    def page(self, meta):
+        import dashboard
+        return dashboard.build(
+            {"sessions": [], "jobs": [], "history": [], "profile": {}, "meta": meta},
+            "now",
+        )
+
+    def test_a_full_fleet_says_so_where_the_question_gets_asked(self):
+        page = self.page({"slotsParked": "5 of 5 browser slots are parked, oldest 0.8h"})
+        self.assertIn("5 of 5 browser slots are parked", page)
+        flight = page[page.index('id="p-flight"'):]
+        self.assertLess(flight.index("5 of 5 browser slots"), flight.index("p-done"))
+
+    def test_it_is_not_the_automation_stopped_alarm(self):
+        """Capacity gone and automation stopped are different facts."""
+        page = self.page({"slotsParked": "5 of 5 browser slots are parked"})
+        self.assertNotIn("Automation is stopped", page)
+
+    def test_a_working_fleet_leaves_no_trace(self):
+        self.assertNotIn("capacity", self.page({}).split("<style")[0])
+
+    def test_the_watcher_writes_it_every_tick_so_it_clears_itself(self):
+        source = (ROOT / "scripts" / "watch.py").read_text()
+        self.assertIn('"--key", "slotsParked"', source)
+        block = source[source.index("parked_now = parked_slot_warning()"):][:400]
+        self.assertIn('meta_value("slotsParked")', block)
+
+
 class PreflightRunsPerAttemptTests(unittest.TestCase):
     """Checked once at the door, used for the whole loop, was the fault.
 

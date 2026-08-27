@@ -867,6 +867,15 @@ def build(state, generated):
         ("done", "Submitted", len(submitted)),
     ]
 
+    # Capacity gone is not the same as automation stopped, so it gets its own
+    # line rather than the alarm banner. It appears where the question is asked:
+    # the last time the fleet filled up, the way it surfaced was the user asking
+    # how many applications were in flight.
+    parked_note = str((state.get("meta") or {}).get("slotsParked") or "").strip()
+    parked_banner = (
+        f'<p class="capacity" role="status">{esc(parked_note)}</p>'
+    ) if parked_note else ""
+
     stopped = str((state.get("meta") or {}).get("blocked") or "").strip()
     blocked_banner = (
         f'<div class="sysbanner" role="alert"><strong>Automation is stopped.</strong> '
@@ -1092,6 +1101,8 @@ def build(state, generated):
   .chip.ready {{ color:var(--green); background:var(--t-g); }}
   .chip.warm {{ color:var(--purple); background:var(--t-p); }}
   .chip.fault {{ color:var(--red-ink); background:var(--t-red); }}
+  .capacity {{ margin:0 0 .85rem; padding:.6rem .85rem; border-radius:var(--radius);
+    background:var(--t-o); color:var(--orange); font-size:.9rem; line-height:1.45; }}
 
   ul.todo {{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.45rem; }}
   ul.todo li {{ font-size:.92rem; line-height:1.38; padding-left:1.25rem; position:relative;
@@ -1294,6 +1305,7 @@ def build(state, generated):
   </div>
 
   <div class="panel" id="p-flight" role="tabpanel">
+    {parked_banner}
     {'<p class="hint">Applications being worked on right now. Updates as each stage completes.</p>' if flight_cards else ''}
     {filter_bar("flight", [], len(flight_cards))}
     {f'<div class="grid">{"".join(flight_cards)}</div>' if flight_cards else empty_state("flight")}

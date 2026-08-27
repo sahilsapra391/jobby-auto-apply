@@ -387,6 +387,15 @@ browser-call count, four had reached the form and one had made zero. So four of
 the five parks were correct and the pipeline was stopped regardless. No single
 park being wrong is exactly why nothing said anything.
 
+The same sentence goes to two places, because they answer different questions.
+The ping tells the user something is wrong wherever they are. `meta.slotsParked`
+puts it at the top of the In flight panel, which is where they were already
+looking the last time this happened; the way it surfaced was the user asking how
+many applications were running. It is written every tick rather than only when
+it appears, so it clears itself when a slot frees. It is not the "Automation is
+stopped" banner: capacity gone and automation stopped are different facts and
+merging them costs the distinction.
+
 `tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
 the real firewall against a real Chrome and attaches real files to a form whose
 input is hidden. Both faults were invisible to the whole suite because every
@@ -735,6 +744,56 @@ than the fact that it passed. A classifier is not verified by reading it. The
 word-bounded version above went from 4 of 4 generic questions wrongly flagged to
 0 of 7, measured against the 156 real answers, and that measurement is the only
 reason anyone knows it works.
+
+## No diagnostic path is ever discarded
+
+**Stderr, health-check results, error branches: none of them may be dropped,
+swallowed or routed to `/dev/null`. The failure nobody can reproduce is almost
+always the one whose evidence was thrown away at the source.**
+
+Three instances, and they are the same instance:
+
+- `ping_health` returned `None` on any network error and a status every caller
+  ignored. An unreachable or misconfigured `HEALTHCHECKS_URL` was therefore
+  indistinguishable, from inside the watcher, from a healthy system with a
+  working alarm.
+- The tick's `STALE BOARD` branch was never reached across a 22-hour outage,
+  because the publish raised first and the exception handler ran instead. Hours
+  of pings said "tick 4620: publish failed" and not one said the board was a day
+  old. `STALE BOARD` appears zero times in `watch.err` for that entire day.
+- `browser_mcp_proxy` passed `stderr=subprocess.DEVNULL` to the Playwright
+  child. When the backend died during initialize, the client saw only
+  "connection closed: initialize response" and the reason ceased to exist in the
+  same instant it was produced. Every hand probe afterwards succeeded, so for
+  two days the fault was "not reproduced" when it had in fact explained itself
+  once and been silenced.
+
+The component whose job is noticing keeps being the one that says nothing, and
+each time it took a person reading code to find what an alarm should have said.
+So, concretely: a `subprocess` gets its stderr captured and reported, never
+`DEVNULL`. A probe returns its outcome and something reads it. An `except` that
+ends a story writes down which story it ended. Where a check can fail before a
+later check runs, the later check's message is attached to the failure rather
+than skipped, because the first thing to go wrong is rarely the important thing.
+
+`tests/test_diagnostics_are_kept.py` enforces the stderr half by walking the AST
+of every module in `scripts/` rather than trusting anyone to remember, because a
+rule that depends on the next person remembering is a rule already broken. It
+counts the launches it inspected, so a matcher that quietly stops matching fails
+rather than passes. Measured after this change: 80 subprocess launches, 73
+captured, 6 inheriting into a service log, 1 merged, none discarded. `DISCARD_
+ALLOWED` exists for a launch that genuinely must throw its child's output away,
+and takes the reason with it.
+
+Chrome was the last holdout and is not an exception. It is launched detached to
+outlive its runner, so a pipe would have no reader and could fill and block it.
+Its output goes to `~/.job-application/logs/chrome-<slot>.log`, truncated at
+each launch so it describes the browser now running rather than growing across
+restarts.
+
+The cost of this is a few kilobytes a run. The cost of not doing it, measured
+three times now, is that the one occurrence able to name the cause is the one
+occurrence guaranteed not to.
 
 ## What counts as evidence
 

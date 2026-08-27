@@ -2051,6 +2051,16 @@ def tick(force_publish=False):
             store(["meta-set", "--key", "blocked", "--value", ""])
             changed["unblocked"] = True
 
+    # The phone alarm tells the user something is wrong. The board has to tell
+    # them what, in the place they are already looking when they ask how many
+    # applications are running, because that is the question this answers and
+    # asking it out loud is how the last one surfaced. Written every tick, so
+    # it clears itself the moment a slot frees.
+    parked_now = parked_slot_warning()
+    if parked_now != (meta_value("slotsParked") or ""):
+        store(["meta-set", "--key", "slotsParked", "--value", parked_now])
+        changed["slotsParked"] = parked_now or "cleared"
+
     # One scan at a time. The runner claims its own scan request only after its
     # forced provider preflight passes.
     if scan_ok and q.get("scan") and not lock_holder("scan"):

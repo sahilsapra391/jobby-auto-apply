@@ -281,6 +281,11 @@ def server_config(slot=None, application_context=None):
     }
 
 
+def _chrome_log_path(slot):
+    """Where a slot's browser writes what it has to say about itself."""
+    return STATE / "logs" / f"chrome-{slot}.log"
+
+
 def activity_path(slot, application_context):
     """Where the firewall records what the agent reached for.
 
@@ -462,15 +467,26 @@ def serve(slot=None):
     profile = _profile_dir(slot)
     for d in (profile, ARTIFACTS):
         d.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(
-        [CHROME,
-         f"--remote-debugging-port={port_for(slot)}",
-         f"--user-data-dir={profile}",
-         "--no-first-run", "--no-default-browser-check",
-         # Keep it alive with a window even when the agent closes its last tab.
-         "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True, env=toolpath.enriched_env())
+    # Chrome's own output goes to a per-slot file rather than DEVNULL. It is
+    # detached and outlives its parent, so a pipe would have no reader and could
+    # fill and block it; a file has neither problem and keeps the reason a
+    # browser refused to start. Truncated at each launch, so it describes the
+    # browser that is running rather than growing across restarts.
+    log = _chrome_log_path(slot)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(log, "wb")
+    try:
+        subprocess.Popen(
+            [CHROME,
+             f"--remote-debugging-port={port_for(slot)}",
+             f"--user-data-dir={profile}",
+             "--no-first-run", "--no-default-browser-check",
+             # Keep it alive with a window even when the agent closes its last tab.
+             "about:blank"],
+            stdout=handle, stderr=subprocess.STDOUT,
+            start_new_session=True, env=toolpath.enriched_env())
+    finally:
+        handle.close()
     for _ in range(READY_TIMEOUT * 4):
         if running(slot):
             return {"started": True, "slot": slot, "cdp": cdp_for(slot)}
