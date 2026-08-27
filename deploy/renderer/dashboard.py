@@ -135,7 +135,8 @@ def publishable_state(state):
     roles = state.get("roles") or {}
     meta = dict(state.get("meta") or {})
     jobs, pool_total, pool_census = publishable_jobs(
-        state.get("jobs") or {}, state.get("searchConfig"))
+        state.get("jobs") or {}, state.get("searchConfig"),
+        cap=state.get("_embedCap"))
     meta["poolTotal"] = pool_total
     meta["poolCensus"] = pool_census
     return {
@@ -194,7 +195,7 @@ def _trim_sections(job):
     return trimmed
 
 
-def publishable_jobs(jobs, config):
+def publishable_jobs(jobs, config, cap=None):
     """(jobs, total, census) — the slice the board can draw, and the pool behind it.
 
     The store holds tens of thousands of postings and KV will not: the envelope
@@ -215,7 +216,7 @@ def publishable_jobs(jobs, config):
     couple of hundred, they never age out, and they are where Watching and
     Submitted find their company marks, so dropping them would blank a logo.
     """
-    selected, total = found_lane.select(jobs, config)
+    selected, total = found_lane.select(jobs, config, cap=cap)
     census = found_lane.pool_census(jobs)
     keep = {str(job.get("id") or "") for job in selected}
     # Filtered in the pool's own order rather than rebuilt selection-first.
@@ -2002,6 +2003,9 @@ def main():
     ap = argparse.ArgumentParser(description="Build the job-application dashboard.")
     ap.add_argument("--out", required=True, help="output HTML path")
     ap.add_argument("--root", help="store directory")
+    ap.add_argument("--embed-cap", type=int,
+                    help="how many Found records to embed; publish lowers this "
+                         "when the state would not fit KV's ceiling")
     ap.add_argument("--state-out", help="optional sanitized renderer-state JSON path")
     args = ap.parse_args()
 
@@ -2011,6 +2015,11 @@ def main():
         return 2
 
     state = load_state(root)
+    if args.embed_cap:
+        # Only the published state honours this. The local HTML is a file on
+        # disk with no ceiling over it, and shrinking it would hide records for
+        # no reason.
+        state["_embedCap"] = args.embed_cap
     generated = clock.now_label()
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)

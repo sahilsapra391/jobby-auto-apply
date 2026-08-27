@@ -353,8 +353,10 @@ class RendererSyncOnPublishTests(unittest.TestCase):
     def test_publish_syncs_before_it_builds(self):
         source = inspect.getsource(publish.cmd_publish)
         self.assertIn("sync_renderer()", source)
+        # fit_state is what cmd_publish calls now; it wraps build_dashboard so
+        # the state can be shrunk to the KV ceiling instead of refused at it.
         self.assertLess(source.index("sync_renderer()"),
-                        source.index("build_dashboard"))
+                        source.index("fit_state"))
 
     def test_it_reports_what_moved_rather_than_silently_fixing_it(self):
         # A script cannot commit on someone's behalf, and Vercel builds from
@@ -394,7 +396,7 @@ class ArtifactUploadTests(unittest.TestCase):
         self.calls = []
         self.original = {
             "sync_renderer": publish.sync_renderer,
-            "build_dashboard": publish.build_dashboard,
+            "fit_state": publish.fit_state,
             "build_documents": publish.build_documents,
             "guard_render": publish.guard_render,
             "push_content": publish.push_content,
@@ -404,8 +406,8 @@ class ArtifactUploadTests(unittest.TestCase):
             "current_url": publish.current_url,
         }
         publish.sync_renderer = lambda: []
-        publish.build_dashboard = lambda root: {
-            "blocked": 0, "inflight": 0, "submitted": 3,
+        publish.fit_state = lambda root, cap=None: {
+            "blocked": 0, "inflight": 0, "submitted": 3, "embedCap": 3400,
             "html": "<html></html>", "state": {"jobs": {}}, "greeting": "Sahil"}
         publish.build_documents = lambda root: {
             "documents": 2, "bytes": 10, "docs": {"A.pdf": "eA=="}}
@@ -420,7 +422,7 @@ class ArtifactUploadTests(unittest.TestCase):
 
     def tearDown(self):
         publish.sync_renderer = self.original["sync_renderer"]
-        publish.build_dashboard = self.original["build_dashboard"]
+        publish.fit_state = self.original["fit_state"]
         publish.build_documents = self.original["build_documents"]
         publish.guard_render = self.original["guard_render"]
         publish.push_content = self.original["push_content"]
@@ -463,6 +465,102 @@ class ArtifactUploadTests(unittest.TestCase):
         _html, _state, bundle, _providers, doc_index = args
         self.assertEqual(bundle, {"A.pdf": "eA=="})
         self.assertIsNone(doc_index)
+
+
+class FitStateTests(unittest.TestCase):
+    """The KV ceiling is a budget to fit, not a wall to fail at.
+
+    On 2026-08-27 the state reached 21.0 MB against a 20 MB ceiling and every
+    publish refused for 23 hours. The scan was healthy the whole time; the
+    board just went on serving the previous evening, and said "Search v21 is
+    live, every 4 hours" while it did, because that line came from the frozen
+    snapshot too.
+    """
+
+    def build(self, sizes):
+        """A dashboard whose state size depends on the cap it was given."""
+        calls = []
+
+        def fake(root, embed_cap=None):
+            calls.append(embed_cap)
+            return {"state": {"pad": "x" * sizes(embed_cap)}}
+
+        return fake, calls
+
+    def run_fit(self, sizes, cap=3400):
+        original = publish.build_dashboard
+        publish.build_dashboard = self.build(sizes)[0]
+        try:
+            return publish.fit_state(None, cap=cap)
+        finally:
+            publish.build_dashboard = original
+
+    def test_a_state_that_already_fits_is_built_once(self):
+        original = publish.build_dashboard
+        calls = []
+
+        def fake(root, embed_cap=None):
+            calls.append(embed_cap)
+            return {"state": {"pad": "x" * 1000}}
+
+        publish.build_dashboard = fake
+        try:
+            summary = publish.fit_state(None, cap=3400)
+        finally:
+            publish.build_dashboard = original
+        self.assertEqual(calls, [3400])
+        self.assertEqual(summary["embedCap"], 3400)
+
+    def test_an_oversized_state_shrinks_until_it_fits(self):
+        original = publish.build_dashboard
+        calls = []
+
+        def fake(root, embed_cap=None):
+            calls.append(embed_cap)
+            # Roughly proportional, as the real payload is.
+            return {"state": {"pad": "x" * (embed_cap * 6500)}}
+
+        publish.build_dashboard = fake
+        try:
+            summary = publish.fit_state(None, cap=3400)
+        finally:
+            publish.build_dashboard = original
+        self.assertGreater(len(calls), 1, "it never tried a smaller slice")
+        self.assertLess(summary["embedCap"], 3400)
+        self.assertLessEqual(summary["sizeAttempts"][-1]["bytes"],
+                             publish.MAX_STATE_BYTES)
+
+    def test_it_converges_quickly_rather_than_halving_blindly(self):
+        """A 21 MB state should cost one more render, not four."""
+        original = publish.build_dashboard
+        calls = []
+
+        def fake(root, embed_cap=None):
+            calls.append(embed_cap)
+            return {"state": {"pad": "x" * int(embed_cap * 6470)}}
+
+        publish.build_dashboard = fake
+        try:
+            publish.fit_state(None, cap=3400)
+        finally:
+            publish.build_dashboard = original
+        self.assertLessEqual(len(calls), 3, f"took {len(calls)} renders: {calls}")
+
+    def test_below_the_floor_it_still_refuses(self):
+        """Records having grown is a different fault from there being more of
+        them, and trimming around it would hide it."""
+        original = publish.build_dashboard
+        publish.build_dashboard = lambda root, embed_cap=None: {
+            "state": {"pad": "x" * (publish.MAX_STATE_BYTES * 2)}}
+        try:
+            with self.assertRaises(publish.StateTooBig):
+                publish.fit_state(None, cap=3400)
+        finally:
+            publish.build_dashboard = original
+
+    def test_the_floor_leaves_a_usable_board(self):
+        self.assertGreaterEqual(publish.EMBED_FLOOR, 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

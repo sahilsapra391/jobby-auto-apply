@@ -209,12 +209,20 @@ class StateFitsTheCeilingTest(unittest.TestCase):
 
     def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
         """A bound nothing can violate is not a bound. Prove this one bites."""
-        original = dashboard.state_slim.slim_jobs
+        # Both reductions have to come off, not one. Sections are cut in
+        # publishable_jobs and the rest in slim_jobs, so disabling only the
+        # latter leaves a half-trimmed state that lands at 20.1 MB -- under the
+        # ceiling, which made this assertion fail and the test red on main for
+        # everybody. What production actually carried was neither reduction.
+        original_slim = dashboard.state_slim.slim_jobs
+        original_trim = dashboard._trim_sections
         dashboard.state_slim.slim_jobs = staticmethod(lambda jobs: jobs)
+        dashboard._trim_sections = lambda job: job
         try:
             unslimmed = self.published_bytes(pool(3400, acted=966))
         finally:
-            dashboard.state_slim.slim_jobs = original
+            dashboard.state_slim.slim_jobs = original_slim
+            dashboard._trim_sections = original_trim
         self.assertGreater(unslimmed, publish.MAX_STATE_BYTES,
                            "the unslimmed slice must exceed the ceiling, or this "
                            "test cannot detect the fault it exists for")
