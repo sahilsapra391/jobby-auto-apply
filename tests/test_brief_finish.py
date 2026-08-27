@@ -123,6 +123,48 @@ class CompletedTests(StoreTemp):
         self.assertEqual(event["confirmation"],
                          "Your application was successfully submitted.")
 
+    def test_completing_without_an_answer_record_warns_but_does_not_refuse(self):
+        """The application is already sent by the time this runs.
+
+        So a missing record cannot be grounds to refuse: refusing would leave
+        the board denying a submission that really went out, which is the
+        disagreement the write-ahead exists to prevent. It is grounds to say so
+        where the run log keeps it. Silence is how "every submitted application
+        shows its answers" quietly becomes "most of them do".
+        """
+        self.session("acme-pm")
+        nonce = self.nonce()
+        result = run_finish([
+            "--id", "acme-pm", "--completed", "--nonce", nonce,
+            "--confirmation", "Your application was successfully submitted.",
+        ], self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("no answer record", result.stderr)
+        self.assertIn("record_answers", result.stderr)
+        # Recorded anyway: the submission is real and the board must say so.
+        self.assertEqual(
+            [e["event"] for e in self.events() if e["event"] == "completed"],
+            ["completed"])
+
+    def test_no_warning_when_the_record_is_there(self):
+        import answer_record
+        apps = pathlib.Path(self.root) / "applications"
+        (apps / "Acme").mkdir(parents=True)
+        real = answer_record.APPS
+        answer_record.APPS = apps
+        self.addCleanup(setattr, answer_record, "APPS", real)
+        self.session("acme-pm")
+        answer_record.write("acme-pm", [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"}], root=self.root)
+        nonce = self.nonce()
+        result = run_finish([
+            "--id", "acme-pm", "--completed", "--nonce", nonce,
+            "--confirmation", "Your application was successfully submitted.",
+        ], self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("no answer record", result.stderr)
+
     def test_completion_before_pre_submit_is_refused(self):
         self.session("acme-pm")
         result = run_finish([

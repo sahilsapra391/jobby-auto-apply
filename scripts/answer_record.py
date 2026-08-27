@@ -100,6 +100,33 @@ SCHEMA_VERSION = 1
 # can trust is worse than none.
 CAPTURE_LEVELS = ("full", "questions-only")
 
+# When record_answers reached the production checkout, so a submission after it
+# is expected to carry a record and one before it never can.
+#
+# The distinction is the whole point. "Not captured" on an application submitted
+# in July is history and closed; the same words on one submitted tonight are a
+# bug that ran. Without a date the board says the same thing about both, and the
+# second kind hides inside the first -- a hundred honest blanks is an excellent
+# place for a real failure to sit unnoticed.
+#
+# 2026-08-27T21:58:29Z is when #75 merged. The checkout was pulled to a SHA
+# containing it minutes later, and run_apply and application_mcp are spawned per
+# run, so the tool was advertised on the next apply rather than at a restart.
+CAPTURE_LIVE_AT = "2026-08-27T22:00:00Z"
+
+
+def expected_to_have_a_record(completed_at):
+    """Should this submission carry an answer record?
+
+    Takes the completed event's own timestamp. Anything unparseable answers no,
+    because accusing a submission of a missing record on the strength of a
+    timestamp nobody can read is worse than staying quiet about it.
+    """
+    stamp = str(completed_at or "").strip()
+    if len(stamp) < len(CAPTURE_LIVE_AT):
+        return False
+    return stamp >= CAPTURE_LIVE_AT
+
 # Where a value came from. The four the board draws a badge for, and the only
 # four a caller may name.
 SOURCES = ("stored", "profile", "generated", "provided")

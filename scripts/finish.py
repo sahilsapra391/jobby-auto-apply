@@ -35,6 +35,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import answer_record  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
@@ -243,6 +246,19 @@ def completed(aid, confirmation, resume, cover, nonce):
         payload["resumeVariant"] = Path(resume).name
     if cover:
         payload["coverLetter"] = Path(cover).name
+    # An application is submitted by the time this runs, so a missing answer
+    # record is not grounds to refuse: refusing would leave the board denying a
+    # submission that really went out, which is the exact disagreement the
+    # write-ahead exists to prevent. It is grounds to say so loudly, on stderr,
+    # where the run log keeps it. Silence here is how "every submitted
+    # application shows its answers" quietly becomes "most of them do".
+    if answer_record.load(aid) is None:
+        print(f"finish: WARNING no answer record for {aid}. The application was "
+              f"submitted and is recorded; what its form asked is not. Call "
+              f"jobby.record_answers before pre_submit, or run "
+              f"scripts/answer_record.py write --id {aid} --input <manifest>.",
+              file=sys.stderr)
+
     event = append_event(payload)
     guard["used"] = True
     entry["submissionGuard"] = guard

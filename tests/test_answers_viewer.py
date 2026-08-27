@@ -261,6 +261,61 @@ class SalvagedRecordTests(unittest.TestCase):
             self.assertIn(name, premium_ui.CSS)
 
 
+class MissingRecordTests(unittest.TestCase):
+    """A blank from before capture and a blank that is a bug read differently.
+
+    Sahil's requirement is that every submitted application shows its answers.
+    The way that quietly stops being true is a run where record_answers is never
+    called: the row goes blank, and a blank looks exactly like the hundred
+    honest ones from before capture existed. So the date decides which it is.
+    """
+
+    def page(self, at, captured=()):
+        return dashboard.build({
+            "profile": {}, "sessions": [], "roles": {}, "jobs": {},
+            "searchConfig": None, "meta": {"answersCaptured": list(captured)},
+            "history": [{"event": "completed", "applicationId": "app-x",
+                         "company": "Acme", "role": "PM", "at": at}],
+        }, "test")
+
+    def row(self, at, captured=()):
+        """Just the Submitted row. `chip hold` is a shared class other lanes use."""
+        rows = submitted_rows(self.page(at, captured))
+        self.assertEqual(len(rows), 1)
+        return rows[0]
+
+    def test_a_submission_from_before_capture_reads_not_captured(self):
+        row = self.row("2026-07-01T10:00:00Z")
+        self.assertIn('<span class="muted">not captured</span>', row)
+        self.assertNotIn("missing", row)
+        self.assertNotIn("submitted without an answer record",
+                         self.page("2026-07-01T10:00:00Z"))
+
+    def test_a_submission_after_capture_with_no_record_is_called_missing(self):
+        row = self.row("2026-08-28T10:00:00Z")
+        self.assertIn('class="chip hold"', row)
+        self.assertIn(">missing<", row)
+        # Not lumped in with the historical blanks.
+        self.assertNotIn('<span class="muted">not captured</span>', row)
+        page = self.page("2026-08-28T10:00:00Z")
+        self.assertIn("submitted without an answer record", page)
+        self.assertIn("did not call", page)
+
+    def test_a_submission_after_capture_with_a_record_offers_the_modal(self):
+        self.assertIn("answers-open", self.row("2026-08-28T10:00:00Z",
+                                               captured=["app-x"]))
+        page = self.page("2026-08-28T10:00:00Z", captured=["app-x"])
+        self.assertNotIn("submitted without an answer record", page)
+
+    def test_an_unreadable_timestamp_is_never_called_a_fault(self):
+        # Accusing a run of a missing record on the strength of a timestamp
+        # nobody can parse is worse than staying quiet about it.
+        for at in ("", None, "yesterday", "2026"):
+            with self.subTest(at=at):
+                self.assertNotIn("submitted without an answer record",
+                                 self.page(at))
+
+
 class ThemeTests(unittest.TestCase):
     """The modal adds no colour of its own, so it cannot miss a theme block."""
 

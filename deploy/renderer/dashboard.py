@@ -468,6 +468,13 @@ def build(state, generated):
     }
     uncaptured = any(str(e.get("applicationId") or "") not in captured
                      for e in submitted)
+    # Submitted since capture went live, and still without a record. Not history,
+    # a live fault, so it gets counted and named rather than blending in.
+    missing_records = [
+        e for e in submitted
+        if str(e.get("applicationId") or "") not in captured
+        and answer_record.expected_to_have_a_record(e.get("at"))
+    ]
     # "reviewed" never confirmed, plus "submitting" with no completion after it —
     # the latter means a session died mid-submit and the platform must be checked.
     reviewed_only = {
@@ -621,25 +628,30 @@ def build(state, generated):
         return f'<span class="muted" title="{esc(v)}">{esc(short)}</span>'
 
     def answers_cell(e):
-        """The form's own questions, or an honest note that nobody wrote them down.
+        """The form's own questions, or an honest note about why there are none.
 
-        Capture began on this branch, so every application submitted before it
-        has no record and never will: reconstructing what a form asked months
-        ago would be inventing an audit trail. "not captured" says exactly that
-        rather than opening an empty modal, which reads as a form with no
-        questions and is the one wrong answer available here.
+        Two different blanks, and collapsing them is how a real failure hides.
+        An application submitted before capture existed has no record and never
+        can: reconstructing what a form asked months ago would be inventing an
+        audit trail. One submitted after capture went live and still has no
+        record is a bug that ran, and it says so, because a hundred honest
+        blanks is an excellent place for a live failure to sit unnoticed.
         """
         aid = str(e.get("applicationId") or "")
-        if not aid or aid not in captured:
-            # Bare, with the explanation in the panel hint above rather than in
-            # a title attribute. The same sentence repeated on a hundred rows
-            # was 13 KB of page for one fact.
-            return '<span class="muted">not captured</span>'
-        return (f'<button class="btn ghost answers-open" type="button" '
-                f'data-id="{esc(aid)}" '
-                f'data-company="{esc(e.get("company") or "")}" '
-                f'data-role="{esc(e.get("role") or "")}" '
-                f'aria-haspopup="dialog" aria-controls="p-answers">Answers</button>')
+        if aid and aid in captured:
+            return (f'<button class="btn ghost answers-open" type="button" '
+                    f'data-id="{esc(aid)}" '
+                    f'data-company="{esc(e.get("company") or "")}" '
+                    f'data-role="{esc(e.get("role") or "")}" '
+                    f'aria-haspopup="dialog" aria-controls="p-answers">Answers</button>')
+        if answer_record.expected_to_have_a_record(e.get("at")):
+            return ('<span class="chip hold" title="This application was submitted '
+                    'after answer capture went live, so it should have a record and '
+                    'does not. The agent did not call record_answers, or the call '
+                    'was refused.">missing</span>')
+        # Bare, with the explanation in the panel hint above rather than in a
+        # title attribute. The same sentence on a hundred rows was 13 KB of page.
+        return '<span class="muted">not captured</span>'
 
     def sub_row(e):
         cls, label = outcome_chip.get(e.get("event"), ("", e.get("event")))
@@ -664,6 +676,23 @@ def build(state, generated):
         f"{' <strong>(submission attempted, interrupted before confirmation)</strong>' if interrupted else ''}</li>"
         for c, r, interrupted in sorted(reviewed_only, key=lambda t: (str(t[0]), str(t[1]))) if c
     )
+    missing_rows = "".join(
+        f"<li><strong>{esc(m.get('company') or '')}</strong>"
+        f"<span class=\"ui-separator\">{esc(m.get('role') or '')}</span></li>"
+        for m in sorted(missing_records, key=lambda x: str(x.get("at") or ""),
+                        reverse=True)[:12]
+    )
+    missing_block = f"""
+      <div class="note">
+        <h4>{len(missing_records)} submitted without an answer record</h4>
+        <p>These went out after answer capture went live, so each should carry a
+        record of what its form asked, and does not. That is a fault in the run
+        rather than missing history: the agent did not call
+        <code>record_answers</code>, or the call was refused. They are marked
+        <span class="chip hold">missing</span> below.</p>
+        <ul>{missing_rows}</ul>
+      </div>""" if missing_records else ""
+
     unconfirmed_block = f"""
       <div class="note">
         <h4>Not confirmed submitted</h4>
@@ -1320,6 +1349,7 @@ def build(state, generated):
   <div class="panel" id="p-done" role="tabpanel">
     {'<p class="hint">Already out. Check here before applying again.</p>' if submitted else ''}
     {'<p class="hint">Answers opens the questions that form asked and what went into each one. Rows reading <em>not captured</em> were submitted before Jobby started writing that record down; nothing is reconstructed for them.</p>' if uncaptured else ''}
+    {missing_block}
     {filter_bar("done", [(o, o.title()) for o in sub_states], len(submitted), wide=True)}
     {f'''<div class="sheet"><div class="tablewrap"><table>
       <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>When</th><th>Posting</th><th>Proof</th><th>Resume</th><th>Cover letter</th><th>Answers</th></tr></thead>
