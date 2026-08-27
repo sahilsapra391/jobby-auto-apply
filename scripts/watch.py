@@ -231,6 +231,11 @@ def config():
 
 # --- health -----------------------------------------------------------------
 
+# The last thing the dead-man alarm actually did, so a broken alarm is visible
+# from inside rather than only by its silence somewhere else.
+LAST_PING = None
+
+
 def ping_health(state="", detail=""):
     """Tell healthchecks.io the watcher is alive and working.
 
@@ -242,13 +247,21 @@ def ping_health(state="", detail=""):
     if not url:
         return None
     target = f"{url}/{state}" if state else url
+    global LAST_PING
     try:
         req = urllib.request.Request(target, data=(detail or "").encode()[:9000],
                                      method="POST")
         with urllib.request.urlopen(req, timeout=10) as r:
+            LAST_PING = {"at": now_stamp(), "state": state or "ok", "status": r.status}
             return r.status
-    except (urllib.error.URLError, OSError, ValueError):
-        # Monitoring must never take the watcher down with it.
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        # Monitoring must never take the watcher down with it. But it must not
+        # fail invisibly either: every caller ignores the return, and on an
+        # unreachable or misconfigured URL this returned None, which from
+        # inside the watcher is indistinguishable from a healthy system with a
+        # working alarm. The outcome is recorded so `status()` can say.
+        LAST_PING = {"at": now_stamp(), "state": state or "ok",
+                     "error": f"{type(exc).__name__}: {exc}"[:200]}
         return None
 
 
@@ -2109,6 +2122,9 @@ def status():
     age = board_staleness()
     out = {"queues": None, "locks": {},
            "health": bool(config().get("HEALTHCHECKS_URL")),
+           # Configured is not the same as working, and only one of them is
+           # worth knowing.
+           "lastPing": LAST_PING,
            # "health" above only ever meant "healthchecks is configured", which
            # read as reassurance through a day-long outage. This is the fact.
            "boardAgeSeconds": None if age is None else int(age),
@@ -2383,6 +2399,13 @@ def main():
                 last_ping = time.time()
         except (TickError, subprocess.TimeoutExpired) as exc:
             consecutive_failures += 1
+            # A failing tick and a stale board are the same outage seen from
+            # two ends, and the stale branch below never runs when the tick
+            # raises. Saying only "tick 4620: publish failed" loses the fact
+            # that costs the most: how long the board has been wrong.
+            stale_now = stale_board_warning()
+            if stale_now:
+                exc = TickError(f"{exc}. {stale_now}")
             # Loud on the way in, then quiet, so a long outage does not fill the
             # disk but is never invisible either.
             if consecutive_failures <= 3 or consecutive_failures % 60 == 0:
