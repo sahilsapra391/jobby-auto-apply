@@ -12,6 +12,7 @@ outcome, not the attempt.
 """
 
 import importlib.util
+import inspect
 import pathlib
 import sys
 import tempfile
@@ -146,6 +147,60 @@ class CanonicalUrlTest(unittest.TestCase):
     def test_nonsense_is_returned_untouched(self):
         for value in ("", None, "not a url", "javascript:alert(1)", "ftp://jobby.fyi"):
             self.assertEqual(self.publish.canonical_url(value), value)
+
+
+
+class RenderTimeFreshnessTests(unittest.TestCase):
+    """The board says how old it is, measured when it is served.
+
+    The frozen board's status line read "Search v21 is live. Every 4 hours,
+    next run 19:31" -- true when that snapshot was built and meaningless
+    nineteen hours later, because it had frozen with everything else. An
+    indicator that can freeze along with the page is theatre, so this one is
+    computed per request from the clock rather than carried in the state.
+    """
+
+    def setUp(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "page_module", root / "deploy" / "api" / "page.py")
+        self.page = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(self.page)
+        except Exception as exc:                      # pragma: no cover
+            self.skipTest(f"page.py needs its deployment context: {exc}")
+
+    def stamp(self, hours_ago):
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc)
+                - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_a_fresh_board_says_only_when_it_was_built(self):
+        label, stale = self.page._freshness(self.stamp(0.2))
+        self.assertFalse(stale)
+        self.assertNotIn("stopped updating", label)
+
+    def test_a_board_older_than_the_threshold_says_so_in_words(self):
+        label, stale = self.page._freshness(self.stamp(23))
+        self.assertTrue(stale)
+        self.assertIn("23 hours old", label)
+        self.assertIn("stopped updating", label)
+
+    def test_a_board_days_old_is_counted_in_days(self):
+        label, _ = self.page._freshness(self.stamp(72))
+        self.assertIn("3 days old", label)
+
+    def test_the_age_is_measured_at_render_and_not_carried_in_the_state(self):
+        """The property that makes it useful. The same stored timestamp reads
+        differently as time passes, which is exactly what a frozen board needs
+        and what a value baked into the snapshot cannot do."""
+        source = inspect.getsource(self.page._freshness)
+        self.assertIn("datetime.now", source)
+
+    def test_an_unreadable_timestamp_does_not_take_the_board_down(self):
+        label, stale = self.page._freshness("not a date")
+        self.assertFalse(stale)
+        self.assertTrue(label)
 
 
 if __name__ == "__main__":

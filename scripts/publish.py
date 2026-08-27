@@ -79,6 +79,12 @@ def run(cmd, **kw):
 # rather than something to keep trimming around.
 EMBED_FLOOR = 1000
 
+# Say something long before the cliff. The ceiling was hit with no warning at
+# all: the state crossed 20 MB between one publish and the next, and the first
+# anyone knew was a board that had stopped moving. At 80% there are weeks of
+# growth left, which is the difference between an outage and a Tuesday.
+HEADROOM_WARN = 0.80
+
 
 def build_dashboard(root, embed_cap=None):
     """Render the board and hand back its sanitized state and summary.
@@ -382,6 +388,13 @@ def fit_state(root, cap=None):
         if len(payload) <= MAX_STATE_BYTES:
             summary["embedCap"] = cap
             summary["sizeAttempts"] = attempts
+            summary["stateBytes"] = len(payload)
+            summary["ceilingUsed"] = len(payload) / MAX_STATE_BYTES
+            if summary["ceilingUsed"] >= HEADROOM_WARN:
+                summary["headroomWarning"] = (
+                    f"the board state is {len(payload) / 1024 / 1024:.1f} MB, "
+                    f"{summary['ceilingUsed']:.0%} of the "
+                    f"{MAX_STATE_BYTES / 1024 / 1024:.0f} MB reader ceiling")
             return summary
         if cap <= EMBED_FLOOR:
             raise StateTooBig(
@@ -560,6 +573,13 @@ def cmd_publish(args, base):
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
           f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
+    if summary.get("headroomWarning"):
+        # stderr, so the watcher's health line carries it rather than it
+        # sitting in a stdout summary nobody reads until something breaks.
+        print(f"HEADROOM: {summary['headroomWarning']}", file=sys.stderr)
+    if summary.get("embedCap") and summary["embedCap"] != found_lane.EMBED_CAP:
+        print(f"TRIMMED: embedded {summary['embedCap']} records rather than "
+              f"{found_lane.EMBED_CAP} so the state would fit", file=sys.stderr)
 
     guard_render(summary, args.root)
 
