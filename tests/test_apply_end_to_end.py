@@ -21,6 +21,7 @@ import socketserver
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -97,12 +98,45 @@ class RealBrowserUploadTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
 
     def open_fixture(self):
-        opened = browser._open_tab(
-            f"http://127.0.0.1:{self.port}/upload-form.html", self.slot
-        )
+        """Open the fixture and wait until Chrome is actually showing it.
+
+        `_open_tab` returns when Chrome has created the tab, not when the page
+        has parsed. Attaching immediately raced the load and lost about one run
+        in four, failing as "the target resolved to no file input" -- which
+        reads exactly like the tool being broken and is the test being wrong.
+        Another session lost an afternoon to it believing it was their diff.
+        """
+        url = f"http://127.0.0.1:{self.port}/upload-form.html"
+        opened = browser._open_tab(url, self.slot)
         target = (opened or {}).get("id") if isinstance(opened, dict) else None
         if target:
             self.addCleanup(browser._cdp, f"/json/close/{target}", self.slot)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            here = next((t for t in browser.tabs(self.slot)
+                         if t.get("id") == target), None)
+            if here and "upload-form.html" in (here.get("url") or ""):
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("the fixture page never loaded in the slot")
+        return target
+
+    def wait_for_form(self, connection):
+        """And wait until the document has the inputs, not just the address.
+
+        The URL is set before the body parses, so the tab reporting the fixture
+        is necessary and not sufficient. This asks the page itself, through the
+        same firewall the agent uses, which is the only thing that can answer.
+        """
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            found = connection.tool("browser_find", {"text": "Cover letter"})
+            text = found.get("result", {}).get("content", [{}])[0].get("text", "")
+            if "Cover letter" in text and "No matches" not in text:
+                return
+            time.sleep(0.2)
+        self.fail("the upload form never appeared on the page")
 
     def client(self):
         connection = Client(self.config)
@@ -120,6 +154,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """Fault 2: six upload calls, both PDFs unattached, application parked."""
         self.open_fixture()
         connection = self.client()
+        self.wait_for_form(connection)
 
         def text(reply):
             return reply["result"]["content"][0]["text"]
@@ -150,6 +185,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture()
         connection = self.client()
+        self.wait_for_form(connection)
         reply = connection.tool("browser_attach_file", {
             "paths": [str(self.resume)], "target": "#portfolio_file",
             "element": "portfolio upload",
@@ -167,6 +203,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """A park with zero calls is a capability failure; this is the other case."""
         self.open_fixture()
         connection = self.client()
+        self.wait_for_form(connection)
         connection.tool("browser_snapshot", {})
         connection.tool("browser_attach_file",
                         {"paths": [str(self.cover)], "target": "#cover_file"})
