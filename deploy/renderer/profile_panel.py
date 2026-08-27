@@ -85,12 +85,22 @@ def panel(counts=None):
                    placeholder="GB, DE, FR, NL"></label>
             <label>Copy from<span class="vh"> an existing base</span>
               <select data-base-copy></select></label>
+            <label>Document
+              <span class="base-file">
+                <input type="file" accept="application/pdf,.pdf" data-base-file>
+                <span class="bank-note" data-base-filename>Using the copied base's PDF.
+                  Choose a file to use your own instead.</span>
+              </span>
+            </label>
             <div class="bank-act">
               <button class="btn" type="button" data-base-save>Create</button>
               <button class="btn ghost" type="button" data-base-cancel>Cancel</button>
             </div>
-            <p class="bank-note">A new base copies an existing one's contact details and
-               document, then you edit its wording. Uploading a PDF is not supported.</p>
+            <p class="bank-note">Contact details always come from the base you copy.
+               A PDF you upload becomes what this base is <em>based on</em>: the text a
+               tailored resume is written against. The wording itself still starts from
+               the copied base, because the layout a resume renders through is the
+               template's, not the uploaded file's.</p>
             <span class="profile-message" data-base-message></span>
           </div>
         </div>
@@ -291,6 +301,12 @@ CSS = r"""
     padding:1rem; background:var(--card); display:grid; gap:.6rem; }
   .base-form label { display:grid; gap:.25rem; color:var(--ink-3); font-size:.8rem;
     font-weight:650; }
+  .base-file { display:grid; gap:.3rem; }
+  .base-file input[type="file"] { font:inherit; font-size:.86rem; color:var(--ink-2); }
+  .base-file input[type="file"]::file-selector-button { font:inherit; font-size:.86rem;
+    padding:.4rem .7rem; margin-right:.6rem; border-radius:10px; cursor:pointer;
+    border:1px solid var(--hair); background:var(--card); color:var(--ink); }
+  .base-file input[type="file"]::file-selector-button:hover { border-color:var(--hair-strong); }
   .base-form select { width:100%; font:inherit; font-size:.92rem; color:var(--ink);
     background:var(--card); border:1px solid var(--hair); border-radius:11px;
     padding:.55rem .7rem; }
@@ -606,6 +622,16 @@ SCRIPT = r"""
       baseAdd.addEventListener('click', function () { baseForm.hidden = !baseForm.hidden; });
       var cancel = page.querySelector('[data-base-cancel]');
       if (cancel) cancel.addEventListener('click', function () { baseForm.hidden = true; });
+      var filePicker = page.querySelector('[data-base-file]');
+      var fileName = page.querySelector('[data-base-filename]');
+      if (filePicker && filePicker.addEventListener && fileName) {
+        filePicker.addEventListener('change', function () {
+          var f = filePicker.files && filePicker.files[0];
+          fileName.textContent = f
+            ? f.name + ' (' + Math.round(f.size / 1024) + ' KB)'
+            : "Using the copied base's PDF. Choose a file to use your own instead.";
+        });
+      }
       var save = page.querySelector('[data-base-save]');
       if (save) save.addEventListener('click', function () {
         var message = page.querySelector('[data-base-message]');
@@ -626,16 +652,60 @@ SCRIPT = r"""
         var body = { editId: editId('base'), action: 'add', key: key, label: label,
                      countries: countries, copyFrom: copyFrom };
         save.disabled = true;
-        remember({ editId: body.editId, kind: 'resume', path: '/api/resume', body: body });
-        post('/api/resume', body).then(function (response) {
+
+        function queueTheBase() {
+          remember({ editId: body.editId, kind: 'resume', path: '/api/resume', body: body });
+          return post('/api/resume', body).then(function (response) {
+            save.disabled = false;
+            if (response && response.ok) {
+              if (message) {
+                message.className = 'profile-message';
+                message.textContent = 'Queued. It appears here once your device applies it.';
+              }
+            } else { fail('Your device would not add it. Nothing changed.'); }
+          });
+        }
+
+        var picker = page.querySelector('[data-base-file]');
+        var chosen = picker && picker.files && picker.files[0];
+        if (!chosen) {
+          queueTheBase().catch(function () {
+            save.disabled = false; fail('That did not reach the queue.');
+          });
+          return;
+        }
+        if (chosen.size > 2 * 1024 * 1024) {
           save.disabled = false;
-          if (response && response.ok) {
-            if (message) {
-              message.className = 'profile-message';
-              message.textContent = 'Queued. It appears here once your device applies it.';
-            }
-          } else { fail('Your device would not add it. Nothing changed.'); }
-        }).catch(function () { save.disabled = false; fail('That did not reach the queue.'); });
+          return fail('That file is ' + Math.round(chosen.size / 1024) + ' KB. The limit is 2 MB.');
+        }
+        // The document goes to a key of its own and the queued request carries
+        // only its name, so a shared key the watcher reads every few seconds
+        // never holds a PDF. Uploaded first: a base pointing at a document that
+        // failed to arrive is worse than no base at all.
+        if (message) {
+          message.className = 'profile-message';
+          message.textContent = 'Uploading the document…';
+        }
+        var reader = new FileReader();
+        reader.onerror = function () { save.disabled = false; fail('That file could not be read.'); };
+        reader.onload = function () {
+          var encoded = String(reader.result || '');
+          encoded = encoded.slice(encoded.indexOf(',') + 1);
+          var uploadId = editId('doc');
+          post('/api/resume-upload', { uploadId: uploadId, pdf: encoded })
+            .then(function (response) {
+              if (!response || !response.ok) {
+                save.disabled = false;
+                return response.json().then(function (payload) {
+                  fail(payload && payload.error ? payload.error : 'That upload was refused.');
+                }).catch(function () { fail('That upload was refused.'); });
+              }
+              body.uploadId = uploadId;
+              return queueTheBase();
+            })
+            .catch(function () { save.disabled = false; fail('That upload did not reach the board.'); });
+        };
+        reader.readAsDataURL(chosen);
       });
     }
 

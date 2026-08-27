@@ -1536,6 +1536,23 @@ def cmd_resume_add(args):
         raise StoreError(f"a base resume with key {key!r} already exists")
     source = next((r for r in resumes if r.get("key") == payload.get("copyFrom")), None) \
         or next((r for r in resumes if r.get("default")), resumes[0])
+    # An uploaded document, already written to disk by the caller, becomes this
+    # base's own PDF. Without one the new base points at the source's document,
+    # which is the copy case and stays the default.
+    #
+    # **The document is not the wording.** The base PDF is what the model reads
+    # as source text and what the layout is measured against; the words a
+    # tailored resume is built from still come from the copied content, because
+    # resume_build.extract matches the exact markup Jobby's own template emits
+    # and cannot read an arbitrary PDF. Uploading changes what the resume is
+    # based on, not what it says.
+    document = payload.get("documentPath")
+    if document:
+        document = Path(str(document)).expanduser()
+        if not document.is_file():
+            raise StoreError(f"no uploaded document at {document}")
+        if document.suffix.lower() != ".pdf":
+            raise StoreError("a base resume document must be a PDF")
     countries = payload.get("countries")
     if not isinstance(countries, list) or not countries:
         raise StoreError("a new base resume needs at least one country")
@@ -1545,7 +1562,7 @@ def cmd_resume_add(args):
     entry = {
         "key": key,
         "label": _bank_text(payload.get("label"), "label", 120).strip() or key.upper(),
-        "path": source.get("path"),
+        "path": str(document) if document else source.get("path"),
         "identity": json.loads(json.dumps(source.get("identity") or {})),
         "appliesTo": codes,
         "selector": {"countries": codes,
@@ -1558,6 +1575,7 @@ def cmd_resume_add(args):
     profile["updatedAt"] = now()
     write_private(paths(root)["profile"], profile)
     return {"added": key, "copiedFrom": source.get("key"),
+            "document": "uploaded" if document else "copied",
             "countries": entry["selector"]["countries"]}
 
 
