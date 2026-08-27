@@ -141,10 +141,14 @@ A guard that refuses at 100% is correct and too late: by then the board is
 already frozen. Every capacity limit gets a warning threshold at 80% that
 surfaces where a person looks.
 
-Published state is at **48%** of the reader ceiling today, 10,075,552 bytes of
-20 MB, measured through current main. It was 105% yesterday. Nobody watched it
-move between those two points, and that is the whole argument: the number is
-only useful if something records it over time.
+Published state moved three times on 2026-08-27 and nobody watched it move:
+**105%** of the reader ceiling in the morning, when the board froze; **48%**
+after #79 and #80 landed on top of #78; **13%** that evening, 2,755 KB of 20 MB,
+after #86 replaced the emergency trim with a real one. Three sessions each
+changed it, each learned their own delta, and each inferred the rest. That is
+the whole argument: the number is only useful if something records it over time.
+A figure that exists only in the stdout of whoever last ran publish is not
+monitored, it is witnessed.
 
 So the headroom read belongs in the **ping payload**, hourly, where Healthchecks
 keeps the history — not only on a status line that is true whenever somebody
@@ -155,6 +159,20 @@ A caution for whoever writes it: an earlier draft of this plan quoted 79% from a
 measurement taken before #79 and #80 landed on top of #78. The number was stale
 within the hour. Re-measure at the point of writing, and prefer emitting the
 measurement to quoting it.
+
+**And it must not know which store it is measuring.** The board state is moving
+out of one KV value into an R2 object behind a pointer, after which the KV value
+is a few hundred bytes and the ceiling that matters is R2's, where this number
+stops being interesting at all. An alarm written against KV specifically would
+be orphaned by that change without failing — the fifth instance of a guard whose
+premise is a constant somebody else owns, after `_trim_sections`,
+`found_lane.EMBED_CAP`, and two sessions repairing the same control in parallel.
+
+So the publish path owns one function that answers *which store holds the state,
+what its limit is, and what it currently weighs*, and the alarm reports the
+ratio without naming a store. Agreed with the session that owns board state on
+2026-08-27, and shipping as part of that move rather than as a follow-up, so
+there is one place that knows rather than two that agree until they do not.
 
 ### 4. A fail-closed guard is never silent to the operator
 
@@ -208,6 +226,32 @@ Existing pairs to hold to this: `test_r2_contract` against the live bucket,
 `LogoContractTests` against `/api/company-logo`, `test_resume_pdf` against real
 Chrome. Each has the integration half; not all have the contract half.
 
+## A status goes stale the same way a board does, and carries no timestamp
+
+**"I am blocked on X" outlives X. Nobody re-derives a status, and unlike a
+board it has no age on it to notice.**
+
+On 2026-08-27 the session that owns board state had been reporting its Step 1 as
+queued behind three named prerequisites. All three had landed. It found out
+because checking somebody else's claim made it check its own, and it had twice
+described the blocking list from memory and been wrong in the same direction.
+
+This is the same failure as everything else in this document, moved one level
+out of the system and into the reporting about it. It is not wrong in any
+visible way. It is old, and everyone downstream treats it as current. The board
+at least carries a timestamp, so `board_staleness` can measure it and the tick
+can fail a ping on it. A status in a report carries nothing, so there is no age
+to measure and no alarm to write.
+
+There is no mechanism to propose here, which is why it is a section rather than
+a guard. What it changes is a habit: a blocker is re-derived when it is cited,
+not when it is discovered, and a status repeated from memory is a claim rather
+than a measurement, subject to the same rule as every other claim in this
+document. The three corrections that mattered most in that window each came from
+someone checking a claim about their **own** area rather than accepting a peer's,
+and in two of the three the check landed on something other than what it was
+aimed at.
+
 ## The coordination problem wearing a test's clothes
 
 `test_it_really_does_fail_when_the_slice_is_over_the_ceiling` has now been
@@ -218,7 +262,20 @@ wrong. None of their authors had read the guard.
 
 That is not a test problem and no further local patch fixes it. The standing fix
 is the one-integrator rule: one session lands to `main`, in an order it decides,
-and the others hold. A guard that several branches repair in parallel is a guard
+and the others hold.
+
+The same absence produced a second defect that looked nothing like it. #78 added
+a published-section trim as the emergency fix for the 21 MB freeze, cutting 16%
+of bullets mid-sentence — the right call against a board that had served nothing
+for 22 hours. #79 landed an hour later with slimming of its own, and the two
+stacked, and the tighter one won **by merge order rather than by anyone
+deciding**. It stayed that way for a day, until #86 replaced it with one
+trimmer. Nobody chose the outcome, nobody was wrong, and it took a measurement
+on the live board to notice: 166 bullets, longest exactly 200, none over.
+
+An outcome nobody chose is the signature of the missing integrator, and it does
+not always arrive as a conflict. Sometimes it arrives as two correct changes
+composing into a third thing neither author would have shipped. A guard that several branches repair in parallel is a guard
 whose repairs conflict, and this one spent a day red on `main` for exactly that
 reason while three sessions each believed they had fixed it.
 
