@@ -376,6 +376,16 @@ before the attach, not after: a React form swaps the field out the moment it
 accepts a file, which made a working upload report a 30-second timeout on the
 live Justworks posting, and an agent told its upload failed retries it.
 
+**A parked application may retry into its own slot, and only its own.**
+`candidate_apply_slots` returns the affinity slot when it is parked under the
+same application id, and `choose_apply_head` lets such an application pass the
+head when the head has no slot. That pairing is what the refusal must not be
+drawn wider than: a guard that refuses everything parked would refuse the one
+retry that costs nothing, since an application already holding its slot consumes
+nothing anyone else is waiting for. Verified against the live fleet on
+2026-08-27 with zero free slots: the parked application sitting last in a queue
+of five was chosen as the head, into `apply-2`, its own.
+
 **A fleet of parked slots is an outage wearing a designed state's clothes.**
 `parked_slot_warning` fails the same dead-man ping the board staleness uses, one
 alarm with two reasons rather than two alarms, when most of the fleet is parked
@@ -395,6 +405,15 @@ many applications were running. It is written every tick rather than only when
 it appears, so it clears itself when a slot frees. It is not the "Automation is
 stopped" banner: capacity gone and automation stopped are different facts and
 merging them costs the distinction.
+
+**Known gap, and which guard covers it.** The preflight proves the server
+answers, not that Chrome behind it is reachable. Playwright MCP connects to the
+browser lazily, on the first tool call, so a dead Chrome still advertises all
+thirteen tools and passes the fence. `browser.open_application` is the guard
+that catches that one step later, failing with "the posting would not open in
+apply-N". Stating which guard covers which case is what makes a failure
+readable: without it, a preflight pass followed by a dead browser looks like the
+fence lying, and the fence is not lying, it is answering a different question.
 
 `tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
 the real firewall against a real Chrome and attaches real files to a form whose
