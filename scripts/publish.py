@@ -35,6 +35,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import toolpath  # noqa: E402
+import found_lane  # noqa: E402
 import settings_panel  # noqa: E402
 import r2  # noqa: E402
 import r2_sync  # noqa: E402
@@ -72,7 +73,20 @@ def run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
-def build_dashboard(root):
+# How far the slice may be cut to fit KV's ceiling before we stop trying. A
+# board showing a thousand of the freshest roles is a board; one showing fifty
+# is a broken promise, and at that point the size is a real fault to look at
+# rather than something to keep trimming around.
+EMBED_FLOOR = 1000
+
+# Say something long before the cliff. The ceiling was hit with no warning at
+# all: the state crossed 20 MB between one publish and the next, and the first
+# anyone knew was a board that had stopped moving. At 80% there are weeks of
+# growth left, which is the difference between an outage and a Tuesday.
+HEADROOM_WARN = 0.80
+
+
+def build_dashboard(root, embed_cap=None):
     """Render the board and hand back its sanitized state and summary.
 
     It used to be written into deploy/api/_dashboard.js for the function to
@@ -86,6 +100,8 @@ def build_dashboard(root):
                "--out", str(out), "--state-out", str(state_out)]
         if root:
             cmd += ["--root", root]
+        if embed_cap:
+            cmd += ["--embed-cap", str(embed_cap)]
         proc = subprocess.run(cmd, text=True, capture_output=True)
         if proc.returncode != 0:
             raise PublishError((proc.stderr or "dashboard build failed").strip())
@@ -221,7 +237,7 @@ def cmd_setup(args, base):
 
 def cmd_local(args, _base):
     # Local serving uses the exact rendered page without touching shared KV.
-    summary = build_dashboard(args.root)
+    summary = fit_state(args.root)
     password = os.environ.get(PASSWORD_ENV) or "local"
     print(f"Serving on http://localhost:{args.port} (password: {password})")
     with tempfile.TemporaryDirectory() as tmp:
@@ -338,6 +354,60 @@ def serialize_state(state):
     return json.dumps(state, separators=(",", ":")).encode("utf-8")
 
 
+class StateTooBig(PublishError):
+    """The state will not fit. Recoverable by embedding fewer records."""
+
+
+def fit_state(root, cap=None):
+    """Build the board, shrinking the embedded slice until the state fits.
+
+    The old behaviour was to refuse, and refusing froze the board. On
+    2026-08-27 the state reached 21.0 MB against a 20 MB ceiling and every
+    publish failed for 23 hours: the scan kept running on time, the pool kept
+    growing, and the board silently went on showing the previous evening.
+
+    The failure is invisible from the board's own side, which is the worst part
+    of it. The page still said "Search v21 is live, every 4 hours" because that
+    line came from the same frozen snapshot, and the Found filters quietly
+    emptied as the snapshot aged past their windows -- the 24-hour bucket read
+    zero not because nothing was found but because nothing on that page was
+    still within a day of now.
+
+    So the size is a budget to fit rather than a wall to hit. The slice is what
+    gives: it already shows a portion of the pool and says so in the footer, so
+    showing a smaller portion is a degradation the board can express. A pool
+    that has genuinely outgrown the ceiling at EMBED_FLOOR is a different
+    problem, and that one still raises.
+    """
+    cap = cap or found_lane.EMBED_CAP
+    attempts = []
+    while True:
+        summary = build_dashboard(root, embed_cap=cap)
+        payload = serialize_state(summary["state"])
+        attempts.append({"cap": cap, "bytes": len(payload)})
+        if len(payload) <= MAX_STATE_BYTES:
+            summary["embedCap"] = cap
+            summary["sizeAttempts"] = attempts
+            summary["stateBytes"] = len(payload)
+            summary["ceilingUsed"] = len(payload) / MAX_STATE_BYTES
+            if summary["ceilingUsed"] >= HEADROOM_WARN:
+                summary["headroomWarning"] = (
+                    f"the board state is {len(payload) / 1024 / 1024:.1f} MB, "
+                    f"{summary['ceilingUsed']:.0%} of the "
+                    f"{MAX_STATE_BYTES / 1024 / 1024:.0f} MB reader ceiling")
+            return summary
+        if cap <= EMBED_FLOOR:
+            raise StateTooBig(
+                f"refusing to publish: even {cap} embedded records come to "
+                f"{len(payload) / 1024 / 1024:.1f} MB against a "
+                f"{MAX_STATE_BYTES / 1024 / 1024:.0f} MB ceiling. The published "
+                "board is untouched. Records have grown, not just multiplied.")
+        # Aim at the budget with a margin rather than halving blindly, so a
+        # 21 MB state costs one more render and not four.
+        room = MAX_STATE_BYTES / len(payload)
+        cap = max(EMBED_FLOOR, min(int(cap * room * 0.92), cap - 100))
+
+
 def guard_state_size(payload):
     """Refuse a state the deployed reader would reject.
 
@@ -349,7 +419,7 @@ def guard_state_size(payload):
     the check that says so out loud if that ever stops being true.
     """
     if len(payload) > MAX_STATE_BYTES:
-        raise PublishError(
+        raise StateTooBig(
             f"refusing to publish: the board state is "
             f"{len(payload) / 1024 / 1024:.1f} MB and the deployed reader stops at "
             f"{MAX_STATE_BYTES / 1024 / 1024:.0f} MB. The published board is untouched. "
@@ -498,11 +568,18 @@ def cmd_publish(args, base):
         print("  Commit deploy/renderer/ or the deployment keeps serving the old "
               "interface — Vercel builds it from git, not from here.")
 
-    summary = build_dashboard(args.root)
+    summary = fit_state(args.root)
     docs = build_documents(args.root)
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
           f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
+    if summary.get("headroomWarning"):
+        # stderr, so the watcher's health line carries it rather than it
+        # sitting in a stdout summary nobody reads until something breaks.
+        print(f"HEADROOM: {summary['headroomWarning']}", file=sys.stderr)
+    if summary.get("embedCap") and summary["embedCap"] != found_lane.EMBED_CAP:
+        print(f"TRIMMED: embedded {summary['embedCap']} records rather than "
+              f"{found_lane.EMBED_CAP} so the state would fit", file=sys.stderr)
 
     guard_render(summary, args.root)
 

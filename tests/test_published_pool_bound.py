@@ -208,28 +208,22 @@ class StateFitsTheCeilingTest(unittest.TestCase):
         self.assertLess(self.published_bytes(jobs), publish.MAX_STATE_BYTES)
 
     def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
-        """A bound nothing can violate is not a bound. Prove this one bites.
-
-        Two separate things had taken the teeth out of it, and the fix for each
-        is different, which is why both are here.
-
-        **Every step that shrinks the slice has to be neutralised, not just the
-        one that existed when this was written.** `_trim_sections` was added to
-        the same path by PR #78 and this test disabled only `slim_jobs`, so the
-        "unslimmed" slice came in at 20,140,313 bytes against a 20,971,520
-        ceiling and the test failed on main. It was measuring a half-slimmed
-        slice and calling it whole. A third trim will break it the same way,
-        which is the right outcome: the failure says "you added a trim and this
-        no longer proves what it says". That diagnosis and fix are PR #83's.
-
-        **And the embed cap is pinned rather than read from `found_lane`,**
-        because this test is about the shape that actually broke production and
-        that shape had 3,400 embedded records in it. Restoring the sections is
-        not enough on its own: at the 3,350 the cap dropped to on 2026-08-26 to
-        make room for the Profile page, the fully unslimmed slice measures
-        20,790,251, still 181,269 under the ceiling. A test whose premise moves
-        with an unrelated constant is the same bug in a second place.
-        """
+        """A bound nothing can violate is not a bound. Prove this one bites."""
+        # Both reductions have to come off, not one. Sections are cut in
+        # publishable_jobs and the rest in slim_jobs, so disabling only the
+        # latter leaves a half-trimmed state that lands at 20.1 MB -- under the
+        # ceiling, which made this assertion fail and the test red on main for
+        # everybody. What production actually carried was neither reduction.
+        #
+        # And the embed cap is pinned rather than read from found_lane, because
+        # this test is about the shape that actually broke production and that
+        # shape had 3,400 embedded records in it. Taking both reductions off is
+        # not enough on its own: at the 3,350 the cap dropped to on 2026-08-26
+        # to make room for the Profile page, the fully untrimmed slice measures
+        # 20,790,251, still 181,269 under the ceiling. A premise that moves with
+        # a constant somebody else owns is the same bug in a second place, and
+        # this guard has now been broken from three directions by three changes
+        # that each had nothing to do with it.
         original_slim = dashboard.state_slim.slim_jobs
         original_trim = dashboard._trim_sections
         original_cap = found_lane.EMBED_CAP
@@ -239,6 +233,8 @@ class StateFitsTheCeilingTest(unittest.TestCase):
         try:
             unslimmed = self.published_bytes(pool(3400, acted=966))
         finally:
+            # Restored in a finally, because leaving the stubs in place leaks
+            # into every test that runs after this one in the same process.
             dashboard.state_slim.slim_jobs = original_slim
             dashboard._trim_sections = original_trim
             found_lane.EMBED_CAP = original_cap
