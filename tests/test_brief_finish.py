@@ -215,6 +215,41 @@ class ParkTests(StoreTemp):
         self.assertIn("unanswered", entry["tags"])
         self.assertEqual(entry["askedBy"], ["acme-pm"])
 
+    def test_what_the_loop_decided_is_recorded_not_just_returned(self):
+        """A silent loop failure has four indistinguishable causes otherwise.
+
+        The agent tagged nothing, a guard refused it, the store errored, or the
+        loop never ran: after the fact those all look identical, because the
+        one field that said which was a return value nobody kept. It lands on
+        the session, beside the blockers it describes.
+        """
+        self.session("acme-pm")
+        run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "How many days a week can you be in the office?",
+            "--pending", "Solve the CAPTCHA",
+            "--unanswered", "How many days a week can you be in the office?",
+            "--detail", "Answer one, do the other"], self.root)
+        saved = json.loads((self.root / "sessions" / "acme-pm.json").read_text())
+        capture = saved["bankCapture"]
+        self.assertEqual(capture["tagged"],
+                         ["How many days a week can you be in the office?"])
+        self.assertEqual(len(capture["opened"]), 1)
+        self.assertTrue(capture["at"])
+        # And the park itself is untouched by the diagnostic.
+        self.assertEqual(saved["status"], "review")
+        self.assertEqual(len(saved["pendingFields"]), 2)
+
+    def test_the_record_says_why_when_nothing_was_banked(self):
+        self.session("acme-pm")
+        run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "I authorize the Company to obtain a consumer report about me?",
+            "--detail", "Read it yourself"], self.root)
+        saved = json.loads((self.root / "sessions" / "acme-pm.json").read_text())
+        self.assertEqual(saved["bankCapture"]["opened"], [])
+        self.assertIn("refusal category", saved["bankCapture"]["notBanked"][0]["why"])
+
     def test_an_action_is_a_blocker_but_not_bank_material(self):
         """"Sign in to Workday" is not a question, and storing it would put an
         instruction in the bank where an answer belongs."""

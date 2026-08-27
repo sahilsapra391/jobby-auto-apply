@@ -358,18 +358,19 @@ test('an authenticated read gets the answers, the identities and the wording', a
   assert.equal(payload.resumeContent.banner, 'PRODUCT MANAGER');
 });
 
-test('a withheld sensitive answer says it exists and nothing more', async () => {
-  // The device publishes no value for a sensitive entry. The route's job is to
-  // carry that distinction, so the page can offer to replace an answer without
-  // ever being told what it says.
+test('a sensitive answer is served with its value and its classification', async () => {
+  // Reversed from #73 on the owner's instruction: no hidden category on his
+  // own board. The classification still travels, because that is what the
+  // multi-tenant encryption path selects on (issue #82), and it must not be
+  // quietly cleared by a decision about what the page draws.
   await publishBank([{ key: 'expected-comp', question: 'Expected compensation?',
-                       value: null, state: 'sensitive', sensitive: true,
-                       heldOnDevice: true, dataClass: 'class-2' }]);
+                       value: '$185,000', state: 'sensitive', sensitive: true,
+                       dataClass: 'class-2' }]);
   const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
   const payload = await response.json();
-  assert.equal(payload.answers[0].value, null);
-  assert.equal(payload.answers[0].heldOnDevice, true);
+  assert.equal(payload.answers[0].value, '$185,000');
   assert.equal(payload.answers[0].sensitive, true);
+  assert.equal(payload.answers[0].dataClass, 'class-2');
 });
 
 test('the legacy answer field is served as a value', async () => {

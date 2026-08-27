@@ -190,20 +190,26 @@ def _memory_bank(state):
     its embed cap is 3.65 MB against a 3.7 MB budget, and the bank is 74 KB. It
     would not fit even if nothing else were true.
 
-    **A sensitive answer's value never leaves the device.** Not masked here, not
-    encrypted here: absent. Twenty-two of these are compensation and
-    demographic answers, and masking is a display choice that does nothing for
-    the copy sitting in the KV blob. The board can say a sensitive answer
-    exists, when it was last touched, and which questions it covers, and it can
-    take a new one. It cannot read the old one back, because it never receives
-    it. That keeps the pre-Profile privacy posture exactly: before this page,
-    nothing from answers.json left the Mac.
+    **Every answer travels, including the sensitive ones.** This reverses the
+    withholding shipped in #73, on the owner's instruction after seeing it live:
+    he does not want a hidden category on his own board, and it is his data and
+    his board. So all 156 answers are published and rendered in plain text.
 
-    The cost is real and one-directional: you cannot check a stored salary from
-    your phone. Reveal-on-tap without storing was considered and is not
-    available -- the board runs on Vercel and its only source is Cloudflare KV,
-    which this machine writes to, so anything the page could reveal would have
-    to be at rest there first.
+    Three things this does not change, because they are different mechanisms
+    that a display decision has no business touching:
+
+    - The `sensitive` flag stays on every record it was on. It is what the
+      multi-tenant envelope-encryption path selects on, and issue #82's gate
+      stands: that work closes before a second account exists.
+    - Secrets are still never captured at all. One-time codes, passwords and
+      identifiers are refused at the door in `store.py` and never written, so
+      there is nothing here to publish in the first place. Non-capture is not
+      the same mechanism as non-display and is untouched.
+    - **This reverses on multi-tenancy.** A single user reading their own
+      compensation on their own password-gated board is a different question
+      from a store holding other people's. When account two exists this goes
+      back, which is what #82 is for. Recorded here so the next reader knows it
+      was a decision rather than an oversight.
     """
     answers = state.get("answers") or {}
     entries = []
@@ -223,18 +229,10 @@ def _memory_bank(state):
         # normalisation, before anything reads it.
         if not record.get("value") and record.get("answer"):
             record["value"] = record.pop("answer")
+        # `sensitive` and `dataClass` still travel. They are the classification
+        # the encryption path selects on; they simply no longer change what the
+        # page draws.
         store.classify(record)
-        if record.get("sensitive"):
-            # Whether it is answered has to be decided before the value goes,
-            # or every sensitive entry would publish as an open question and
-            # the board would ask you to answer things you answered months ago.
-            record["heldOnDevice"] = store.answered(record)
-            record["value"] = None
-            record.pop("answer", None)
-            # `dataClass` stays and travels: it is what the multi-tenant
-            # encryption path selects on, and #82 is where that work is owed
-            # from. Reading one of these back on a phone comes back with the
-            # encryption rather than being given up.
         entries.append(record)
     entries.sort(key=lambda e: str(e.get("question") or "").lower())
     return {
@@ -250,13 +248,8 @@ def bank_counts(bank):
     entries = bank.get("answers") or []
     return {
         "total": len(entries),
-        # A withheld sensitive value reads as unanswered to `answered()`, because
-        # there is no value left to look at. `heldOnDevice` is what says the
-        # difference between "we are not showing you this" and "nobody has
-        # answered this".
         "unanswered": sum(1 for e in entries
                           if not store.answered(e)
-                          and not e.get("heldOnDevice")
                           and e.get("remembered") is not False),
         "sensitive": sum(1 for e in entries if e.get("sensitive")),
         "identities": len(bank.get("identities") or []),

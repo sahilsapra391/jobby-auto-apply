@@ -390,6 +390,7 @@ def fit_state(root, cap=None):
             summary["sizeAttempts"] = attempts
             summary["stateBytes"] = len(payload)
             summary["ceilingUsed"] = len(payload) / MAX_STATE_BYTES
+            summary["growthWarning"] = state_growth(len(payload))
             if summary["ceilingUsed"] >= HEADROOM_WARN:
                 summary["headroomWarning"] = (
                     f"the board state is {len(payload) / 1024 / 1024:.1f} MB, "
@@ -438,6 +439,62 @@ def guard_state_size(payload):
 LAST_PUBLISH = Path("~/.job-application/last-publish").expanduser()
 
 
+# The size of the last state that published. A ceiling warning at 80% catches
+# slow accumulation, and slow accumulation is not how this has actually gone
+# wrong: 20.87 MB arrived because nobody added a lot and several people added a
+# little over a few days. It would also miss the sharper case entirely -- one
+# change embedding something that had been served from R2, a quarter megabyte
+# in a single commit by somebody who does not think of themselves as adding a
+# lot either. From 49% that lands at 50% and says nothing until weeks later.
+#
+# So growth is watched as well as size. A jump is reported the publish it
+# happens on, when the change that caused it is the obvious suspect, rather
+# than months later when it is one of thirty candidates.
+LAST_STATE_BYTES = Path("~/.job-application/last-state-bytes").expanduser()
+# Either, not both. The case this exists for is a quarter megabyte arriving in
+# one change, and at 10 MB that is 2.5% -- requiring both thresholds would have
+# missed the exact scenario it was written for.
+#
+# A low byte threshold is affordable because the embed cap bounds how many
+# records the state carries, so publish-to-publish it churns rather than grows:
+# records swap, the count does not. Sustained growth means something changed
+# about the records, which is the thing worth a sentence. If this turns out to
+# be noisy in practice, raise it against observed variance rather than guessing
+# again -- a warning nobody believes is worse than no warning.
+GROWTH_WARN_BYTES = 256 * 1024
+GROWTH_WARN_SHARE = 0.05
+
+
+def state_growth(size):
+    """What to say about this state's size against the last one, or None.
+
+    Returns a sentence, not a verdict. Growth is usually legitimate -- the pool
+    grows, and so should the board -- so this reports rather than refuses.
+    """
+    try:
+        previous = int(LAST_STATE_BYTES.read_text().strip())
+    except (OSError, ValueError):
+        return None
+    grew = size - previous
+    if grew <= 0:
+        return None
+    share = grew / previous if previous else 1.0
+    if grew < GROWTH_WARN_BYTES and share < GROWTH_WARN_SHARE:
+        return None
+    return (f"the board state grew {grew / 1024 / 1024:.2f} MB ({share:.0%}) "
+            f"since the last publish, to {size / 1024 / 1024:.2f} MB. Whatever "
+            "changed in this one is the thing to look at.")
+
+
+def remember_state_size(size):
+    """Bookkeeping, never fatal, like mark_published below."""
+    try:
+        LAST_STATE_BYTES.parent.mkdir(parents=True, exist_ok=True)
+        LAST_STATE_BYTES.write_text(str(int(size)), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def mark_published():
     """Record that a publish succeeded. Never fatal: this is bookkeeping."""
     try:
@@ -469,7 +526,8 @@ def push_content(html, state, docs, providers=None, doc_index=None):
         providers_path = Path(tmp) / "providers.json"
         index_path = Path(tmp) / "doc-index.json"
         html_path.write_text(html, encoding="utf-8")
-        state_path.write_bytes(guard_state_size(serialize_state(state)))
+        published_bytes = guard_state_size(serialize_state(state))
+        state_path.write_bytes(published_bytes)
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
@@ -484,6 +542,9 @@ def push_content(html, state, docs, providers=None, doc_index=None):
     if r.returncode != 0:
         raise PublishError(f"could not write board state to KV: {(r.stderr or '').strip()[:400]}")
     mark_published()
+    # Only after KV took it: a refused or failed publish must not move the
+    # baseline the next one is measured against.
+    remember_state_size(len(published_bytes))
     return json.loads(r.stdout or "{}")
 
 
@@ -573,6 +634,8 @@ def cmd_publish(args, base):
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
           f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
+    if summary.get("growthWarning"):
+        print(f"GROWTH: {summary['growthWarning']}", file=sys.stderr)
     if summary.get("headroomWarning"):
         # stderr, so the watcher's health line carries it rather than it
         # sitting in a stdout summary nobody reads until something breaks.
