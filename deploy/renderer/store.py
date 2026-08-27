@@ -360,7 +360,13 @@ def classify(entry):
     sensitive = entry.get("state") == "sensitive" or bool(entry.get("sensitive"))
     entry["sensitive"] = sensitive
     entry["dataClass"] = "class-2" if sensitive else "class-1"
-    entry["encryption"] = "pending" if sensitive else "none"
+    # There is deliberately no `encryption` field beside this. It existed, held
+    # the constant "pending" on every sensitive record and "none" on every other
+    # one, was written by nobody else and read by nothing. A status field with
+    # one value and no writer is not a status, it is a promise, and it ages into
+    # a lie the longer it sits there looking like it is tracking something.
+    # `dataClass` says what the record is, #82 says what is owed about it, and
+    # neither of those pretends to be a state machine.
     return entry
 
 

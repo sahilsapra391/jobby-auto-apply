@@ -213,12 +213,10 @@ def _memory_bank(state):
             record["heldOnDevice"] = store.answered(record)
             record["value"] = None
             record.pop("answer", None)
-            # Nothing pending in this path any more: there is no published copy
-            # to encrypt. `dataClass` stays, because the device-side store is
-            # still Class 2 and that work is still owed, and issue #82 is where
-            # it is owed from. Reading one of these back on a phone comes back
-            # with the encryption, rather than being given up.
-            record.pop("encryption", None)
+            # `dataClass` stays and travels: it is what the multi-tenant
+            # encryption path selects on, and #82 is where that work is owed
+            # from. Reading one of these back on a phone comes back with the
+            # encryption rather than being given up.
         entries.append(record)
     entries.sort(key=lambda e: str(e.get("question") or "").lower())
     return {

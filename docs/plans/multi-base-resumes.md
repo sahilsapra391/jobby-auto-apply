@@ -181,12 +181,44 @@ title, location, seniority, extracted years, workplace, industry. A selector is 
 hand-written predicate over that same feature set. They should not each grow their
 own evaluator.
 
-So build `scripts/job_predicate.py` once: a validated predicate schema, an
-evaluator over a job record, a plain-language renderer, and one place where
-"unknown" is defined per dimension. Selection calls it. The learner calls it for
-its features. `found_lane`'s filters are the third caller and the reason to check
-whether this is really a new module or an extraction of what `match_score.gates`
-already does. Make that call by reading `gates()` first, rather than assuming.
+So there is one evaluator, one place "unknown" is defined per dimension, and
+several callers. **It is an extraction, not a greenfield module**, and reading
+the code first changed which code it extracts from.
+
+`match_score.gates()` is the wrong target. It runs citizenship regexes over the
+title and excerpt and appends two booleans the caller passes in. No schema, no
+user-authored predicate, no per-dimension unknown, no plain-language rendering,
+and it answers a different question: not "does this job match my rule" but "why
+is this role capped". Extracting it would be extracting the wrong thing.
+
+The right target is the `score_*` family, which is already most of what this
+plan was about to specify from scratch:
+
+- `score_location` resolves the wanted set through `search_config.expand_locations`,
+  decides country and workplace separately, and **returns a list naming which
+  dimensions were unknown** so nothing has to re-derive it.
+- `score_experience` reads `extracted.yearsMin` with `yearsMax` as fallback,
+  judges against the floor because "nobody is ever turned down for having too
+  few years above a stated ceiling", and returns `NEUTRAL` plus `True` for
+  unknown when the posting states no number.
+- Both return a **plain-language reason for every branch**: "IN is in scope",
+  "asks for 7 years, 2 over the ceiling", "the posting does not state a
+  requirement". That is the selector's plain-language rendering, already
+  written.
+
+And `found_lane`'s filters are not a second dialect. The client filters on the
+`unknowns` array that `match_score` computed and shipped in the payload, so
+"unknown" already has exactly one determination point.
+
+So: split each `score_*` into a predicate returning `(matched, why, unknown)`
+and a thin weighting layer over it. `scripts/job_predicate.py` is where the
+predicate halves live. Match scoring keeps its current behaviour by calling
+predicate-plus-weights. Base selection calls the predicate half and gets the
+reason string for `resumeBase.why` for free. The learner is the third caller.
+
+The thing to avoid is writing a fourth filter dialect for selectors, which is
+what "build a selector language" naturally becomes if nobody reads
+`score_location` first.
 
 ## Migration
 

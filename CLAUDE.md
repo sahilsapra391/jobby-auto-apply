@@ -609,6 +609,66 @@ the restart confirmed against the reflog. Where the consumption can be made
 structural rather than a step to remember, make it structural; a rule that
 depends on the next person remembering is a rule already broken.
 
+## A clean merge is not a correct merge
+
+**When two branches change the same invariant from different files, git's
+success tells you nothing. The merged code has to be re-checked against the
+invariant by running the property's tests, not by observing the absence of
+conflict markers.**
+
+On 2026-08-26 the Memory Bank branch added a rule to `store.py`: an answer entry
+with no value is a question the store is tracking, not an answer to it, so it
+must never satisfy a lookup. `find_answer` and `topic_answer` were taught it.
+The merge from `main` then brought `acknowledgement()`, `expected_pay()` and
+`us_person()` from another branch, three new resolvers each iterating
+`answers.values()` and returning the first tagged entry, none of which knew the
+rule existed. Git reported a clean merge. It was clean. It was also wrong in
+three places, and every test on both sides still passed, because each side's
+tests only covered the code that side wrote.
+
+The tell is that a merge conflict is a *textual* overlap and an invariant is a
+*semantic* one. Two branches editing the same line conflict. Two branches where
+one adds a rule and the other adds code that has to follow it do not, and that
+is the more dangerous case precisely because nothing stops to ask.
+
+So, after any merge that touched a file where this branch established or relied
+on an invariant: name the invariant, find every site that could violate it in
+the merged tree, and run the test that proves the property rather than the test
+suite as a whole. Where the invariant can be enforced in one place instead of N,
+move it there while you are looking at it: the fix above was to filter once in
+`find_answer` and pass the filtered set to every resolver, so the next one
+inherits the guard by construction rather than by somebody remembering.
+
+This is the semantic sibling of "a change is done when the running system
+consumes it". Both are the same failure: an artefact that exists, passes, and
+does not do the thing.
+
+## Substring matching on a semantic category is a bug waiting for a corpus
+
+**Never test category membership with `marker in text`. Use word boundaries.**
+
+This has now cost three sessions an afternoon each, from three directions:
+
+- `"india" in "Indiana"`, which filtered a US state into an India location bucket.
+- `"age " in "average "`, `"age " in "manage "`, and `"race" in "embrace"`, which
+  flagged "What is your average deal size?", "How do you manage a team?" and "Do
+  you embrace ambiguity?" as sensitive compensation and demographic questions.
+- The same shape in marker lists that recognise legal topics, where "authoris"
+  alone matches both a work-authorisation question and a background-check
+  authorisation, which are opposite answers.
+
+It is always the same failure and it is always invisible in review, because the
+marker list reads correctly. `("race", "gender", "veteran")` looks like a list of
+demographic terms. It is a list of substrings, and the corpus decides what that
+means.
+
+Compile a regex with `\b` on both ends, measure it against the real store or the
+real pool before trusting it, and report the false positives you found rather
+than the fact that it passed. A classifier is not verified by reading it. The
+word-bounded version above went from 4 of 4 generic questions wrongly flagged to
+0 of 7, measured against the 156 real answers, and that measurement is the only
+reason anyone knows it works.
+
 ## What counts as evidence
 
 **A docstring, a fixture, a test, a commit message or another session's summary

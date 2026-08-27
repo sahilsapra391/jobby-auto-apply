@@ -394,7 +394,7 @@ class OpenedSensitivityTests(BankTest):
                   value="$185,000", state="sensitive", version=0)
         entry = self.answers()[out["key"]]
         self.assertEqual(entry["state"], "sensitive")
-        self.assertEqual(entry["encryption"], "pending")
+        self.assertEqual(entry["dataClass"], "class-2")
 
     def test_the_classifier_reads_words_not_substrings(self):
         """Measured on 2026-08-26: a substring list flagged "average", "manage"
@@ -483,13 +483,21 @@ class SensitiveTests(BankTest):
         entry = self.answers()[store.answer_key("What compensation are you looking for?")]
         self.assertTrue(entry["sensitive"])
         self.assertEqual(entry["dataClass"], "class-2")
-        self.assertEqual(entry["encryption"], "pending")
+
+    def test_there_is_no_status_field_pretending_to_track_that_work(self):
+        """`encryption` used to sit here holding the constant "pending", written
+        by nobody and read by nothing. A status with one value and no writer is
+        a promise, not a status, and it ages into a lie."""
+        self.edit(question="What compensation are you looking for?", value="$185,000",
+                  state="sensitive", version=0)
+        entry = self.answers()[store.answer_key("What compensation are you looking for?")]
+        self.assertNotIn("encryption", entry)
 
     def test_an_ordinary_entry_is_not(self):
         self.edit(question="What is your notice period?", value="15 days", version=0)
         entry = self.answers()["notice-period"]
         self.assertFalse(entry["sensitive"])
-        self.assertEqual(entry["encryption"], "none")
+        self.assertEqual(entry["dataClass"], "class-1")
 
     def test_a_value_declined_at_fill_time_is_not_an_open_question(self):
         self.put("Expected CTC", "70 LPA", state="sensitive", remember=False)
