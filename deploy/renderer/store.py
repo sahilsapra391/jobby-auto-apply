@@ -1411,6 +1411,187 @@ def _profile_resumes(root):
     return profile, resumes
 
 
+# --- base resume selectors --------------------------------------------------
+#
+# A base was a region and is now a rule. `appliesTo` held a list of country
+# codes and nothing else, which is one axis, and it happened to be the axis that
+# got built first. A selector is the same idea with a name, a priority and room
+# for the dimensions the multi-base plan measured as actually available.
+#
+# v1 is location only, and that is a measurement rather than a preference:
+# against the real 14,293-job pool, `location.country` is populated on 94.5% of
+# records while `roleCategory`, `degree`, `employmentType` and `industry` are
+# populated on 0%. A selector over role category would match nothing, forever,
+# silently. Title keywords and the years band come next, on the `score_*`
+# extraction, per docs/plans/multi-base-resumes.md.
+
+
+def resume_selector(entry):
+    """The normalised rule for one base: which countries it claims.
+
+    `appliesTo` is read when no selector is present, so a profile written before
+    this existed keeps behaving exactly as it did.
+    """
+    entry = entry or {}
+    selector = entry.get("selector")
+    if not isinstance(selector, dict):
+        selector = {}
+    countries = selector.get("countries")
+    if not isinstance(countries, list):
+        countries = entry.get("appliesTo") or []
+    packs = selector.get("regionPacks")
+    if not isinstance(packs, list):
+        packs = []
+    return {
+        "countries": sorted({str(c).upper() for c in countries if str(c).strip()}),
+        "regionPacks": sorted({str(p).upper() for p in packs if str(p).strip()}),
+    }
+
+
+def resume_countries(entry):
+    """Every country a base claims, with its region packs expanded."""
+    selector = resume_selector(entry)
+    out = set(selector["countries"])
+    if selector["regionPacks"]:
+        try:
+            import search_config
+            for pack in selector["regionPacks"]:
+                out |= {str(c).upper() for c in search_config.REGION_PACKS.get(pack, [])}
+        except ImportError:
+            pass
+    return out
+
+
+def resume_priority(entry):
+    try:
+        return int((entry or {}).get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def select_resume(resumes, country=None):
+    """(entry, why) -- which base a posting in this country renders from.
+
+    Deterministic and explainable, and no model is involved: the highest
+    priority base whose selector names the country wins, ties break on the
+    marked default and then on key so the answer never depends on dict order,
+    and anything unmatched falls to the default. The reason travels with the
+    choice because a wrong resume on a posting is otherwise the least
+    diagnosable failure in the system, the document being plausible and nothing
+    erroring.
+    """
+    resumes = [r for r in (resumes or []) if isinstance(r, dict)]
+    if not resumes:
+        return None, "no base resume is on record"
+    default = next((r for r in resumes if r.get("default")), resumes[0])
+    want = str(country or "").upper()
+    if not want:
+        return default, "the posting names no country, so the default applies"
+    matches = [r for r in resumes if want in resume_countries(r)]
+    if not matches:
+        return default, f"no base claims {want}, so the default applies"
+    matches.sort(key=lambda r: (-resume_priority(r), not r.get("default"),
+                                str(r.get("key") or "")))
+    chosen = matches[0]
+    why = f"{want} is claimed by {chosen.get('key')}"
+    if len(matches) > 1:
+        why += (f", which outranks {len(matches) - 1} other base"
+                f"{'s' if len(matches) > 2 else ''} claiming it")
+    return chosen, why
+
+
+def resume_overlaps(resumes):
+    """Countries claimed by more than one base, with who claims them.
+
+    Surfaced, never resolved silently. Two bases matching one posting is a
+    priority question, and the person who wrote both rules is the one who should
+    answer it.
+    """
+    claims = {}
+    for entry in (resumes or []):
+        for country in resume_countries(entry):
+            claims.setdefault(country, []).append(entry.get("key"))
+    return {c: sorted(k for k in keys if k)
+            for c, keys in sorted(claims.items()) if len(keys) > 1}
+
+
+def cmd_resume_add(args):
+    """Add a base resume, copying identity and document from an existing one.
+
+    Deliberately a copy rather than an upload. `resume_build.extract` matches
+    the exact markup Jobby's own template emits and the corpus test that proves
+    byte-for-byte fidelity runs over resumes Jobby rendered itself, so an
+    arbitrary PDF cannot round-trip through it. Cloning one belongs to the
+    onboarding phase and the UI must not imply it exists.
+    """
+    payload = load_input(args.input)
+    if not isinstance(payload, dict):
+        raise StoreError("a base resume must be a JSON object")
+    key = _bank_text(payload.get("key"), "key", 60).strip()
+    if not key or not all(c.isalnum() or c in "-_" for c in key):
+        raise StoreError("a base resume key must be alphanumeric with - or _")
+    root = root_dir(args.root)
+    profile, resumes = _profile_resumes(root)
+    if any(r.get("key") == key for r in resumes):
+        raise StoreError(f"a base resume with key {key!r} already exists")
+    source = next((r for r in resumes if r.get("key") == payload.get("copyFrom")), None) \
+        or next((r for r in resumes if r.get("default")), resumes[0])
+    countries = payload.get("countries")
+    if not isinstance(countries, list) or not countries:
+        raise StoreError("a new base resume needs at least one country")
+    # Sorted and de-duplicated on write, so the stored shape and what
+    # resume_selector() reports are the same list rather than two orders of it.
+    codes = sorted({str(c).upper() for c in countries if str(c).strip()})
+    entry = {
+        "key": key,
+        "label": _bank_text(payload.get("label"), "label", 120).strip() or key.upper(),
+        "path": source.get("path"),
+        "identity": json.loads(json.dumps(source.get("identity") or {})),
+        "appliesTo": codes,
+        "selector": {"countries": codes,
+                     "regionPacks": sorted({str(p).upper() for p in (payload.get("regionPacks") or [])})},
+        "priority": int(payload.get("priority") or 0),
+        "default": False,
+        "copiedFrom": source.get("key"),
+    }
+    profile["resumes"] = resumes + [entry]
+    profile["updatedAt"] = now()
+    write_private(paths(root)["profile"], profile)
+    return {"added": key, "copiedFrom": source.get("key"),
+            "countries": entry["selector"]["countries"]}
+
+
+def cmd_resume_update(args):
+    """Change a base resume's label, the countries it claims, or its priority."""
+    payload = load_input(args.input)
+    if not isinstance(payload, dict):
+        raise StoreError("a base resume update must be a JSON object")
+    key = _bank_text(payload.get("key"), "key", 60).strip()
+    root = root_dir(args.root)
+    profile, resumes = _profile_resumes(root)
+    entry = next((r for r in resumes if r.get("key") == key), None)
+    if entry is None:
+        raise StoreError(f"no base resume with key {key!r}")
+    if "label" in payload:
+        entry["label"] = _bank_text(payload.get("label"), "label", 120).strip() or key.upper()
+    if "countries" in payload:
+        countries = payload.get("countries")
+        if not isinstance(countries, list) or not countries:
+            raise StoreError("a base resume must claim at least one country")
+        codes = sorted({str(c).upper() for c in countries if str(c).strip()})
+        entry["appliesTo"] = codes
+        entry.setdefault("selector", {})["countries"] = codes
+    if "regionPacks" in payload:
+        entry.setdefault("selector", {})["regionPacks"] = \
+            [str(p).upper() for p in (payload.get("regionPacks") or [])]
+    if "priority" in payload:
+        entry["priority"] = int(payload.get("priority") or 0)
+    profile["updatedAt"] = now()
+    write_private(paths(root)["profile"], profile)
+    return {"updated": key, "selector": resume_selector(entry),
+            "priority": resume_priority(entry)}
+
+
 def cmd_resume_default(args):
     root = root_dir(args.root)
     profile, resumes = _profile_resumes(root)
@@ -1734,6 +1915,8 @@ COMMANDS = {
     "resume-content-get": cmd_resume_content_get,
     "resume-content-put": cmd_resume_content_put,
     "resume-default": cmd_resume_default,
+    "resume-add": cmd_resume_add,
+    "resume-update": cmd_resume_update,
     "resume-remove": cmd_resume_remove,
     "history-append": cmd_history_append,
     "history-list": cmd_history_list,
@@ -1769,6 +1952,8 @@ def build_parser():
     sp.add_argument("--version", default=0); sp.add_argument("--edit-id")
     sp = sub.add_parser("resume-content-put"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("resume-default"); sp.add_argument("--key", required=True)
+    sp = sub.add_parser("resume-add"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("resume-update"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("resume-remove"); sp.add_argument("--key", required=True)
     sp = sub.add_parser("answers-resolve"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("history-append"); sp.add_argument("--input", required=True)

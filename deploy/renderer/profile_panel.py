@@ -75,22 +75,45 @@ def panel(counts=None):
         <div class="identity-grid" data-identities>
           <p class="bank-note" data-identities-empty>Loading your base resumes&hellip;</p>
         </div>
+        <p class="profile-message" data-identity-warnings></p>
+        <div class="identity-add">
+          <button class="btn ghost" type="button" data-base-add>Add a base resume</button>
+          <div class="base-form" data-base-form hidden>
+            <label>Name<input type="text" data-base-label placeholder="Europe"></label>
+            <label>Key<input type="text" data-base-key placeholder="eu"></label>
+            <label>Countries<input type="text" data-base-countries
+                   placeholder="GB, DE, FR, NL"></label>
+            <label>Copy from<span class="vh"> an existing base</span>
+              <select data-base-copy></select></label>
+            <div class="bank-act">
+              <button class="btn" type="button" data-base-save>Create</button>
+              <button class="btn ghost" type="button" data-base-cancel>Cancel</button>
+            </div>
+            <p class="bank-note">A new base copies an existing one's contact details and
+               document, then you edit its wording. Uploading a PDF is not supported.</p>
+            <span class="profile-message" data-base-message></span>
+          </div>
+        </div>
 
         <details class="wording">
           <summary>
-            <span>Edit the wording every tailored resume starts from</span>
-            <span class="wording-hint">The layout is fixed. The words are not.</span>
+            <span>Edit your resume</span>
+            <span class="wording-hint">The document itself. Click any line and type.</span>
           </summary>
           <div class="wording-body">
             <div class="split-note">
-              <strong>The counts are the template, the text is yours.</strong>
-              Each tailored resume replaces wording in a fixed layout, so a line can say
-              anything and there is always the same number of them. Adding or removing one
-              is refused rather than rendered wrong.
+              <strong>The words are yours, the layout is the template's.</strong>
+              You are editing the real document, so what you see is what the PDF will be.
+              Lines can say anything; there is always the same number of them, because the
+              layout is what the page-fit check measures against.
             </div>
-            <div data-wording></div>
+            <p class="profile-message" data-font-note hidden></p>
+            <div class="resume-stage" data-resume-stage>
+              <p class="bank-note" data-resume-empty>Loading your resume&hellip;</p>
+            </div>
             <div class="wording-act">
-              <button class="btn" type="button" data-wording-save>Save wording</button>
+              <button class="btn" type="button" data-wording-save>Save resume</button>
+              <button class="btn ghost" type="button" data-wording-revert>Revert</button>
               <span class="profile-message" data-wording-message role="status" aria-live="polite"></span>
             </div>
           </div>
@@ -112,14 +135,22 @@ def panel(counts=None):
             <input type="search" data-bank-search placeholder="Search questions and answers"
                    autocomplete="off" spellcheck="false">
           </label>
-          <div class="bank-filters" role="group" aria-label="Filter the Memory Bank">
-            <button class="bank-chip on" type="button" data-bank-filter="all">All</button>
-            <button class="bank-chip" type="button" data-bank-filter="open">
+          <div class="bank-filters" role="group" aria-label="Which kind of record">
+            <button class="bank-chip on" type="button" data-bank-kind="question">
+              Questions<span class="chip-n" data-kind-n="question"></span>
+            </button>
+            <button class="bank-chip" type="button" data-bank-kind="policy">
+              Your policies<span class="chip-n" data-kind-n="policy"></span>
+            </button>
+            <button class="bank-chip" type="button" data-bank-kind="story">
+              Story bank<span class="chip-n" data-kind-n="story"></span>
+            </button>
+            <button class="bank-chip" type="button" data-bank-kind="open">
               Needs you<span class="chip-n" data-bank-open>{unanswered}</span>
             </button>
-            <button class="bank-chip" type="button" data-bank-filter="policy">Policies</button>
           </div>
         </div>
+        <div class="bank-cats" role="group" aria-label="Filter by category" data-bank-cats></div>
 
         <div class="bank-groups" data-bank>
           <p class="bank-note">Loading your answers&hellip;</p>
@@ -216,7 +247,7 @@ CSS = r"""
 
   .bank-tools { display:flex; gap:.7rem; align-items:center; flex-wrap:wrap;
     margin-bottom:1rem; }
-  .bank-search { flex:1 1 18rem; min-width:0; }
+  .bank-search { flex:1 1 18rem; min-width:0; max-width:100%; }
   .bank-filters { display:flex; gap:.25rem; padding:3px; border:1px solid var(--hair);
     border-radius:13px; background:var(--seg); }
   .bank-chip { border-radius:10px; padding:.46rem .8rem; font-size:.86rem; font-weight:600;
@@ -231,6 +262,38 @@ CSS = r"""
   .chip-n { background:var(--sunk); border-radius:999px; padding:.1rem .38rem;
     font-size:.72rem; font-weight:750; }
   .bank-chip.on .chip-n { background:var(--card); }
+
+  /* Category chips: a second, quieter row under the kind split, because they
+     are a filter within a filter and should not compete with it. */
+  .bank-cats { display:flex; flex-wrap:wrap; gap:.35rem; margin:-.4rem 0 1rem; }
+  .bank-cat { border:1px solid var(--hair); border-radius:999px; padding:.3rem .7rem;
+    font-size:.8rem; font-weight:600; color:var(--ink-2); background:var(--card);
+    cursor:pointer; display:inline-flex; align-items:center; gap:.35rem;
+    transition:border-color .24s var(--ease),background-color .24s var(--ease),color .2s; }
+  .bank-cat:hover { border-color:var(--hair-strong); color:var(--ink); }
+  .bank-cat.on { background:var(--t-p); border-color:transparent; color:var(--blue); }
+  .bank-cat .chip-n { background:var(--sunk); }
+  .bank-cat.on .chip-n { background:var(--card); }
+
+  .bank-more { background:none; border:0; padding:0; margin:.35rem 0 0; cursor:pointer;
+    color:var(--blue); font-size:.8rem; font-weight:650; }
+  .bank-more:hover { text-decoration:underline; }
+  .bank-alts { margin:.4rem 0 0; padding-left:1.1rem; color:var(--ink-3); font-size:.84rem;
+    line-height:1.5; }
+
+  /* The resume, shown as the document. Scaled to fit rather than clipped: it is
+     816px wide at 96dpi and the panel is narrower on most screens. */
+  .resume-stage { position:relative; overflow:hidden; border:1px solid var(--hair);
+    border-radius:14px; background:#fff; margin-top:.4rem; }
+  .resume-frame { border:0; display:block; background:#fff; }
+  .identity-add { margin-top:1rem; }
+  .base-form { margin-top:.8rem; border:1px solid var(--hair); border-radius:16px;
+    padding:1rem; background:var(--card); display:grid; gap:.6rem; }
+  .base-form label { display:grid; gap:.25rem; color:var(--ink-3); font-size:.8rem;
+    font-weight:650; }
+  .base-form select { width:100%; font:inherit; font-size:.92rem; color:var(--ink);
+    background:var(--card); border:1px solid var(--hair); border-radius:11px;
+    padding:.55rem .7rem; }
 
   .bank-group { margin-top:1.4rem; }
   .bank-group:first-child { margin-top:0; }
@@ -274,7 +337,15 @@ CSS = r"""
   @media (max-width:640px) {
     .block-head { flex-direction:column; gap:.5rem; }
     .bank-tools { flex-direction:column; align-items:stretch; }
-    .bank-filters { overflow-x:auto; }
+    /* A flex item's min-width is auto, so `overflow-x:auto` alone never
+       engages: the track just grows and takes the document with it. Measured
+       at 375px, the four kind chips pushed the page to 459px wide. */
+    .bank-filters { overflow-x:auto; min-width:0; max-width:100%;
+      scrollbar-width:none; }
+    .bank-filters::-webkit-scrollbar { display:none; }
+    .bank-chip { flex:0 0 auto; }
+    .bank-cats { min-width:0; max-width:100%; }
+    .resume-stage { max-width:100%; }
     .bank-when { margin-left:0; }
     .identity-row { grid-template-columns:1fr; gap:.1rem; }
   }
@@ -291,11 +362,11 @@ SCRIPT = r"""
     var loading = false;
     var failure = null;
     var query = '';
-    var filter = 'all';
+    var kind = 'question';
+    var category = null;
 
     var bankHost = page.querySelector('[data-bank]');
     var identityHost = page.querySelector('[data-identities]');
-    var wordingHost = page.querySelector('[data-wording]');
 
     function el(tag, className, text) {
       var node = document.createElement(tag);
@@ -386,9 +457,9 @@ SCRIPT = r"""
       var card = el('article', 'identity-card');
       var head = el('div', 'identity-head');
       var titles = el('div');
-      titles.appendChild(el('h4', null, entry.key ? String(entry.key).toUpperCase() : 'Base'));
-      var scope = (entry.countryScope || []).join(', ');
-      titles.appendChild(el('p', 'identity-scope', scope ? 'Used for ' + scope : 'No country set'));
+      titles.appendChild(el('h4', null,
+        entry.label || (entry.key ? String(entry.key).toUpperCase() : 'Base')));
+      titles.appendChild(el('p', 'identity-scope', claimText(entry)));
       head.appendChild(titles);
       if (entry.isDefault) head.appendChild(el('span', 'identity-default', 'Default'));
       card.appendChild(head);
@@ -467,6 +538,45 @@ SCRIPT = r"""
       return card;
     }
 
+    // The rule in words, generated from the rule rather than typed by hand. A
+    // selector the reader cannot read is a selector they cannot correct.
+    function claimText(entry) {
+      var countries = entry.countryScope || [];
+      if (entry.isDefault && !countries.length) return 'Used when nothing else matches';
+      if (!countries.length) return 'Claims no country, so it is never selected';
+      var shown = countries.slice(0, 6).join(', ');
+      var rest = countries.length > 6 ? ' and ' + (countries.length - 6) + ' more' : '';
+      return 'Used for ' + shown + rest + (entry.isDefault ? ', and when nothing matches' : '');
+    }
+
+    function paintIdentityWarnings() {
+      var node = page.querySelector('[data-identity-warnings]');
+      if (!node) return;
+      node.textContent = '';
+      var list = (data && data.identities) || [];
+      var claims = {};
+      list.forEach(function (entry) {
+        (entry.countryScope || []).forEach(function (c) {
+          (claims[c] = claims[c] || []).push(entry.key);
+        });
+      });
+      var overlaps = Object.keys(claims).filter(function (c) { return claims[c].length > 1; });
+      var messages = [];
+      // Surfaced, never resolved silently: two bases claiming one country is a
+      // priority question, and the person who wrote both rules should answer it.
+      if (overlaps.length) {
+        messages.push(overlaps.map(function (c) {
+          return c + ' is claimed by ' + claims[c].join(' and ');
+        }).join('; ') + '. The higher priority wins.');
+      }
+      if (!list.some(function (e) { return e.isDefault; })) {
+        messages.push('No base is marked default, so a posting matching none of them has '
+          + 'nothing to fall back to.');
+      }
+      node.textContent = messages.join(' ');
+      node.className = messages.length ? 'profile-message bad' : 'profile-message';
+    }
+
     function renderIdentities() {
       if (!identityHost) return;
       identityHost.textContent = '';
@@ -477,113 +587,226 @@ SCRIPT = r"""
         return;
       }
       list.forEach(function (entry) { identityHost.appendChild(identityCard(entry)); });
+      paintIdentityWarnings();
+      var copy = page.querySelector('[data-base-copy]');
+      if (copy) {
+        copy.textContent = '';
+        list.forEach(function (entry) {
+          var opt = document.createElement('option');
+          opt.value = entry.key;
+          opt.textContent = entry.label || entry.key;
+          copy.appendChild(opt);
+        });
+      }
+    }
+
+    var baseAdd = page.querySelector('[data-base-add]');
+    var baseForm = page.querySelector('[data-base-form]');
+    if (baseAdd && baseAdd.addEventListener && baseForm) {
+      baseAdd.addEventListener('click', function () { baseForm.hidden = !baseForm.hidden; });
+      var cancel = page.querySelector('[data-base-cancel]');
+      if (cancel) cancel.addEventListener('click', function () { baseForm.hidden = true; });
+      var save = page.querySelector('[data-base-save]');
+      if (save) save.addEventListener('click', function () {
+        var message = page.querySelector('[data-base-message]');
+        var key = String((page.querySelector('[data-base-key]') || {}).value || '').trim();
+        var label = String((page.querySelector('[data-base-label]') || {}).value || '').trim();
+        var raw = String((page.querySelector('[data-base-countries]') || {}).value || '');
+        var copyFrom = String((page.querySelector('[data-base-copy]') || {}).value || '');
+        var countries = raw.split(/[,\s]+/).map(function (c) { return c.trim().toUpperCase(); })
+          .filter(Boolean);
+        function fail(text) {
+          if (message) { message.className = 'profile-message bad'; message.textContent = text; }
+        }
+        if (!/^[A-Za-z0-9_-]+$/.test(key)) return fail('The key can only be letters, numbers, - and _.');
+        if (!countries.length) return fail('Name at least one country, like GB or DE.');
+        if (!countries.every(function (c) { return /^[A-Z]{2}$/.test(c); })) {
+          return fail('Countries are two-letter codes, like GB, DE, FR.');
+        }
+        var body = { editId: editId('base'), action: 'add', key: key, label: label,
+                     countries: countries, copyFrom: copyFrom };
+        save.disabled = true;
+        remember({ editId: body.editId, kind: 'resume', path: '/api/resume', body: body });
+        post('/api/resume', body).then(function (response) {
+          save.disabled = false;
+          if (response && response.ok) {
+            if (message) {
+              message.className = 'profile-message';
+              message.textContent = 'Queued. It appears here once your device applies it.';
+            }
+          } else { fail('Your device would not add it. Nothing changed.'); }
+        }).catch(function () { save.disabled = false; fail('That did not reach the queue.'); });
+      });
     }
 
     // --- the wording ---------------------------------------------------------
 
-    function textField(label, value, rows) {
-      var wrap = el('div', 'wording-field');
-      var id = 'w-' + Math.random().toString(36).slice(2, 9);
-      var tag = el('label', null, label);
-      tag.setAttribute('for', id);
-      wrap.appendChild(tag);
-      var box = el('textarea');
-      box.id = id;
-      box.rows = rows || 2;
-      box.value = value === undefined || value === null ? '' : String(value);
-      wrap.appendChild(box);
-      wrap.__input = box;
-      return wrap;
+    // --- the resume, edited as a document ------------------------------------
+    //
+    // A same-origin `srcdoc` iframe, not a Shadow DOM, and that was measured
+    // rather than chosen. Both survive the board's CSP and both accept
+    // `contenteditable`, but a shadow root has no `html` or `body`, and the
+    // resume's own stylesheet targets exactly those. Rendered in a shadow root
+    // the banner comes out in `system-ui`; in the iframe it comes out in
+    // `"Calibri Light", Calibri, sans-serif`, which is what the PDF uses. A
+    // preview with the wrong typeface cannot claim to be what the document will
+    // look like, and that claim is the entire feature.
+    //
+    // The slots below are the same ones `resume_build.extract` matches on, so
+    // reading edits back out is the inverse of the render rather than a second
+    // parser with its own opinions.
+    var SLOTS = [
+      { field: 'banner', sel: '.banner', many: false },
+      { field: 'summary', sel: '.body.summary', many: false },
+      { field: 'areasOfExpertise', sel: '.aoe', many: true },
+      { field: 'lede', sel: '.body.lede', many: true },
+      { field: 'bullets', sel: 'ul', many: true }
+    ];
+
+    var stage = page.querySelector('[data-resume-stage]');
+    var frame = null;
+
+    function editableDoc() {
+      return frame && frame.contentDocument;
     }
 
-    function renderWording() {
-      if (!wordingHost) return;
-      wordingHost.textContent = '';
-      var content = (data && data.resumeContent) || null;
-      if (!content || !Object.keys(content).length) {
-        wordingHost.appendChild(el('p', 'bank-note',
-          'No base wording is on record, so there is nothing to edit yet.'));
+    function renderResume() {
+      if (!stage) return;
+      stage.textContent = '';
+      var html = data && data.resumeRender;
+      if (!html) {
+        stage.appendChild(el('p', 'bank-note',
+          'Your device could not render the resume, so there is nothing to edit here. '
+          + 'The wording is still used for tailored resumes.'));
         return;
       }
-      var fields = { areas: [], technical: [], roles: [] };
-
-      var banner = textField('Headline', content.banner, 1);
-      wordingHost.appendChild(banner);
-      var summary = textField('Summary', content.summary, 6);
-      wordingHost.appendChild(summary);
-
-      var areaWrap = el('div', 'wording-field');
-      areaWrap.appendChild(el('label', null,
-        'Areas of expertise (' + (content.areasOfExpertise || []).length + ')'));
-      var areaList = el('div', 'wording-list');
-      (content.areasOfExpertise || []).forEach(function (area) {
-        var box = el('input');
-        box.type = 'text';
-        box.value = area === null || area === undefined ? '' : String(area);
-        areaList.appendChild(box);
-        fields.areas.push(box);
-      });
-      areaWrap.appendChild(areaList);
-      wordingHost.appendChild(areaWrap);
-
-      var techWrap = el('div', 'wording-field');
-      techWrap.appendChild(el('label', null, 'Technical proficiencies'));
-      var techList = el('div', 'wording-list');
-      (content.technical || []).forEach(function (row) {
-        var line = el('div', 'identity-row');
-        var label = el('input');
-        label.type = 'text';
-        label.value = String((row && row.label) || '');
-        var items = el('input');
-        items.type = 'text';
-        items.value = String((row && row.items) || '');
-        line.appendChild(label);
-        line.appendChild(items);
-        techList.appendChild(line);
-        fields.technical.push({ label: label, items: items });
-      });
-      techWrap.appendChild(techList);
-      wordingHost.appendChild(techWrap);
-
-      (content.roles || []).forEach(function (role, index) {
-        var box = el('div', 'wording-role');
-        box.appendChild(el('h5', null, 'Role ' + (index + 1)));
-        var lede = textField('Opening line', role && role.lede, 3);
-        box.appendChild(lede);
-        var bullets = [];
-        ((role && role.bullets) || []).forEach(function (bullet, n) {
-          var field = textField('Point ' + (n + 1), bullet, 2);
-          box.appendChild(field);
-          bullets.push(field.__input);
+      frame = document.createElement('iframe');
+      frame.className = 'resume-frame';
+      frame.setAttribute('sandbox', 'allow-same-origin');
+      frame.setAttribute('title', 'Your resume, editable');
+      frame.srcdoc = html;
+      frame.addEventListener('load', function () {
+        var doc = editableDoc();
+        if (!doc) return;
+        SLOTS.forEach(function (slot) {
+          Array.prototype.forEach.call(doc.querySelectorAll(slot.sel), function (node) {
+            if (slot.field === 'bullets') {
+              Array.prototype.forEach.call(node.querySelectorAll('li'), function (li) {
+                li.setAttribute('contenteditable', 'true');
+              });
+            } else {
+              node.setAttribute('contenteditable', 'true');
+              // The bullet glyph is the template's, not the user's text.
+              Array.prototype.forEach.call(node.querySelectorAll('.b'), function (b) {
+                b.setAttribute('contenteditable', 'false');
+              });
+            }
+          });
         });
-        wordingHost.appendChild(box);
-        fields.roles.push({ lede: lede.__input, bullets: bullets });
+        // The document is 816px wide at 96dpi and the panel is narrower, so it
+        // is scaled to fit rather than clipped or scrolled sideways.
+        fitFrame();
+        reportFonts(doc);
       });
+      stage.appendChild(frame);
+    }
 
-      wordingHost.__collect = function () {
-        return {
-          banner: banner.__input.value,
-          summary: summary.__input.value,
-          areasOfExpertise: fields.areas.map(function (b) { return b.value; }),
-          technical: fields.technical.map(function (row) {
-            return { label: row.label.value, items: row.items.value };
-          }),
-          roles: fields.roles.map(function (role) {
-            return {
-              lede: role.lede.value,
-              bullets: role.bullets.map(function (b) { return b.value; })
-            };
-          })
-        };
+    function fitFrame() {
+      if (!frame || !stage) return;
+      var available = stage.clientWidth || 816;
+      var scale = Math.min(1, available / 816);
+      frame.style.width = '816px';
+      frame.style.transform = 'scale(' + scale + ')';
+      frame.style.transformOrigin = 'top left';
+      var doc = editableDoc();
+      var pages = doc ? doc.querySelectorAll('.page').length || 1 : 1;
+      frame.style.height = (1056 * pages) + 'px';
+      stage.style.height = Math.ceil(1056 * pages * scale) + 'px';
+    }
+    if (window.addEventListener) window.addEventListener('resize', fitFrame);
+
+    function reportFonts(doc) {
+      // A surface that cannot be exact says so. The PDF is rendered by Chrome
+      // on the device that has Calibri Light; a phone almost certainly does
+      // not, and the preview there is an approximation rather than a lie.
+      var note = page.querySelector('[data-font-note]');
+      if (!note || !doc.fonts || !doc.fonts.check) return;
+      var ok = false;
+      try { ok = doc.fonts.check('12pt "Calibri Light"'); } catch (e) { ok = false; }
+      note.hidden = ok;
+      if (!ok) {
+        note.textContent = 'This device does not have Calibri Light, so the preview '
+          + 'approximates the spacing. The PDF is rendered on your Mac, which does.';
+      }
+    }
+
+    function collectResume() {
+      // The inverse of the render, reading the same slots extract writes.
+      var doc = editableDoc();
+      if (!doc) return null;
+      var base = (data && data.resumeContent) || {};
+      var text = function (node) { return String(node.textContent || '').trim(); };
+      // An area of expertise is rendered as `<span class="b">•</span>&nbsp;&nbsp;`
+      // followed by the words, and `extract` captures only the words. Reading
+      // the whole node instead puts the glyph and its two non-breaking spaces
+      // into the content, and the next render draws a second bullet in front of
+      // the first, compounding on every save. Caught in the browser, because a
+      // save with no edits looked like a no-op and was not one.
+      var areaText = function (node) {
+        var clone = node.cloneNode(true);
+        Array.prototype.forEach.call(clone.querySelectorAll('.b'), function (b) {
+          b.parentNode.removeChild(b);
+        });
+        return String(clone.textContent || '').replace(/^[\s\u00a0]+/, '').trim();
       };
+      var out = {
+        banner: doc.querySelector('.banner') ? text(doc.querySelector('.banner')) : base.banner,
+        summary: doc.querySelector('.body.summary')
+          ? text(doc.querySelector('.body.summary')) : base.summary,
+        areasOfExpertise: Array.prototype.map.call(doc.querySelectorAll('.aoe'), areaText),
+        technical: [],
+        roles: []
+      };
+      Array.prototype.forEach.call(doc.querySelectorAll('.tech'), function (row, i) {
+        var existing = (base.technical || [])[i] || {};
+        var bold = row.querySelector('b');
+        var label = bold ? String(bold.textContent || '').replace(/:\s*$/, '').trim()
+          : existing.label;
+        var items = text(row).replace(/^[^:]*:\s*/, '');
+        out.technical.push({ label: label, items: items });
+      });
+      var ledes = doc.querySelectorAll('.body.lede');
+      var lists = doc.querySelectorAll('ul');
+      var count = Math.max(ledes.length, lists.length);
+      for (var i = 0; i < count; i++) {
+        out.roles.push({
+          lede: ledes[i] ? text(ledes[i]) : ((base.roles || [])[i] || {}).lede || '',
+          bullets: lists[i]
+            ? Array.prototype.map.call(lists[i].querySelectorAll('li'), text)
+            : (((base.roles || [])[i] || {}).bullets || [])
+        });
+      }
+      return out;
     }
 
     var wordingSave = page.querySelector('[data-wording-save]');
+    var wordingRevert = page.querySelector('[data-wording-revert]');
     var wordingMessage = page.querySelector('[data-wording-message]');
+
+    if (wordingRevert && wordingRevert.addEventListener) {
+      wordingRevert.addEventListener('click', function () {
+        renderResume();
+        if (wordingMessage) {
+          wordingMessage.className = 'profile-message';
+          wordingMessage.textContent = 'Reverted to the saved version.';
+        }
+      });
+    }
+
     if (wordingSave && wordingSave.addEventListener) {
       wordingSave.addEventListener('click', function () {
-        if (!wordingHost || !wordingHost.__collect) return;
-        var content = wordingHost.__collect();
+        var content = collectResume();
+        if (!content) return;
         var body = { editId: editId('wrd'), action: 'content', content: content };
         wordingSave.disabled = true;
         if (wordingMessage) {
@@ -599,8 +822,6 @@ SCRIPT = r"""
             wordingMessage.className = 'profile-message';
             wordingMessage.textContent = 'Saved. Your next tailored resume starts from this.';
           } else {
-            // A refusal has to be visible. An edit the user believes is saved
-            // and silently is not is the worst thing this page can do.
             wordingMessage.className = 'profile-message bad';
             wordingMessage.textContent = 'Your device would not take that. Nothing was changed.';
           }
@@ -616,17 +837,77 @@ SCRIPT = r"""
     // --- the Memory Bank -----------------------------------------------------
 
     function matches(entry) {
-      if (filter === 'open' && !isOpen(entry)) return false;
-      if (filter === 'policy' && (entry.tags || []).indexOf('policy') === -1) return false;
+      if (kind === 'open') {
+        if (!isOpen(entry)) return false;
+      } else if ((entry.kind || 'question') !== kind) {
+        return false;
+      }
+      if (category && entry.category !== category) return false;
       if (!query) return true;
       var hay = String(entry.question || '') + ' ' + (entry.tags || []).join(' ')
         + ' ' + String(entry.value || '');
       return hay.toLowerCase().indexOf(query) !== -1;
     }
 
-    function bankRow(entry) {
+    // **Group for display. Never merge records. Keep every key.**
+    //
+    // Eleven rows say "Yes" to what a reader sees as one question: six ways of
+    // asking whether sponsorship is required, five ways of asking about
+    // relocation. Collapsing those to two rows is the point of this function.
+    //
+    // What it must never do is merge the records behind them. The bank holds
+    // fourteen sponsorship-and-authorisation keys because fourteen employers
+    // word the question fourteen ways, and each key is what makes the lookup
+    // match that employer's form. And seven of them answer a bare "Yes" while
+    // meaning opposite facts: "Do you require visa sponsorship?" is Yes, and
+    // "Are you legally authorized to work in the United States?" is also Yes.
+    // Merge on the answer and one of them starts filling forms with the
+    // opposite of the truth, under a real name, unrecallable.
+    //
+    // So the grouping key is computed on the device, in answer_categories.py,
+    // from a narrow topic plus the exact answer, with the topics written so
+    // opposite-polarity questions cannot land in the same one. A row with no
+    // groupKey stands alone, which is the safe default and the common case.
+    function grouped(entries) {
+      var byKey = {};
+      var order = [];
+      entries.forEach(function (entry) {
+        var key = entry.groupKey;
+        if (!key) { order.push({ lead: entry, members: [entry] }); return; }
+        if (!byKey[key]) {
+          byKey[key] = { lead: entry, members: [] };
+          order.push(byKey[key]);
+        }
+        byKey[key].members.push(entry);
+      });
+      return order;
+    }
+
+    function bankRow(entry, members) {
+      members = members || [entry];
       var row = el('article', 'bank-row' + (isOpen(entry) ? ' open' : ''));
       row.appendChild(el('p', 'bank-q', entry.question || entry.key || 'Untitled question'));
+      if (members.length > 1) {
+        // One row, every record kept. The others are the same fact asked in
+        // different words, and each of their keys is what matches the employer
+        // who used those words.
+        var more = el('button', 'bank-more',
+          'asked ' + members.length + ' ways');
+        more.type = 'button';
+        var list = el('ul', 'bank-alts');
+        list.hidden = true;
+        members.slice(1).forEach(function (other) {
+          list.appendChild(el('li', null, other.question || other.key));
+        });
+        more.addEventListener('click', function () {
+          list.hidden = !list.hidden;
+          more.textContent = list.hidden
+            ? 'asked ' + members.length + ' ways'
+            : 'hide the other wordings';
+        });
+        row.appendChild(more);
+        row.appendChild(list);
+      }
 
       var body = el('p', 'bank-a');
       function paintValue() {
@@ -800,29 +1081,44 @@ SCRIPT = r"""
     // Standing policies first, then the questions still waiting, then the rest.
     // The waiting ones lead visually even though policies lead in order,
     // because an open question is the only thing here that is costing anything.
-    function groupsFor(entries) {
-      // Under a filter the grouping is the filter. Splitting a Sensitive
-      // filter into "Standing policies" and "Everything else" labels 22
-      // a filtered set as "everything else", which is worse than no heading.
-      if (filter !== 'all') {
-        var titles = { open: 'Needs your answer', policy: 'Standing policies' };
-        return [{ key: filter, title: titles[filter] || 'Matching', rows: entries,
-                  note: '' }];
-      }
-      var open = [], policy = [], rest = [];
-      entries.forEach(function (entry) {
-        if (isOpen(entry)) open.push(entry);
-        else if ((entry.tags || []).indexOf('policy') !== -1) policy.push(entry);
-        else rest.push(entry);
+    var CATEGORY_LABELS = {
+      'this-employer': 'This employer', 'how-you-heard': 'How you heard',
+      'consent': 'Consent & privacy', 'work-authorisation': 'Work authorisation',
+      'compensation': 'Compensation', 'demographics': 'Demographics',
+      'background-check': 'Background check', 'legal': 'Legal declarations',
+      'location': 'Location & travel', 'education': 'Education',
+      'skills': 'Skills & experience', 'availability': 'Availability',
+      'contact': 'Contact & links', 'other': 'Uncategorised'
+    };
+
+    function paintCategories() {
+      var host = page.querySelector('[data-bank-cats]');
+      if (!host) return;
+      host.textContent = '';
+      if (kind !== 'question' && kind !== 'open') return;
+      var counts = {};
+      ((data && data.answers) || []).forEach(function (entry) {
+        if (kind === 'open' ? !isOpen(entry) : (entry.kind || 'question') !== 'question') return;
+        if (!entry.category) return;
+        counts[entry.category] = (counts[entry.category] || 0) + 1;
       });
-      return [
-        { key: 'open', title: 'Needs your answer', rows: open,
-          note: 'An application stopped on each of these. Answer it once and every '
-                + 'later application finds it.' },
-        { key: 'policy', title: 'Standing policies', rows: policy,
-          note: 'Answered the same way on every form.' },
-        { key: 'rest', title: 'Everything else', rows: rest, note: '' }
-      ];
+      var slugs = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+      if (!slugs.length) return;
+      var all = el('button', 'bank-cat' + (category ? '' : ' on'), 'All');
+      all.type = 'button';
+      all.addEventListener('click', function () { category = null; render(); });
+      host.appendChild(all);
+      slugs.forEach(function (slug) {
+        var chip = el('button', 'bank-cat' + (category === slug ? ' on' : ''),
+          CATEGORY_LABELS[slug] || slug);
+        chip.type = 'button';
+        chip.appendChild(el('span', 'chip-n', String(counts[slug])));
+        chip.addEventListener('click', function () {
+          category = (category === slug) ? null : slug;
+          render();
+        });
+        host.appendChild(chip);
+      });
     }
 
     function render() {
@@ -839,6 +1135,8 @@ SCRIPT = r"""
         bankHost.appendChild(el('p', 'bank-note', 'Loading your answers…'));
         return;
       }
+      paintKindChips();
+      paintCategories();
       var entries = (data.answers || []).filter(matches);
       if (!entries.length) {
         bankHost.appendChild(el('div', 'bank-empty', data.answers && data.answers.length
@@ -847,17 +1145,31 @@ SCRIPT = r"""
             + 'put it here.'));
         return;
       }
-      groupsFor(entries).forEach(function (group) {
-        if (!group.rows.length) return;
-        var section = el('section', 'bank-group' + (group.key === 'open' ? ' open' : ''));
-        section.appendChild(el('h4', null, group.title + ' (' + group.rows.length + ')'));
-        if (group.note) section.appendChild(el('p', null, group.note));
-        var list = el('div', 'bank-list');
-        group.rows.forEach(function (entry) { list.appendChild(bankRow(entry)); });
-        section.appendChild(list);
-        bankHost.appendChild(section);
-      });
+      var rows = grouped(entries);
+      var list = el('div', 'bank-list');
+      rows.forEach(function (group) { list.appendChild(bankRow(group.lead, group.members)); });
+      var head = el('p', 'bank-note',
+        rows.length === entries.length
+          ? entries.length + (entries.length === 1 ? ' entry' : ' entries')
+          : rows.length + ' rows, from ' + entries.length + ' stored entries');
+      bankHost.appendChild(head);
+      bankHost.appendChild(list);
       paintCounts();
+    }
+
+    function paintKindChips() {
+      var counts = { question: 0, policy: 0, story: 0 };
+      ((data && data.answers) || []).forEach(function (entry) {
+        var k = entry.kind || 'question';
+        if (counts[k] !== undefined) counts[k] += 1;
+      });
+      Object.keys(counts).forEach(function (k) {
+        var node = page.querySelector('[data-kind-n="' + k + '"]');
+        if (node) node.textContent = String(counts[k]);
+      });
+      Array.prototype.forEach.call(page.querySelectorAll('[data-bank-kind]'), function (chip) {
+        chip.classList.toggle('on', chip.dataset.bankKind === kind);
+      });
     }
 
     function paintCounts() {
@@ -881,14 +1193,15 @@ SCRIPT = r"""
         render();
       });
     }
-    var chips = page.querySelectorAll('[data-bank-filter]');
+    var chips = page.querySelectorAll('[data-bank-kind]');
     Array.prototype.forEach.call(chips || [], function (chip) {
       if (!chip.addEventListener) return;
       chip.addEventListener('click', function () {
-        filter = chip.dataset.bankFilter;
-        Array.prototype.forEach.call(chips, function (other) {
-          other.classList.toggle('on', other === chip);
-        });
+        kind = chip.dataset.bankKind;
+        // Categories only describe employer questions, so switching away from
+        // them drops a category filter rather than leaving one applied to a
+        // list it cannot match.
+        category = null;
         render();
       });
     });
@@ -914,7 +1227,7 @@ SCRIPT = r"""
           }
           data = result.payload;
           renderIdentities();
-          renderWording();
+          renderResume();
           render();
           replay();
         })

@@ -10,6 +10,7 @@ SOURCE = REPO / "scripts"
 TARGET = REPO / "deploy" / "renderer"
 FILES = (
     "answer_record.py",
+    "answer_categories.py",
     "ats_match.py",
     "brand.py",
     # dashboard.py and found_lane.py both import this; without it the deployed

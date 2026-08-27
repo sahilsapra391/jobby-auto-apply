@@ -303,7 +303,7 @@ function boundedString(value, limit) {
 }
 
 const ANSWER_ACTIONS = new Set(['save', 'delete']);
-const RESUME_ACTIONS = new Set(['default', 'content', 'remove']);
+const RESUME_ACTIONS = new Set(['default', 'content', 'remove', 'add', 'update']);
 
 async function handleAnswerEdit(request) {
   if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
@@ -354,7 +354,25 @@ async function handleResumeEdit(request) {
     const action = String(body.action || '');
     if (!RESUME_ACTIONS.has(action)) return json({ ok: false, error: 'unknown action' }, 400);
     const extra = { action };
-    if (action === 'default' || action === 'remove') {
+    if (action === 'add' || action === 'update') {
+      const key = boundedString(body.key, LIMITS.key);
+      if (!key || !/^[A-Za-z0-9._-]+$/.test(key)) return json({ ok: false, error: 'bad base resume key' }, 400);
+      extra.key = key;
+      const label = boundedString(body.label, LIMITS.key);
+      if (label) extra.label = label;
+      // Two-letter codes only. The store validates again; this keeps anything
+      // unbounded out of the queue every poll has to read.
+      const countries = Array.isArray(body.countries) ? body.countries : [];
+      const codes = countries.filter((c) => typeof c === 'string' && /^[A-Za-z]{2}$/.test(c))
+        .slice(0, 64).map((c) => c.toUpperCase());
+      if (action === 'add' && !codes.length) {
+        return json({ ok: false, error: 'a new base resume needs at least one country' }, 400);
+      }
+      if (codes.length) extra.countries = codes;
+      const copyFrom = boundedString(body.copyFrom, LIMITS.key);
+      if (copyFrom) extra.copyFrom = copyFrom;
+      if (Number.isInteger(body.priority)) extra.priority = body.priority;
+    } else if (action === 'default' || action === 'remove') {
       const key = boundedString(body.key, LIMITS.key);
       if (!key || !/^[A-Za-z0-9._-]+$/.test(key)) return json({ ok: false, error: 'bad base resume key' }, 400);
       extra.key = key;

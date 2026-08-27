@@ -275,12 +275,21 @@ def identity_block(region=None, root=None):
     profile = _json.loads(out.stdout or "{}")
 
     resumes = profile.get("resumes") or []
-    want = (region or "").upper()
-    chosen = None
-    for entry in resumes:
-        if want and want in [str(a).upper() for a in (entry.get("appliesTo") or [])]:
-            chosen = entry
-            break
+    # Selection moved into the store so one rule serves the renderer, the board
+    # and anything later, rather than each growing its own idea of which base a
+    # posting gets. It reads `selector` when present and `appliesTo` when not,
+    # so a profile written before selectors existed behaves exactly as it did.
+    try:
+        import store as _store
+        chosen, _why = _store.select_resume(resumes, region)
+    except ImportError:
+        chosen = None
+    if chosen is None:
+        want = (region or "").upper()
+        for entry in resumes:
+            if want and want in [str(a).upper() for a in (entry.get("appliesTo") or [])]:
+                chosen = entry
+                break
     if chosen is None:
         chosen = next((e for e in resumes if e.get("default")), resumes[0] if resumes else {})
     identity = chosen.get("identity") or {}

@@ -574,6 +574,97 @@ class BaseResumeTests(BankTest):
         self.assertEqual(out["resumes"], ["us"])
 
 
+class BaseResumeSelectionTests(BankTest):
+    """A base is content plus a rule for when it applies, and the rule has to be
+    explainable or a wrong resume on a posting is undiagnosable: the document is
+    plausible, nothing errors, and the only evidence is a person noticing."""
+
+    def profile(self, resumes):
+        store.cmd_profile_replace(ns(root=self.root, input=self.write({
+            "firstName": "Sahil", "resumes": resumes})))
+
+    def base(self, key, countries, default=False, priority=0):
+        return {"key": key, "path": f"/r/{key}.pdf", "default": default,
+                "priority": priority,
+                "selector": {"countries": countries},
+                "identity": {"phone": "5550001111", "location": "Somewhere"}}
+
+    def test_a_country_selects_the_base_that_claims_it(self):
+        resumes = [self.base("us", ["US"], default=True), self.base("in", ["IN"])]
+        chosen, why = store.select_resume(resumes, "IN")
+        self.assertEqual(chosen["key"], "in")
+        self.assertIn("IN is claimed by in", why)
+
+    def test_an_unclaimed_country_falls_to_the_default_and_says_so(self):
+        resumes = [self.base("us", ["US"], default=True), self.base("in", ["IN"])]
+        chosen, why = store.select_resume(resumes, "GB")
+        self.assertEqual(chosen["key"], "us")
+        self.assertIn("no base claims GB", why)
+
+    def test_priority_breaks_an_overlap_deterministically(self):
+        resumes = [self.base("eu", ["GB", "DE"], priority=10),
+                   self.base("gb", ["GB"], priority=20),
+                   self.base("us", ["US"], default=True)]
+        chosen, why = store.select_resume(resumes, "GB")
+        self.assertEqual(chosen["key"], "gb")
+        self.assertIn("outranks", why)
+
+    def test_selection_does_not_depend_on_list_order(self):
+        a = [self.base("eu", ["GB"], priority=10), self.base("gb", ["GB"], priority=20),
+             self.base("us", ["US"], default=True)]
+        b = list(reversed(a))
+        self.assertEqual(store.select_resume(a, "GB")[0]["key"],
+                         store.select_resume(b, "GB")[0]["key"])
+
+    def test_a_profile_written_before_selectors_still_works(self):
+        """`appliesTo` is what the store held before this existed."""
+        resumes = [{"key": "us", "path": "/r/us.pdf", "default": True, "appliesTo": ["US"],
+                    "identity": {"phone": "1", "location": "x"}},
+                   {"key": "in", "path": "/r/in.pdf", "default": False, "appliesTo": ["IN"],
+                    "identity": {"phone": "2", "location": "y"}}]
+        self.assertEqual(store.select_resume(resumes, "IN")[0]["key"], "in")
+
+    def test_overlaps_are_reported_rather_than_resolved_silently(self):
+        resumes = [self.base("eu", ["GB", "DE"]), self.base("gb", ["GB"])]
+        self.assertEqual(store.resume_overlaps(resumes), {"GB": ["eu", "gb"]})
+
+    def test_adding_a_base_copies_an_existing_one(self):
+        self.profile([self.base("us", ["US"], default=True)])
+        out = store.cmd_resume_add(ns(root=self.root, input=self.write(
+            {"key": "eu", "label": "Europe", "countries": ["gb", "de"], "copyFrom": "us"})))
+        self.assertEqual(out["added"], "eu")
+        self.assertEqual(out["countries"], ["DE", "GB"])
+        resumes = store.cmd_profile_get(ns(root=self.root))["resumes"]
+        eu = next(r for r in resumes if r["key"] == "eu")
+        self.assertEqual(eu["identity"], resumes[0]["identity"])
+        self.assertFalse(eu["default"])
+        self.assertEqual(store.select_resume(resumes, "DE")[0]["key"], "eu")
+
+    def test_a_new_base_needs_a_country_and_a_clean_key(self):
+        self.profile([self.base("us", ["US"], default=True)])
+        with self.assertRaises(store.StoreError):
+            store.cmd_resume_add(ns(root=self.root, input=self.write(
+                {"key": "eu", "countries": []})))
+        with self.assertRaises(store.StoreError):
+            store.cmd_resume_add(ns(root=self.root, input=self.write(
+                {"key": "../etc", "countries": ["GB"]})))
+
+    def test_a_duplicate_key_is_refused(self):
+        self.profile([self.base("us", ["US"], default=True)])
+        with self.assertRaises(store.StoreError):
+            store.cmd_resume_add(ns(root=self.root, input=self.write(
+                {"key": "us", "countries": ["GB"]})))
+
+    def test_updating_changes_what_a_base_claims(self):
+        self.profile([self.base("us", ["US"], default=True), self.base("eu", ["GB"])])
+        store.cmd_resume_update(ns(root=self.root, input=self.write(
+            {"key": "eu", "countries": ["GB", "DE", "FR"], "priority": 5})))
+        resumes = store.cmd_profile_get(ns(root=self.root))["resumes"]
+        self.assertEqual(store.select_resume(resumes, "FR")[0]["key"], "eu")
+        self.assertEqual(store.resume_priority(
+            next(r for r in resumes if r["key"] == "eu")), 5)
+
+
 class ResumeWordingTests(BankTest):
     BASE = {
         "banner": "PRODUCT MANAGER",
@@ -715,7 +806,8 @@ class PublishedShapeTests(BankTest):
         published = dashboard.publishable_state(self.state())
         counts = published["meta"]["memoryBank"]
         self.assertEqual(counts, {"total": 3, "unanswered": 1, "sensitive": 1,
-                                  "identities": 1})
+                                  "identities": 1, "questions": 3,
+                                  "policies": 0, "stories": 0})
 
     def test_an_identity_publishes_the_document_name_not_the_path(self):
         """A path is a directory layout on one person's machine and says
