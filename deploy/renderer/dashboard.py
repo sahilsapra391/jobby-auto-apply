@@ -30,6 +30,7 @@ import clock  # noqa: E402
 import answer_record  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
+import answer_categories  # noqa: E402
 import premium_ui  # noqa: E402
 import profile_panel  # noqa: E402
 import settings_panel  # noqa: E402
@@ -114,7 +115,32 @@ def load_state(root, apps_root=None):
         # fetches them. See publishable_state for why that is not optional.
         "answers": read_json(root / "answers.json", {}),
         "resumeContent": store.resume_content(root),
+        "resumeRender": _render_base_resume(root),
     }
+
+
+def _render_base_resume(root):
+    """The base resume as HTML, for the editor to show the document itself.
+
+    Rendered here, on the machine that owns the template, because the deployed
+    bundle carries no `templates/` directory and never should: it is the same
+    trap that took the board down when the renderer read a path under
+    `public/`. Returns "" when anything is missing, and the editor says so
+    rather than drawing an empty page.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import resume_build
+        template = (Path(__file__).resolve().parents[1] / "templates" / "resume.html")
+        content = store.resume_content(root)
+        if not template.exists() or not content:
+            return ""
+        name, contact = resume_build.identity_block(root=root)
+        rendered = resume_build.render(template.read_text(encoding="utf-8"), content)
+        return rendered.replace("{{name}}", name).replace("{{contact}}", contact)
+    except (OSError, ValueError, KeyError, SystemExit, ImportError):
+        # A resume that will not render is a broken editor, not a broken board.
+        return ""
 
 
 SESSION_PUBLIC_FIELDS = {
@@ -234,6 +260,11 @@ def _memory_bank(state):
         # the encryption path selects on; they simply no longer change what the
         # page draws.
         store.classify(record)
+        # What kind of record it is, what it is about, and whether it can share
+        # a row with another. All three are derived here rather than in the
+        # browser so one classifier serves the page, the counts and any later
+        # caller, instead of the page growing a second opinion.
+        answer_categories.annotate(record)
         entries.append(record)
     entries.sort(key=lambda e: str(e.get("question") or "").lower())
     return {
@@ -241,6 +272,12 @@ def _memory_bank(state):
         "answers": entries,
         "identities": _identities(state.get("profile") or {}),
         "resumeContent": state.get("resumeContent") or {},
+        # The resume as it actually renders, so the editor can show the document
+        # rather than a column of labelled boxes. About 16 KB against a 20 MB
+        # state ceiling. It is fetched with the rest of the bank and never
+        # embedded in the page, which is the same bargain everything else here
+        # makes.
+        "resumeRender": state.get("resumeRender") or "",
     }
 
 
@@ -254,6 +291,9 @@ def bank_counts(bank):
                           and e.get("remembered") is not False),
         "sensitive": sum(1 for e in entries if e.get("sensitive")),
         "identities": len(bank.get("identities") or []),
+        "questions": sum(1 for e in entries if e.get("kind") == "question"),
+        "policies": sum(1 for e in entries if e.get("kind") == "policy"),
+        "stories": sum(1 for e in entries if e.get("kind") == "story"),
     }
 
 
