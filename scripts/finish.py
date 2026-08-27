@@ -248,6 +248,19 @@ def completed(aid, confirmation, resume, cover, nonce):
     entry["submissionGuard"] = guard
     save_session(aid, entry)
     set_phase(aid, "Verifying", "confirmation recorded")
+
+    # The answer record and the confirmation exist now and not before, so this
+    # is the second and last moment an application's artifacts change. Same
+    # rule as the install: best effort, because a submitted application whose
+    # upload failed is still submitted and the sweep will catch it.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import r2
+        import r2_sync
+        if r2.configured():
+            r2_sync.push_application(aid)
+    except Exception:  # noqa: BLE001 - storage must not fail a submission record
+        pass
     return {"logged": True, "eventId": event.get("eventId"),
             "synced": sync_board(),
             "resumeVariant": payload.get("resumeVariant"),

@@ -704,5 +704,141 @@ class KeyTiebreakTest(unittest.TestCase):
         self.assertEqual(len(set(keys.values())), 2, "two files, two distinct keys")
 
 
+class EvictionTest(unittest.TestCase):
+    """Local files go only when R2 provably has them and the work is finished.
+
+    The apply path needs a real file: the form agent uploads a PDF to the
+    employer by path and the browser firewall pins that path by device, inode,
+    size and sha256. So R2 cannot be the source for a file handed to a chooser,
+    and eviction waits for the application to reach a terminal outcome.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.store_root = self.tmp / "store"
+        store(self.store_root, "init")
+        self.done, self.live = "aa11bb22cc33dd44", "bb22cc33dd44ee55"
+        for aid, company in ((self.done, "Doneco"), (self.live, "Liveco")):
+            payload = self.tmp / f"{aid}.json"
+            payload.write_text(json.dumps({"applicationId": aid, "company": company,
+                                           "role": "PM", "status": "active",
+                                           "resumeVariant": f"{company}_Resume.pdf"}))
+            store(self.store_root, "session-save", "--id", aid, "--input", str(payload))
+        event = self.tmp / "e.json"
+        event.write_text(json.dumps({"applicationId": self.done, "event": "completed",
+                                     "at": "2026-08-27T00:00:00Z", "company": "Doneco",
+                                     "role": "PM"}))
+        store(self.store_root, "history-append", "--input", str(event))
+        self.apps = self.tmp / "applications"
+        for company in ("Doneco", "Liveco"):
+            (self.apps / company).mkdir(parents=True)
+            (self.apps / company / f"{company}_Resume.pdf").write_bytes(
+                f"%PDF {company}".encode())
+        self.apps_dir = str(self.apps)
+        self.client = FakeClient()
+        r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                     apply=True, client=self.client)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_evict(self, apply):
+        return r2_sync.evict(str(self.store_root), "account-1", self.apps_dir,
+                             apply=apply, client=self.client)
+
+    def path(self, company):
+        return self.apps / company / f"{company}_Resume.pdf"
+
+    def test_a_finished_application_is_evictable_and_a_live_one_is_not(self):
+        result = self.run_evict(apply=False)
+        self.assertEqual(result["removable"], 1)
+        self.assertIn("the application has not finished", result["keptReasons"])
+
+    def test_a_dry_run_removes_nothing(self):
+        self.run_evict(apply=False)
+        self.assertTrue(self.path("Doneco").exists())
+
+    def test_applying_removes_the_finished_one_only(self):
+        result = self.run_evict(apply=True)
+        self.assertEqual(result["removed"], 1)
+        self.assertFalse(self.path("Doneco").exists())
+        self.assertTrue(self.path("Liveco").exists(),
+                        "a live application still needs its PDF on disk to upload")
+
+    def test_nothing_is_removed_when_r2_does_not_have_it(self):
+        self.client.objects.clear()
+        result = self.run_evict(apply=True)
+        self.assertEqual(result["removed"], 0)
+        self.assertTrue(self.path("Doneco").exists())
+        self.assertIn("no object in R2", result["keptReasons"])
+
+    def test_nothing_is_removed_when_r2_holds_different_bytes(self):
+        # The check re-downloads and hashes rather than trusting the manifest,
+        # because the manifest records what we believe we sent.
+        key = f"u/account-1/app/{self.done}/resume.pdf"
+        self.client.objects[key]["body"] = b"%PDF something else entirely"
+        result = self.run_evict(apply=True)
+        self.assertEqual(result["removed"], 0)
+        self.assertTrue(self.path("Doneco").exists())
+
+    def test_the_index_survives_eviction_so_the_board_keeps_serving(self):
+        """The trap this had to avoid: file gone, link dead, object fine.
+
+        The index used to be derived from the tree, so removing a local file
+        would drop its entry on the next publish and turn a working board link
+        into a 404 while the object sat safely in R2.
+        """
+        self.run_evict(apply=True)
+        plan = r2_artifacts.collect(str(self.store_root), "account-1", self.apps_dir)
+        index, _ = r2_sync.doc_index_from_manifest(str(self.store_root), plan["artifacts"])
+        self.assertEqual(index["Doneco_Resume.pdf"]["key"],
+                         f"u/account-1/app/{self.done}/resume.pdf")
+        self.assertNotIn("Doneco_Resume.pdf",
+                         {a["name"] for a in plan["artifacts"]},
+                         "the file really is gone from disk")
+
+    def test_an_evicted_artifact_comes_back_byte_identical(self):
+        original = self.path("Doneco").read_bytes()
+        self.run_evict(apply=True)
+        back = self.tmp / "restored.pdf"
+        r2_sync.materialise("Doneco_Resume.pdf", back, str(self.store_root),
+                            client=self.client)
+        self.assertEqual(back.read_bytes(), original)
+
+    def test_materialise_refuses_a_name_it_does_not_know(self):
+        with self.assertRaises(r2.R2Error):
+            r2_sync.materialise("never-stored.pdf", self.tmp / "x.pdf",
+                                str(self.store_root), client=self.client)
+
+    def test_materialise_refuses_content_that_does_not_hash_right(self):
+        key = f"u/account-1/app/{self.done}/resume.pdf"
+        self.client.objects[key]["body"] = b"%PDF tampered"
+        with self.assertRaises(r2.R2Error):
+            r2_sync.materialise("Doneco_Resume.pdf", self.tmp / "x.pdf",
+                                str(self.store_root), client=self.client)
+
+    def test_pushing_one_application_uploads_only_that_one(self):
+        # Both files change; only the named application's is pushed. Changing
+        # the content rather than clearing the bucket, because the manifest is
+        # what suppresses a re-upload and clearing the bucket alone leaves it
+        # believing the object is there -- which is the real behaviour, and the
+        # first version of this test tripped on it.
+        self.path("Doneco").write_bytes(b"%PDF Doneco revised")
+        self.path("Liveco").write_bytes(b"%PDF Liveco revised")
+        self.client.puts = 0
+        out = r2_sync.push_application(self.done, str(self.store_root),
+                                       apps_dir=self.apps_dir, client=self.client)
+        self.assertEqual(out["objects"], 1)
+        self.assertEqual(out["uploaded"], 1)
+        self.assertEqual(self.client.puts, 1, "the live application must not be touched")
+        self.assertEqual(self.client.objects[f"u/account-1/app/{self.done}/resume.pdf"]["body"],
+                         b"%PDF Doneco revised")
+
+    def test_pushing_an_application_with_nothing_on_disk_is_not_an_error(self):
+        out = r2_sync.push_application("no-such-application", str(self.store_root),
+                                       apps_dir=self.apps_dir, client=self.client)
+        self.assertEqual(out["objects"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

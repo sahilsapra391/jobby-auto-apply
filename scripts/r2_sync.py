@@ -76,6 +76,46 @@ def save_manifest(data, root=None):
     return path
 
 
+def doc_index_from_manifest(root=None, artifacts=()):
+    """filename -> key, from what R2 holds rather than from what disk holds.
+
+    This is what makes local eviction safe. The index used to be derived from
+    the tree the collector walks, so deleting a local file after uploading it
+    would have dropped its entry on the next publish and turned every board
+    link to that document into a 404 -- the artifact safely in R2 and
+    unreachable, which is the worst of both.
+
+    The manifest records every object this machine has put in the bucket and
+    survives the local file being removed, so it is the honest source. Anything
+    on disk that has not been uploaded yet is merged in on top, because it will
+    be uploaded moments later in the same publish and the index has to describe
+    the state after that, not before.
+    """
+    manifest = load_manifest(root)["objects"]
+    entries = {}
+    for key, record in manifest.items():
+        name = record.get("name")
+        if not name:
+            continue
+        entries.setdefault(name, []).append({
+            "key": key, "sha256": record.get("sha256", ""),
+            "bytes": record.get("bytes", 0),
+            "contentType": record.get("contentType") or "application/pdf",
+        })
+    for artifact in artifacts:
+        entries.setdefault(artifact["name"], [])
+        if not any(e["key"] == artifact["key"] for e in entries[artifact["name"]]):
+            entries[artifact["name"]].append({
+                "key": artifact["key"], "sha256": artifact["sha256"],
+                "bytes": artifact["bytes"], "contentType": artifact["contentType"]})
+
+    # Same rule as before: a name claimed by two objects is left out rather
+    # than resolved arbitrarily. posting.txt exists in a dozen company folders.
+    index = {name: values[0] for name, values in entries.items() if len(values) == 1}
+    ambiguous = sorted(name for name, values in entries.items() if len(values) > 1)
+    return index, ambiguous
+
+
 def doc_index(artifacts):
     """filename -> {key, sha256, bytes, contentType}, for the serving route.
 
@@ -113,7 +153,9 @@ def sync(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
     """
     plan = plan or r2_artifacts.collect(root, user_id, apps_dir)
     artifacts = plan["artifacts"]
-    index, ambiguous = doc_index(artifacts)
+    # From the manifest, not from the tree. A file evicted after upload is gone
+    # from `artifacts` but still in R2, and its board link has to keep working.
+    index, ambiguous = doc_index_from_manifest(root, artifacts)
     result = {
         "objects": len(artifacts),
         "bytes": sum(a["bytes"] for a in artifacts),
@@ -147,6 +189,14 @@ def sync(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
             entry = known.get(key)
             if entry and entry.get("sha256") == digest:
                 result["skippedByManifest"] += 1
+                # The record is the index's source now, so a field added after
+                # it was written has to be filled in on the way past. Without
+                # this, every object uploaded before contentType existed serves
+                # as application/pdf forever, including the JSON and the HTML.
+                if entry.get("contentType") != artifact["contentType"]:
+                    entry["contentType"] = artifact["contentType"]
+                    entry["name"] = artifact["name"]
+                    result["refreshed"] = result.get("refreshed", 0) + 1
                 continue
             # The manifest does not know this one. Ask R2 before writing: a run
             # that died halfway through, or a second machine, may already have
@@ -166,7 +216,8 @@ def sync(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
                 if progress:
                     progress(artifact, result)
             known[key] = {"sha256": digest, "bytes": artifact["bytes"],
-                          "name": artifact["name"], "uploadedAt": stamp}
+                          "name": artifact["name"], "uploadedAt": stamp,
+                          "contentType": artifact["contentType"]}
     finally:
         # Persist whatever did land, even on the way out of a failure, so a
         # retry resumes instead of re-uploading everything that already worked.
@@ -175,6 +226,180 @@ def sync(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
         manifest["objects"] = known
         save_manifest(manifest, root)
     return result
+
+
+def terminal_applications(root=None):
+    """Application ids whose story is over: submitted, abandoned, or dropped.
+
+    Only these may have their local files removed. A live application still
+    needs its PDFs on disk, because the form agent uploads them to the
+    employer by path and the browser firewall pins that path by device, inode,
+    size and sha256. R2 cannot be the source for a file being handed to a
+    file-chooser, so eviction waits for the run to finish.
+    """
+    latest, dropped = {}, set()
+    for event in r2_artifacts._store(root, "history-list") or []:
+        aid = event.get("applicationId")
+        if aid and event.get("at"):
+            latest[aid] = max(latest.get(aid, ("", "")), (event["at"], event.get("event") or ""))
+    for row in r2_artifacts._store(root, "session-list") or []:
+        aid = row.get("applicationId")
+        if aid and (row.get("status") or "") == "dropped":
+            dropped.add(aid)
+    done = {aid for aid, (_at, event) in latest.items()
+            if event in ("completed", "abandoned")}
+    return done | dropped
+
+
+def evict(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
+          client=None, plan=None, deep=True):
+    """Delete local artifacts that R2 verifiably holds, for finished applications.
+
+    Three conditions before a byte is removed, because the whole point is that
+    the artifact survives:
+
+      1. the application has reached a terminal outcome
+      2. the object exists in R2 and its content matches the local file, checked
+         by re-downloading and hashing rather than by trusting the manifest
+      3. the filename resolves through the index, so the board can still serve it
+
+    Anything that fails one of the three is kept and reported. There is no force
+    flag: an artifact nobody can prove is in R2 stays on the disk that has it.
+    """
+    plan = plan or r2_artifacts.collect(root, user_id, apps_dir)
+    client = client or r2.client(user_id=user_id)
+    finished = terminal_applications(root)
+    index, _ambiguous = doc_index_from_manifest(root, plan["artifacts"])
+
+    # A company folder is settled when every application recorded against it has
+    # finished. The unattributable files in it -- the working drafts and hand-made
+    # documents from before document_contract owned the naming -- belong to those
+    # applications even though nothing says which, so a settled folder is the
+    # honest test for them. A folder with live work in it keeps everything,
+    # because a draft there might still be an input to something running.
+    live_companies = set()
+    for aid, entry in r2_artifacts.load_applications(root).items():
+        if aid not in finished and entry.get("company"):
+            live_companies.add(r2_artifacts._company_segment(entry["company"]).lower())
+
+    removable, kept, freed = [], [], 0
+    for artifact in plan["artifacts"]:
+        aid = artifact["applicationId"]
+        reason = None
+        if not aid and artifact["company"].lower() in live_companies:
+            reason = "unattributed, and its company still has live work"
+        elif not aid and artifact["company"].lower() not in live_companies:
+            reason = None            # settled folder: safe, falls through to R2 checks
+        elif aid not in finished:
+            reason = "the application has not finished"
+        # The index check guards against turning a board link into a dead link,
+        # so it only applies to names the board can actually resolve. A name the
+        # index does not carry is one it never served -- the ambiguous ones,
+        # posting.txt in a dozen company folders -- and those are reachable in
+        # R2 by key whether or not a copy sits here.
+        listed = index.get(artifact["name"])
+        if reason is None and listed and listed.get("key") != artifact["key"]:
+            reason = "the board resolves this name to a different object"
+        elif reason is None:
+            head = client.head(artifact["key"])
+            if head is None:
+                reason = "no object in R2"
+            elif head.get("bytes") != artifact["bytes"]:
+                reason = "R2 holds a different size"
+            elif deep:
+                body = client.get(artifact["key"])
+                if body is None:
+                    reason = "vanished between HEAD and GET"
+                elif hashlib.sha256(body).hexdigest() != artifact["sha256"]:
+                    reason = "R2 content does not match the local file"
+        if reason:
+            kept.append({"path": artifact["path"], "why": reason})
+        else:
+            removable.append(artifact)
+            freed += artifact["bytes"]
+
+    removed = 0
+    if apply:
+        for artifact in removable:
+            try:
+                Path(artifact["path"]).unlink()
+                removed += 1
+            except OSError as exc:
+                kept.append({"path": artifact["path"], "why": f"could not remove: {exc}"})
+    return {
+        "onDisk": len(plan["artifacts"]),
+        "terminalApplications": len(finished),
+        "removable": len(removable), "removed": removed,
+        "bytesFreed": freed if apply else 0,
+        "bytesRemovable": freed,
+        "kept": len(kept),
+        "keptReasons": _reason_counts(kept),
+        "applied": bool(apply),
+    }
+
+
+def _reason_counts(kept):
+    counts = {}
+    for item in kept:
+        counts[item["why"]] = counts.get(item["why"], 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+def materialise(name, destination, root=None, user_id=r2.DEFAULT_USER_ID,
+                client=None):
+    """Bring an evicted artifact back to disk, by the filename it had.
+
+    Eviction is only safe if the file can come back, and one thing genuinely
+    needs it back: the form agent uploads a PDF to the employer by path, and the
+    browser firewall pins that path by device, inode, size and sha256. A retry
+    on an application whose documents were evicted has to stage them again.
+
+    Verifies the hash it was stored with before writing, and writes through a
+    temporary file in the destination directory so a partial download can never
+    be handed to a file chooser as a complete one.
+    """
+    index, _ambiguous = doc_index_from_manifest(root)
+    entry = index.get(name)
+    if not entry:
+        raise r2.R2Error(f"no stored artifact is named {name!r}")
+    client = client or r2.client(user_id=user_id)
+    body = client.get(entry["key"])
+    if body is None:
+        raise r2.R2Error(f"{name!r} is indexed at {entry['key']} but R2 has no object there")
+    digest = hashlib.sha256(body).hexdigest()
+    if entry.get("sha256") and digest != entry["sha256"]:
+        raise r2.R2Error(f"{name!r} came back with a different hash than it was stored with")
+
+    destination = Path(destination).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
+        handle.write(body)
+        temp = Path(handle.name)
+    temp.chmod(0o600)
+    os.replace(temp, destination)
+    return {"name": name, "key": entry["key"], "bytes": len(body),
+            "sha256": digest, "path": str(destination)}
+
+
+def push_application(application_id, root=None, user_id=r2.DEFAULT_USER_ID,
+                     apps_dir=None, client=None):
+    """Put one application's artifacts in R2 now, rather than at the next publish.
+
+    Publishing is the batch path and it runs minutes to hours after a document
+    is rendered. In that window the only copy is the local one, which is exactly
+    the state this work exists to end. Called when documents are installed and
+    again when an application finishes, so the gap is seconds rather than a
+    publish cycle.
+    """
+    plan = r2_artifacts.collect(root, user_id, apps_dir)
+    mine = [a for a in plan["artifacts"] if a["applicationId"] == application_id]
+    if not mine:
+        return {"applicationId": application_id, "objects": 0, "uploaded": 0}
+    result = sync(root, user_id, apps_dir, apply=True, client=client,
+                  plan={"artifacts": mine, "skipped": [], "root": plan["root"]})
+    return {"applicationId": application_id, "objects": len(mine),
+            "uploaded": result["uploaded"], "matchedRemote": result["matchedRemote"],
+            "skippedByManifest": result["skippedByManifest"]}
 
 
 def verify(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, deep=True,
@@ -277,6 +502,13 @@ def main(argv=None):
     ap.add_argument("--index", action="store_true", help="print the filename index and stop")
     ap.add_argument("--prune", action="store_true",
                     help="delete objects under the prefix no local artifact maps to")
+    ap.add_argument("--evict", action="store_true",
+                    help="remove local artifacts R2 verifiably holds, for finished "
+                         "applications only. Dry run without --apply")
+    ap.add_argument("--push", metavar="APPLICATION_ID",
+                    help="upload one application's artifacts now")
+    ap.add_argument("--get", nargs=2, metavar=("NAME", "DEST"),
+                    help="bring one evicted artifact back to disk by filename")
     args = ap.parse_args(argv)
 
     try:
@@ -285,6 +517,18 @@ def main(argv=None):
             index, ambiguous = doc_index(plan["artifacts"])
             print(json.dumps({"entries": len(index), "ambiguous": ambiguous,
                               "index": index}, indent=2, sort_keys=True))
+            return 0
+        if args.get:
+            print(json.dumps(materialise(args.get[0], args.get[1], args.root,
+                                         args.user), indent=2, sort_keys=True))
+            return 0
+        if args.push:
+            print(json.dumps(push_application(args.push, args.root, args.user,
+                                              args.apps), indent=2, sort_keys=True))
+            return 0
+        if args.evict:
+            out = evict(args.root, args.user, args.apps, apply=args.apply, plan=plan)
+            print(json.dumps(out, indent=2, sort_keys=True))
             return 0
         if args.prune:
             out = prune(args.root, args.user, args.apps, apply=args.apply, plan=plan)
