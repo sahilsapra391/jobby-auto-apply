@@ -343,7 +343,12 @@ the browser tools are unavailable, call `jobby.park_application` with that block
 
    For any user-only or missing-answer blocker, leave the tab open on the exact page that
    needs action and call `jobby.park_application` once with every short blocker plus the
-   exact action the user should take. Once parked, stop.
+   exact action the user should take. Also pass `unanswered`: every blocker that is a form
+   question with no stored answer, worded exactly as the form worded it. Those go into the
+   user's Memory Bank so the next application that asks does not stop. Leave out anything
+   that is an action rather than a question, and anything from the paragraph above: a
+   CAPTCHA, an account, a password, a one-time code and an authorisation are never stored.
+   Once parked, stop.
 
 6. Before clicking Submit, call `jobby.pre_submit` exactly once. Submit only when it returns
    `proceed: true`. Keep its `submissionNonce`. Click Submit once. After the page visibly

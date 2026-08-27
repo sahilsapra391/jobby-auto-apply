@@ -247,12 +247,25 @@ TOOLS = [
     },
     {
         "name": "park_application",
-        "description": "Park this application for the user with one or more named blockers.",
+        "description": (
+            "Park this application for the user with one or more named blockers. "
+            "List in `unanswered` any blocker that is a form question with no "
+            "stored answer, exactly as it appeared, so it is recorded for next "
+            "time. Leave out blockers that are actions rather than questions."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "pending": {
                     "type": "array", "minItems": 1, "maxItems": 20,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 300},
+                },
+                # A second flat array rather than objects inside `pending`: the
+                # advertised surface stays object-at-the-top with plain string
+                # items, and a client on an older revision that omits it still
+                # parks correctly.
+                "unanswered": {
+                    "type": "array", "minItems": 0, "maxItems": 20,
                     "items": {"type": "string", "minLength": 1, "maxLength": 300},
                 },
                 "detail": {"type": "string", "minLength": 1, "maxLength": 1_000},
@@ -485,7 +498,7 @@ class ApplicationTools:
                 "band": band, "why": detail["note"]}
 
     def _park_application(self, args: dict[str, Any]) -> dict[str, Any]:
-        _closed(args, {"pending", "detail"})
+        _closed(args, {"pending", "detail", "unanswered"})
         pending = args.get("pending")
         if not isinstance(pending, list) or not 1 <= len(pending) <= 20:
             raise ToolInputError("pending must be a non-empty bounded list")
@@ -495,8 +508,20 @@ class ApplicationTools:
         ]
         if len(set(blockers)) != len(blockers):
             raise ToolInputError("pending must not contain duplicates")
+        raw = args.get("unanswered")
+        if raw is not None and (not isinstance(raw, list) or len(raw) > 20):
+            raise ToolInputError("unanswered must be a bounded list")
+        unanswered = [
+            _text(item, f"unanswered[{index}]", maximum=300)
+            for index, item in enumerate(raw or [])
+        ]
+        # Tagging a blocker that was never parked would put a question in the
+        # bank attributed to an application that never asked it.
+        stray = [q for q in unanswered if q not in set(blockers)]
+        if stray:
+            raise ToolInputError("every unanswered question must also be in pending")
         detail = _text(args.get("detail"), "detail", maximum=1_000)
-        return finish.park(self.context.application_id, blockers, detail)
+        return finish.park(self.context.application_id, blockers, detail, unanswered)
 
     def _pre_submit(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, set())

@@ -26,8 +26,14 @@ const DEDICATED_KEYS = {
 // watch and pass carry job ids from the Found lane rather than application
 // ids, but they are the same shape and the same idempotency rule, so they ride
 // the existing array machinery instead of growing a second copy of it.
+// answerEdits and resumeEdits carry a Profile-page edit rather than an
+// application, and their id is the edit's own id rather than an application id.
+// Same array, same dedupe, same single key: the board re-sends edits it
+// remembers exactly as it re-sends clicks, and an edit id that is already in
+// the queue is the same edit arriving twice.
 export const QUEUES = [
   'apply', 'scan', 'marked', 'drop', 'restore', 'focus', 'watch', 'pass',
+  'answerEdits', 'resumeEdits',
   'providerLocal', 'providerDocuments',
 ];
 // The saved search is one object, not a queue: the board writes it, the watcher
@@ -38,7 +44,8 @@ export { configured };
 
 const empty = () => ({
   apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
-  watch: [], pass: [], providerLocal: [], providerDocuments: [],
+  watch: [], pass: [], answerEdits: [], resumeEdits: [],
+  providerLocal: [], providerDocuments: [],
   [CONFIG_FIELD]: null,
 });
 

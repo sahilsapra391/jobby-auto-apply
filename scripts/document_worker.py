@@ -817,9 +817,7 @@ def _prompt_sources(runtime: Mapping[str, Any]) -> dict[str, Any]:
             Path(runtime["storeRoot"]) / "profile.json",
             MAX_PROMPT_SECTION_BYTES,
         )
-        base_content = _read_small_json(
-            RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES
-        )
+        base_content = _base_resume_content(runtime)
         base_resume_text = ats_match.pdf_text(runtime["baseResumePath"])
     except (OSError, RuntimeError, SystemExit, ResultInvalid) as exc:
         raise GenerationFailed("document prompt inputs could not be read") from exc
@@ -1091,6 +1089,22 @@ def _model_text(
     return cleaned
 
 
+def _base_resume_content(runtime):
+    """The wording a tailored resume starts from.
+
+    The Profile page edits this. The board cannot write to a tracked repository
+    file, so the edit lands beside the rest of the store and is preferred here.
+    The shipped template stays the fallback and the shape reference: the store
+    refuses an override whose list lengths differ from it, so the two can never
+    disagree about how many slots the template has.
+    """
+    root = Path(runtime.get("storeRoot") or "~/.job-application").expanduser()
+    override = root / "resume-content.json"
+    if override.exists():
+        return _read_small_json(override, MAX_PROMPT_SECTION_BYTES)
+    return _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
+
+
 def _validate_resume_overrides(
     raw: Any, base: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1244,7 +1258,7 @@ def validate_provider_content(
     company = str(runtime.get("company") or "").strip()
     role = str(runtime.get("role") or "").strip()
     try:
-        base = _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
+        base = _base_resume_content(runtime)
         overrides = _validate_resume_overrides(raw["resumeOverrides"], base)
     except ResultInvalid:
         if not openai:
@@ -1299,7 +1313,7 @@ def render_provider_content(
     output_root = Path(runtime["outputRoot"]).resolve()
     names = runtime["outputs"]
     try:
-        base = _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
+        base = _base_resume_content(runtime)
         profile = _read_small_json(
             Path(runtime["storeRoot"]) / "profile.json", MAX_PROMPT_SECTION_BYTES
         )

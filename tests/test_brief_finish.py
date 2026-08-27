@@ -192,6 +192,89 @@ class ParkTests(StoreTemp):
         self.assertEqual(saved["pendingFields"][0]["question"], "Workday account")
         self.assertNotIn("value", saved["pendingFields"][0])
 
+    def answers(self):
+        path = self.root / "answers.json"
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    def test_a_parked_question_is_recorded_for_next_time(self):
+        """The grow-only loop, from the door the application opens.
+
+        A question that stopped this application will stop the next one, so it
+        goes into the Memory Bank the moment it stops this one, unanswered and
+        attributed to the application that hit it.
+        """
+        self.session("acme-pm")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "How many days a week can you be in the office?",
+            "--detail", "Answer it and press Retry"], self.root).stdout)
+        self.assertTrue(out["parked"])
+        self.assertEqual(len(out["openedInBank"]), 1)
+        entry = self.answers()[out["openedInBank"][0]]
+        self.assertEqual(entry["state"], "missing")
+        self.assertIn("unanswered", entry["tags"])
+        self.assertEqual(entry["askedBy"], ["acme-pm"])
+
+    def test_an_action_is_a_blocker_but_not_bank_material(self):
+        """"Sign in to Workday" is not a question, and storing it would put an
+        instruction in the bank where an answer belongs."""
+        self.session("acme-pm")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park", "--pending", "Workday account",
+            "--detail", "Create it, then press Retry"], self.root).stdout)
+        self.assertTrue(out["parked"])
+        self.assertEqual(out["openedInBank"], [])
+        self.assertEqual(self.answers(), {})
+
+    def test_the_agents_tagging_decides_when_it_is_given(self):
+        self.session("acme-pm")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "Tell us about a time you shipped something hard",
+            "--pending", "Solve the CAPTCHA",
+            "--unanswered", "Tell us about a time you shipped something hard",
+            "--detail", "Answer the first, do the second"], self.root).stdout)
+        self.assertEqual(len(out["openedInBank"]), 1)
+        self.assertEqual(len(self.answers()), 1)
+
+    def test_a_refusal_is_parked_and_never_banked(self):
+        self.session("acme-pm")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "I authorize the Company to obtain a consumer report about me?",
+            "--detail", "Read it and decide yourself"], self.root).stdout)
+        self.assertTrue(out["parked"], "the application must still park")
+        self.assertEqual(out["openedInBank"], [])
+        self.assertEqual(self.answers(), {})
+        self.assertIn("refusal category", out["notBanked"][0]["why"])
+
+    def test_a_bank_refusal_never_stops_the_park(self):
+        """Failure honesty. Parking has to succeed even when the bank write does
+        not, or a store problem leaves an application in flight with nobody
+        told. What did not get recorded rides back in the result instead."""
+        self.session("acme-pm")
+        out = json.loads(run_finish([
+            "--id", "acme-pm", "--park",
+            "--pending", "What is the one-time code we sent you?",
+            "--detail", "Read it off your phone yourself"], self.root).stdout)
+        self.assertTrue(out["parked"])
+        saved = json.loads((self.root / "sessions" / "acme-pm.json").read_text())
+        self.assertEqual(saved["status"], "review")
+        self.assertEqual(len(saved["pendingFields"]), 1)
+        self.assertEqual(out["openedInBank"], [])
+        self.assertIn("one-time code", out["notBanked"][0]["why"])
+
+    def test_two_applications_asking_one_question_leave_one_entry(self):
+        self.session("acme-pm")
+        self.session("other-pm")
+        question = "Why do you want to work here?"
+        for aid in ("acme-pm", "other-pm"):
+            run_finish(["--id", aid, "--park", "--pending", question,
+                        "--detail", "Answer it"], self.root)
+        answers = self.answers()
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(list(answers.values())[0]["askedBy"], ["acme-pm", "other-pm"])
+
     def test_park_needs_a_named_blocker(self):
         self.session("acme-pm")
         r = run_finish(["--id", "acme-pm", "--park"], self.root)
