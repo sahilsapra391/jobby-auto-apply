@@ -5,6 +5,7 @@ Run from the repo root: python3 -m unittest discover -s tests
 
 import argparse
 import importlib.util
+import itertools
 import json
 import pathlib
 import tempfile
@@ -36,6 +37,14 @@ class StoreTest(unittest.TestCase):
 
     def find(self, question):
         return store.cmd_answer_find(ns(root=self.root, question=question))
+
+    _serial = itertools.count()
+
+    def write_json(self, payload):
+        """A JSON file for a --input argument, uniquely named per call."""
+        f = pathlib.Path(self.tmp.name) / f"in-{next(self._serial)}.json"
+        f.write_text(json.dumps(payload))
+        return str(f)
 
     def append_event(self, **event):
         f = pathlib.Path(self.tmp.name) / "ev.json"
@@ -75,7 +84,25 @@ class StoreTest(unittest.TestCase):
         res = self.put_answer("Expected CTC", "70 LPA", state="sensitive", remember=False)
         self.assertFalse(res["stored"])
         got = self.find("Expected CTC")
-        self.assertIsNone(got["value"])
+        # An entry holding no value is a question the store recognises, not an
+        # answer to it, so the lookup reports none and says the question is
+        # known rather than handing back an entry whose value is empty.
+        self.assertEqual(got["match"], "none")
+        self.assertIsNone(got.get("value"))
+        self.assertTrue(got["open"])
+
+    def test_a_value_the_user_declined_to_keep_is_not_an_open_question(self):
+        """Not remembering is a decision, not a gap in the bank.
+
+        Both cases hold no value. Only one of them is something to put in front
+        of the user again, and asking them to reverse a consent decision every
+        time an employer asks is the wrong one.
+        """
+        self.put_answer("Expected CTC", "70 LPA", state="sensitive", remember=False)
+        out = store.cmd_answer_open(ns(root=self.root, input=self.write_json(
+            {"question": "Expected CTC", "applicationId": "app-1"})))
+        self.assertFalse(out["opened"])
+        self.assertIn("chose not to store", out["reason"])
 
     def test_answers_resolve_batches_and_validates(self):
         self.put_answer("Notice period in days", "60")

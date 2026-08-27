@@ -215,49 +215,78 @@ CSS = r"""
 SCRIPT = r"""
   (function () {
     var homeTitle = document.title;
-    function isSettingsPath() {
-      return location.pathname.replace(/\/+$/, '') === '/settings';
+    // One mechanism owns the screen change, and this is it. Home, Profile and
+    // Settings are one document: the link is intercepted, the body class flips
+    // inside a view transition, and pushState moves the URL. A third view is a
+    // third entry in these tables and nothing else.
+    var VIEWS = {
+      home: { path: '/', klass: null, title: null },
+      profile: { path: '/profile', klass: 'profile-view', title: 'Profile | Jobby' },
+      settings: { path: '/settings', klass: 'settings-view', title: 'Settings | Jobby' }
+    };
+    function viewFromPath() {
+      var path = location.pathname.replace(/\/+$/, '');
+      if (path === '/settings') return 'settings';
+      if (path === '/profile') return 'profile';
+      return 'home';
     }
-    function paintPrimaryNav(settings) {
+    function currentView() {
+      if (document.body.classList.contains('settings-view')) return 'settings';
+      if (document.body.classList.contains('profile-view')) return 'profile';
+      return 'home';
+    }
+    function paintPrimaryNav(view) {
       document.querySelectorAll('[data-primary-view]').forEach(function (link) {
-        var current = link.dataset.primaryView === (settings ? 'settings' : 'home');
-        if (current) link.setAttribute('aria-current', 'page');
+        if (link.dataset.primaryView === view) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       });
     }
-    function applyView(settings) {
-      document.body.classList.toggle('settings-view', settings);
-      document.title = settings ? 'Settings | Jobby' : homeTitle;
-      paintPrimaryNav(settings);
-      if (settings) startProviderPolling();
+    function applyView(view) {
+      var wanted = VIEWS[view] || VIEWS.home;
+      Object.keys(VIEWS).forEach(function (name) {
+        var klass = VIEWS[name].klass;
+        if (klass) document.body.classList.toggle(klass, name === view);
+      });
+      document.title = wanted.title || homeTitle;
+      paintPrimaryNav(view);
+      if (view === 'settings') startProviderPolling();
+      // The Profile page holds nothing until it asks for it, so opening it is
+      // what starts the fetch.
+      if (view === 'profile' && window.jobbyLoadProfile) window.jobbyLoadProfile();
     }
-    function swapView(settings) {
-      if (settings === document.body.classList.contains('settings-view')) return;
-      var run = function () { window.scrollTo(0, 0); applyView(settings); };
+    function swapView(view) {
+      if (view === currentView()) return;
+      var run = function () { window.scrollTo(0, 0); applyView(view); };
       var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (!document.startViewTransition || still) { run(); return; }
       var root = document.documentElement;
       root.classList.add('jb-vt');
       var transition = document.startViewTransition(run);
       transition.finished.then(clear, clear);
+      // `ready` rejects on its own when a transition is superseded or the
+      // document is hidden, and nothing was listening: two nav clicks in quick
+      // succession printed "Transition was aborted because of invalid state"
+      // as an unhandled rejection. Harmless to the switch, which `finished`
+      // already settles, but a console error on a healthy board is a console
+      // error nobody reads the next time.
+      if (transition.ready && transition.ready.catch) transition.ready.catch(function () {});
       function clear() { root.classList.remove('jb-vt'); }
     }
     document.querySelectorAll('[data-primary-view]').forEach(function (link) {
       link.addEventListener('click', function (event) {
         if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
-        var settings = link.dataset.primaryView === 'settings';
-        if (settings !== document.body.classList.contains('settings-view')) {
-          history.pushState({ settingsView: settings }, '', settings ? '/settings' : '/');
-          swapView(settings);
-        }
+        var view = link.dataset.primaryView;
+        if (!VIEWS[view] || view === currentView()) return;
+        history.pushState({ primaryView: view }, '', VIEWS[view].path);
+        swapView(view);
       });
     });
-    window.addEventListener('popstate', function () { swapView(isSettingsPath()); });
+    window.addEventListener('popstate', function () { swapView(viewFromPath()); });
     window.jobbyGoHome = function () {
-      if (!document.body.classList.contains('settings-view')) return;
-      history.pushState({ settingsView: false }, '', '/');
-      swapView(false);
+      if (currentView() === 'home') return;
+      history.pushState({ primaryView: 'home' }, '', '/');
+      swapView('home');
     };
     var message = document.getElementById('provider-message');
     var labels = {
@@ -354,7 +383,7 @@ SCRIPT = r"""
         if (document.body.classList.contains('settings-view')) refreshProviders();
       }, 30000);
     }
-    applyView(isSettingsPath());
+    applyView(viewFromPath());
     document.querySelectorAll('.provider-action').forEach(function (button) {
       button.addEventListener('click', function () {
         var body = { provider: button.dataset.provider, target: button.dataset.target,

@@ -51,7 +51,8 @@ test('a key that was never written is an empty queue, not an error', async () =>
   fakeKV({ body: null });
   assert.deepEqual(await readQueue(ENV), {
     apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
-    watch: [], pass: [], providerLocal: [], providerDocuments: [],
+    watch: [], pass: [], answerEdits: [], resumeEdits: [],
+    providerLocal: [], providerDocuments: [],
     searchConfig: null,
   });
 });
@@ -144,7 +145,8 @@ test('dropping does not disturb the other queues', async () => {
 
 const FULL = () => ({
   apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
-  watch: [], pass: [], providerLocal: [], providerDocuments: [],
+  watch: [], pass: [], answerEdits: [], resumeEdits: [],
+  providerLocal: [], providerDocuments: [],
   searchConfig: null,
 });
 
@@ -274,4 +276,82 @@ test('a value written before these fields existed still reads correctly', async 
   assert.deepEqual(q.pass, []);
   assert.equal(q[CONFIG_FIELD], null);
   assert.equal(q.apply.length, 1);
+});
+
+// The Profile page's two lanes. They carry an edit rather than an application,
+// which is the one thing about them that is new: the id is the edit's own id,
+// so "the same click twice" and "two different edits to one answer" are
+// distinguishable here rather than only in the store.
+
+test('a Memory Bank edit rides the existing key with no new one', async () => {
+  const kv = fakeKV({ body: FULL() });
+  await enqueue(ENV, 'answerEdits', 'ans-1', {
+    action: 'save', key: 'notice-period', question: 'Notice period?',
+    value: '15 days', version: 0,
+  });
+  assert.deepEqual([...kv.values.keys()], ['jobby:queue'], 'zero new KV keys');
+  const after = await readQueue(ENV);
+  assert.equal(after.answerEdits.length, 1);
+  assert.equal(after.answerEdits[0].value, '15 days');
+  assert.equal(after.answerEdits[0].version, 0);
+});
+
+test('a replayed edit is deduped by its edit id', async () => {
+  fakeKV({ body: FULL() });
+  assert.equal((await enqueue(ENV, 'answerEdits', 'ans-1', { value: 'a' })).deduped, undefined);
+  assert.equal((await enqueue(ENV, 'answerEdits', 'ans-1', { value: 'a' })).deduped, true);
+  assert.equal((await readQueue(ENV)).answerEdits.length, 1);
+});
+
+test('two different edits to one answer are both queued', async () => {
+  // Not the same as a replay, and the difference matters: the store settles
+  // these by version and can only do that if both arrive.
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'answerEdits', 'ans-1', { key: 'notice-period', version: 0 });
+  await enqueue(ENV, 'answerEdits', 'ans-2', { key: 'notice-period', version: 1 });
+  assert.equal((await readQueue(ENV)).answerEdits.length, 2);
+});
+
+test('a profile edit disturbs no other queue, and none disturbs it', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'still-running');
+  await enqueue(ENV, 'watch', 'job-1');
+  await enqueue(ENV, 'answerEdits', 'ans-1', { value: 'a' });
+  await enqueue(ENV, 'resumeEdits', 'res-1', { action: 'default', key: 'in' });
+  await putConfig(ENV, { keywords: ['pm'], version: 1 });
+  const after = await readQueue(ENV);
+  assert.equal(after.apply.length, 1, 'an answer edit must not eat a queued Apply');
+  assert.equal(after.watch.length, 1);
+  assert.equal(after.answerEdits.length, 1);
+  assert.equal(after.resumeEdits.length, 1);
+  assert.deepEqual(after[CONFIG_FIELD].config.keywords, ['pm']);
+});
+
+test('claiming the edits leaves every application click alone', async () => {
+  fakeKV({ body: FULL() });
+  await enqueue(ENV, 'apply', 'untouched');
+  await enqueue(ENV, 'marked', 'also-untouched');
+  await enqueue(ENV, 'answerEdits', 'ans-1', { value: 'a' });
+  await enqueue(ENV, 'answerEdits', 'ans-2', { value: 'b' });
+  assert.equal((await claimAll(ENV, 'answerEdits')).length, 2);
+  const after = await readQueue(ENV);
+  assert.deepEqual(after.answerEdits, []);
+  assert.equal(after.apply.length, 1);
+  assert.equal(after.marked.length, 1);
+});
+
+test('a queue value written before these lanes existed still reads correctly', async () => {
+  // The rolling case: a board published yesterday, a watcher running today.
+  fakeKV({ body: { apply: [{ applicationId: 'old' }], searchConfig: null } });
+  const read = await readQueue(ENV);
+  assert.deepEqual(read.answerEdits, []);
+  assert.deepEqual(read.resumeEdits, []);
+  assert.equal(read.apply.length, 1);
+});
+
+test('both new lanes are declared, so the CLI accepts them', async () => {
+  // queue.mjs refuses a prefix that is not in QUEUES, and the watcher calls it
+  // by name. A lane added to empty() but not here claims nothing, silently.
+  assert.ok(QUEUES.includes('answerEdits'));
+  assert.ok(QUEUES.includes('resumeEdits'));
 });

@@ -1011,7 +1011,27 @@ def fingerprint():
     # the published board would keep showing the last set of sessions.
     return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
             f"{provider_signature()}|{render_version()}|{search_config_version()}|"
+            f"{profile_signature()}|"
             + "|".join(parts))
+
+
+def profile_signature():
+    """Enough of the Profile page to notice an edit, and no more.
+
+    Size and modification time of the three files behind it. No value is read,
+    so nothing a user typed can reach the tick line or the healthchecks payload
+    through this. A missing file is a stable empty rather than a fault: the
+    resume-content override does not exist until the first edit.
+    """
+    parts = []
+    for name in ("answers.json", "resume-content.json", "profile.json"):
+        path = STATE_DIR / name
+        try:
+            stat = path.stat()
+            parts.append(f"{name}:{stat.st_size}:{stat.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{name}:-")
+    return ",".join(parts)
 
 
 def search_config_version():
@@ -1352,6 +1372,172 @@ def apply_found_decisions(q):
     return changed
 
 
+# --- Profile page edits -----------------------------------------------------
+
+def _bank_command(item):
+    """The store call one claimed answer edit becomes, or None."""
+    action = item.get("action") or "save"
+    if action == "delete":
+        key = item.get("key")
+        if not key:
+            return None, None
+        return ["answer-delete", "--key", str(key),
+                "--version", str(int(item.get("version") or 0)),
+                "--edit-id", str(item.get("applicationId") or "")], None
+    payload = {
+        "editId": item.get("applicationId"),
+        "question": item.get("question"),
+        "value": item.get("value") or "",
+        "version": int(item.get("version") or 0),
+    }
+    for field in ("key", "state", "tags"):
+        if item.get(field) not in (None, ""):
+            payload[field] = item[field]
+    return ["answer-edit", "--input", "-"], json.dumps(payload)
+
+
+def _resume_command(item):
+    action = item.get("action")
+    if action in ("default", "remove"):
+        key = item.get("key")
+        if not key:
+            return None, None
+        return [f"resume-{action}", "--key", str(key)], None
+    if action == "content" and isinstance(item.get("content"), dict):
+        return ["resume-content-put", "--input", "-"], json.dumps(item["content"])
+    return None, None
+
+
+def close_answered_blockers(answered_keys):
+    """Drop parked rows whose question the bank can now answer.
+
+    This is the second door of the grow-only loop. An answer saved on the
+    Profile page closes the question everywhere it is blocking, not only where
+    it was first asked, which is the whole reason the bank is worth filling.
+
+    Returns the applications that lost their last blocker, which is what the
+    caller retries.
+    """
+    if not answered_keys:
+        return [], []
+    cleared, freed = [], []
+    for entry in _sessions():
+        if (entry.get("status") or "").lower() != "review":
+            continue
+        pending = entry.get("pendingFields") or []
+        if not pending:
+            continue
+        remaining = []
+        for item in pending:
+            question = item.get("question") if isinstance(item, dict) else None
+            resolved = False
+            if question:
+                found = store(["answer-find", "--question", str(question)])
+                if found.returncode == 0:
+                    try:
+                        answer = json.loads(found.stdout or "{}")
+                    except json.JSONDecodeError:
+                        answer = {}
+                    # Only an answer clears a row. `match: none` with `open`
+                    # means the bank is tracking the question and still has
+                    # nothing to fill, which is exactly a blocker.
+                    resolved = answer.get("match") != "none" and bool(
+                        answer.get("value") or answer.get("answer"))
+            if not resolved:
+                remaining.append(item)
+        if len(remaining) == len(pending):
+            continue
+        aid = entry.get("applicationId")
+        if remaining:
+            entry["pendingFields"] = remaining
+        else:
+            entry.pop("pendingFields", None)
+            freed.append(aid)
+        _save_session(entry)
+        cleared.append({"applicationId": aid,
+                        "closed": len(pending) - len(remaining),
+                        "left": len(remaining)})
+    return cleared, freed
+
+
+def apply_profile_edits(q):
+    """Memory Bank and base-resume edits, claimed off the queue and applied.
+
+    Idempotent twice over: the queue dedupes an edit id it already holds, and
+    the store refuses an edit whose version has already moved. So the board's
+    localStorage replay is free, the same way it is for every other click.
+
+    A refused edit is reported rather than swallowed. An answer the user typed
+    and believes is saved, which silently is not, is the worst outcome
+    available here.
+    """
+    changed = {}
+    for queue, build in (("answerEdits", _bank_command), ("resumeEdits", _resume_command)):
+        if not q.get(queue):
+            continue
+        claimed = claim_all(f"{queue}/")
+        done, refused = [], []
+        answered_keys = []
+        for item in claimed:
+            if not isinstance(item, dict):
+                continue
+            argv, stdin = build(item)
+            if argv is None:
+                refused.append({"editId": item.get("applicationId"),
+                                "why": "the edit named no action this store knows"})
+                continue
+            result = subprocess.run(
+                [sys.executable, str(REPO / "scripts" / "store.py")] + argv,
+                input=stdin, capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SECONDS)
+            if result.returncode != 0:
+                refused.append({"editId": item.get("applicationId"),
+                                "why": (result.stderr or "").strip()[:200] or "the store refused it"})
+                continue
+            try:
+                out = json.loads(result.stdout or "{}")
+            except json.JSONDecodeError:
+                refused.append({"editId": item.get("applicationId"),
+                                "why": "the store returned junk"})
+                continue
+            if out.get("applied") is False and out.get("reason") == "conflict":
+                refused.append({"editId": item.get("applicationId"),
+                                "why": f"the entry moved to version {out.get('version')}"})
+                continue
+            done.append(out.get("key") or out.get("default") or out.get("removed") or True)
+            if queue == "answerEdits" and out.get("stored"):
+                answered_keys.append(out.get("key"))
+        if done:
+            changed[queue] = done
+        if refused:
+            changed[f"{queue}Refused"] = refused
+        if answered_keys:
+            cleared, freed = close_answered_blockers(answered_keys)
+            if cleared:
+                changed["blockersCleared"] = cleared
+            for aid in freed:
+                # The last question on the card is answered, so the application
+                # is no longer waiting on the user and goes back to work without
+                # a second click. Through the normal Apply path, so every guard
+                # that stops a duplicate submission still runs.
+                reason = do_not_start(aid)
+                if reason:
+                    changed.setdefault("notResumed", []).append(
+                        {"applicationId": aid, "why": reason})
+                    continue
+                enqueued = subprocess.run(
+                    [toolpath.node(), "queue.mjs", "enqueue", "apply/", aid],
+                    cwd=DEPLOY, capture_output=True, text=True,
+                    env=toolpath.queue_env(), timeout=60)
+                if enqueued.returncode == 0:
+                    changed.setdefault("resumed", []).append(aid)
+                else:
+                    changed.setdefault("notResumed", []).append(
+                        {"applicationId": aid,
+                         "why": (enqueued.stderr or "").strip()[:160] or "could not re-queue"})
+    return changed
+
+
 # --- watchdog ---------------------------------------------------------------
 
 def sweep_stuck(queued=()):
@@ -1643,6 +1829,7 @@ def tick(force_publish=False):
             changed["searchConfig"] = taken
 
     changed.update(apply_found_decisions(q))
+    changed.update(apply_profile_edits(q))
 
     if q.get("marked"):
         r = run([sys.executable, str(REPO / "scripts" / "apply_marks.py"), "--no-publish"])

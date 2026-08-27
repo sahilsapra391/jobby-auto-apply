@@ -254,7 +254,59 @@ def completed(aid, confirmation, resume, cover, nonce):
             "coverLetter": payload.get("coverLetter")}
 
 
-def park(aid, blockers, reason):
+# A blocker that is a question the user can answer once and be done with, as
+# opposed to one they have to go and do something about. Only the first kind is
+# Memory Bank material: "Sign in to Workday" is not a question, and storing it
+# would put an instruction in the bank where an answer belongs.
+#
+# The agent tags these explicitly when it parks. This is the fallback for a run
+# that did not, and it is deliberately narrow: a trailing question mark, which
+# an employer's form field label reliably has and an instruction reliably does
+# not. Over-reaching here fills the bank with rubbish the user has to clear.
+def question_shaped(blocker):
+    text = (blocker or "").strip()
+    return text.endswith("?") and len(text) > 8
+
+
+def open_in_bank(aid, blockers, unanswered=None):
+    """Put every unanswered question from this park into the Memory Bank.
+
+    The grow-only loop. A question that stopped one application is a question
+    that will stop the next one, so it is recorded the moment it stops this one
+    and the user can answer it from the Profile page without going back to the
+    form.
+
+    Never fatal. Parking has to succeed even when the bank write does not, or a
+    store problem would leave an application in flight with nobody told. What
+    did and did not get recorded rides back in the result instead.
+    """
+    tagged = {b for b in (unanswered or []) if b in set(blockers)}
+    chosen = [b for b in blockers if b in tagged] if tagged else \
+        [b for b in blockers if question_shaped(b)]
+    opened, skipped = [], []
+    for blocker in chosen:
+        payload = json.dumps({"question": blocker, "applicationId": aid})
+        r = subprocess.run(
+            [sys.executable, str(STORE), "answer-open", "--input", "-"],
+            input=payload, capture_output=True, text=True)
+        if r.returncode != 0:
+            skipped.append({"question": blocker[:120],
+                            "why": (r.stderr or "").strip()[:160] or "store refused"})
+            continue
+        try:
+            result = json.loads(r.stdout or "{}")
+        except json.JSONDecodeError:
+            skipped.append({"question": blocker[:120], "why": "store returned junk"})
+            continue
+        if result.get("opened") or result.get("joined"):
+            opened.append(result.get("key"))
+        else:
+            skipped.append({"question": blocker[:120],
+                            "why": result.get("reason") or "not bank material"})
+    return opened, skipped
+
+
+def park(aid, blockers, reason, unanswered=None):
     """Send it to Needs you with the blocker named.
 
     A pendingField is an object carrying the question and why it is stuck, not a
@@ -282,7 +334,9 @@ def park(aid, blockers, reason):
                        input=json.dumps(entry), capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"finish: session-save failed: {(r.stderr or '').strip()[:300]}")
+    opened, skipped = open_in_bank(aid, blockers, unanswered)
     return {"parked": True, "pendingFields": entry["pendingFields"],
+            "openedInBank": opened, "notBanked": skipped,
             "synced": sync_board()}
 
 
@@ -297,6 +351,9 @@ def main():
     ap.add_argument("--nonce")
     ap.add_argument("--resume")
     ap.add_argument("--cover")
+    ap.add_argument("--unanswered", action="append", default=[],
+                    help="a --pending blocker that is an unanswered form question, "
+                         "so the Memory Bank records it. Repeatable.")
     ap.add_argument("--pending", action="append", default=[],
                     help="the blocker, as the user will read it. Repeatable.")
     ap.add_argument("--detail", default="")
@@ -322,7 +379,7 @@ def main():
         if not args.pending:
             raise SystemExit("finish: --park needs at least one --pending naming the "
                              "blocker, or the board shows a stuck row with no reason.")
-        out = park(args.id, args.pending, args.detail)
+        out = park(args.id, args.pending, args.detail, args.unanswered)
     print(json.dumps(out, indent=2))
 
 
