@@ -546,14 +546,6 @@ async function handleDocument(request, pathname) {
     return new Response(request.method === 'HEAD' ? null : bytes, {
       status: 200,
       headers: {
-        // KV is the fallback for anything R2 did not answer, not the case of
-        // an unindexed name. Five ways in: R2 unconfigured, the index
-        // unreadable, no entry for this name, an entry whose key fails its
-        // shape check, and R2 answering 404 or faulting on a key the index
-        // does carry. That last one is why an indexed artifact can land here,
-        // and it is deliberate: the index running ahead of the bucket is
-        // emptiness rather than a fault. PDF is the default because every
-        // document KV holds is one.
         'content-type': 'application/pdf',
         // inline so it opens in the browser rather than forcing a save
         'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
