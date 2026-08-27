@@ -58,6 +58,22 @@ def main():
         if not args.phase:
             print(json.dumps({"error": "--phase required unless --done"}))
             return 2
+        # A dropped application is never promoted back into flight by a phase
+        # update. This is what made Drop look like it did nothing: the tick
+        # processes drops first and then walks the apply queue, and a stale
+        # apply for the same id set the phase, which set the status, which put
+        # the application straight back in flight ninety seconds after the user
+        # dropped it. Observed on 2026-08-27, one tick, same two ids in both
+        # `dropped` and `queued`.
+        #
+        # Refused here rather than by filtering the queue, because the queue is
+        # one of several callers and the next one would find the same hole. It
+        # also explains a session carrying droppedAt with a live status: the
+        # drop wrote its record and this overwrote the one field that mattered.
+        if (d.get("status") or "").lower() == "dropped":
+            print(json.dumps({"applicationId": args.id, "refused": "dropped",
+                              "why": "the user dropped this application"}))
+            return 0
         # Remember the lane once, on the way in. Recording it on every phase
         # update would overwrite it with "inflight" after the first one and the
         # role could never be handed back.

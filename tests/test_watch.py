@@ -18,6 +18,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import math
 import pathlib
 import tempfile
 import time
@@ -1604,10 +1605,27 @@ class ParkedSlotAlarmTests(unittest.TestCase):
             self.assertEqual(watch.parked_slot_warning(), "")
 
     def test_most_of_the_fleet_parked_is_capacity_gone_whatever_the_reason(self):
-        with self.parked({"apply-1": 60, "apply-2": 120, "apply-3": 90}):
+        """Sized from the pool rather than from the number it happened to be.
+
+        This said "3 of 5" and went quiet when the pool widened to eight, which
+        is the same defect as a guard whose premise is a constant somebody else
+        owns. Three of eight is not most of a fleet and should not alarm; the
+        threshold is a share, so the fixture is built from APPLY_SLOTS.
+        """
+        # ceil, not int: 8 * 0.6 truncates to 4, which is half a fleet and
+        # correctly does not alarm, so the fixture would have proved the
+        # opposite of what it claims.
+        need = math.ceil(watch.APPLY_SLOTS * watch.PARKED_SLOT_FRACTION)
+        enough = {f"apply-{i}": 60 + i for i in range(1, need + 1)}
+        with self.parked(enough):
             warning = watch.parked_slot_warning()
-        self.assertIn("3 of 5", warning)
+        self.assertIn(f"{len(enough)} of {watch.APPLY_SLOTS}", warning)
         self.assertIn("cannot start", warning)
+
+    def test_a_minority_of_the_fleet_parked_does_not_alarm(self):
+        few = {f"apply-{i}": 60 for i in range(1, watch.APPLY_SLOTS // 4 + 1)}
+        with self.parked(few):
+            self.assertEqual(watch.parked_slot_warning(), "")
 
     def test_one_slot_held_most_of_a_day_earns_it_alone(self):
         with self.parked({"apply-1": 7 * 3600}):

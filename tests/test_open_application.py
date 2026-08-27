@@ -68,7 +68,10 @@ class OpenApplicationTests(unittest.TestCase):
         self.assertEqual(result["url"], "https://boards.example.com/acme/jobs/5")
         self.assertEqual([page["id"] for page in chrome.pages], ["opened"])
         self.assertEqual(chrome.closed, ["blank"])
-        self.assertEqual(chrome.activated, ["opened"])
+        # Not raised. Every apply run passes through here, so activating took
+        # the user's screen once per application; and with the other tabs closed
+        # the posting is already the selected one, so the call did nothing else.
+        self.assertEqual(chrome.activated, [])
 
     def test_a_retry_returns_to_the_part_filled_form_on_the_same_site(self):
         # An ATS rewrites its own path between steps, so the tab holding the
@@ -80,7 +83,7 @@ class OpenApplicationTests(unittest.TestCase):
         self.assertTrue(result["opened"])
         self.assertTrue(result["reused"])
         self.assertEqual(result["url"], started["url"])
-        self.assertEqual(chrome.activated, ["step2"])
+        self.assertEqual(chrome.activated, [])
         self.assertEqual(chrome.closed, ["blank"])
         self.assertEqual([page["id"] for page in chrome.pages], ["step2"])
 
@@ -93,7 +96,7 @@ class OpenApplicationTests(unittest.TestCase):
 
         self.assertTrue(result["opened"])
         self.assertFalse(result["reused"])
-        self.assertEqual(chrome.activated, ["opened"])
+        self.assertEqual(chrome.activated, [])
         self.assertEqual([page["id"] for page in chrome.pages], ["opened"])
         self.assertEqual(sorted(chrome.closed), ["blank", "other"])
 
