@@ -340,6 +340,61 @@ def publishable_jobs(jobs, config, cap=None):
     return out, total, census
 
 
+# One application, one lane, decided in one place.
+#
+# Every lane used to be its own comprehension, and one of them read a different
+# field: Submitted came from `history`, everything else from `session.status`.
+# Two sources of truth for "where does this appear" can disagree, and on
+# 2026-08-27 one did -- an application with a completed event sitting at status
+# `watch`, drawn in both Submitted and Watching.
+#
+# Precedence, and the reasons, because the order is the whole content:
+#
+#   submitted  a fact about the outside world. An employer received it and it
+#              cannot be recalled, so it outranks any position of ours. Dropping
+#              a submitted application must not erase the record that it went
+#              out; the drop is still on the session, it just does not decide
+#              the lane. Zero applications are both today, so this is a rule for
+#              the first one rather than a description of the store.
+#   dropped    the user said no. Beats every workflow state below it.
+#   inflight   an agent is working on it right now.
+#   act        it is waiting on the user: `active` or `review`.
+#   watch      the resting state.
+#
+# Anything else lands nowhere and is drawn nowhere, which is the honest answer
+# for a status this does not know rather than a guess at the nearest lane.
+LANE_ORDER = ("done", "dropped", "flight", "act", "watch")
+
+
+def lane_of(session, submitted_ids=()):
+    """The one lane this application appears in, or None."""
+    if not isinstance(session, dict):
+        return None
+    aid = session.get("applicationId")
+    status = (session.get("status") or "").lower()
+    if aid and aid in submitted_ids:
+        return "done"
+    if status == "dropped":
+        return "dropped"
+    if status == "inflight":
+        return "flight"
+    if status in ("active", "review"):
+        return "act"
+    if status == "watch":
+        return "watch"
+    return None
+
+
+def lanes_for(sessions, submitted_ids=()):
+    """Every session bucketed into exactly one lane."""
+    out = {name: [] for name in LANE_ORDER}
+    for session in sessions or []:
+        lane = lane_of(session, submitted_ids)
+        if lane:
+            out[lane].append(session)
+    return out
+
+
 def esc(v):
     return html.escape(str(v if v is not None else ""))
 
@@ -446,20 +501,23 @@ def build(state, generated):
     if isinstance(carried_census, dict) and carried_census:
         found_census = carried_census
 
-    blocked = [s for s in sessions if s.get("status") in ("active", "review")]
-    blocked.sort(key=lambda s: len(s.get("pendingFields", [])))
-
-    inflight = [s for s in sessions if s.get("status") == "inflight"]
-    watch = [s for s in sessions if s.get("status") == "watch"]
-    # Roles the user said no to. Kept rather than deleted, because "we decided
-    # against this one" is a fact worth being able to look up later, and because
-    # without it a dropped role would simply reappear on the next sweep.
-    dropped = sorted((s for s in sessions if s.get("status") == "dropped"),
-                     key=lambda x: x.get("droppedAt") or "", reverse=True)
     # An application whose latest event is a post-submission outcome is still
     # submitted; it must not vanish from the board when an outcome is logged.
     OUTCOMES = ("response", "interview", "offer", "rejected")
     submitted = [e for e in history if e.get("event") in ("completed",) + OUTCOMES]
+    submitted_ids = {e.get("applicationId") for e in submitted if e.get("applicationId")}
+
+    # Bucketed once, so no application can be drawn in two lanes. See lane_of
+    # for the precedence and why each step of it is where it is.
+    buckets = lanes_for(sessions, submitted_ids)
+    blocked = sorted(buckets["act"], key=lambda s: len(s.get("pendingFields", [])))
+    inflight = buckets["flight"]
+    watch = buckets["watch"]
+    # Roles the user said no to. Kept rather than deleted, because "we decided
+    # against this one" is a fact worth being able to look up later, and because
+    # without it a dropped role would simply reappear on the next sweep.
+    dropped = sorted(buckets["dropped"],
+                     key=lambda x: x.get("droppedAt") or "", reverse=True)
     # Written by load_state on the laptop, because the deployed renderer has no
     # applications/ folder to scan. Ids only; the records are fetched on open.
     captured = {
