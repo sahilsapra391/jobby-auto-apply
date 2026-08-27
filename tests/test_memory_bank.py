@@ -283,6 +283,159 @@ class RefusalBoundaryTests(BankTest):
         self.assertTrue(out["applied"])
 
 
+class LoopEntryBoundaryTests(BankTest):
+    """The loop as an entry point, which is the door the boundary suite did not
+    used to have.
+
+    Everything the answer system refuses is refused at lookup. The grow-only
+    loop opens a second door: it *writes* questions, unprompted, from whatever
+    an employer put on a form. If a refusal could arrive through it, the bank
+    would end up holding the question, the Profile page would invite an answer,
+    and the refusal would have been routed around rather than enforced.
+    """
+
+    def opened(self, question):
+        return self.open_question(question)["opened"]
+
+    def test_a_consumer_report_authorisation_cannot_become_a_bank_question(self):
+        self.assertFalse(self.opened(
+            "I authorize the Company to obtain a consumer report about me for "
+            "employment purposes."))
+        self.assertEqual(self.answers(), {})
+
+    def test_an_fcra_disclosure_cannot(self):
+        self.assertFalse(self.opened(
+            "Please acknowledge the FCRA disclosure and sign to permit a background "
+            "check to be conducted."))
+        self.assertEqual(self.answers(), {})
+
+    def test_a_captcha_cannot(self):
+        self.assertFalse(self.opened("Solve the reCAPTCHA to continue."))
+        self.assertEqual(self.answers(), {})
+
+    def test_a_degree_in_x_cannot(self):
+        """Not a refused act, and that is the point of listing it separately.
+
+        A person may answer this deliberately from the Profile page. What must
+        not happen is Jobby planting it unprompted, because it sits one word
+        from the political-contributions topic that already has a standing
+        answer, and §10 keeps it as a tested boundary.
+        """
+        self.assertFalse(self.opened("Do you have a degree in political science?"))
+        self.assertEqual(self.answers(), {})
+
+    def test_criminal_history_cannot(self):
+        self.assertFalse(self.opened("Have you ever been convicted of a felony?"))
+        self.assertEqual(self.answers(), {})
+
+    def test_a_one_time_code_cannot(self):
+        self.assertFalse(self.opened("Enter the verification code we sent you."))
+        self.assertEqual(self.answers(), {})
+
+    def test_the_whole_refusal_set_leaves_the_bank_empty(self):
+        """Swept together, because the failure that matters is any one of them
+        getting through, not a particular one."""
+        for question in (
+            "I authorize the Company to obtain a consumer report about me.",
+            "I acknowledge the FCRA disclosure and authorise a background check.",
+            "Have you ever been convicted of a crime?",
+            "Please complete the CAPTCHA below.",
+            "Create a password for your candidate account.",
+            "Do you have a degree in political science?",
+            "Enter the one-time code from your authenticator app.",
+        ):
+            self.open_question(question, "app-1")
+        self.assertEqual(self.answers(), {},
+                         "a refusal reached the bank through the park loop")
+
+    def test_an_ordinary_question_still_gets_through(self):
+        """The guard has to be narrow or the loop stops being worth having."""
+        self.assertTrue(self.opened("How many days a week can you be in the office?"))
+        self.assertEqual(len(self.answers()), 1)
+
+
+class OpenedSensitivityTests(BankTest):
+    """A question's subject is known when it is recorded and nowhere else.
+
+    Without this, a parked "What is your expected compensation?" opened as an
+    ordinary entry, the Profile page offered it as an ordinary answer, and a
+    salary was stored unflagged and rendered unmasked.
+    """
+
+    def test_a_compensation_question_is_born_sensitive(self):
+        out = self.open_question("What is your expected compensation?")
+        entry = self.answers()[out["key"]]
+        self.assertEqual(entry["state"], "sensitive")
+        self.assertTrue(entry["sensitive"])
+        self.assertEqual(entry["dataClass"], "class-2")
+
+    def test_a_demographic_question_is_born_sensitive(self):
+        for question in ("Are you a protected veteran?",
+                         "What is your gender?",
+                         "What is your date of birth?",
+                         "Do you require visa sponsorship?"):
+            with self.subTest(question=question):
+                out = self.open_question(question)
+                self.assertEqual(self.answers()[out["key"]]["state"], "sensitive", question)
+
+    def test_an_ordinary_question_is_not(self):
+        for question in ("How many days a week can you be in the office?",
+                         "What is your average deal size?",
+                         "How do you manage a team?",
+                         "Describe a package you shipped end to end.",
+                         "What is your notice period?"):
+            with self.subTest(question=question):
+                out = self.open_question(question)
+                self.assertEqual(self.answers()[out["key"]]["state"], "missing", question)
+
+    def test_answering_a_born_sensitive_entry_keeps_it_sensitive(self):
+        out = self.open_question("What is your expected compensation?")
+        self.edit(key=out["key"], question="What is your expected compensation?",
+                  value="$185,000", state="sensitive", version=0)
+        entry = self.answers()[out["key"]]
+        self.assertEqual(entry["state"], "sensitive")
+        self.assertEqual(entry["encryption"], "pending")
+
+    def test_the_classifier_reads_words_not_substrings(self):
+        """Measured on 2026-08-26: a substring list flagged "average", "manage"
+        and "embrace" as sensitive, because "age" and "race" live inside them.
+        A classifier that masks half the bank is worse than no classifier."""
+        for question in ("What is your average deal size?",
+                         "How do you manage a team?",
+                         "Do you embrace ambiguity?",
+                         "Describe a package you shipped"):
+            self.assertFalse(store.sensitive_question(question), question)
+
+
+class ResolverGuardTests(BankTest):
+    """An unanswered entry must not satisfy a lookup through *any* resolver.
+
+    Guarded once in find_answer rather than inside each resolver. Guarding them
+    one at a time is how this broke: the loop added the rule, topic_answer was
+    taught it, and the next merge brought three more resolvers from another
+    branch, each iterating the answers with no idea a rule existed.
+    """
+
+    def test_no_resolver_can_return_an_entry_with_no_answer(self):
+        # Every tag the merged resolvers key on, all on valueless entries.
+        answers = {}
+        for key, tag, question in (
+            ("ack", "acknowledgement-standing", "Do you acknowledge the terms?"),
+            ("pay", "compensation", "What is your expected compensation?"),
+            ("noncompete", "post-employment-obligations", "Any non-compete?"),
+        ):
+            answers[key] = {"key": key, "question": question, "value": None,
+                            "state": "missing", "tags": [tag]}
+        for probe in ("Do you acknowledge and agree to the terms above?",
+                      "What compensation are you looking for?",
+                      "Do you have a non-compete in place?",
+                      "Please acknowledge the privacy notice."):
+            with self.subTest(probe=probe):
+                found = store.find_answer(answers, probe)
+                self.assertEqual(found.get("match"), "none", probe)
+                self.assertIsNone(found.get("value"), probe)
+
+
 class OneTimeCodeTests(BankTest):
     """A code is worthless a minute later and dangerous for as long as it is
     written down. It is not bank material through any door."""
@@ -513,11 +666,62 @@ class PublishedShapeTests(BankTest):
         self.assertNotIn("answer", entry)
         self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 1)
 
+    def test_a_sensitive_value_is_never_published_at_all(self):
+        """The strongest rule in this feature, and the one that survives being
+        looked at from the wrong angle.
+
+        Masking is a display choice. It does nothing about the copy sitting in
+        the KV blob, which is where a sensitive answer would actually live, so
+        the value is not published: not masked, not encrypted, absent. This
+        asserts against the serialised state rather than a field, because the
+        failure mode is a value surviving somewhere nobody thought to look.
+        """
+        published = dashboard.publishable_state(self.state())
+        blob = json.dumps(published)
+        self.assertNotIn("$185,000", blob)
+        entry = next(a for a in published["memoryBank"]["answers"]
+                     if a["key"] == "expected-comp")
+        self.assertIsNone(entry["value"])
+        self.assertTrue(entry["sensitive"])
+        self.assertTrue(entry["heldOnDevice"])
+        # Nothing pending in this path, so no string that ages into permanent.
+        self.assertNotIn("encryption", entry)
+        # The classification stays: the device-side store is still Class 2 and
+        # that work is still owed.
+        self.assertEqual(entry["dataClass"], "class-2")
+
+    def test_an_ordinary_value_still_travels(self):
+        published = dashboard.publishable_state(self.state())
+        entry = next(a for a in published["memoryBank"]["answers"]
+                     if a["key"] == "notice-period")
+        self.assertEqual(entry["value"], "15 days")
+        self.assertNotIn("heldOnDevice", entry)
+
+    def test_a_withheld_answer_is_not_counted_as_an_open_question(self):
+        """Both have no value on this side. Only one of them is something to
+        put in front of the user, and getting it wrong would ask them to
+        re-answer everything sensitive they have ever stored."""
+        counts = dashboard.publishable_state(self.state())["meta"]["memoryBank"]
+        self.assertEqual(counts["unanswered"], 1)
+        self.assertEqual(counts["sensitive"], 1)
+
+    def test_a_sensitive_question_nobody_has_answered_is_still_open(self):
+        state = self.state()
+        state["answers"]["comp-open"] = {
+            "key": "comp-open", "question": "What compensation do you want?",
+            "value": None, "state": "sensitive", "tags": ["unanswered"]}
+        published = dashboard.publishable_state(state)
+        entry = next(a for a in published["memoryBank"]["answers"]
+                     if a["key"] == "comp-open")
+        self.assertFalse(entry["heldOnDevice"])
+        self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 2)
+
     def test_the_counts_ride_in_meta_and_the_values_do_not(self):
         published = dashboard.publishable_state(self.state())
         counts = published["meta"]["memoryBank"]
         self.assertEqual(counts, {"total": 3, "unanswered": 1, "sensitive": 1,
                                   "identities": 1})
+        self.assertNotIn("$185,000", json.dumps(published))
 
     def test_an_identity_publishes_the_document_name_not_the_path(self):
         """A path is a directory layout on one person's machine and says

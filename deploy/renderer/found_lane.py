@@ -47,11 +47,30 @@ import search_config  # noqa: E402
 # Lowered to 3,350 on 2026-08-25, because that measurement was taken against a
 # page carrying one feature and the page now carries two. The Profile page's
 # shell costs 35,713 bytes of shared document whichever lane a reader opens,
-# and at 3,400 that put the whole board at 3,879,904 bytes: past the 3.7 MB
-# margin line, grazing the ceiling this cap exists to keep clear of. Fifty
-# records buy it back and then some -- measured at 3,825,578 bytes, which is
-# 14,879 *below* where the board sat before any of this. The alternative was
-# moving the margin line, which is the same thing as not having one.
+# and at 3,400 that put the board at 3,883,244 bytes: past the 3.7 MB margin
+# line, grazing the ceiling this cap exists to keep clear of. At 3,350 the
+# board measures 3,831,544, which leaves 48,187 bytes -- more margin than the
+# 39,274 it had before any of this. The alternative was moving the margin line,
+# which is the same thing as not having one.
+#
+# **This is not free, and it is not only the global tail.** `floor` below is
+# derived from `cap`, so every per-region floor shrinks with it. Measured
+# against the real 13,327-job pool on 2026-08-26:
+#
+#   worldwide (2 buckets)      remote 935 -> 921   other 2465 -> 2429
+#   US + IN (4 buckets)        US 1493 -> 1472     IN  467 ->  460
+#   US + IN + JP + GB (6)      US 1515 -> 1488     IN  311 ->  307   JP 113 -> 113
+#
+# So a floor-limited region loses about 1.5% of its cards, India included. A
+# region thinner than its floor (Japan, 113 in supply) loses nothing, because
+# it was never floor-limited. No bucket is starved and none goes to zero, but
+# "the Profile page costs India four cards" is true and belongs written down
+# rather than discovered.
+#
+# The durable fix is to stop spending page weight on a panel most readers never
+# open: serve the Profile page's script from the same origin instead of inlining
+# it, which CSP already permits for scripts. That is a change to the
+# self-contained-artifact property and wants its own commit.
 EMBED_CAP = 3350
 # One slice of the description, used by the card and by Details. It used to be
 # two overlapping slices of the same text.

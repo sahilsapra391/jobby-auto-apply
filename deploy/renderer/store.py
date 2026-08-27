@@ -239,6 +239,62 @@ REFUSAL_CATEGORIES = (
 )
 
 
+# What the loop must open as sensitive rather than as an ordinary question.
+#
+# An opened entry is born with no value and no tags, so without this a parked
+# "What is your expected compensation?" becomes a plain entry, the Profile page
+# offers it as an ordinary answer, and a salary gets stored unflagged and
+# unmasked. The state has to be right at the moment the question is recorded,
+# because that is the only moment anything knows what the question was about.
+#
+# The set is §4's, from the north star: compensation, demographics, work
+# authorisation and date of birth.
+# Word-bounded, and that is not a detail. Measured against the real 156-entry
+# store on 2026-08-26, a substring list flagged "What is your average deal
+# size?", "How do you manage a team?" and "Do you embrace ambiguity?" as
+# sensitive, because "age " lives inside "average" and "manage", and "race"
+# inside "embrace". A classifier that masks half the bank is worse than none.
+SENSITIVE_SHAPE = re.compile(
+    r"\b("
+    r"compensation|salary|salaries|ctc|remuneration|"
+    r"(?:expected|current|desired|base|hourly|target)\s+pay|pay\s+rate|"
+    r"race|ethnicity|ethnic\s+origin|hispanic|latino|"
+    r"gender|sex|sexual\s+orientation|lgbt\w*|transgender|"
+    r"disability|disabled|veteran|"
+    r"date\s+of\s+birth|birth\s+date|age\s+(?:range|bracket|group)|"
+    r"marital\s+status|religion|"
+    r"national\s+origin|visa\s+sponsorship|sponsorship"
+    r")\b",
+    re.I,
+)
+
+
+def sensitive_question(question):
+    """True when a question is one the store must treat as Class 2 on sight."""
+    return bool(SENSITIVE_SHAPE.search(question or ""))
+
+
+# Questions the boundary suite is actively protecting, which the loop must
+# never plant on its own.
+#
+# This is a narrower rule than refusal_category, and a different one. Nothing
+# here is an act the product refuses; a person may answer any of it deliberately
+# from the Profile page. What must not happen is Jobby *planting* the question
+# unprompted, because each of these sits one word from a topic that already has
+# a standing answer, and an entry here is the shortest path to a wrong field
+# being filled quietly. §10 lists them as tested boundaries and they stay that
+# way.
+BOUNDARY_QUESTIONS = (
+    "Do you have a degree in political science?",
+)
+
+
+def boundary_question(question):
+    """True when the loop must not open this question by itself."""
+    target = answer_key(question)
+    return any(answer_key(probe) == target for probe in BOUNDARY_QUESTIONS)
+
+
 def refusal_category(question):
     """The refusal this question belongs to, or None.
 
@@ -291,10 +347,15 @@ def classify(entry):
     """Add the data-class marking the multi-tenant plan's Class 2 work reads.
 
     Sensitive answers (compensation, demographics, work authorisation, date of
-    birth) are the fields destined for per-user envelope encryption. Nothing
-    here encrypts anything; it marks which records that work has to reach, so
-    the migration has something to select on rather than re-deriving the set
-    from tag spellings.
+    birth) are the fields destined for per-user envelope encryption, per §6 of
+    docs/plans/multi-tenant-architecture.md. Nothing here encrypts anything; it
+    marks which records that work has to reach, so the migration has something
+    to select on rather than re-deriving the set from tag spellings.
+
+    That work is issue #82, which also carries the reason a sensitive answer's
+    value is withheld from the board entirely today rather than published and
+    masked. The marker points at a task with an acceptance list, not at an
+    intention.
     """
     sensitive = entry.get("state") == "sensitive" or bool(entry.get("sensitive"))
     entry["sensitive"] = sensitive
@@ -996,14 +1057,24 @@ def find_answer(answers, question):
     # its own question the moment it opened it.
     if held is not None and answered(held):
         return held
+    # Every resolver below sees only entries that actually carry an answer.
+    #
+    # Filtered once, here, rather than guarded inside each resolver. Guarding
+    # them one at a time is exactly how this broke: the grow-only loop added
+    # the rule, `topic_answer` was taught it, and the next merge brought
+    # `acknowledgement`, `expected_pay` and `us_person` from another branch,
+    # each iterating `answers.values()` with no idea there was a rule to
+    # follow. A resolver added tomorrow inherits the guard by construction.
+    usable = {k: v for k, v in answers.items() if answered(v)}
+
     # Fall back to overlap scoring so slightly different phrasings still match.
     # The bar is deliberately high: "product management" vs "project management"
     # scores 0.71 — one word apart, and the wrong answer.
     target = set(key.split("-"))
     scored = []
-    for k, v in answers.items():
+    for k, v in usable.items():
         other = set(k.split("-"))
-        if not other or not answered(v):
+        if not other:
             continue
         score = len(target & other) / len(target | other)
         if score > 0:
@@ -1017,10 +1088,10 @@ def find_answer(answers, question):
             return {"match": "fuzzy", "score": round(score, 2), **entry}
     # Before giving up, try recognising the question by a distinctive phrase.
     # Overlap scoring cannot see a non-compete clause buried in a paragraph.
-    topical = topic_answer(answers, question)
+    topical = topic_answer(usable, question)
     if topical is not None:
         return topical
-    ack = acknowledgement(answers, question)
+    ack = acknowledgement(usable, question)
     if ack is not None:
         return ack
 
@@ -1203,6 +1274,8 @@ def cmd_answer_open(args):
         # Not bank material, so it stays a blocker on the card and nothing
         # invites the user to answer it here and be refused a step later.
         return {"opened": False, "reason": f"refusal category: {refused}"}
+    if boundary_question(question):
+        return {"opened": False, "reason": "tested boundary: the loop does not plant this"}
 
     root = root_dir(args.root)
     path = paths(root)["answers"]
@@ -1226,7 +1299,11 @@ def cmd_answer_open(args):
         "key": key,
         "question": entry.get("question") or question,
         "value": None,
-        "state": "missing",
+        # `missing` unless the question itself is Class 2, in which case it is
+        # born sensitive and the Profile page masks it from the first render.
+        # Deciding this later, when someone answers it, means deciding it with
+        # the question's subject already forgotten.
+        "state": "sensitive" if sensitive_question(question) else "missing",
         "askedBy": asked[:50],
         "openedAt": entry.get("openedAt") or now(),
         "lastAskedAt": now(),

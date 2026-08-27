@@ -131,8 +131,10 @@ def panel(counts=None):
       </section>
 
       <p class="credential-note">Answers are stored on Your Device and published to the board
-         behind this password so you can read and edit them here. Sensitive answers are held
-         back until you ask to see one. One-time codes and verification codes are never stored,
+         behind this password so you can read and edit them here. Sensitive answers stay on
+         your device: the board is told one exists so you can replace it, never what it says.
+         Reading one back here waits on the per-user encryption in the multi-tenant plan,
+         rather than shipping without it. One-time codes and verification codes are never stored,
          and neither is an answer to anything Jobby refuses to sign on your behalf.</p>
     </section>
     """
@@ -249,7 +251,7 @@ CSS = r"""
   .bank-q { margin:0; font-weight:620; line-height:1.45; overflow-wrap:anywhere; }
   .bank-a { margin:.4rem 0 0; color:var(--ink-2); line-height:1.5; white-space:pre-wrap;
     overflow-wrap:anywhere; }
-  .bank-a.masked { color:var(--ink-3); letter-spacing:.14em; }
+  .bank-a.held { color:var(--ink-3); font-style:italic; }
   .bank-a.none { color:var(--orange); font-style:italic; }
   .bank-meta { margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem .5rem;
     align-items:center; }
@@ -261,6 +263,9 @@ CSS = r"""
   .bank-act { margin-top:.7rem; display:flex; gap:.45rem; flex-wrap:wrap; }
   .bank-act .btn { padding:.44rem .8rem; font-size:.86rem; }
   .bank-edit { margin-top:.7rem; display:grid; gap:.55rem; }
+  .bank-sensitive { display:flex; align-items:center; gap:.5rem; color:var(--ink-2);
+    font-size:.85rem; cursor:pointer; }
+  .bank-sensitive input { accent-color:var(--blue); width:1rem; height:1rem; margin:0; }
   .bank-note { color:var(--ink-3); line-height:1.5; margin:0; }
   .bank-empty { border:1px dashed var(--hair-strong); border-radius:16px;
     padding:1.4rem 1.1rem; text-align:center; color:var(--ink-3); }
@@ -370,7 +375,9 @@ SCRIPT = r"""
     }
 
     function isOpen(entry) {
-      return !answered(entry) && entry.remembered !== false;
+      // A withheld sensitive answer has no value here and is not a question
+      // waiting on anybody.
+      return !answered(entry) && !entry.heldOnDevice && entry.remembered !== false;
     }
 
     function stamp(value) {
@@ -633,19 +640,18 @@ SCRIPT = r"""
       row.appendChild(el('p', 'bank-q', entry.question || entry.key || 'Untitled question'));
 
       var body = el('p', 'bank-a');
-      var revealed = false;
       function paintValue() {
-        if (!answered(entry)) {
+        if (entry.heldOnDevice) {
+          // There is nothing to reveal and no control that pretends there is.
+          // The value was never sent, so a masked row with a Reveal button
+          // would be a button that cannot work.
+          body.className = 'bank-a held';
+          body.textContent = 'Answered. Held on your device, not sent to the board.';
+        } else if (!answered(entry)) {
           body.className = 'bank-a none';
           body.textContent = entry.remembered === false
             ? 'Filled when asked, deliberately not kept.'
             : 'No answer yet.';
-        } else if (entry.sensitive && !revealed) {
-          body.className = 'bank-a masked';
-          // Fixed width, not the answer's. A mask that is as long as what it
-          // hides is not a mask: measured on the real store, "Are you a
-          // veteran?" came back as two dots, which is "No" written in dots.
-          body.textContent = '••••••••';
         } else {
           body.className = 'bank-a';
           body.textContent = entry.value;
@@ -672,19 +678,10 @@ SCRIPT = r"""
       row.appendChild(meta);
 
       var act = el('div', 'bank-act');
-      var edit = el('button', 'btn ghost', answered(entry) ? 'Edit' : 'Answer');
+      var edit = el('button', 'btn ghost',
+        entry.heldOnDevice ? 'Replace' : (answered(entry) ? 'Edit' : 'Answer'));
       edit.type = 'button';
       act.appendChild(edit);
-      if (entry.sensitive && answered(entry)) {
-        var reveal = el('button', 'btn ghost', 'Reveal');
-        reveal.type = 'button';
-        reveal.addEventListener('click', function () {
-          revealed = !revealed;
-          reveal.textContent = revealed ? 'Hide' : 'Reveal';
-          paintValue();
-        });
-        act.appendChild(reveal);
-      }
       row.appendChild(act);
 
       var open = false;
@@ -693,11 +690,33 @@ SCRIPT = r"""
         open = true;
         act.style.display = 'none';
         var editor = el('div', 'bank-edit');
+        if (entry.heldOnDevice) {
+          // Write-only, and said so plainly rather than by an empty box the
+          // reader has to interpret.
+          editor.appendChild(el('p', 'bank-note',
+            'Your device holds the current answer and does not send it here. '
+            + 'Anything you type replaces it.'));
+        }
         var box = el('textarea');
         box.rows = 3;
-        box.value = answered(entry) ? String(entry.value) : '';
-        box.setAttribute('aria-label', 'Answer for: ' + (entry.question || ''));
+        box.value = (!entry.heldOnDevice && answered(entry)) ? String(entry.value) : '';
+        box.setAttribute('aria-label',
+          (entry.heldOnDevice ? 'Replacement answer for: ' : 'Answer for: ')
+          + (entry.question || ''));
         editor.appendChild(box);
+
+        // The store guesses sensitivity from the question when the loop opens
+        // it, and a guess is all it can be: measured against the real corpus,
+        // the wording of "Which of the following communities do you belong to?"
+        // names nothing sensitive at all. So the person answering gets the
+        // final say, in both directions.
+        var mark = el('label', 'bank-sensitive');
+        var tick = el('input');
+        tick.type = 'checkbox';
+        tick.checked = Boolean(entry.sensitive);
+        mark.appendChild(tick);
+        mark.appendChild(el('span', null, 'Sensitive: keep this hidden until I ask'));
+        editor.appendChild(mark);
         var buttons = el('div', 'bank-act');
         var save = el('button', 'btn', 'Save');
         save.type = 'button';
@@ -718,7 +737,7 @@ SCRIPT = r"""
         }
         cancel.addEventListener('click', close);
 
-        if (answered(entry)) {
+        if (answered(entry) || entry.heldOnDevice) {
           // Inside the editor rather than on the resting row: forgetting an
           // answer takes opening the thing first, which is one more deliberate
           // act than a button sitting next to Edit would ask for.
@@ -773,7 +792,7 @@ SCRIPT = r"""
           var body2 = {
             editId: editId('ans'), action: 'save', key: entry.key,
             question: entry.question, value: value,
-            state: entry.sensitive ? 'sensitive' : 'confirmed',
+            state: tick.checked ? 'sensitive' : 'confirmed',
             version: Number(entry.version || 0)
           };
           remember({ editId: body2.editId, kind: 'answer', path: '/api/answer', body: body2 });
@@ -785,6 +804,7 @@ SCRIPT = r"""
               entry.value = value;
               entry.version = Number(entry.version || 0) + 1;
               entry.state = body2.state;
+              entry.sensitive = tick.checked;
               entry.tags = (entry.tags || []).filter(function (t) { return t !== 'unanswered'; });
               entry.answeredAt = new Date().toISOString();
               close();
@@ -815,7 +835,8 @@ SCRIPT = r"""
                        sensitive: 'Sensitive answers' };
         return [{ key: filter, title: titles[filter] || 'Matching', rows: entries,
                   note: filter === 'sensitive'
-                    ? 'Hidden until you ask. Revealing one shows it on this screen only.'
+                    ? 'Answers your device keeps to itself. The board is told they '
+                      + 'exist so you can replace one, never what they say.'
                     : '' }];
       }
       var open = [], policy = [], rest = [];

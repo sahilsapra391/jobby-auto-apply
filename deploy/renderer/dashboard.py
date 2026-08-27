@@ -168,14 +168,23 @@ def _memory_bank(state):
     """The Profile page's data, as the API will hand it out.
 
     Not page material, and that is measured rather than assumed: the board at
-    its embed cap is 3.66 MB against a 3.7 MB budget, and the bank is 74 KB. It
+    its embed cap is 3.65 MB against a 3.7 MB budget, and the bank is 74 KB. It
     would not fit even if nothing else were true.
 
-    What is also true is that it should not fit. Twenty-two of these entries are
-    compensation and demographic answers. Keeping them out of the HTML means
-    they are never in a saved copy of the page, never in a browser cache of it,
-    and never in the view-source of a board left open on a screen. They arrive
-    over an authenticated fetch, for the panel that asked.
+    **A sensitive answer's value never leaves the device.** Not masked here, not
+    encrypted here: absent. Twenty-two of these are compensation and
+    demographic answers, and masking is a display choice that does nothing for
+    the copy sitting in the KV blob. The board can say a sensitive answer
+    exists, when it was last touched, and which questions it covers, and it can
+    take a new one. It cannot read the old one back, because it never receives
+    it. That keeps the pre-Profile privacy posture exactly: before this page,
+    nothing from answers.json left the Mac.
+
+    The cost is real and one-directional: you cannot check a stored salary from
+    your phone. Reveal-on-tap without storing was considered and is not
+    available -- the board runs on Vercel and its only source is Cloudflare KV,
+    which this machine writes to, so anything the page could reveal would have
+    to be at rest there first.
     """
     answers = state.get("answers") or {}
     entries = []
@@ -195,7 +204,21 @@ def _memory_bank(state):
         # normalisation, before anything reads it.
         if not record.get("value") and record.get("answer"):
             record["value"] = record.pop("answer")
-        entries.append(store.classify(record))
+        store.classify(record)
+        if record.get("sensitive"):
+            # Whether it is answered has to be decided before the value goes,
+            # or every sensitive entry would publish as an open question and
+            # the board would ask you to answer things you answered months ago.
+            record["heldOnDevice"] = store.answered(record)
+            record["value"] = None
+            record.pop("answer", None)
+            # Nothing pending in this path any more: there is no published copy
+            # to encrypt. `dataClass` stays, because the device-side store is
+            # still Class 2 and that work is still owed, and issue #82 is where
+            # it is owed from. Reading one of these back on a phone comes back
+            # with the encryption, rather than being given up.
+            record.pop("encryption", None)
+        entries.append(record)
     entries.sort(key=lambda e: str(e.get("question") or "").lower())
     return {
         "userId": USER_ID,
@@ -210,8 +233,14 @@ def bank_counts(bank):
     entries = bank.get("answers") or []
     return {
         "total": len(entries),
+        # A withheld sensitive value reads as unanswered to `answered()`, because
+        # there is no value left to look at. `heldOnDevice` is what says the
+        # difference between "we are not showing you this" and "nobody has
+        # answered this".
         "unanswered": sum(1 for e in entries
-                          if not store.answered(e) and e.get("remembered") is not False),
+                          if not store.answered(e)
+                          and not e.get("heldOnDevice")
+                          and e.get("remembered") is not False),
         "sensitive": sum(1 for e in entries if e.get("sensitive")),
         "identities": len(bank.get("identities") or []),
     }

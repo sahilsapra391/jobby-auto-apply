@@ -358,6 +358,20 @@ test('an authenticated read gets the answers, the identities and the wording', a
   assert.equal(payload.resumeContent.banner, 'PRODUCT MANAGER');
 });
 
+test('a withheld sensitive answer says it exists and nothing more', async () => {
+  // The device publishes no value for a sensitive entry. The route's job is to
+  // carry that distinction, so the page can offer to replace an answer without
+  // ever being told what it says.
+  await publishBank([{ key: 'expected-comp', question: 'Expected compensation?',
+                       value: null, state: 'sensitive', sensitive: true,
+                       heldOnDevice: true, dataClass: 'class-2' }]);
+  const response = await handler.fetch(request('/api/profile', undefined, 'GET'));
+  const payload = await response.json();
+  assert.equal(payload.answers[0].value, null);
+  assert.equal(payload.answers[0].heldOnDevice, true);
+  assert.equal(payload.answers[0].sensitive, true);
+});
+
 test('the legacy answer field is served as a value', async () => {
   // Four real entries put theirs in `answer`, which is where the field started.
   await publishBank([{ key: 'rate-sql', question: 'Rate yourself on SQL', answer: '9' }]);
