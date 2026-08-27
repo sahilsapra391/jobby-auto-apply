@@ -1166,10 +1166,11 @@ def stale_board_warning():
 
 # A parked slot is a designed state: an agent filled what it could and left the
 # page open for the user. A fleet of them is an outage wearing that state's
-# clothes. On 2026-08-27 three of five slots were parked from that afternoon,
-# two of them because their browser server advertised nothing and one on a real
-# blocker, and the way that surfaced was the user asking how many applications
-# were in flight. Nothing was going to say it.
+# clothes. On 2026-08-27 all five were parked at once with none running, and the
+# way that surfaced was the user asking how many applications were in flight.
+# Counted by browser calls, four had reached the form and one had made zero, so
+# most of them were working as designed and the fleet was still stopped. That is
+# the point: no single park was wrong, and capacity was gone anyway.
 PARKED_SLOT_STALE_SECONDS = 6 * 3600
 PARKED_SLOT_FRACTION = 0.6
 

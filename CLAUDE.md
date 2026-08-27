@@ -382,6 +382,11 @@ alarm with two reasons rather than two alarms, when most of the fleet is parked
 or one slot has been held most of a day. Ages are parsed as UTC; `time.mktime`
 reads local and an alarm that is hours out is an alarm nobody keeps.
 
+Measured on 2026-08-27, when all five slots were parked with none running: by
+browser-call count, four had reached the form and one had made zero. So four of
+the five parks were correct and the pipeline was stopped regardless. No single
+park being wrong is exactly why nothing said anything.
+
 `tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
 the real firewall against a real Chrome and attaches real files to a form whose
 input is hidden. Both faults were invisible to the whole suite because every
