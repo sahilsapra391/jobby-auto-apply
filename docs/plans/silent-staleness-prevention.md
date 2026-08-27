@@ -103,6 +103,18 @@ meaningless. Where a test neutralises machinery in order to prove something,
 it has to neutralise all of it, and adding to that machinery means revisiting
 the test.
 
+That is not the whole of it, and the rest arrived while this was being written.
+#81 and #84 found a third direction: the test built its slice from
+`found_lane.EMBED_CAP`, which somebody else owns and which dropped to 3,350 on
+2026-08-26 to make room for the Profile page. With both trims off but the cap
+read live, the "untrimmed" slice measures 20,790,251, still 181,269 under the
+ceiling, so the guard would have gone quiet again for a reason having nothing to
+do with trimming. The cap is pinned in the test now. The general form is worse
+than the first one: a proof whose premise is a constant somebody else maintains
+will be broken by people who never read it, and the same guard has now been
+taken down from three directions by three changes that each had nothing to do
+with it.
+
 ### 3. Capacity has headroom alarms, not just cliffs
 
 A guard that refuses at 100% is correct and too late: by then the board is
