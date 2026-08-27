@@ -249,6 +249,38 @@ test('a hostile key in the index cannot escape the user prefix', async () => {
   }
 });
 
+test('an answer record served from KV keeps its own content type', async () => {
+  // Everything in KV is a PDF, because that is all the pre-R2 publisher wrote,
+  // so application/pdf was hardcoded here. 189 of the 442 indexed artifacts are
+  // JSON, HTML or text, and a JSON record served as a PDF is a file the browser
+  // refuses rather than a page it renders.
+  await putDoc(process.env, 'answers.json',
+               Buffer.from('{"fields":[]}').toString('base64'));
+  await index({ 'answers.json': { key: 'u/account-1/app/aa/answers.json',
+                                  contentType: 'application/json' } });
+  r2Faults = 500;                       // force the KV fallback
+  const response = await handler.fetch(get('/doc/answers.json'));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.equal(await response.text(), '{"fields":[]}');
+});
+
+test('a document the index does not know still defaults to pdf', async () => {
+  await putDoc(process.env, 'Legacy.pdf', Buffer.from('%PDF').toString('base64'));
+  const response = await handler.fetch(get('/doc/Legacy.pdf'));
+  assert.equal(response.headers.get('content-type'), 'application/pdf');
+});
+
+test('a hostile content type in the index cannot reach the response', async () => {
+  // The index arrives through KV, so its content type is checked like its key.
+  for (const bad of ['text/html<script>', 'application/pdf\r\nX-Evil: 1', '../../x', 42]) {
+    await index({ 'x.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: bad } });
+    objects.set('u/account-1/app/aa/resume.pdf', Buffer.from('%PDF'));
+    const response = await handler.fetch(get('/doc/x.pdf'));
+    assert.equal(response.headers.get('content-type'), 'application/pdf', String(bad));
+  }
+});
+
 test('a document is never cached and never indexed', async () => {
   objects.set('u/account-1/app/aa/resume.pdf', Buffer.from('%PDF'));
   await index({ 'r.pdf': { key: 'u/account-1/app/aa/resume.pdf', contentType: 'application/pdf' } });

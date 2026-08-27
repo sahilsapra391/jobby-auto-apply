@@ -501,10 +501,22 @@ async function handleDocument(request, pathname) {
   // is validated separately below.
   if (!/^[A-Za-z0-9._ -]{1,200}$/.test(name)) return text('No such document.\n', 404);
 
+  // Read once, outside the R2 branch: the KV fallback needs the content type
+  // too. Everything KV holds is a PDF, because that is all the pre-R2 publisher
+  // ever wrote, so application/pdf was right for as long as documents were the
+  // only artifact. They are not: 189 of the 442 indexed artifacts are JSON,
+  // HTML or text, and a JSON answer record served as application/pdf is a file
+  // the browser refuses rather than a page it renders. Found by a peer session
+  // building the answers modal against this route.
+  const index = await getDocIndex(process.env).catch(() => null);
+  const entry = index && index.docs ? index.docs[name] : null;
+  const contentType = (entry && typeof entry.contentType === 'string'
+                       && /^[a-z]+\/[a-z0-9.+-]+(; charset=[a-z0-9-]+)?$/i.test(entry.contentType))
+    ? entry.contentType
+    : 'application/pdf';
+
   let r2Error = null;
   if (r2Configured(process.env)) {
-    const index = await getDocIndex(process.env).catch(() => null);
-    const entry = index && index.docs ? index.docs[name] : null;
     // The key is ours, written by the publisher, but it arrives through KV and
     // ends up in a signed request, so it is checked rather than trusted. The
     // dot segments matter: S3 keys are opaque strings and R2 would happily
@@ -517,7 +529,7 @@ async function handleDocument(request, pathname) {
         const upstream = await fetchObject(process.env, entry.key, request.headers.get('range'));
         if (upstream.ok || upstream.status === 206) {
           const headers = {
-            'content-type': entry.contentType || 'application/pdf',
+            'content-type': contentType,
             'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
             ...BASE_HEADERS,
           };
@@ -541,13 +553,34 @@ async function handleDocument(request, pathname) {
     }
   }
 
+  // KV is the not-answered path, not the legacy path, and the difference is
+  // load-bearing enough to enumerate. Six ways to arrive here, three of them
+  // holding a valid index entry:
+  //
+  //   1. R2 is not configured at all
+  //   2. the index could not be read
+  //   3. the index has no entry for this name        <- the legacy documents
+  //   4. the entry's key fails the shape or dot-segment check, so a poisoned
+  //      index degrades to KV rather than to an error
+  //   5. R2 answered 404, which means the index is ahead of the bucket
+  //   6. R2 answered something else, or the fetch threw
+  //
+  // 5 is the one the dual read was built for and the one that is easy to
+  // convince yourself cannot happen: it is the window between an artifact
+  // being written locally and r2_sync putting it in the bucket. A peer session
+  // and I between us wrote three wrong comments about this block before either
+  // of us read the branch instead of the previous sentence.
+  //
+  // Everything KV actually holds is a PDF, because that is all the pre-R2
+  // publisher ever wrote, so an indexed non-PDF reaching 5 finds nothing here
+  // and falls to the error below rather than being served as the wrong type.
   const b64 = await getDoc(process.env, name).catch(() => null);
   if (b64) {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     return new Response(request.method === 'HEAD' ? null : bytes, {
       status: 200,
       headers: {
-        'content-type': 'application/pdf',
+        'content-type': contentType,
         // inline so it opens in the browser rather than forcing a save
         'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
         ...BASE_HEADERS,

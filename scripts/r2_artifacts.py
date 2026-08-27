@@ -198,6 +198,18 @@ def _company_segment(value):
     return cleaned.strip().strip(".") or "Unknown"
 
 
+# Which filename wins when two claim one key, lowest first. A captured record
+# beats the bare question list it was salvaged from, whatever they sort like.
+FILENAME_PREFERENCE = ("answers-", "questions-", "confirmation-", "confirm-")
+
+
+def _rank(name):
+    for position, prefix in enumerate(FILENAME_PREFERENCE):
+        if name.startswith(prefix):
+            return position
+    return len(FILENAME_PREFERENCE)
+
+
 def _sha256_and_size(path):
     digest = hashlib.sha256()
     total = 0
@@ -245,14 +257,34 @@ def collect(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None):
         company = _company_segment(path.parent.name)
         if aid:
             key = f"u/{user_id}/app/{aid}/{kind}{ext}"
-            # Two differently named files can both claim one application's
-            # resume: a contract-named one and a stem-named one from the
-            # generation before. Sorted order decides, and the loser keeps its
-            # own name rather than overwriting the winner.
-            if key in taken:
+            # Two differently named files can both claim one application's key:
+            # a contract-named resume and a stem-named one from the generation
+            # before, or answers-<id>.json beside the questions-<id>.json it was
+            # salvaged from. The loser keeps its own name under unfiled/ rather
+            # than overwriting the winner.
+            #
+            # Which one wins is chosen, not alphabetical. It used to fall out of
+            # sorted path order, which happened to give the right answer for
+            # answers/questions and gave it for no reason: re-syncing while a
+            # record was briefly absent would hand the key back to the bare
+            # list, and the card's modal would then fetch an array where it
+            # expects an object. It fails closed, and silently, which is the
+            # worst way to find out. Found by a peer session measuring the live
+            # bucket rather than by anything here.
+            incumbent = taken.get(key)
+            if incumbent and _rank(path.name) >= _rank(Path(incumbent).name):
                 key = f"u/{user_id}/unfiled/{company}/{path.name}"
                 aid = kind = None
             else:
+                if incumbent:
+                    # The newcomer is better. Demote the file already holding
+                    # the key instead of the one arriving.
+                    for earlier in artifacts:
+                        if earlier["path"] == incumbent:
+                            earlier["key"] = (f"u/{user_id}/unfiled/"
+                                              f"{earlier['company']}/{earlier['name']}")
+                            earlier["applicationId"] = earlier["kind"] = None
+                            break
                 taken[key] = str(path)
         else:
             key = f"u/{user_id}/unfiled/{company}/{path.name}"
