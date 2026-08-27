@@ -60,7 +60,16 @@ class FenceSurfaceContractTests(unittest.TestCase):
 
 
 class ProviderCarriesTheBrowserTests(unittest.TestCase):
-    """Every provider cleared for apply has to actually be handed the servers."""
+    """Every provider cleared for apply has to actually be handed the servers.
+
+    The binary is stubbed. The first version let `build_run_invocation` resolve
+    the real CLI, which passes on a laptop that has Claude and Codex installed
+    and dies on a runner that has neither, and a test that only holds where the
+    thing is already working is the shape of bug this whole change is about.
+    What is under test is the argv, not the install.
+    """
+
+    BINARY = staticmethod(lambda provider, required: f"/nonexistent/{provider}")
 
     def context(self, root):
         for name in ("resume.pdf", "cover.pdf"):
@@ -89,6 +98,7 @@ class ProviderCarriesTheBrowserTests(unittest.TestCase):
                         provider, "apply", "prompt",
                         workspace=root, browser_slot="apply-1",
                         browser_adapter=browser, application_context=context,
+                        binary_resolver=self.BINARY,
                     )
                     flat = " ".join(invocation.argv)
                     self.assertIn("browser", flat)
