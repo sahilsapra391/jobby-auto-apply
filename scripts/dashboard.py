@@ -31,7 +31,8 @@ import answer_record  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
 import premium_ui  # noqa: E402
-import settings_panel  # noqa: E402
+import settings_panel
+import state_slim  # noqa: E402
 
 
 def root_dir(override=None):
@@ -166,10 +167,49 @@ def publishable_state(state):
             if isinstance(record, dict)
         },
         "meta": meta,
-        "jobs": jobs,
+        # Slimmed, not whole. The records keep every field the deployed
+        # renderer reads, so filter and scoring stay identical, and lose the
+        # ones nothing draws. That was 20.66 MB of jobs against a 20 MB
+        # ceiling, and the ceiling won for 22 hours. See scripts/state_slim.py.
+        "jobs": state_slim.slim_jobs(jobs),
         "searchConfig": state.get("searchConfig"),
         "providers": settings_panel.public_payload(state.get("providers") or {}),
     }
+
+
+# What an expanded card actually draws. found_lane renders five points a column
+# and nothing reads past them, so publishing more is bytes the reader discards.
+PUBLISHED_SECTION_POINTS = 5
+# 200 keeps 79.5% of real bullets whole (measured over 94,438 of them: mean 157,
+# p90 279). It is chosen against the synthetic worst case rather than the mean,
+# because that is what the ceiling has to survive: 3,400 records of five full
+# length bullets a column is 17.5 MB, against 20.7 at 300 characters.
+PUBLISHED_SECTION_CHARS = 200
+
+
+def _trim_sections(job):
+    """One record with its sections cut to what the board will show.
+
+    The store keeps the whole parse, because a later reader may want it. The
+    published state cannot: sections reached 9.38 MB of a 21.03 MB state after
+    the full-body backfill, and the deployed reader stops at 20 MB, so every
+    publish failed and the board froze for hours. Trimmed to what the panel
+    draws, the same state is 16.2 MB.
+    """
+    sections = job.get("sections")
+    if not isinstance(sections, dict):
+        return job
+    cut = {}
+    for name in ("responsibilities", "requirements"):
+        lines = sections.get(name)
+        if isinstance(lines, list) and lines:
+            cut[name] = [str(line)[:PUBLISHED_SECTION_CHARS]
+                         for line in lines[:PUBLISHED_SECTION_POINTS]]
+    if not cut:
+        return job
+    trimmed = dict(job)
+    trimmed["sections"] = cut
+    return trimmed
 
 
 def publishable_jobs(jobs, config):
@@ -207,7 +247,7 @@ def publishable_jobs(jobs, config):
     for job_id, job in (jobs or {}).items():
         key = str(job_id)
         if (job.get("state") or "new") != "new" or key in keep:
-            out[key] = job
+            out[key] = _trim_sections(job)
     return out, total, census
 
 
