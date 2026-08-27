@@ -134,6 +134,32 @@ what the store would say today, presented as what the employer received then.
 That is a fabricated audit trail, and a fabricated audit trail is worse than
 none. A test asserts no stored value reaches a salvaged record.
 
+There is a second tempting source and it is worse than the join. Sessions
+write blocker text into a session's `pendingFields`, and #73 now writes the same
+strings into `answers.json` as unanswered entries carrying `askedBy`. Both live
+in a field called `question`, so backfilling salvaged records from them looks
+like recovering more of the same thing. It is not. Measured across the 13
+applications parked in `review` on 2026-08-27, 29 blocker strings, **0 of 29 are
+question-shaped**; every one is agent prose. Two verbatim:
+
+    "Email verification code (8 characters) sent to sahil...@gmail.com"
+    "Browser tools unavailable in this session"
+
+A fault report and an instruction, sitting in a field named `question`. The
+salvage reads `questions*.json` only and must keep doing so. `askedBy` was 0
+across all 156 entries when checked the same day, because that loop writes on a
+park and none has happened since it merged, so there is nothing there to take
+even if it were the right shape.
+
+That is five distinct claims now catalogued, and none of them may share a field:
+what the form asked and the agent entered (`full`), what the form asked with the
+answer lost (`questions-only`), what the agent reported being stuck on, what the
+agent saw on the confirmation page (`confirmation` on the completed event, 78 of
+102, page banners with no field values), and what an employer's email says it
+received, which does not exist yet. The `capture` level and the per-field
+`source` enum are where a new one goes. Adding a value costs one enum entry;
+blending two costs the ability to ever tell which you are looking at.
+
 Attribution follows `r2_artifacts`' rule rather than a new one: the id in the
 filename when the store knows it, otherwise the company folder and only when
 that company has exactly one application. 25 files were skipped on those
