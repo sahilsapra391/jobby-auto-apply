@@ -267,12 +267,19 @@ def _validated_healthchecks_url(value):
     return value
 
 
-def _render_healthchecks(content, value):
+def _render_assignment(content, name, value):
+    """Replace one NAME= line in place, collapsing any stale duplicates.
+
+    In place rather than appended, because a second live assignment for the
+    same name is how a config file ends up meaning two things at once, and the
+    reader takes the last one while a person reads the first.
+    """
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}[ \t]*=(.*)$")
     lines = content.splitlines(keepends=True)
     matches = []
     for index, line in enumerate(lines):
         body, ending = _split_ending(line)
-        if HEALTHCHECKS_ASSIGNMENT.match(body):
+        if pattern.match(body):
             matches.append((index, ending))
 
     if matches:
@@ -281,13 +288,17 @@ def _render_healthchecks(content, value):
         output = []
         for index, line in enumerate(lines):
             if index == first_index:
-                output.append(f"{HEALTHCHECKS_NAME}={value}{matches[0][1]}")
+                output.append(f"{name}={value}{matches[0][1]}")
             elif index not in matched_indexes:
                 output.append(line)
         return "".join(output), "updated"
 
     separator = "" if not content or content.endswith(("\n", "\r")) else "\n"
-    return f"{content}{separator}{HEALTHCHECKS_NAME}={value}\n", "created"
+    return f"{content}{separator}{name}={value}\n", "created"
+
+
+def _render_healthchecks(content, value):
+    return _render_assignment(content, HEALTHCHECKS_NAME, value)
 
 
 def set_healthchecks_url(value, config_path=None):
@@ -317,6 +328,74 @@ def set_healthchecks_url(value, config_path=None):
         "path": str(path),
         "mode": "0600",
         "state": state,
+    }
+
+
+R2_NAMES = ("R2_ACCOUNT_ID", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+
+# An R2 access key id is a 32-character hex string and the secret is a
+# 64-character hex string. Checking the shape here is not security, it is the
+# difference between "Connected" and a backfill that fails on object one with a
+# signature error nobody can read.
+R2_ACCESS_KEY_ID_SHAPE = re.compile(r"^[0-9a-f]{32}$")
+R2_SECRET_SHAPE = re.compile(r"^[0-9a-f]{64}$")
+R2_BUCKET_SHAPE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+R2_ACCOUNT_SHAPE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _validated_r2(values):
+    for name in R2_NAMES:
+        value = values.get(name)
+        if not isinstance(value, str) or not value or any(
+                char in value for char in ("\0", "\r", "\n")):
+            raise WorkerKeyError("invalid_r2_setting", [name])
+    checks = {
+        "R2_ACCOUNT_ID": R2_ACCOUNT_SHAPE,
+        "R2_BUCKET": R2_BUCKET_SHAPE,
+        "R2_ACCESS_KEY_ID": R2_ACCESS_KEY_ID_SHAPE,
+        "R2_SECRET_ACCESS_KEY": R2_SECRET_SHAPE,
+    }
+    wrong = [name for name, shape in checks.items() if not shape.fullmatch(values[name])]
+    if wrong:
+        raise WorkerKeyError("unexpected_r2_shape", wrong)
+    return {name: values[name] for name in R2_NAMES}
+
+
+def set_r2_credentials(values, config_path=None):
+    """Write the four R2 settings atomically, printing none of them.
+
+    Never takes a secret on argv. The caller collects it from a private prompt,
+    so it does not reach shell history, the process table, or a log.
+    """
+    checked = _validated_r2(values)
+    path = Path(config_path) if config_path is not None else toolpath.LOCAL_CONFIG
+    if not path.is_absolute():
+        raise WorkerKeyError("config_path_not_absolute")
+    _secure_directory(path.parent)
+
+    states = {}
+    with _config_lock(path):
+        if path.is_symlink():
+            raise WorkerKeyError("unsafe_file_target")
+        content = _read_config(path)
+        rendered = content
+        for name in R2_NAMES:
+            rendered, states[name] = _render_assignment(rendered, name, checked[name])
+        if rendered != content or not path.exists():
+            _atomic_write(path, rendered)
+        else:
+            try:
+                os.chmod(path, 0o600, follow_symlinks=False)
+            except OSError as exc:
+                raise WorkerKeyError("config_permissions_failed") from exc
+
+    return {
+        "ok": True,
+        "action": "set-r2",
+        "path": str(path),
+        "mode": "0600",
+        "variables": list(R2_NAMES),
+        "state": states,
     }
 
 
@@ -378,6 +457,11 @@ def main(argv=None):
         "set-healthchecks", help="set the private Healthchecks ping URL"
     )
     healthchecks.add_argument("url", help="https://hc-ping.com/<uuid>")
+    r2cmd = commands.add_parser(
+        "set-r2", help="set the R2 artifact bucket credentials from a private prompt"
+    )
+    r2cmd.add_argument("--bucket", default="jobby-artifacts")
+    r2cmd.add_argument("--account", help="Cloudflare account id (default: the one already configured)")
     args = parser.parse_args(argv)
 
     try:
@@ -385,6 +469,21 @@ def main(argv=None):
             result = ensure_worker_key()
         elif args.command == "stage":
             result = stage_worker_env(args.output)
+        elif args.command == "set-r2":
+            import getpass
+            account = args.account or toolpath.settings().get("CF_ACCOUNT_ID", "")
+            if not account:
+                print(json.dumps({"ok": False, "action": "set-r2",
+                                  "error": "no_account_id"}, sort_keys=True))
+                return 2
+            print("Paste the R2 API token values. Neither is echoed or printed back.",
+                  file=sys.stderr)
+            result = set_r2_credentials({
+                "R2_ACCOUNT_ID": account.strip(),
+                "R2_BUCKET": args.bucket.strip(),
+                "R2_ACCESS_KEY_ID": getpass.getpass("Access Key ID: ").strip(),
+                "R2_SECRET_ACCESS_KEY": getpass.getpass("Secret Access Key: ").strip(),
+            })
         else:
             result = set_healthchecks_url(args.url)
     except WorkerKeyError as exc:

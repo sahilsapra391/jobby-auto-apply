@@ -843,7 +843,7 @@ class ProviderNeutralApplyTests(TickHarnessMixin, unittest.TestCase):
         ready = {"state": "ready", "provider": "gemini"}
         with self.tick_harness("openai", ready) as calls:
             watch.tick()
-        calls["claim"].assert_called_once_with("apply/")
+        calls["claim"].assert_called_once_with("apply/", application_id="acme-pm")
         calls["serve"].assert_called_once_with("apply-1")
         calls["spawn"].assert_called_once()
         argv = list(calls["spawn"].call_args.args[1])
@@ -1019,7 +1019,14 @@ class SourcingSchedulerTests(unittest.TestCase):
         stamp = watch.schedule_next_tier1(now)
         when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         delta = (when - now).total_seconds()
-        self.assertGreaterEqual(delta, 3600 - watch.TIER1_JITTER_SECONDS)
+        # One second of slack, for truncation rather than for jitter. The stamp
+        # is formatted to whole seconds, so it discards up to 999ms of `now`,
+        # and a jitter landing on the minimum then measured just under the
+        # bound. Intermittent, roughly one run in a thousand, and an
+        # occasionally red test costs more than the bound's last second is
+        # worth. `test_the_configured_interval_is_respected` below already
+        # carries the same allowance.
+        self.assertGreaterEqual(delta, 3600 - watch.TIER1_JITTER_SECONDS - 1)
         self.assertLessEqual(delta, 3600 + watch.TIER1_JITTER_SECONDS)
 
     def test_the_jitter_actually_varies(self):
@@ -1247,6 +1254,69 @@ class EyeAndPassTests(unittest.TestCase):
             self.promote.watch(self.root, "j1")
 
 
+class ParkedSlotDeadlockTests(unittest.TestCase):
+    """The queue that stopped because its slots were held by its own tail.
+
+    Observed on 2026-08-25: all five browser slots parked by applications that
+    had been retried, so they were back in the Apply queue at positions three
+    to eight while still owning their tabs. The head held built documents and
+    no slot. Nine applications reported "waiting for an earlier application"
+    and not one of them was running.
+    """
+
+    def setUp(self):
+        self.parked = {}
+        self.owned = {}
+        self.free = []
+        patch_holder = mock.patch.object(
+            watch, "lock_holder",
+            side_effect=lambda name: ({"note": self.parked[name], "parked": True}
+                                      if name in self.parked else None))
+        patch_slot = mock.patch.object(
+            watch, "browser_slot_for_application",
+            side_effect=lambda aid, sessions=None: self.owned.get(aid))
+        patch_free = mock.patch.object(
+            watch, "free_apply_slots", side_effect=lambda: list(self.free))
+        for p in (patch_holder, patch_slot, patch_free):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_head_still_wins_when_it_can_run(self):
+        self.free = ["apply-1"]
+        items = [{"applicationId": "head"}, {"applicationId": "tail"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "head")
+
+    def test_a_tail_holding_its_own_parked_slot_goes_first_when_the_head_cannot(self):
+        # Every slot parked, none free, and the head owns none of them.
+        self.free = []
+        self.parked = {"apply-1": "gitlab", "apply-2": "versant"}
+        self.owned = {"gitlab": "apply-1", "versant": "apply-2"}
+        items = [{"applicationId": "axon"},
+                 {"applicationId": "swiggy"},
+                 {"applicationId": "gitlab"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "gitlab")
+
+    def test_a_tail_without_a_slot_of_its_own_does_not_jump_the_queue(self):
+        # A free slot would have served the head too, so this is not a reason
+        # to reorder, and click order is the rule whenever it can be kept.
+        self.free = []
+        self.parked = {"apply-1": "someone-else"}
+        self.owned = {}
+        items = [{"applicationId": "axon"}, {"applicationId": "swiggy"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "axon")
+
+    def test_a_slot_parked_by_a_different_application_is_not_borrowed(self):
+        # The tab holds another application's half-filled form.
+        self.free = []
+        self.parked = {"apply-1": "gitlab"}
+        self.owned = {"swiggy": "apply-1"}
+        items = [{"applicationId": "axon"}, {"applicationId": "swiggy"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "axon")
+
+    def test_an_empty_queue_has_no_head(self):
+        self.assertIsNone(watch.choose_apply_head([]))
+
+
 class SlotReleaseTests(unittest.TestCase):
     """A slot must not be lost when something throws before the runner starts.
 
@@ -1294,7 +1364,7 @@ class SlotReleaseTests(unittest.TestCase):
         self.assertIn("candidate_slots = candidate_apply_slots(head_id)", window)
         self.assertIn("slot = candidate_slots[0]", window)
         self.assertIn("if reserve(slot, note=head_id):", window)
-        self.assertIn('claimed = claim_one("apply/")', window)
+        self.assertIn('claimed = claim_one("apply/", application_id=head_id)', window)
         self.assertIn("persist_browser_slot(head_id, slot)", window)
         self.assertIn("browser.serve(slot)", window)
         self.assertIn("except Exception:", window)

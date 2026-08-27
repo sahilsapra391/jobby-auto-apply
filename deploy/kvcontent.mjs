@@ -20,6 +20,13 @@ export const LOCAL_STATUS_KEY = 'jobby:worker:local:status';
 export const WORKER_STATUS_KEY = 'jobby:worker:documents:status';
 export const docKey = (name) => `jobby:doc:${name}`;
 
+// filename -> the R2 key that holds it. The board's links are filenames and
+// always have been, and the R2 layout is by application id, so something has to
+// bridge the two. A separate key rather than a field on the board state,
+// because the state is 9.4MB gzipped and a document open would have to
+// decompress the whole board to find one filename.
+export const DOC_INDEX_KEY = 'jobby:doc-index';
+
 // A serverless instance handles several requests before it is recycled, so a
 // short cache turns a burst of page loads into one KV read without ever
 // serving anything meaningfully stale.
@@ -113,6 +120,31 @@ export async function getDoc(env, name) {
 
 export async function putDoc(env, name, base64) {
   return kvPut(env, docKey(name), base64);
+}
+
+let cachedIndex = null;
+
+/** {schemaVersion, generatedAt, docs: {name: {key, sha256, bytes, contentType}}} */
+export async function getDocIndex(env) {
+  if (cachedIndex && Date.now() - cachedIndex.at < CACHE_MS) return cachedIndex.value;
+  const raw = await kvGet(env, DOC_INDEX_KEY);
+  if (raw === null) return null;
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (value.schemaVersion !== 1 || !value.docs || typeof value.docs !== 'object') return null;
+  cachedIndex = { at: Date.now(), value };
+  return value;
+}
+
+export async function putDocIndex(env, docs, generatedAt) {
+  cachedIndex = null;
+  return kvPut(env, DOC_INDEX_KEY, JSON.stringify({
+    schemaVersion: 1, generatedAt, docs,
+  }));
 }
 
 export { configured };

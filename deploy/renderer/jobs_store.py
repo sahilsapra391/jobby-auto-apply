@@ -691,6 +691,33 @@ def close_missing(jobs, seen, at=None, norm=None):
     return jobs, {"closed": closed, "refused": refused}
 
 
+def clear_undecided_watch(job, why):
+    """Take a record out of `watched` that no decision ever put there.
+
+    `watched -> new` is not in TRANSITIONS and should not be. A watch is a
+    thing the user did, and a state machine that lets any caller undo it is one
+    where a bug can quietly empty the shelf. So this is not a transition; it is
+    a named repair, it stamps why on the record, and the only caller is
+    `repair_watch_drift.py`.
+
+    It exists because 33 records were sitting in `watched` with no session, no
+    history event, no entry in roles.json and no timestamp -- no evidence
+    anywhere that a person chose them. Reverting those is not undoing a
+    decision, it is removing a state no decision produced. The cost if that
+    reasoning is wrong is one more eye-tap on a role that reappears in Found;
+    the cost of the alternative is a shelf carrying decisions nobody made.
+    """
+    if job.get("state") != "watched":
+        raise JobsStoreError(
+            f"clear_undecided_watch only applies to a watched record, not "
+            f"{job.get('state')!r}")
+    job = dict(job)
+    job["state"] = "new"
+    job["stateRepairedAt"] = now_stamp()
+    job["stateRepairedWhy"] = why
+    return job
+
+
 def reopen(job):
     """A closed job the board is listing again. Returns (job, reopened).
 

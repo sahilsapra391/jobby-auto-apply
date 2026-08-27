@@ -7,7 +7,9 @@ cited answer-store key actually existing -- are each the sort of thing a caller
 would quietly get wrong on a form nobody re-reads.
 """
 
+import hashlib
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -378,6 +380,135 @@ class PublicRecordTests(unittest.TestCase):
         # The key names a row in the local answer store. The board shows a
         # source badge, not a store index, so it stays on the laptop.
         self.assertNotIn("sourceKey", public["fields"][0])
+
+
+class ArtifactContractTests(unittest.TestCase):
+    """The writer and the R2 collector are one contract in two modules.
+
+    r2_artifacts is the single collector deciding what a Class 1 artifact is and
+    what its key is, and it already matched `answers-<id>.json` by name before
+    this feature existed. So there is nothing to add there and exactly one thing
+    to keep true: both modules must look in the same directory. If they drift,
+    the record is written, the upload never sees it, and the board says "not
+    captured" for an application that has a record sitting on disk.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+
+    def test_both_modules_resolve_the_same_applications_directory(self):
+        import r2_artifacts
+        cases = [None, str(self.root), str(self.root / "other")]
+        for case in cases:
+            with self.subTest(root=case):
+                self.assertEqual(answer_record.applications_dir(case),
+                                 r2_artifacts.applications_dir(case))
+
+    def test_the_environment_redirect_moves_both_the_same_way(self):
+        import r2_artifacts
+        previous = os.environ.get("JOB_APPLICATION_DIR")
+        os.environ["JOB_APPLICATION_DIR"] = str(self.root)
+        try:
+            self.assertEqual(answer_record.applications_dir(),
+                             r2_artifacts.applications_dir())
+            self.assertEqual(answer_record.applications_dir(),
+                             self.root / "applications")
+        finally:
+            if previous is None:
+                os.environ.pop("JOB_APPLICATION_DIR", None)
+            else:
+                os.environ["JOB_APPLICATION_DIR"] = previous
+
+    def test_a_record_is_collected_as_a_class_one_artifact_under_its_application(self):
+        import r2_artifacts
+        store = self.root / "state"
+        (store / "sessions").mkdir(parents=True)
+        (store / "answers.json").write_text("{}")
+        (store / "sessions" / "app-1.json").write_text(json.dumps({
+            "applicationId": "app-1", "company": "Acme", "role": "PM"}))
+        apps = self.root / "applications"
+        apps.mkdir()
+        real_apps = answer_record.APPS
+        answer_record.APPS = apps
+        self.addCleanup(setattr, answer_record, "APPS", real_apps)
+        answer_record.write("app-1", [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"}], root=store)
+
+        plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
+        found = [a for a in plan["artifacts"] if a["name"] == "answers-app-1.json"]
+        self.assertEqual(len(found), 1)
+        artifact = found[0]
+        self.assertEqual(artifact["applicationId"], "app-1")
+        self.assertEqual(artifact["kind"], "answers")
+        self.assertEqual(artifact["key"], "u/account-1/app/app-1/answers.json")
+        # The board's modal reads this as JSON. A record keyed with the PDF
+        # content type is a file the browser refuses rather than a page.
+        self.assertEqual(artifact["contentType"], "application/json")
+        self.assertEqual(artifact["sha256"],
+                         hashlib.sha256((apps / "Acme" / "answers-app-1.json")
+                                        .read_bytes()).hexdigest())
+
+    def test_a_hand_made_questions_file_cannot_shadow_the_real_record(self):
+        # Seventeen questions-<id>.json files predate this feature, hold question
+        # text with no answers, and map to the same `answers` kind. Both want
+        # u/<user>/app/<id>/answers.json and only one can have it. Sorted path
+        # order gives it to the real record; the older file keeps its own name
+        # under unfiled/ rather than overwriting what the board reads.
+        import r2_artifacts
+        store = self.root / "state"
+        (store / "sessions").mkdir(parents=True)
+        (store / "answers.json").write_text("{}")
+        (store / "sessions" / "app-1.json").write_text(json.dumps({
+            "applicationId": "app-1", "company": "Acme", "role": "PM"}))
+        apps = self.root / "applications"
+        (apps / "Acme").mkdir(parents=True)
+        (apps / "Acme" / "questions-app-1.json").write_text(
+            json.dumps(["What is your name?"]))
+        real_apps = answer_record.APPS
+        answer_record.APPS = apps
+        self.addCleanup(setattr, answer_record, "APPS", real_apps)
+        answer_record.write("app-1", [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"}], root=store)
+
+        plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
+        by_name = {a["name"]: a for a in plan["artifacts"]}
+        self.assertEqual(by_name["answers-app-1.json"]["key"],
+                         "u/account-1/app/app-1/answers.json")
+        self.assertEqual(by_name["questions-app-1.json"]["key"],
+                         "u/account-1/unfiled/Acme/questions-app-1.json")
+
+
+class HistoryStaysClosedTests(unittest.TestCase):
+    def test_the_history_still_refuses_to_carry_answers(self):
+        """The per-application record is the sanctioned path *because* this holds.
+
+        applications.jsonl is append-only, unfiltered and read by everything;
+        putting a transcript there would put a salary figure and an EEO answer
+        in a file nothing masks. The record filters at the door instead, which
+        is only a meaningful distinction while the door stays shut. This is the
+        obvious place someone adds a shortcut, so the refusal is asserted from
+        the feature that would benefit from breaking it.
+        """
+        import store
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        payload = pathlib.Path(temp.name) / "event.json"
+
+        class Args:
+            root = temp.name
+            input = str(payload)
+
+        for banned in ("answers", "values"):
+            with self.subTest(key=banned):
+                payload.write_text(json.dumps({
+                    "event": "completed", "company": "Acme", "role": "PM",
+                    banned: {"what are your salary expectations?": "165000"}}))
+                with self.assertRaises(store.StoreError):
+                    store.cmd_history_append(Args())
 
 
 if __name__ == "__main__":

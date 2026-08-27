@@ -474,8 +474,38 @@ is now a terms requirement as well as a security one.
 
 **Class 1, R2, encrypted at rest by the platform, plaintext to the API.**
 Uploaded resumes, generated resume and cover-letter HTML and PDF, cached JD
-snapshots, confirmation screenshots. Private bucket, no public access, served
-only through short-lived presigned GETs minted after an authz check.
+snapshots, confirmation screenshots. Private bucket, no public access, no CDN.
+
+**Serving proxies the bytes; it does not hand out URLs.** The request passes the
+authz check, the API reads the object, the API returns it. This section used to
+say "short-lived presigned GETs minted after an authz check" and that was built
+first and then measured, on 2026-08-25, against the real board and the real
+bucket: a redirect is a second round trip, the Vercel leg alone is 370 to 430ms
+whatever it is doing, and a 119KB resume cost about 180ms more than the KV path
+it replaced. Mobile is the primary surface and pays a second round trip harder,
+not softer. Proxying is one round trip, the same shape KV always had, and the
+function's own read is faster than KV's: 104ms against 122ms at 119KB, 145ms
+against 301ms at 540KB, because KV carries base64 and R2 carries bytes.
+
+It is also better on its own terms, which is why it is the design rather than a
+performance patch. No signed URL reaches the browser, so none lands in history,
+in a screenshot or in a shared link, and nothing a reader holds keeps working
+after they lose access.
+
+**Single-tenant, today, on Vercel:** the function authenticates to R2 with the
+S3-compatible credential and streams the object back, forwarding Range so a
+phone's PDF viewer can page a large file. Presigning still exists in the two
+signers, because it is how the device authenticates its own uploads and how an
+operator gets a temporary link by hand, but it is not on the serving path.
+
+**Workers-era:** the same shape with less machinery. An R2 binding on the Worker
+reads the object directly after the authz check, so the S3-compatible credential
+and its rotation stop existing for serving and remain only for the device
+uploader. Moving from one to the other changes where the bytes come from inside
+one function; it does not change the contract, the key layout, or anything the
+browser sees. That is the point of proxying now rather than later: the redirect
+design was carrying a credential complication that the destination does not
+have.
 
 **Class 2, field-level envelope encryption.** The answers `store.py` already
 tags sensitive: compensation expectations, work authorisation, EEO and

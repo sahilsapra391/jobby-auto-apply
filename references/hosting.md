@@ -200,6 +200,88 @@ vercel env add CF_API_TOKEN production
 python3 scripts/queue_check.py --write
 ```
 
+### Setting up the artifact bucket
+
+Generated resumes and cover letters, the job description as it read when we
+applied, and the per-application answer record live in Cloudflare R2, not in
+KV and not only on the laptop. The bucket is private, has no public access and
+no CDN in front of it. A document link makes the same password check every
+other route makes, and then `deploy/api/board.js` reads the object out of R2 and
+returns the bytes. Nothing signed reaches the browser, and a `Range` header is
+forwarded so a phone's PDF viewer can page a large file instead of waiting on
+the whole download.
+
+R2 prices operations in the same shape KV does and with the same trap: writes
+and **listing** are Class A, a million a month; reads are Class B, ten million.
+So nothing on the publish path lists. `~/.job-application/r2-manifest.json`
+records what this machine has already uploaded, which makes a publish over an
+unchanged tree cost zero operations. `--prune` is the only thing that lists, it
+is run by hand, and it is the only thing that can delete.
+
+One-time setup:
+
+1. Create the bucket, or reuse `jobby-artifacts`:
+
+```bash
+npx wrangler r2 bucket create jobby-artifacts
+```
+
+2. Create an **R2 API token** at **dash.cloudflare.com → R2 → API → Manage API
+   tokens**, with *Object Read & Write* scoped to that one bucket. It prints an
+   Access Key ID and a Secret Access Key once, plus a Token value that Jobby
+   does not use: the S3 path signs with the key pair, and the token is for
+   Cloudflare's own REST API.
+
+   This is a second credential and not interchangeable with the KV one. The
+   Workers KV token cannot see R2 and the R2 token cannot see KV.
+
+3. Put the pair on this machine. It reads them from a private prompt, so
+   neither reaches shell history, the process table, or a log:
+
+```bash
+python3 scripts/worker_key.py set-r2
+```
+
+   `R2_ACCOUNT_ID` falls back to the `CF_ACCOUNT_ID` already set for the queue
+   and `R2_BUCKET` defaults to `jobby-artifacts`, so only the two credentials
+   need supplying. Both land in `~/.job-application/config.env` at mode 0600.
+
+4. Give the same pair to the Vercel project, so the board can mint links.
+   `pbpaste` keeps them off the screen and out of history:
+
+```bash
+cd deploy && pbpaste | vercel env add R2_ACCESS_KEY_ID production
+```
+
+```bash
+cd deploy && pbpaste | vercel env add R2_SECRET_ACCESS_KEY production
+```
+
+5. Prove the credential signs and the bucket answers, without writing anything:
+
+```bash
+python3 scripts/r2.py --check
+```
+
+Then move what is already on disk:
+
+```bash
+python3 scripts/r2_sync.py                # dry run: what would move, and how much
+python3 scripts/r2_sync.py --apply        # upload
+python3 scripts/r2_sync.py --verify       # re-download every object and re-hash it
+```
+
+`--verify` is deep by default, and that is the point. It re-downloads each body
+and compares the hash against the local file, because the stamped metadata
+survives a bad body and a HEAD-only pass would report a corruption as healthy.
+`--verify --quick` compares size, the stamped hash and the ETag against the
+local MD5, which catches corruption too without downloading anything.
+
+Publishing uploads before it writes anything to KV, and a failed upload fails
+the publish. That is deliberate: a board that published while its documents did
+not arrive is a board full of links to nothing, and the local file stays
+authoritative either way.
+
 ### Poll interval, and why it is not two seconds
 
 The watcher polls every few seconds so a click reaches an agent almost immediately. It is tempting to make that number very small. Do not: at two seconds the old Blob-backed queue ran roughly 1.3 million operations a month and the store was suspended.
@@ -335,6 +417,10 @@ deploy/dev-server.mjs       runs the same handler locally; never uploaded
 scripts/publish.py          render and write content to KV, record the stable URL
 scripts/document_job.py     Mac client for encrypted document work
 scripts/document_worker.py  serial local document worker
+scripts/r2.py               R2 access and SigV4 signing, stdlib only
+scripts/r2_artifacts.py     which local file is an artifact, and its key
+scripts/r2_sync.py          upload, verify, prune, and the filename index
+deploy/r2.mjs               the same signing, for minting links in the function
 ```
 
 Board HTML and application documents no longer enter the repository or a deployment. `publish.py` sends them to KV through owner-only temporary files.

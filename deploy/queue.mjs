@@ -4,7 +4,7 @@
 //   poll                 every queue in one read, no side effects
 //   list <prefix>        what is waiting in one queue, oldest first
 //   enqueue <prefix> <id>  add a request, deduped by application id
-//   claim-one <prefix>   take exactly the oldest request
+//   claim-one <prefix> [id]  take the oldest request, or that one specifically
 //   claim <prefix>       take every request
 //   config-take          take the saved search config and clear it
 //
@@ -31,7 +31,9 @@ try {
     if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) die('usage: queue.mjs enqueue <prefix> <applicationId>');
     console.log(JSON.stringify(await enqueue(env, queue, id)));
   } else if (cmd === 'claim-one') {
-    console.log(JSON.stringify(await claimOne(env, queue)));
+    // The optional id takes that request rather than the oldest.
+    if (id && !/^[A-Za-z0-9._-]+$/.test(id)) die('claim-one: bad application id');
+    console.log(JSON.stringify(await claimOne(env, queue, id || '')));
   } else if (cmd === 'claim') {
     console.log(JSON.stringify(await claimAll(env, queue)));
   } else if (cmd === 'config-take') {

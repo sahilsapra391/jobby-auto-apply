@@ -201,10 +201,13 @@ class BrandTest(unittest.TestCase):
     def test_job_cards_answer_hover_with_their_outline_not_a_lift(self):
         # The controls are still allowed to leave the card; the card is not.
         html = build()
-        self.assertIn(".card:hover { border-color:var(--hair-strong);", html)
-        # Weighted to match the status rule along the top, drawn as an inset
-        # shadow so thickening it cannot move the card.
-        self.assertIn("inset 0 0 0 2px var(--hair-strong)", html)
+        self.assertIn(".card:hover { border-color:var(--hair-strong); }", html)
+        # One ring, not a coloured rule with a thinner grey line beside it: all
+        # four sides are the status rule's weight and only the colour differs,
+        # so hover changes colour alone and nothing moves.
+        self.assertIn(".card { border-width:3px; }", html)
+        self.assertIn(".card.hold { border-top-color:var(--orange); }", html)
+        self.assertIn(".card.ref,.card.flight { border-top-color:var(--purple); }", html)
         self.assertIn(".jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }", html)
         for rule in (".card:hover", ".jb-card:hover"):
             start = html.index(rule)
@@ -1291,6 +1294,28 @@ class ProviderSettingsTests(unittest.TestCase):
         panel = page[page.index("function detailPanel(job) {"):]
         panel = panel[:panel.index("function ", 40)]
         self.assertNotIn("job.sum", panel)
+
+    def test_an_optimistic_move_stands_until_the_status_changes(self):
+        """The rule that made Retry look broken.
+
+        A retried application keeps its old status until the runner picks it
+        up, so "the snapshot is newer than the move" fired on the very next
+        publish and dragged the card back out of In flight seconds after the
+        click. What supersedes a move is the status changing, not the clock.
+        """
+        page = build()
+        self.assertIn("was: lastSeenStatus[id] || ''", page)
+        self.assertIn("return (serverStatus || '') === (mine.was || '');", page)
+        # And a move nothing ever answers cannot pin a card forever.
+        self.assertIn("PENDING_CAP_MS", page)
+        self.assertIn("Date.now() - Date.parse(mine.at) > PENDING_CAP_MS", page)
+
+    def test_applying_from_found_draws_a_card_straight_away(self):
+        # Found creates the application rather than moving a card, so there is
+        # nothing for the lane poll to move until the session exists.
+        page = build()
+        self.assertIn("window.jobbyPlaceholder = function (company, role, id)", page)
+        self.assertIn("if (window.jobbyPlaceholder) window.jobbyPlaceholder(job.co, job.ti, job.id);", page)
 
     def test_the_mark_replays_on_click_without_a_composited_blur(self):
         # A CSS clip-path or opacity animation promotes the pack to its own

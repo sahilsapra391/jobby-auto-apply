@@ -44,8 +44,40 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-APPS = REPO / "applications"
 STORE = REPO / "scripts" / "store.py"
+
+
+def applications_dir(root=None):
+    """Where tailored documents live, following a redirected store.
+
+    This has to be `r2_artifacts.applications_dir` character for character.
+    That module is the one collector deciding which local files are Class 1
+    artifacts and what their R2 key is, and it already matches
+    `answers-<id>.json` by name. If this file writes to REPO/applications while
+    a redirected store sends the collector to <root>/applications, the record is
+    written, nothing reads it, and the board shows "not captured" for an
+    application that has one. `AnswerRecordArtifactTests` compares the two
+    rather than restating the rule.
+
+    Not imported from there: r2_artifacts pulls in document_contract, file_docs
+    and r2, and this module ships in the renderer bundle, which must not.
+    """
+    redirect = root or os.environ.get("JOB_APPLICATION_DIR")
+    if redirect:
+        return Path(redirect).expanduser() / "applications"
+    return REPO / "applications"
+
+
+# None means "resolve from the store root or the environment on every call",
+# which is what r2_artifacts does. Tests set it to a temporary directory. It is
+# not resolved once at import, because finish.py exports JOB_APPLICATION_DIR
+# after this module is already loaded.
+APPS = None
+
+
+def _apps(root=None):
+    return Path(APPS) if APPS else applications_dir(root)
+
 
 SCHEMA_VERSION = 1
 
@@ -356,36 +388,37 @@ def _identity(root, application_id):
     return None, None, None, None
 
 
-def company_dir(company):
+def company_dir(company, root=None):
     """The folder file_docs.py files this company's documents into."""
-    return APPS / str(company)
+    return _apps(root) / str(company)
 
 
-def index():
+def index(root=None):
     """{application id: path} for every record on disk, in one scan.
 
     Publishing asks for a hundred records in a row, and a per-record rglob over
     a hundred company folders is a scan each. This is the one scan.
     """
-    if not APPS.exists():
+    apps = _apps(root)
+    if not apps.exists():
         return {}
     found = {}
-    for path in sorted(APPS.rglob("answers-*.json")):
+    for path in sorted(apps.rglob("answers-*.json")):
         stem = path.name[len("answers-"):-len(".json")]
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", stem):
             found.setdefault(stem, path)
     return found
 
 
-def record_path(application_id, company=None):
+def record_path(application_id, company=None, root=None):
     """Where this application's record lives, whether or not it exists yet.
 
     Named by application id rather than by company, for the same reason
     jd-<id>.txt is: one company can have two open roles and they share a folder.
     """
     if company:
-        return company_dir(company) / f"answers-{application_id}.json"
-    return index().get(application_id)
+        return company_dir(company, root) / f"answers-{application_id}.json"
+    return index(root).get(application_id)
 
 
 def build(application_id, fields, *, root=None, answers=None):
@@ -423,7 +456,7 @@ def write(application_id, fields, *, root=None):
         raise RecordError(
             f"the record is {len(encoded)} bytes, over the {MAX_RECORD_BYTES} byte "
             f"ceiling. Trim long free-text answers rather than raising this.")
-    path = company_dir(record["company"]) / f"answers-{application_id}.json"
+    path = company_dir(record["company"], root) / f"answers-{application_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(payload + "\n", encoding="utf-8")
@@ -435,22 +468,22 @@ def write(application_id, fields, *, root=None):
     return {"written": str(path), "bytes": len(encoded), **record["counts"]}
 
 
-def load(application_id, path=None):
-    path = path or record_path(application_id)
+def load(application_id, path=None, root=None):
+    path = path or record_path(application_id, root=root)
     if not path or not path.exists():
         return None
     record = _read_json(path, None)
     return record if isinstance(record, dict) else None
 
 
-def captured_ids():
+def captured_ids(root=None):
     """Every application that has a record, by id.
 
     The board asks this once per render to decide which Submitted rows offer
     Answers and which say "not captured", so it is a directory scan rather than
     a read of a hundred files.
     """
-    return set(index())
+    return set(index(root))
 
 
 def public_record(record):

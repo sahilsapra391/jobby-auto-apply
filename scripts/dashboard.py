@@ -50,7 +50,15 @@ def read_json(path, default):
         return default
 
 
-def load_state(root):
+def load_state(root, apps_root=None):
+    """The store, plus which applications have an answer record.
+
+    `apps_root` is the raw --root override rather than the resolved store path,
+    because that is exactly what publish.py hands r2_artifacts. Passing the
+    resolved path instead would send this to <store>/applications on a machine
+    whose documents are in REPO/applications, and every Submitted row would read
+    "not captured" while the records sat there.
+    """
     sessions = []
     sdir = root / "sessions"
     if sdir.exists():
@@ -82,7 +90,7 @@ def load_state(root):
     # without this every Submitted row would read "not captured" on the board
     # while reading correctly on the laptop.
     if isinstance(meta, dict):
-        meta["answersCaptured"] = sorted(answer_record.captured_ids())
+        meta["answersCaptured"] = sorted(answer_record.captured_ids(apps_root))
 
     return {
         "profile": read_json(root / "profile.json", {}),
@@ -1300,14 +1308,35 @@ def build(state, generated):
   function writePending(value) {{
     try {{ localStorage.setItem(PENDING_KEY, JSON.stringify(value)); }} catch (e) {{}}
   }}
+  // The status the last poll saw for each application, so a move can record
+  // what it is superseding.
+  var lastSeenStatus = {{}};
+  // How long an unanswered move may hold a card. A retry the runner never
+  // picks up should not pin a card in In flight forever.
+  var PENDING_CAP_MS = 30 * 60 * 1000;
+
   // Called the moment the user acts, before anything has reached the server.
   function rememberMove(id, lane) {{
     if (!id || !lane) return;
     var pending = readPending();
-    pending[id] = {{ lane: lane, at: new Date().toISOString() }};
+    // `was` is the point. Retry leaves an application on its old status until
+    // the runner picks it up, so "the snapshot is newer than the move" fired on
+    // the very next publish and dragged the card back out of In flight. What
+    // supersedes the move is the status CHANGING, not the clock moving.
+    pending[id] = {{ lane: lane, at: new Date().toISOString(),
+                    was: lastSeenStatus[id] || '' }};
     writePending(pending);
+    // Ask the server straight away rather than waiting out the interval.
+    setTimeout(function () {{ if (window.jobbyPollLanes) window.jobbyPollLanes(); }}, 800);
   }}
   window.jobbyRememberMove = rememberMove;
+  // Found lives in its own script and has no card to move: an Apply there
+  // creates the application rather than moving one. It calls this so the job
+  // shows up in In flight on the click, the same way Retry already does.
+  window.jobbyPlaceholder = function (company, role, id) {{
+    if (!id || document.querySelector('.card[data-id="' + CSS.escape(id) + '"]')) return;
+    placeholderCard(company || '', role || '', id);
+  }};
 
   function cardFor(id) {{
     return document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
@@ -1347,19 +1376,24 @@ def build(state, generated):
     return true;
   }}
 
+  function stillMine(mine, serverStatus) {{
+    if (!mine) return false;
+    if (Date.now() - Date.parse(mine.at) > PENDING_CAP_MS) return false;
+    // The server has said something new about this application, so it knows
+    // more than the click did.
+    return (serverStatus || '') === (mine.was || '');
+  }}
+
   function applyLanes(data) {{
     if (!data || !data.ok) return;
     var pending = readPending();
-    var stamp = Date.parse(data.generatedAt || '') || 0;
+    var sessions = data.sessions || {{}};
     var keep = {{}};
     var moved = 0;
-    Object.keys(data.sessions || {{}}).forEach(function (id) {{
-      var lane = LANE_FOR_STATUS[data.sessions[id]];
+    Object.keys(sessions).forEach(function (id) {{
+      var lane = LANE_FOR_STATUS[sessions[id]];
       var mine = pending[id];
-      // A move this browser made outranks the snapshot until the snapshot is
-      // newer than the move. Without that, a reload inside the publish window
-      // reads the stale lane back and the card jumps home.
-      if (mine && Date.parse(mine.at) > stamp) {{
+      if (stillMine(mine, sessions[id])) {{
         keep[id] = mine;
         lane = mine.lane;
       }}
@@ -1367,11 +1401,13 @@ def build(state, generated):
       var card = cardFor(id);
       if (card && laneOf(card) !== lane && moveCard(card, lane)) moved += 1;
     }});
-    // Anything still pending that the snapshot has not caught up with stays.
+    // A move for an application the snapshot does not carry yet, which is what
+    // an Apply out of Found looks like until the session exists.
     Object.keys(pending).forEach(function (id) {{
-      if (keep[id]) return;
-      if (Date.parse(pending[id].at) > stamp) keep[id] = pending[id];
+      if (keep[id] || Object.prototype.hasOwnProperty.call(sessions, id)) return;
+      if (stillMine(pending[id], '')) keep[id] = pending[id];
     }});
+    lastSeenStatus = sessions;
     writePending(keep);
     return moved;
   }}
@@ -1385,6 +1421,7 @@ def build(state, generated):
       // not worth a message; the next tick tries again.
       .catch(function () {{}});
   }}
+  window.jobbyPollLanes = pollLanes;
   pollLanes();
   setInterval(pollLanes, LANE_POLL_MS);
   // Coming back to the tab should not wait out the interval.
@@ -1533,17 +1570,28 @@ def build(state, generated):
         'This copy of the board cannot reach the record.'));
       return;
     }}
-    fetch('/api/answers?id=' + encodeURIComponent(id), {{ credentials: 'same-origin' }})
-      .then(function (r) {{ return r.ok ? r.json() : null; }})
-      .then(function (data) {{
-        if (!data || !data.ok || !data.record) {{
+    // Through /doc/, the same authenticated proxy the resume and the cover
+    // letter come down. A record is the same class of per-application artifact
+    // they are, so it is the same R2 key layout, the same index, the same
+    // password gate and the same dual-read. A second route would have been a
+    // second gate to keep honest.
+    fetch('/doc/answers-' + encodeURIComponent(id) + '.json',
+          {{ credentials: 'same-origin' }})
+      .then(function (r) {{
+        // A miss answers text/plain, so the type is checked rather than
+        // trusting that 404 is the only way to not get a record.
+        var kind = r.headers && r.headers.get ? (r.headers.get('content-type') || '') : '';
+        return r.ok && kind.indexOf('json') >= 0 ? r.json() : null;
+      }})
+      .then(function (record) {{
+        if (!record || !record.fields) {{
           answersBody.textContent = '';
           answersBody.appendChild(ansEl('p', 'answers-loading',
             'The record is filed on your Mac but has not been published yet.'));
           return;
         }}
-        answersCache[id] = data.record;
-        renderAnswers(data.record);
+        answersCache[id] = record;
+        renderAnswers(record);
       }})
       // A saved copy of the board has no route to ask. That is not an error
       // worth dressing up, and the rest of the row still stands.
@@ -2141,7 +2189,7 @@ def main():
         print("job-application dashboard: no store found; run store.py init first", file=sys.stderr)
         return 2
 
-    state = load_state(root)
+    state = load_state(root, args.root)
     generated = clock.now_label()
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)

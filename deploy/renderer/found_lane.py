@@ -1876,6 +1876,9 @@ SCRIPT = r"""
     // In flight, not Watching: an Apply goes straight past the watch list.
     bump('flight', 1);
     if (window.jobbyRememberMove) window.jobbyRememberMove(job.id, 'flight');
+    // A card in In flight on the click, rather than an empty lane until the
+    // watcher creates the session and the next publish carries it.
+    if (window.jobbyPlaceholder) window.jobbyPlaceholder(job.co, job.ti, job.id);
     post('/api/watch', { applicationId: job.id })
       .then(function () { return decide('/api/apply', job, article,
                                         function () { bump('flight', -1); }); })

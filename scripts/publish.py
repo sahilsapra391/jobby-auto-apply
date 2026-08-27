@@ -34,9 +34,10 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import answer_record  # noqa: E402
 import toolpath  # noqa: E402
 import settings_panel  # noqa: E402
+import r2  # noqa: E402
+import r2_sync  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
@@ -101,17 +102,11 @@ def build_dashboard(root):
 
 
 def build_documents(root):
-    """Inline the resume, cover letter and answer record each submission used.
+    """Inline the resume and cover letter each submitted application used.
 
     They live outside the deployment, so the board could not otherwise link to
     them. Only documents referenced by a completed event are included, which
     keeps the bundle to what the Submitted tab can actually show.
-
-    The answer records ride here rather than in the board state for a measured
-    reason: the state was 19.1 MB of its 20 MB ceiling on 2026-08-25, and a
-    record averages a couple of kilobytes. The documents bundle is keyed
-    per file and written only when a file changes, so a record costs one KV
-    write once and nothing on any board load that does not open it.
     """
     import base64
 
@@ -120,12 +115,10 @@ def build_documents(root):
         store += ["--root", root]
     hist = subprocess.run(store + ["history-list"], capture_output=True, text=True)
     events = json.loads(hist.stdout or "[]")
-    wanted, submitted_ids = set(), set()
+    wanted = set()
     for e in events:
         if e.get("event") != "completed":
             continue
-        if e.get("applicationId"):
-            submitted_ids.add(str(e["applicationId"]))
         for key in ("resumeVariant", "coverLetter"):
             value = e.get(key) or ""
             if value.endswith(".pdf"):
@@ -144,23 +137,27 @@ def build_documents(root):
         total += len(raw)
         docs[name] = base64.b64encode(raw).decode()
 
-    # Only records belonging to something the board actually lists as submitted.
-    # A record for an application still in flight has nothing to link from, and
-    # publishing it would put answers in KV before the form was even sent.
-    records, record_bytes = 0, 0
-    filed = answer_record.index()
-    for aid in sorted(set(filed) & submitted_ids):
-        public = answer_record.public_record(answer_record.load(aid, filed[aid]))
-        if not public:
-            continue
-        raw = json.dumps(public, separators=(",", ":"),
-                         ensure_ascii=False).encode("utf-8")
-        docs[f"answers-{aid}.json"] = base64.b64encode(raw).decode()
-        records += 1
-        record_bytes += len(raw)
+    return {"documents": len(docs), "bytes": total, "docs": docs}
 
-    return {"documents": len(docs), "bytes": total + record_bytes, "docs": docs,
-            "answerRecords": records, "answerRecordBytes": record_bytes}
+
+def push_artifacts(root):
+    """Put every Class 1 artifact in R2 and hand back the filename index.
+
+    Loud on failure, and deliberately before anything is written to KV. An
+    upload that fails leaves the local file authoritative and the published
+    board exactly as it was, which is the only honest outcome: a board that
+    published successfully while its documents did not arrive is a board full of
+    links to nothing, and that is the failure this whole project keeps paying
+    for in other forms.
+
+    When R2 is not configured this returns None and the caller falls back to the
+    KV document bundle, so a checkout without the credentials still publishes a
+    working board rather than refusing.
+    """
+    if not r2.configured():
+        return None
+    result = r2_sync.sync(root, apply=True)
+    return result
 
 
 def logged_in(base):
@@ -327,18 +324,24 @@ def guard_state_size(payload):
     return payload
 
 
-def push_content(html, state, docs, providers=None):
-    """Write sanitized board state and documents into KV.
+def push_content(html, state, docs, providers=None, doc_index=None):
+    """Write sanitized board state, documents and the artifact index into KV.
 
     The legacy HTML remains a migration fallback until all local publishers run
     this release. New Vercel deployments render ``state`` with their own code.
     Files are used instead of argv because the payloads are several megabytes.
+
+    ``docs`` and ``doc_index`` are the two eras of document serving and only one
+    is ever populated. Before R2, the base64 of each PDF went into KV. After,
+    the bytes are in R2 and only the filename index travels, because the board's
+    links are filenames and the R2 layout is by application id.
     """
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "board.html"
         state_path = Path(tmp) / "board-state.json"
         docs_path = Path(tmp) / "documents.json"
         providers_path = Path(tmp) / "providers.json"
+        index_path = Path(tmp) / "doc-index.json"
         html_path.write_text(html, encoding="utf-8")
         state_path.write_bytes(guard_state_size(
             json.dumps(state, separators=(",", ":")).encode("utf-8")))
@@ -346,9 +349,11 @@ def push_content(html, state, docs, providers=None):
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
         )
+        index_path.write_text(json.dumps(doc_index or {}), encoding="utf-8")
         r = subprocess.run([toolpath.node(), "publish-content.mjs",
                             str(html_path), str(docs_path), str(providers_path),
-                            str(state_path), renderer_fingerprint()],
+                            str(state_path), renderer_fingerprint(),
+                            str(index_path)],
                            cwd=DEPLOY, capture_output=True, text=True,
                            env=toolpath.queue_env())
     if r.returncode != 0:
@@ -441,9 +446,7 @@ def cmd_publish(args, base):
     docs = build_documents(args.root)
     print(f"Board: {summary['blocked']} blocked, {summary.get('inflight', 0)} in flight, "
           f"{summary['submitted']} submitted, {docs['documents']} documents "
-          f"({docs['bytes'] / 1024 / 1024:.1f} MB), "
-          f"{docs['answerRecords']} answer records "
-          f"({docs['answerRecordBytes'] / 1024:.0f} KB)")
+          f"({docs['bytes'] / 1024 / 1024:.1f} MB)")
 
     guard_render(summary, args.root)
 
@@ -455,19 +458,53 @@ def cmd_publish(args, base):
         # overwrites the real board. There is no safe way to let a temp store
         # through, only a safe way to stop short.
         html = summary.pop("html")
+        # The artifact plan is local work: it hashes files and writes nothing,
+        # so a dry run can report exactly what an apply would move.
+        artifacts = None
+        if r2.configured():
+            try:
+                artifacts = r2_sync.sync(args.root, apply=False)
+                artifacts.pop("index", None)
+            except (r2.R2Error, RuntimeError) as exc:
+                artifacts = {"error": str(exc)}
         print(json.dumps({"published": False, "dryRun": True,
                           "wouldWriteBytes": len(html),
                           "documents": docs["documents"],
+                          "artifacts": artifacts,
                           "submitted": summary.get("submitted")}, indent=2))
         return 0
 
+    # Artifacts first. If they cannot be stored there is no point publishing a
+    # board that links to them, and the local files stay authoritative.
+    try:
+        artifacts = push_artifacts(args.root)
+    except (r2.R2Error, RuntimeError) as exc:
+        raise PublishError(
+            f"refusing to publish: an artifact could not be uploaded to R2. {exc} "
+            "The published board is untouched and every document is still on this "
+            "machine. Fix the cause and run this again.") from exc
+
+    if artifacts is None:
+        print("R2 is not configured, so documents are going to KV as before. "
+              "Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY to move them.")
+        doc_index, bundle = None, docs.pop("docs")
+    else:
+        print(f"Artifacts in R2: {artifacts['objects']} objects "
+              f"({artifacts['bytes'] / 1024 / 1024:.1f} MB), "
+              f"{artifacts['uploaded']} uploaded, "
+              f"{artifacts['matchedRemote']} already matched, "
+              f"{artifacts['skippedByManifest']} unchanged")
+        doc_index, bundle = artifacts["index"], {}
+        docs.pop("docs", None)
+
     result = push_content(
-        summary.pop("html"), summary.pop("state"), docs.pop("docs"),
-        provider_payload(args.root)
+        summary.pop("html"), summary.pop("state"), bundle,
+        provider_payload(args.root), doc_index
     )
     print(f"Board state written to KV: {result['state']['bytes'] / 1024:.0f} KB compressed, "
           f"{result['documents']['written']} documents written, "
-          f"{result['documents']['skipped']} unchanged")
+          f"{result['documents']['skipped']} unchanged, "
+          f"{result.get('docIndex', {}).get('entries', 0)} indexed artifacts")
 
     if not args.deploy:
         url = current_url(args.root) or "https://jobby-board.vercel.app"

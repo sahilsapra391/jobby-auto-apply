@@ -143,9 +143,16 @@ class UntrustedTextTests(unittest.TestCase):
         # id, the company and the role it already carried.
         page = build(captured=["app-captured"])
         self.assertNotIn("jb-answers-data", page)
-        self.assertIn("/api/answers?id=", page)
         for marker in ("sourceKey", "sensitiveReason", '"withheld"'):
             self.assertNotIn(marker, page)
+
+    def test_the_modal_reads_through_the_document_route_and_no_other(self):
+        # A record is the same class of per-application artifact the resume and
+        # the cover letter are, so it comes down the same authenticated proxy.
+        # A route of its own would be a second auth gate to keep honest.
+        page = build(captured=["app-captured"])
+        self.assertIn("/doc/answers-", page)
+        self.assertNotIn("/api/answers", page)
 
     def test_the_modal_builds_every_row_through_text_rather_than_markup(self):
         page = build(captured=["app-captured"])

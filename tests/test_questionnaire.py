@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import questionnaire  # noqa: E402
 
@@ -185,19 +187,50 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(flags, sorted(flags))
 
 
-class LiveCorpusTests(unittest.TestCase):
-    """Against the real store when one exists. Skipped in CI, which has none."""
+class TaxonomyCoverageTests(unittest.TestCase):
+    """The taxonomy covers a frozen sample of questions employers really asked.
 
-    def test_the_taxonomy_still_covers_every_question_really_asked(self):
-        root = Path(os.environ.get("JOB_APPLICATION_DIR",
-                                   "~/.job-application")).expanduser()
-        if not (root / "answers.json").exists():
-            self.skipTest("no answer store on this machine")
+    This used to read the live answer store, and it failed identically on clean
+    `main` the moment somebody else's application run met a question the
+    taxonomy had no topic for. A test that fails on data rather than on code is
+    red for every session that runs the suite, and a permanently red test
+    teaches everybody to ignore red -- which is the failure this project has
+    already paid for once at the gate.
+
+    So the invariant is checked against a fixture, and whether the *live* corpus
+    has outgrown the taxonomy is a lint that warns:
+
+        python3 scripts/lint_questionnaire_coverage.py
+
+    The fixture also records the orphans known at capture time, so a real gap
+    is written down rather than deleted along with the test that found it. The
+    one it caught, "Work Authorization", was covered by a `work-authorisation`
+    topic while this branch was open, and the third test below is what said so.
+    """
+
+    FIXTURE = json.loads(
+        (FIXTURES / "observed_questions.json").read_text())
+
+    def test_the_taxonomy_covers_the_captured_questions(self):
         payload = questionnaire.load()
-        questions = questionnaire.observed_questions(root)
-        _covered, orphans = questionnaire.coverage(questions, payload)
+        _covered, orphans = questionnaire.coverage(self.FIXTURE["covered"], payload)
         self.assertEqual(orphans, [],
-                         "employers are asking something the taxonomy has no topic for")
+                         "the taxonomy lost a topic it used to cover")
+
+    def test_a_recorded_orphan_that_gets_covered_is_taken_off_the_list(self):
+        """A gap with a name is a task; a gap with a deleted test is nothing.
+
+        And when the task is done the record has to go, or the list rots into
+        a set of stale claims -- which is the failure the withdrawn-claims list
+        in section 15 exists to stop. This caught its own entry: "Work
+        Authorization" was an orphan when the fixture was captured and a peer
+        added a `work-authorisation` topic while the branch was open, so the
+        list is empty rather than carrying a gap that no longer exists.
+        """
+        payload = questionnaire.load()
+        _covered, still = questionnaire.coverage(self.FIXTURE["knownOrphans"], payload)
+        self.assertEqual(sorted(still), sorted(self.FIXTURE["knownOrphans"]),
+                         "this orphan is covered now: take it out of the fixture")
 
 
 if __name__ == "__main__":
