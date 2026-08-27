@@ -216,6 +216,80 @@ payload, and result-validation contract. Encryption, decryption, provider
 execution, HTML/PDF rendering, geometric checks, and file installation all run
 on the Mac. KV receives ciphertext and fixed status metadata.
 
+## Artifacts live in R2, and the board links to them by filename
+
+Generated resumes and cover letters (PDF and HTML), cached job descriptions and
+per-application answer records are Class 1 data in
+`docs/plans/multi-tenant-architecture.md` section 6: not secrets the way a
+provider key is, so they sit in a private R2 bucket in plaintext and are read
+back by the API after the board's own password check. The relational store did
+not move and is not in scope; that is the plan's Phase 2.
+
+The key layout is `u/{userId}/app/{applicationId}/{kind}.{ext}` with
+`u/account-1/` today, so a deletion request stays one prefix sweep and
+multi-tenant is this layout with a different id rather than a migration. A file
+that cannot be tied to an application id keeps its company folder under
+`u/{userId}/unfiled/{company}/{filename}` instead of being filed under an
+invented id. Measured 2026-08-25 over the real tree: 621 objects, 31.1 MB, 287
+attributed across 120 applications, 334 unfiled. The unfiled ones are working
+drafts and hand-made documents from before `document_contract` owned the
+naming, and every document an employer actually received is attributed.
+
+Attribution reads the store, never the filename's shape. Only 37 of 187
+application ids are 16-hex; the rest are slugs, and a hex-shaped sidecar pattern
+filed 13 of 39 job descriptions as unattributable. The document kind comes from
+the field it was recorded under, not from looking for "CoverLetter" in the name.
+
+**The board links to documents by filename and that did not change.** `/doc/<name>`
+resolves through `jobby:doc-index` in KV, one small key mapping filename to R2
+key, so no published board and no saved copy has a stale link. A name that
+occurs twice in the tree is left out of the index rather than resolved
+arbitrarily: `posting.txt` exists in a dozen company folders and means something
+different in each.
+
+**The function reads the object and returns the bytes. It does not redirect.**
+The first version minted a presigned GET and redirected, which is what the
+architecture plan then said, and it was measured: a second round trip, and the
+Vercel leg alone is 370 to 430ms whatever it is doing, so a 119KB resume cost
+about 180ms more than the KV path it replaced. Proxying is one round trip and
+the function's own read beats KV's, 104ms against 122ms at 119KB and 145ms
+against 301ms at 540KB, because KV carries base64 and R2 carries bytes. Range
+is forwarded so a phone's PDF viewer can page a large file. No signed URL
+reaches the browser, so none lands in history or in a shared link. Do not put
+the redirect back; the Workers-era design serves through an R2 binding, which
+is this shape with less machinery, not the redirect.
+
+Dual-read order: R2 first, then the KV copy for anything the index has not
+learned. An R2 404 on an indexed key falls through to KV, because the index
+being ahead of the bucket is emptiness rather than a fault. Any other R2 failure
+with no KV copy behind it returns a 502 naming the fault. It never answers 404
+for a document that exists.
+
+SigV4 is written twice, in `scripts/r2.py` for the device and `deploy/r2.mjs`
+for the function, because presigning needs the S3 credential and the deployment
+mints the links. `tests/test_r2_contract.py` compares complete URLs across
+twelve cases. Treat it the way `LogoContractTests` is treated: one contract in
+two languages, and the test has to compare outputs rather than restate rules.
+
+`scripts/r2_sync.py` is both the backfill and the steady state, deliberately.
+A migration that maps a file to one key and a publish that maps it to another
+never finishes. Idempotency is three layers: the local manifest at
+`~/.job-application/r2-manifest.json` (zero operations when nothing changed),
+a HEAD when the manifest does not know, and the object's own
+`x-amz-meta-sha256`. `--verify` is deep by default because the stamped metadata
+survives a corrupted body, so a HEAD-only pass calls corruption healthy.
+
+An upload that fails fails the publish, loudly, before anything reaches KV. The
+local file stays authoritative. Do not soften this into a warning.
+
+R2 refuses a body that disagrees with its signed `x-amz-content-sha256`, so
+corrupted bytes cannot be uploaded through this client at all. Verified against
+the live bucket on 2026-08-25.
+
+The KV document copies under `jobby:doc:*` are still there and still served as
+the fallback. Retiring them is its own commit after a week of clean serving,
+and it re-does the KV write-budget math.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,
@@ -269,6 +343,10 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/sync_vercel_renderer.py`: deterministic copy step for the deployed renderer.
 - `scripts/premium_ui.py`: Soft Premium tokens, layout, motion, and responsive rules.
 - `scripts/company_logos.py`: trusted logo selection, proxy URLs, and monogram fallback.
+- `scripts/r2.py`: R2 access and SigV4, stdlib only, device side.
+- `scripts/r2_artifacts.py`: which local file is a Class 1 artifact, and its key.
+- `scripts/r2_sync.py`: upload, verify, prune, and the filename index.
+- `deploy/r2.mjs`: the same signing, and the server-side read the board serves from.
 - `deploy/api/page.py`: password-gated server render using sanitized KV state and deployed code.
 - `deploy/api/board.js`: queue, document, logo, health, and provider endpoints.
 - `deploy/renderer/`: generated deployment copy of the renderer. Never edit it directly.

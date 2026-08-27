@@ -708,7 +708,8 @@ application").
 |---|---|---|
 | Board hosting | **Vercel** serverless function, `framework: other` | Stable password-gated URL |
 | Board rendering | **Vercel Python function** | UI code is atomic with the Git deployment |
-| Board state + submitted documents | **Cloudflare Workers KV** | Data updates without a Vercel deployment |
+| Board state | **Cloudflare Workers KV** | Data updates without a Vercel deployment |
+| Generated documents, JD snapshots, answer records | **Cloudflare R2**, private, proxied by the API | Class 1 artifacts, off the device, served after the same password check |
 | Control queue | **Cloudflare Workers KV**, one application key plus a local provider lane | See below |
 | Encrypted document transport | **Cloudflare Workers KV**, AES-256-GCM per request and result | Crash-safe serial leases; KV sees ciphertext and fixed status |
 | Document worker | Local **launchd** service, serial | Keeps document generation bounded on Your Device |
@@ -736,6 +737,15 @@ settings claim cannot rewrite application state. A ten-minute sanitized local
 status heartbeat stays inside the API's fifteen-minute freshness window without
 spending the KV write budget. R2 has the same trap in
 different units.
+
+**R2 has the same trap, in its own units.** Class A is writes *and*
+`ListObjects`, a million a month. Class B is reads, ten million. So listing is
+again the operation that has to stay off any polling path. The publish path
+never lists: `~/.job-application/r2-manifest.json` records what this machine has
+uploaded, so a publish over an unchanged tree costs zero operations. Measured
+2026-08-25 on the real tree: the first sync wrote 621 objects and 31.1 MB in
+6m17s; the next one took 3 seconds and spent nothing. Only `--prune` lists, it
+is run by hand, and it is the only command here that deletes.
 
 **Vercel's 100 deploys/day ran out.** Publishing the board meant redeploying the
 whole site, and the board's change signature included each in-flight `phase`.

@@ -107,20 +107,29 @@ export async function enqueue(env, queue, applicationId, extra = {}) {
   return { queued: applicationId };
 }
 
-export async function claimOne(env, queue) {
+function takeFrom(list, applicationId) {
+  if (!applicationId) return list.shift();
+  const at = list.findIndex((item) => item && item.applicationId === applicationId);
+  if (at < 0) return undefined;
+  return list.splice(at, 1)[0];
+}
+
+export async function claimOne(env, queue, applicationId = '') {
   if (DEDICATED_KEYS[queue]) {
     const list = await readDedicated(env, queue);
     if (!list.length) return [];
-    const head = list.shift();
+    const taken = takeFrom(list, applicationId);
+    if (!taken) return [];
     await writeDedicated(env, queue, list);
-    return [head];
+    return [taken];
   }
   const data = await readQueue(env);
   const list = data[queue] || [];
   if (!list.length) return [];
-  const head = list.shift();
+  const taken = takeFrom(list, applicationId);
+  if (!taken) return [];
   await writeQueue(env, data);
-  return [head];
+  return [taken];
 }
 
 export async function claimAll(env, queue) {

@@ -193,7 +193,7 @@ def compact(job, why_table, logo_table=None):
         "bd": len({s.get("source") for s in (job.get("sources") or []) if s.get("source")}),
         "sg": sightings,
         "tg": [tidy_tag(t) for t in (job.get("tags") or [])[:MAX_TAGS] if tidy_tag(t)],
-        "sum": " ".join((job.get("descriptionExcerpt") or "").split())[:EMBED_EXCERPT_CHARS],
+        "sum": embed_excerpt(job.get("descriptionExcerpt")),
         "yr": extracted.get("yearsMin") if extracted.get("yearsMin") is not None
               else extracted.get("yearsMax"),
         "yrt": extracted.get("yearsText"),
@@ -365,6 +365,22 @@ NOT_A_CITY = {
 # Acronyms that .title() would mangle into "Emea".
 REGION_LABELS = {"emea": "EMEA", "apac": "APAC", "latam": "LATAM", "eu": "EU",
                  "us": "US", "uk": "UK", "usa": "USA"}
+
+
+def embed_excerpt(text):
+    """The summary a card shows: whitespace collapsed, cut, and a fixed point.
+
+    The rstrip is the whole reason this is a function. state_slim stores this
+    value in the published state rather than the full 1,500-character excerpt,
+    and the embed then runs the same transform over what it finds. Cutting at
+    EMBED_EXCERPT_CHARS can land just after a space, so without the rstrip the
+    transform is not idempotent: running it once gives "...word " and running it
+    twice gives "...word", and the page rendered from a slimmed state differs
+    from the page rendered from a whole one by a single byte. It cost an
+    afternoon to find, on a fixture, because no record in the real pool happened
+    to break on a space.
+    """
+    return " ".join(str(text or "").split())[:EMBED_EXCERPT_CHARS].rstrip()
 
 
 def place(job):
@@ -1904,6 +1920,9 @@ SCRIPT = r"""
     // In flight, not Watching: an Apply goes straight past the watch list.
     bump('flight', 1);
     if (window.jobbyRememberMove) window.jobbyRememberMove(job.id, 'flight');
+    // A card in In flight on the click, rather than an empty lane until the
+    // watcher creates the session and the next publish carries it.
+    if (window.jobbyPlaceholder) window.jobbyPlaceholder(job.co, job.ti, job.id);
     post('/api/watch', { applicationId: job.id })
       .then(function () { return decide('/api/apply', job, article,
                                         function () { bump('flight', -1); }); })

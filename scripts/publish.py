@@ -36,6 +36,8 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import toolpath  # noqa: E402
 import settings_panel  # noqa: E402
+import r2  # noqa: E402
+import r2_sync  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
@@ -138,6 +140,26 @@ def build_documents(root):
     return {"documents": len(docs), "bytes": total, "docs": docs}
 
 
+def push_artifacts(root):
+    """Put every Class 1 artifact in R2 and hand back the filename index.
+
+    Loud on failure, and deliberately before anything is written to KV. An
+    upload that fails leaves the local file authoritative and the published
+    board exactly as it was, which is the only honest outcome: a board that
+    published successfully while its documents did not arrive is a board full of
+    links to nothing, and that is the failure this whole project keeps paying
+    for in other forms.
+
+    When R2 is not configured this returns None and the caller falls back to the
+    KV document bundle, so a checkout without the credentials still publishes a
+    working board rather than refusing.
+    """
+    if not r2.configured():
+        return None
+    result = r2_sync.sync(root, apply=True)
+    return result
+
+
 def logged_in(base):
     """(ok, why). Distinguishes 'not signed in' from 'could not run at all'.
 
@@ -209,6 +231,28 @@ def cmd_local(args, _base):
         return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
 
 
+# Hosts that answer a permanent redirect to their www form. Measured
+# 2026-08-27: https://jobby.fyi/doc/<name> answers 308 to www.jobby.fyi, which
+# costs 180 to 290 ms on every document open for anyone who arrived at the
+# apex. Document links on the board are relative, so they inherit whichever
+# host the page was loaded on, and the fix is to never emit the apex.
+CANONICAL_HOSTS = {"jobby.fyi": "www.jobby.fyi"}
+
+
+def canonical_url(url):
+    """The board URL with its redirecting host swapped for the one that answers."""
+    from urllib.parse import urlsplit, urlunsplit
+    try:
+        parts = urlsplit(str(url or "").strip())
+    except ValueError:
+        return url
+    target = CANONICAL_HOSTS.get(parts.hostname or "")
+    if not target or parts.scheme not in ("http", "https"):
+        return url
+    netloc = target + (f":{parts.port}" if parts.port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def current_url(root):
     store = [sys.executable, str(REPO / "scripts" / "store.py")]
     if root:
@@ -216,7 +260,7 @@ def current_url(root):
     r = subprocess.run(store + ["meta-get", "--key", "dashboardUrl"],
                        capture_output=True, text=True)
     try:
-        return json.loads(r.stdout or "{}").get("dashboardUrl") or ""
+        return canonical_url(json.loads(r.stdout or "{}").get("dashboardUrl") or "")
     except json.JSONDecodeError:
         return ""
 
@@ -282,6 +326,18 @@ def provider_payload(root=None):
 MAX_STATE_BYTES = 20 * 1024 * 1024
 
 
+def serialize_state(state):
+    """The one place board state becomes bytes.
+
+    Exists so a test can measure exactly what the guard measures. The previous
+    size test asserted a record *count* against EMBED_CAP while the guard
+    weighed *bytes*, over a fixture whose records were 264 bytes against
+    production's 4,961, so it stayed green through 22 hours of refused
+    publishes. Two ways of turning state into bytes is how that happens twice.
+    """
+    return json.dumps(state, separators=(",", ":")).encode("utf-8")
+
+
 def guard_state_size(payload):
     """Refuse a state the deployed reader would reject.
 
@@ -302,32 +358,62 @@ def guard_state_size(payload):
     return payload
 
 
-def push_content(html, state, docs, providers=None):
-    """Write sanitized board state and documents into KV.
+# Written after a publish actually reaches KV, by whichever route published.
+#
+# watch.py measures board staleness from this, and it has to be written here
+# rather than only in the watcher: the first version marked success in the
+# watcher's own publish path, so a publish run by hand left the alarm ringing
+# over a board that was seconds old. An alarm that cries wolf gets ignored, and
+# then it is not an alarm.
+LAST_PUBLISH = Path("~/.job-application/last-publish").expanduser()
+
+
+def mark_published():
+    """Record that a publish succeeded. Never fatal: this is bookkeeping."""
+    try:
+        LAST_PUBLISH.parent.mkdir(parents=True, exist_ok=True)
+        LAST_PUBLISH.write_text(
+            __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            encoding="utf-8")
+    except OSError:
+        pass
+
+
+def push_content(html, state, docs, providers=None, doc_index=None):
+    """Write sanitized board state, documents and the artifact index into KV.
 
     The legacy HTML remains a migration fallback until all local publishers run
     this release. New Vercel deployments render ``state`` with their own code.
     Files are used instead of argv because the payloads are several megabytes.
+
+    ``docs`` and ``doc_index`` are the two eras of document serving and only one
+    is ever populated. Before R2, the base64 of each PDF went into KV. After,
+    the bytes are in R2 and only the filename index travels, because the board's
+    links are filenames and the R2 layout is by application id.
     """
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "board.html"
         state_path = Path(tmp) / "board-state.json"
         docs_path = Path(tmp) / "documents.json"
         providers_path = Path(tmp) / "providers.json"
+        index_path = Path(tmp) / "doc-index.json"
         html_path.write_text(html, encoding="utf-8")
-        state_path.write_bytes(guard_state_size(
-            json.dumps(state, separators=(",", ":")).encode("utf-8")))
+        state_path.write_bytes(guard_state_size(serialize_state(state)))
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
         )
+        index_path.write_text(json.dumps(doc_index or {}), encoding="utf-8")
         r = subprocess.run([toolpath.node(), "publish-content.mjs",
                             str(html_path), str(docs_path), str(providers_path),
-                            str(state_path), renderer_fingerprint()],
+                            str(state_path), renderer_fingerprint(),
+                            str(index_path)],
                            cwd=DEPLOY, capture_output=True, text=True,
                            env=toolpath.queue_env())
     if r.returncode != 0:
         raise PublishError(f"could not write board state to KV: {(r.stderr or '').strip()[:400]}")
+    mark_published()
     return json.loads(r.stdout or "{}")
 
 
@@ -428,19 +514,53 @@ def cmd_publish(args, base):
         # overwrites the real board. There is no safe way to let a temp store
         # through, only a safe way to stop short.
         html = summary.pop("html")
+        # The artifact plan is local work: it hashes files and writes nothing,
+        # so a dry run can report exactly what an apply would move.
+        artifacts = None
+        if r2.configured():
+            try:
+                artifacts = r2_sync.sync(args.root, apply=False)
+                artifacts.pop("index", None)
+            except (r2.R2Error, RuntimeError) as exc:
+                artifacts = {"error": str(exc)}
         print(json.dumps({"published": False, "dryRun": True,
                           "wouldWriteBytes": len(html),
                           "documents": docs["documents"],
+                          "artifacts": artifacts,
                           "submitted": summary.get("submitted")}, indent=2))
         return 0
 
+    # Artifacts first. If they cannot be stored there is no point publishing a
+    # board that links to them, and the local files stay authoritative.
+    try:
+        artifacts = push_artifacts(args.root)
+    except (r2.R2Error, RuntimeError) as exc:
+        raise PublishError(
+            f"refusing to publish: an artifact could not be uploaded to R2. {exc} "
+            "The published board is untouched and every document is still on this "
+            "machine. Fix the cause and run this again.") from exc
+
+    if artifacts is None:
+        print("R2 is not configured, so documents are going to KV as before. "
+              "Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY to move them.")
+        doc_index, bundle = None, docs.pop("docs")
+    else:
+        print(f"Artifacts in R2: {artifacts['objects']} objects "
+              f"({artifacts['bytes'] / 1024 / 1024:.1f} MB), "
+              f"{artifacts['uploaded']} uploaded, "
+              f"{artifacts['matchedRemote']} already matched, "
+              f"{artifacts['skippedByManifest']} unchanged")
+        doc_index, bundle = artifacts["index"], {}
+        docs.pop("docs", None)
+
     result = push_content(
-        summary.pop("html"), summary.pop("state"), docs.pop("docs"),
-        provider_payload(args.root)
+        summary.pop("html"), summary.pop("state"), bundle,
+        provider_payload(args.root), doc_index
     )
     print(f"Board state written to KV: {result['state']['bytes'] / 1024:.0f} KB compressed, "
           f"{result['documents']['written']} documents written, "
-          f"{result['documents']['skipped']} unchanged")
+          f"{result['documents']['skipped']} unchanged, "
+          f"{result.get('docIndex', {}).get('entries', 0)} indexed artifacts")
 
     if not args.deploy:
         url = current_url(args.root) or "https://jobby-board.vercel.app"
@@ -459,7 +579,7 @@ def cmd_publish(args, base):
         raise PublishError((proc.stderr or "vercel deploy failed").strip())
 
     urls = re.findall(r"https://[^\s]+", (proc.stdout or "") + (proc.stderr or ""))
-    url = urls[-1] if urls else None
+    url = canonical_url(urls[-1]) if urls else None
     if not url:
         raise PublishError("deployed, but no URL was reported; check `vercel ls`")
 

@@ -9,7 +9,8 @@
 // board.
 
 import { gunzipSync } from 'node:zlib';
-import { getBoard, getBoardState, getDoc, getLocalStatus } from '../kvcontent.mjs';
+import { getBoard, getBoardState, getDoc, getDocIndex, getLocalStatus } from '../kvcontent.mjs';
+import { fetchObject, configured as r2Configured } from '../r2.mjs';
 
 const REALM = 'Application board';
 
@@ -457,6 +458,109 @@ async function handleCompanyLogo(request, requestUrl) {
   return text('No company logo.\n', 404);
 }
 
+// Application documents: the exact resume and cover letter an employer
+// received. They live in R2 now, and the board still links to them by filename
+// because that is what every published board and every saved copy already
+// says. jobby:doc-index bridges the two.
+//
+// The function reads the object and returns the bytes. It does not redirect.
+// That was the first shape and it was measured: a presigned redirect costs a
+// second round trip, and from a laptop on wifi the Vercel leg alone is 370 to
+// 430ms whatever it is doing, so a 119KB resume went from 504ms to about
+// 684ms. Mobile is this product's main surface and a second round trip costs
+// more there, not less. Proxying is one round trip, the same one the KV path
+// always had, and R2 is faster than the KV REST API underneath it.
+//
+// Two things it also buys. No signed URL reaches the browser, so none lands in
+// history, in a screenshot, or in a shared link, and nothing the reader holds
+// keeps working for five minutes after they lose access. And it is the shape
+// the multi-tenant plan is heading for: on Workers an R2 binding serves the
+// object directly after the authz check, with no presigning at all. What is
+// still needed here is the credential to authenticate the fetch, because Vercel
+// has no binding; what goes away is minting URLs for other people to use.
+//
+// Dual-read, in this order and for this reason. R2 is where new artifacts are
+// written, so it is asked first. KV still holds every document published before
+// the migration, so it answers for anything the index has not learned yet, and
+// it keeps answering until the retirement commit deletes those copies. And when
+// both are out, the reply says what went wrong, because returning 404 for a
+// credential fault reports it as a document that does not exist.
+async function handleDocument(request, pathname) {
+  const name = decodeURIComponent(pathname.slice('/doc/'.length));
+  // The name comes off the board but arrives as a URL path, so treat it as
+  // untrusted: only a plain filename may become a KV key or reach the index.
+  //
+  // The space is deliberate and was a real bug. Ten of the 426 stored artifacts
+  // are named like "Sahil Sapra - Resume - Senior Project Manager.pdf", from
+  // before document_contract owned the naming, and two of them are documents an
+  // employer actually received and the Submitted tab actually links to. The
+  // guard rejected them before anything was even looked up, so those two links
+  // have always been dead. A space cannot escape a path segment, cannot open a
+  // second KV key, and never reaches the R2 key, which comes from the index and
+  // is validated separately below.
+  if (!/^[A-Za-z0-9._ -]{1,200}$/.test(name)) return text('No such document.\n', 404);
+
+  let r2Error = null;
+  if (r2Configured(process.env)) {
+    const index = await getDocIndex(process.env).catch(() => null);
+    const entry = index && index.docs ? index.docs[name] : null;
+    // The key is ours, written by the publisher, but it arrives through KV and
+    // ends up in a signed request, so it is checked rather than trusted. The
+    // dot segments matter: S3 keys are opaque strings and R2 would happily
+    // store one containing "..", but an intermediary that normalises the path
+    // would then be signing one key and fetching another.
+    if (entry && typeof entry.key === 'string'
+        && /^u\/[A-Za-z0-9._-]+\/[\x20-\x7e]{1,900}$/.test(entry.key)
+        && !entry.key.split('/').includes('..')) {
+      try {
+        const upstream = await fetchObject(process.env, entry.key, request.headers.get('range'));
+        if (upstream.ok || upstream.status === 206) {
+          const headers = {
+            'content-type': entry.contentType || 'application/pdf',
+            'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
+            ...BASE_HEADERS,
+          };
+          // Range matters on a phone: a PDF viewer asks for the first pages and
+          // renders them rather than waiting for a 540KB download.
+          for (const header of ['content-length', 'content-range', 'accept-ranges']) {
+            const value = upstream.headers.get(header);
+            if (value) headers[header] = value;
+          }
+          return new Response(request.method === 'HEAD' ? null : upstream.body,
+                              { status: upstream.status, headers });
+        }
+        // A 404 from R2 means the index is ahead of the bucket. Fall through to
+        // KV rather than reporting a fault, because KV may still hold it.
+        if (upstream.status !== 404) {
+          r2Error = `R2 answered ${upstream.status}`;
+        }
+      } catch (err) {
+        r2Error = String(err.message || err);
+      }
+    }
+  }
+
+  const b64 = await getDoc(process.env, name).catch(() => null);
+  if (b64) {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(request.method === 'HEAD' ? null : bytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/pdf',
+        // inline so it opens in the browser rather than forcing a save
+        'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
+        ...BASE_HEADERS,
+      },
+    });
+  }
+  if (r2Error) {
+    return text(
+      `This document is in R2 but it could not be read, so there is nothing to open.\n` +
+      `${r2Error}\nThe file is still on the machine that made it.\n`, 502);
+  }
+  return text('No such document.\n', 404);
+}
+
 export default {
   async fetch(request) {
     const requestUrl = new URL(request.url);
@@ -608,22 +712,7 @@ export default {
     // Application documents: the exact resume and cover letter an employer
     // received. Same password gate as the board, never cached, never indexed.
     if (pathname.startsWith('/doc/')) {
-      const name = decodeURIComponent(pathname.slice('/doc/'.length));
-      // The name comes off the board but arrives as a URL path, so treat it as
-      // untrusted: only a plain filename may become a KV key.
-      if (!/^[A-Za-z0-9._-]+$/.test(name)) return text('No such document.\n', 404);
-      const b64 = await getDoc(process.env, name).catch(() => null);
-      if (!b64) return text('No such document.\n', 404);
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      return new Response(request.method === 'HEAD' ? null : bytes, {
-        status: 200,
-        headers: {
-          'content-type': 'application/pdf',
-          // inline so it opens in the browser rather than forcing a save
-          'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
-          ...BASE_HEADERS,
-        },
-      });
+      return handleDocument(request, pathname);
     }
 
     // Apply request from the Watching tab: build the documents and drive the

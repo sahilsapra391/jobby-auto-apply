@@ -102,6 +102,20 @@ _document_status_cache = None
 # Publishing shells out to vercel, so it is debounced behind an actual change,
 # with a floor so a long quiet stretch still refreshes eventually.
 PUBLISH_FLOOR_SECONDS = 900
+# A board older than twice the floor is stale, and staleness is its own alarm.
+#
+# The existing alarm fires when a publish is attempted and fails, and that was
+# not enough. On 2026-08-27 the board sat a day out of date and nothing rang.
+# Two silent conditions stacked: the Vercel quota cooldown makes publish()
+# return early without raising, so no attempt means no failure; and underneath
+# it the state had grown past the size ceiling, so every attempt after the
+# cooldown lifted refused. Both leave a real, complete, wrong board being
+# served, and a board cannot announce its own staleness.
+#
+# So this watches the outcome rather than the attempt. LAST_DEPLOY is written
+# only after a publish actually goes out, which makes its age the one honest
+# measure of whether the thing is working, whatever the reason it is not.
+PUBLISH_STALE_SECONDS = 2 * PUBLISH_FLOOR_SECONDS
 # The configured check expects one ping per hour with ten minutes of grace.
 # Fifty-five minutes leaves a small scheduling cushion without flooding it.
 HEARTBEAT_SECONDS = 55 * 60
@@ -657,13 +671,62 @@ def candidate_apply_slots(aid):
     return free_apply_slots()
 
 
+def choose_apply_head(apply_items):
+    """The first queued application that can actually start.
+
+    Click order is the rule and index 0 wins whenever it can run. It gives way
+    only for the one case that otherwise deadlocks: a parked application still
+    owns its browser slot, and pressing Retry puts it back in the queue while it
+    keeps that slot. If such an application is behind the head, the head is
+    waiting for a slot that the tail is holding, and the tail is waiting to
+    become the head. Neither can move.
+
+    Observed on 2026-08-25 with all five slots parked by applications sitting at
+    positions three to eight, the head holding built documents and no slot, and
+    every one of the nine in flight reporting "waiting for an earlier
+    application" while nothing at all was running.
+
+    An application that already owns its slot consumes nothing the head is
+    waiting for, so letting it go first costs the head nothing and frees a slot
+    when it finishes.
+    """
+    items = [item for item in apply_items if isinstance(item, dict)]
+    if not items:
+        return None
+    head = items[0]
+    if candidate_apply_slots(head.get("applicationId")):
+        return head
+    for item in items[1:]:
+        aid = item.get("applicationId")
+        if not aid:
+            continue
+        slot = browser_slot_for_application(aid)
+        # Its own parked slot, and only that. A free slot would have been
+        # available to the head too, so it is not a reason to reorder.
+        if slot and _parked_by(slot, aid):
+            return item
+    return head
+
+
+def _parked_by(slot, aid):
+    held = lock_holder(slot)
+    return bool(held and held.get("parked") is True and held.get("note") == aid)
+
+
 def queue_depth(q, name):
     return len(q.get(name) or [])
 
 
-def claim_one(prefix):
-    """Take exactly one request off a queue. Only ever called from the tick."""
-    r = subprocess.run([toolpath.node(), "queue.mjs", "claim-one", prefix], cwd=DEPLOY,
+def claim_one(prefix, application_id=""):
+    """Take one request off a queue. Only ever called from the tick.
+
+    Naming the application takes that one rather than the oldest, which is what
+    lets the tick run a request it chose over one that cannot start.
+    """
+    argv = [toolpath.node(), "queue.mjs", "claim-one", prefix]
+    if application_id:
+        argv.append(application_id)
+    r = subprocess.run(argv, cwd=DEPLOY,
                        capture_output=True, text=True, env=toolpath.queue_env(), timeout=60)
     if r.returncode != 0:
         raise TickError(f"claim failed for {prefix}: {(r.stderr or '').strip()[:200]}")
@@ -1066,6 +1129,38 @@ COOLDOWN = STATE_DIR / "publish-cooldown"
 # publishes at all. When the quota is gone, stop trying until it resets rather
 # than spending every tick on a request that cannot succeed.
 QUOTA_COOLDOWN_SECONDS = 60 * 60
+
+
+# publish.py writes this whenever a publish reaches KV, whichever route ran it.
+LAST_PUBLISH = STATE_DIR / "last-publish"
+
+
+def board_staleness():
+    """Seconds since the board last actually published, or None if never.
+
+    Deliberately not "since the last attempt" and not "since the last tick".
+    Every failure mode this has had looked healthy from the attempt side.
+
+    Both markers count, and the newer wins. LAST_DEPLOY is the watcher's own,
+    LAST_PUBLISH is written by publish.py however it was invoked. Reading only
+    the watcher's marker meant a publish run by hand left the alarm ringing over
+    a board that was seconds old, which is how an alarm stops being believed.
+    """
+    stamps = [path.stat().st_mtime for path in (LAST_DEPLOY, LAST_PUBLISH)
+              if path.exists()]
+    return time.time() - max(stamps) if stamps else None
+
+
+def stale_board_warning():
+    """The message for the dead-man ping, or empty when the board is current."""
+    age = board_staleness()
+    if age is None or age <= PUBLISH_STALE_SECONDS:
+        return ""
+    hours = age / 3600
+    return (f"the board has not published for {hours:.1f} hours, against a "
+            f"{PUBLISH_STALE_SECONDS / 60:.0f} minute limit. It is still serving "
+            "its last snapshot, so it looks fine and is not. Run "
+            "`python3 scripts/publish.py` to see the reason.")
 
 
 def publishing_paused():
@@ -1743,13 +1838,14 @@ def tick(force_publish=False):
                         {"applicationId": aid, "slot": slot})
 
     apply_items = q.get("apply") or []
-    apply_head = apply_items[0] if apply_items else None
+    apply_head = choose_apply_head(apply_items)
     head_id = apply_head.get("applicationId") if isinstance(apply_head, dict) else None
+    apply_tail = [item for item in apply_items if item is not apply_head]
 
     # Tail applications stay visible as queued, but only the head can submit or
     # Poll one serial document lane on this device. Tail applications remain
     # queued so document generation stays bounded and preserves click order.
-    for item in apply_items[1:]:
+    for item in apply_tail:
         aid = item.get("applicationId") if isinstance(item, dict) else None
         if aid and set_phase_if_changed(aid, "Queued", "Waiting for an earlier application"):
             changed.setdefault("queued", []).append(aid)
@@ -1935,10 +2031,10 @@ def tick(force_publish=False):
         retained = affinity_slot == slot
         if reserve(slot, note=head_id):
             try:
-                claimed = claim_one("apply/")
+                claimed = claim_one("apply/", application_id=head_id)
                 if not claimed or claimed[0].get("applicationId") != head_id:
                     raise TickError("the Apply queue changed before the form runner started")
-                q["apply"] = apply_items[1:]
+                q["apply"] = apply_tail
                 persist_browser_slot(head_id, slot)
                 browser.serve(slot)
                 pid = spawn(
@@ -2010,7 +2106,13 @@ def heartbeat_due(line, last_line, since_last_ping):
 
 
 def status():
-    out = {"queues": None, "locks": {}, "health": bool(config().get("HEALTHCHECKS_URL"))}
+    age = board_staleness()
+    out = {"queues": None, "locks": {},
+           "health": bool(config().get("HEALTHCHECKS_URL")),
+           # "health" above only ever meant "healthchecks is configured", which
+           # read as reassurance through a day-long outage. This is the fact.
+           "boardAgeSeconds": None if age is None else int(age),
+           "boardStale": bool(stale_board_warning())}
     try:
         out["queues"] = poll_queues()
     except (TickError, subprocess.TimeoutExpired) as exc:
@@ -2267,7 +2369,16 @@ def main():
             if line and line != prev_line:
                 print(f"{now_stamp()} {line}", flush=True)
             last_line = line
-            if heartbeat_due(line, prev_line, time.time() - last_ping):
+            stale = stale_board_warning()
+            if stale:
+                # Fails the dead-man check rather than pinging healthy. A quiet
+                # tick over a day-old board is the exact shape of the outage
+                # this exists for, and "idle" would have reported it as fine.
+                if consecutive_failures == 0:
+                    print(f"{now_stamp()} STALE BOARD: {stale}", file=sys.stderr, flush=True)
+                ping_health("fail", stale)
+                last_ping = time.time()
+            elif heartbeat_due(line, prev_line, time.time() - last_ping):
                 ping_health("", (line or "idle")[:2000])
                 last_ping = time.time()
         except (TickError, subprocess.TimeoutExpired) as exc:

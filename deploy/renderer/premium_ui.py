@@ -126,15 +126,19 @@ CSS = r"""
 
   .card,.sheet,.empty,.note,.jb-banner,.jb-filters,.jb-addlink,.provider-card,.split-note {
     border:1px solid var(--hair); border-radius:var(--radius); box-shadow:var(--sh); }
+  /* One ring. The status rule along the top is 3px, so the other three sides
+     are too, and only the colour differs. At 1px the grey met the coloured rule
+     at a step and read as two separate lines rather than one frame. Width does
+     not change on hover, so nothing moves. */
+  .card { border-width:3px; }
   .card { border-radius:var(--radius); padding:1.25rem;
     transition:border-color .24s var(--ease),box-shadow .24s var(--ease),
     background-color .3s; }
-  .card:hover { border-color:var(--hair-strong);
-    box-shadow:var(--sh),inset 0 0 0 2px var(--hair-strong); }
+  .card:hover { border-color:var(--hair-strong); }
   .card.hold,.card.ready,.card.ref,.card.flight { background:var(--card); }
-  .card.hold { border-top:3px solid var(--orange); }
-  .card.ready { border-top:3px solid var(--green); }
-  .card.ref,.card.flight { border-top:3px solid var(--purple); }
+  .card.hold { border-top-color:var(--orange); }
+  .card.ready { border-top-color:var(--green); }
+  .card.ref,.card.flight { border-top-color:var(--purple); }
   .grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
   .act { flex-wrap:wrap; gap:.45rem; }
   .act .btn { flex:0 0 auto; white-space:nowrap; padding:.52rem .7rem; }
