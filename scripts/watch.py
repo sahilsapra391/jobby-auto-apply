@@ -1111,15 +1111,24 @@ COOLDOWN = STATE_DIR / "publish-cooldown"
 QUOTA_COOLDOWN_SECONDS = 60 * 60
 
 
+# publish.py writes this whenever a publish reaches KV, whichever route ran it.
+LAST_PUBLISH = STATE_DIR / "last-publish"
+
+
 def board_staleness():
     """Seconds since the board last actually published, or None if never.
 
     Deliberately not "since the last attempt" and not "since the last tick".
     Every failure mode this has had looked healthy from the attempt side.
+
+    Both markers count, and the newer wins. LAST_DEPLOY is the watcher's own,
+    LAST_PUBLISH is written by publish.py however it was invoked. Reading only
+    the watcher's marker meant a publish run by hand left the alarm ringing over
+    a board that was seconds old, which is how an alarm stops being believed.
     """
-    if not LAST_DEPLOY.exists():
-        return None
-    return time.time() - LAST_DEPLOY.stat().st_mtime
+    stamps = [path.stat().st_mtime for path in (LAST_DEPLOY, LAST_PUBLISH)
+              if path.exists()]
+    return time.time() - max(stamps) if stamps else None
 
 
 def stale_board_warning():

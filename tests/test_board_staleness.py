@@ -28,17 +28,21 @@ spec.loader.exec_module(watch)
 class BoardStalenessTest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp())
-        self.original = watch.LAST_DEPLOY
+        self.original = (watch.LAST_DEPLOY, watch.LAST_PUBLISH)
         watch.LAST_DEPLOY = self.tmp / "last-deploy"
+        watch.LAST_PUBLISH = self.tmp / "last-publish"
 
     def tearDown(self):
-        watch.LAST_DEPLOY = self.original
+        watch.LAST_DEPLOY, watch.LAST_PUBLISH = self.original
+
+    def _touch(self, path, seconds_ago):
+        import os
+        path.write_text("x")
+        when = time.time() - seconds_ago
+        os.utime(path, (when, when))
 
     def publish_was(self, seconds_ago):
-        watch.LAST_DEPLOY.write_text("x")
-        when = time.time() - seconds_ago
-        import os
-        os.utime(watch.LAST_DEPLOY, (when, when))
+        self._touch(watch.LAST_DEPLOY, seconds_ago)
 
     def test_a_board_published_moments_ago_is_not_stale(self):
         self.publish_was(30)
@@ -67,6 +71,43 @@ class BoardStalenessTest(unittest.TestCase):
         # first run is how an alarm gets ignored later.
         self.assertIsNone(watch.board_staleness())
         self.assertEqual(watch.stale_board_warning(), "")
+
+
+    def test_a_publish_run_by_hand_clears_the_alarm(self):
+        """The defect this caught: the board was 29 seconds old and still stale.
+
+        LAST_DEPLOY is written only by the watcher's own publish path, so a
+        publish by any other route left the alarm ringing over a fresh board.
+        publish.py writes LAST_PUBLISH however it was invoked, and the newer of
+        the two is what counts.
+        """
+        self._touch(watch.LAST_DEPLOY, 22 * 3600)
+        self.assertTrue(watch.stale_board_warning())
+        self._touch(watch.LAST_PUBLISH, 29)
+        self.assertEqual(watch.stale_board_warning(), "")
+        self.assertLess(watch.board_staleness(), 60)
+
+    def test_an_old_hand_publish_does_not_mask_a_stale_watcher(self):
+        # The newer wins in both directions, so a stale hand-publish beside a
+        # fresh watcher publish is not an alarm either.
+        self._touch(watch.LAST_PUBLISH, 22 * 3600)
+        self._touch(watch.LAST_DEPLOY, 29)
+        self.assertEqual(watch.stale_board_warning(), "")
+
+    def test_both_stale_is_still_an_alarm(self):
+        self._touch(watch.LAST_DEPLOY, 22 * 3600)
+        self._touch(watch.LAST_PUBLISH, 20 * 3600)
+        self.assertTrue(watch.stale_board_warning())
+
+    def test_publish_records_the_marker_where_the_watcher_reads_it(self):
+        # One path writes it, another reads it; they have to agree on where.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "publish_mod", ROOT / "scripts" / "publish.py")
+        publish = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(publish)
+        self.assertEqual(publish.LAST_PUBLISH.name, self.original[1].name)
+        self.assertEqual(publish.LAST_PUBLISH, self.original[1])
 
     def test_the_window_is_twice_the_publish_floor(self):
         self.assertEqual(watch.PUBLISH_STALE_SECONDS, 2 * watch.PUBLISH_FLOOR_SECONDS)

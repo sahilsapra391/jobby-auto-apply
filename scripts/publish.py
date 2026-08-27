@@ -358,6 +358,28 @@ def guard_state_size(payload):
     return payload
 
 
+# Written after a publish actually reaches KV, by whichever route published.
+#
+# watch.py measures board staleness from this, and it has to be written here
+# rather than only in the watcher: the first version marked success in the
+# watcher's own publish path, so a publish run by hand left the alarm ringing
+# over a board that was seconds old. An alarm that cries wolf gets ignored, and
+# then it is not an alarm.
+LAST_PUBLISH = Path("~/.job-application/last-publish").expanduser()
+
+
+def mark_published():
+    """Record that a publish succeeded. Never fatal: this is bookkeeping."""
+    try:
+        LAST_PUBLISH.parent.mkdir(parents=True, exist_ok=True)
+        LAST_PUBLISH.write_text(
+            __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            encoding="utf-8")
+    except OSError:
+        pass
+
+
 def push_content(html, state, docs, providers=None, doc_index=None):
     """Write sanitized board state, documents and the artifact index into KV.
 
@@ -391,6 +413,7 @@ def push_content(html, state, docs, providers=None, doc_index=None):
                            env=toolpath.queue_env())
     if r.returncode != 0:
         raise PublishError(f"could not write board state to KV: {(r.stderr or '').strip()[:400]}")
+    mark_published()
     return json.loads(r.stdout or "{}")
 
 
