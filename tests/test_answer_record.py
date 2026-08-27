@@ -517,6 +517,22 @@ class ArtifactContractTests(unittest.TestCase):
                     {"question": "First name", "answer": "Sahil",
                      "source": "profile", "readBack": "match"}], root=store)
 
+                # The premise, asserted rather than assumed. This case only
+                # proves displacement if the loser really is reached first, and
+                # that rests on "AAA Corp" sorting before "Acme" -- a fact about
+                # two strings in this test, which a rename would silently
+                # destroy while leaving it green. collect() walks
+                # sorted(rglob("*")), so the same walk answers it here.
+                # Borrowed from jobby-auto-apply-71, who hit the same trap.
+                visited = [q.name for q in sorted(apps.rglob("*")) if q.is_file()]
+                if why.endswith("FIRST"):
+                    self.assertLess(
+                        visited.index(loser), visited.index("answers-app-1.json"),
+                        "the loser has to be visited first or this proves nothing")
+                else:
+                    self.assertGreater(
+                        visited.index(loser), visited.index("answers-app-1.json"))
+
                 plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
                 by_name = {a["name"]: a for a in plan["artifacts"]}
                 self.assertEqual(by_name["answers-app-1.json"]["key"],
