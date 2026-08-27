@@ -231,6 +231,28 @@ def cmd_local(args, _base):
         return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
 
 
+# Hosts that answer a permanent redirect to their www form. Measured
+# 2026-08-27: https://jobby.fyi/doc/<name> answers 308 to www.jobby.fyi, which
+# costs 180 to 290 ms on every document open for anyone who arrived at the
+# apex. Document links on the board are relative, so they inherit whichever
+# host the page was loaded on, and the fix is to never emit the apex.
+CANONICAL_HOSTS = {"jobby.fyi": "www.jobby.fyi"}
+
+
+def canonical_url(url):
+    """The board URL with its redirecting host swapped for the one that answers."""
+    from urllib.parse import urlsplit, urlunsplit
+    try:
+        parts = urlsplit(str(url or "").strip())
+    except ValueError:
+        return url
+    target = CANONICAL_HOSTS.get(parts.hostname or "")
+    if not target or parts.scheme not in ("http", "https"):
+        return url
+    netloc = target + (f":{parts.port}" if parts.port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def current_url(root):
     store = [sys.executable, str(REPO / "scripts" / "store.py")]
     if root:
@@ -238,7 +260,7 @@ def current_url(root):
     r = subprocess.run(store + ["meta-get", "--key", "dashboardUrl"],
                        capture_output=True, text=True)
     try:
-        return json.loads(r.stdout or "{}").get("dashboardUrl") or ""
+        return canonical_url(json.loads(r.stdout or "{}").get("dashboardUrl") or "")
     except json.JSONDecodeError:
         return ""
 
@@ -304,6 +326,18 @@ def provider_payload(root=None):
 MAX_STATE_BYTES = 20 * 1024 * 1024
 
 
+def serialize_state(state):
+    """The one place board state becomes bytes.
+
+    Exists so a test can measure exactly what the guard measures. The previous
+    size test asserted a record *count* against EMBED_CAP while the guard
+    weighed *bytes*, over a fixture whose records were 264 bytes against
+    production's 4,961, so it stayed green through 22 hours of refused
+    publishes. Two ways of turning state into bytes is how that happens twice.
+    """
+    return json.dumps(state, separators=(",", ":")).encode("utf-8")
+
+
 def guard_state_size(payload):
     """Refuse a state the deployed reader would reject.
 
@@ -343,8 +377,7 @@ def push_content(html, state, docs, providers=None, doc_index=None):
         providers_path = Path(tmp) / "providers.json"
         index_path = Path(tmp) / "doc-index.json"
         html_path.write_text(html, encoding="utf-8")
-        state_path.write_bytes(guard_state_size(
-            json.dumps(state, separators=(",", ":")).encode("utf-8")))
+        state_path.write_bytes(guard_state_size(serialize_state(state)))
         docs_path.write_text(json.dumps(docs), encoding="utf-8")
         providers_path.write_text(
             json.dumps(providers or settings_panel.public_payload({})), encoding="utf-8"
@@ -523,7 +556,7 @@ def cmd_publish(args, base):
         raise PublishError((proc.stderr or "vercel deploy failed").strip())
 
     urls = re.findall(r"https://[^\s]+", (proc.stdout or "") + (proc.stderr or ""))
-    url = urls[-1] if urls else None
+    url = canonical_url(urls[-1]) if urls else None
     if not url:
         raise PublishError("deployed, but no URL was reported; check `vercel ls`")
 
