@@ -208,13 +208,28 @@ class StateFitsTheCeilingTest(unittest.TestCase):
         self.assertLess(self.published_bytes(jobs), publish.MAX_STATE_BYTES)
 
     def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
-        """A bound nothing can violate is not a bound. Prove this one bites."""
-        original = dashboard.state_slim.slim_jobs
+        """A bound nothing can violate is not a bound. Prove this one bites.
+
+        Every step that shrinks the slice has to be neutralised here, not just
+        the one that existed when this was written. `_trim_sections` was added
+        to the same path afterwards, cutting published sections to the five
+        points a card draws, and because this test disabled only `slim_jobs`
+        the "unslimmed" slice came in at 20.14 MB against a 20.97 MB ceiling and
+        the test failed on main. It was measuring a half-slimmed slice and
+        calling it whole.
+
+        A third one will break it the same way, which is the right outcome: the
+        failure says "you added a trim and this no longer proves what it says".
+        """
+        original_slim = dashboard.state_slim.slim_jobs
+        original_trim = dashboard._trim_sections
         dashboard.state_slim.slim_jobs = staticmethod(lambda jobs: jobs)
+        dashboard._trim_sections = lambda job: job
         try:
             unslimmed = self.published_bytes(pool(3400, acted=966))
         finally:
-            dashboard.state_slim.slim_jobs = original
+            dashboard.state_slim.slim_jobs = original_slim
+            dashboard._trim_sections = original_trim
         self.assertGreater(unslimmed, publish.MAX_STATE_BYTES,
                            "the unslimmed slice must exceed the ceiling, or this "
                            "test cannot detect the fault it exists for")
