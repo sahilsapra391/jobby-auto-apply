@@ -691,7 +691,20 @@ def open_application(url, slot, settle_timeout=20):
         other = page.get("id")
         if other and other != target:
             _cdp(f"/json/close/{other}", slot)
-    _cdp(f"/json/activate/{target}", slot)
+
+    # No activate here, deliberately. Every apply run passes through this
+    # function, and `/json/activate` raises the slot's window, so a working
+    # afternoon of applications took the user's screen away from them again and
+    # again -- eight slots now, so eight times as often as it needs to be.
+    #
+    # It was also doing nothing else. The loop above closes every other page, so
+    # the posting is the only tab in the window and is therefore already the
+    # selected one. The call's only remaining effect was the focus theft.
+    #
+    # A user-initiated focus is a different thing and stays: `focus_tab` fronts
+    # Chrome because somebody clicked Open & finish and wants to be taken there.
+    # The rule is that the agent works in the background and the user's own
+    # clicks move the user.
 
     settled = None
     for _ in range(max(1, int(settle_timeout)) * 4):
