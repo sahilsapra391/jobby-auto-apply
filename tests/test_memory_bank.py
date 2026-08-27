@@ -640,6 +640,47 @@ class BaseResumeSelectionTests(BankTest):
         self.assertFalse(eu["default"])
         self.assertEqual(store.select_resume(resumes, "DE")[0]["key"], "eu")
 
+    def test_an_uploaded_document_becomes_the_new_base_pdf(self):
+        """Uploading changes what the base is built from, not what it says.
+
+        The PDF is the source text the model reads and what the layout is
+        measured against. The wording still comes from the copied base, because
+        resume_build.extract matches the exact markup Jobby's template emits
+        and cannot read an arbitrary document.
+        """
+        self.profile([self.base("us", ["US"], default=True)])
+        uploaded = pathlib.Path(self.tmp.name) / "eu.pdf"
+        uploaded.write_bytes(b"%PDF-1.7 pretend")
+        out = store.cmd_resume_add(ns(root=self.root, input=self.write(
+            {"key": "eu", "countries": ["GB"], "copyFrom": "us",
+             "documentPath": str(uploaded)})))
+        self.assertEqual(out["document"], "uploaded")
+        resumes = store.cmd_profile_get(ns(root=self.root))["resumes"]
+        eu = next(r for r in resumes if r["key"] == "eu")
+        self.assertEqual(eu["path"], str(uploaded))
+        # Contact details still come from the base it copied.
+        self.assertEqual(eu["identity"], resumes[0]["identity"])
+
+    def test_without_an_upload_the_base_keeps_using_the_copied_document(self):
+        self.profile([self.base("us", ["US"], default=True)])
+        out = store.cmd_resume_add(ns(root=self.root, input=self.write(
+            {"key": "eu", "countries": ["GB"], "copyFrom": "us"})))
+        self.assertEqual(out["document"], "copied")
+        resumes = store.cmd_profile_get(ns(root=self.root))["resumes"]
+        self.assertEqual(next(r for r in resumes if r["key"] == "eu")["path"],
+                         resumes[0]["path"])
+
+    def test_a_missing_or_non_pdf_document_is_refused(self):
+        self.profile([self.base("us", ["US"], default=True)])
+        with self.assertRaises(store.StoreError):
+            store.cmd_resume_add(ns(root=self.root, input=self.write(
+                {"key": "eu", "countries": ["GB"], "documentPath": "/nope/missing.pdf"})))
+        notpdf = pathlib.Path(self.tmp.name) / "eu.txt"
+        notpdf.write_text("not a pdf")
+        with self.assertRaises(store.StoreError):
+            store.cmd_resume_add(ns(root=self.root, input=self.write(
+                {"key": "eu2", "countries": ["GB"], "documentPath": str(notpdf)})))
+
     def test_a_new_base_needs_a_country_and_a_clean_key(self):
         self.profile([self.base("us", ["US"], default=True)])
         with self.assertRaises(store.StoreError):

@@ -525,3 +525,85 @@ test('the three classification fields specifically survive the route', async () 
   assert.equal(payload.answers[0].groupKey, 'sponsorship-required|yes');
   assert.equal(payload.answers[1].kind, 'policy');
 });
+
+// --- uploading a base resume ------------------------------------------------
+//
+// The document goes to a key of its own, never into `jobby:queue`. That key is
+// read whole on every watcher poll and read-modify-written by every click, and
+// a resume is about 87 KB, which is 116 KB of base64 sitting in every one of
+// those reads until the watcher claims it.
+
+const PDF = Buffer.concat([Buffer.from('%PDF-1.7'), Buffer.alloc(64, 0x20)]);
+
+test('an uploaded resume goes to its own key and not into the queue', async () => {
+  const response = await handler.fetch(request('/api/resume-upload', {
+    uploadId: 'doc-1', pdf: PDF.toString('base64'),
+  }));
+  assert.equal(response.status, 202);
+  assert.ok(values.has('jobby:upload:doc-1'));
+  assert.equal(values.has('jobby:queue'), false, 'the document must not touch the queue');
+});
+
+test('the queued base carries the upload id, not the document', async () => {
+  await handler.fetch(request('/api/resume-upload', {
+    uploadId: 'doc-2', pdf: PDF.toString('base64'),
+  }));
+  const response = await handler.fetch(request('/api/resume', {
+    editId: 'base-1', action: 'add', key: 'eu', countries: ['GB', 'DE'],
+    copyFrom: 'us', uploadId: 'doc-2',
+  }));
+  assert.equal(response.status, 202);
+  const queued = JSON.parse(values.get('jobby:queue')).resumeEdits[0];
+  assert.equal(queued.uploadId, 'doc-2');
+  assert.equal(queued.pdf, undefined);
+  assert.ok(JSON.stringify(queued).length < 400, 'the queue entry must stay small');
+});
+
+test('a file that is not a PDF is refused by its content, not its name', async () => {
+  // The browser reports a name and the name is not evidence. A file that is not
+  // a PDF otherwise fails on the device, later, mid-application.
+  const response = await handler.fetch(request('/api/resume-upload', {
+    uploadId: 'doc-3', pdf: Buffer.from('PK this is a zip').toString('base64'),
+  }));
+  assert.equal(response.status, 415);
+  assert.equal(values.has('jobby:upload:doc-3'), false);
+});
+
+test('an oversized upload is refused with the size in the message', async () => {
+  const big = Buffer.concat([Buffer.from('%PDF-1.7'), Buffer.alloc(3 * 1024 * 1024, 0x20)]);
+  const response = await handler.fetch(request('/api/resume-upload', {
+    uploadId: 'doc-4', pdf: big.toString('base64'),
+  }));
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error, /KB; the limit is 2 MB/);
+  assert.equal(values.has('jobby:upload:doc-4'), false);
+});
+
+test('an empty or missing file is refused', async () => {
+  assert.equal((await handler.fetch(request('/api/resume-upload', { uploadId: 'doc-5' }))).status, 400);
+  assert.equal((await handler.fetch(request('/api/resume-upload', {
+    uploadId: 'doc-6', pdf: '',
+  }))).status, 400);
+});
+
+test('an upload id that is not a plain token is refused', async () => {
+  const response = await handler.fetch(request('/api/resume-upload', {
+    uploadId: '../../etc/passwd', pdf: PDF.toString('base64'),
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(values.size, 0);
+});
+
+test('uploading stays behind the password and refuses a cross-site post', async () => {
+  const unauth = await handler.fetch(
+    request('/api/resume-upload', { uploadId: 'x', pdf: PDF.toString('base64') }, 'POST', false));
+  assert.equal(unauth.status, 401);
+  const crossSite = new Request('https://board.example/api/resume-upload', {
+    method: 'POST',
+    headers: { authorization: auth(), origin: 'https://evil.example',
+               'content-type': 'application/json', 'x-jobby-request': '1' },
+    body: JSON.stringify({ uploadId: 'x', pdf: PDF.toString('base64') }),
+  });
+  assert.equal((await handler.fetch(crossSite)).status, 403);
+  assert.equal(values.size, 0);
+});

@@ -53,6 +53,7 @@ const text = (body, status, extra = {}) =>
   });
 
 import { readQueue, enqueue as kvEnqueue, claimOne, putConfig, takeConfig, configured, CONFIG_FIELD } from '../kvqueue.mjs';
+import { kvPut } from '../kv.mjs';
 
 // Vercel Blob suspended this store once the watcher started polling it. The
 // queue now lives in Cloudflare Workers KV under a single key, because KV
@@ -387,6 +388,9 @@ async function handleResumeEdit(request) {
       if (codes.length) extra.countries = codes;
       const copyFrom = boundedString(body.copyFrom, LIMITS.key);
       if (copyFrom) extra.copyFrom = copyFrom;
+      // The name of the key holding an uploaded document, never the document.
+      const uploadId = boundedString(body.uploadId, LIMITS.editId);
+      if (uploadId && /^[A-Za-z0-9._-]+$/.test(uploadId)) extra.uploadId = uploadId;
       if (Number.isInteger(body.priority)) extra.priority = body.priority;
     } else if (action === 'default' || action === 'remove') {
       const key = boundedString(body.key, LIMITS.key);
@@ -405,6 +409,57 @@ async function handleResumeEdit(request) {
       extra.content = content;
     }
     return json({ ok: true, ...(await kvEnqueue(process.env, 'resumeEdits', editId, extra)) }, 202);
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) }, 502);
+  }
+}
+
+// An uploaded base resume, on its way to the device.
+//
+// **Its own key, not the queue.** `jobby:queue` is read whole on every watcher
+// poll, a few seconds apart, and read-modify-written by every click. A resume
+// is about 87 KB, which is 116 KB of base64 sitting in that read until the
+// watcher claims it. So the document goes in a key of its own, the queue
+// carries only its name, and the device deletes the key once it has the bytes.
+// Same shape as the dedicated provider lanes in kvqueue.mjs and for the same
+// reason.
+//
+// Two megabytes, not the 12 MB `document_contract` will accept. That ceiling is
+// for anything a document job might carry; this is one resume, and a resume
+// that does not fit in 2 MB is a scan of a resume rather than a resume.
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+const PDF_MAGIC = '%PDF-';
+
+async function handleResumeUpload(request) {
+  if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
+  if (request.method !== 'POST') return text('Method not allowed.\n', 405, { allow: 'POST' });
+  try {
+    const body = await request.json().catch(() => ({}));
+    const uploadId = boundedString(body.uploadId, LIMITS.editId);
+    if (!uploadId || !/^[A-Za-z0-9._-]+$/.test(uploadId)) {
+      return json({ ok: false, error: 'bad uploadId' }, 400);
+    }
+    const encoded = typeof body.pdf === 'string' ? body.pdf : '';
+    if (!encoded) return json({ ok: false, error: 'no file' }, 400);
+    // Decoded length, not the base64 length: the cap is about the document.
+    let bytes;
+    try {
+      bytes = Buffer.from(encoded, 'base64');
+    } catch {
+      return json({ ok: false, error: 'that file could not be read' }, 400);
+    }
+    if (!bytes.length) return json({ ok: false, error: 'that file is empty' }, 400);
+    if (bytes.length > MAX_UPLOAD_BYTES) {
+      return json({ ok: false, error: `that file is ${Math.round(bytes.length / 1024)} KB; the limit is 2 MB` }, 413);
+    }
+    // Checked by content, not by the name the browser reported. A file called
+    // resume.pdf that is not a PDF fails later, on the device, in the middle of
+    // building a real application.
+    if (bytes.subarray(0, 5).toString('latin1') !== PDF_MAGIC) {
+      return json({ ok: false, error: 'that file is not a PDF' }, 415);
+    }
+    await kvPut(process.env, `jobby:upload:${uploadId}`, encoded);
+    return json({ ok: true, uploadId, bytes: bytes.length }, 202);
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) }, 502);
   }
@@ -711,6 +766,7 @@ export default {
       return json({ ok: true, ...payload }, 200);
     }
 
+    if (pathname === '/api/resume-upload') return handleResumeUpload(request);
     if (pathname === '/api/answer') return handleAnswerEdit(request);
     if (pathname === '/api/resume') return handleResumeEdit(request);
 

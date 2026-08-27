@@ -1476,6 +1476,52 @@ def _bank_command(item):
     return ["answer-edit", "--input", "-"], json.dumps(payload)
 
 
+BASE_RESUME_DIR = STATE_DIR / "base-resumes"
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+
+
+def install_uploaded_resume(upload_id, key):
+    """Take an uploaded base resume out of KV and write it beside the store.
+
+    The board can reach KV and the device can reach the filesystem, and this is
+    the only place those meet. The key is deleted as it is taken, so a document
+    does not sit in KV after the one device that wanted it has it.
+
+    Returns the path, or raises. Refusing loudly matters more than usual here:
+    a base resume that silently did not arrive means the next application is
+    built from the wrong document and nothing says so.
+    """
+    result = subprocess.run(
+        [toolpath.node(), "queue.mjs", "upload-take", upload_id],
+        cwd=DEPLOY, capture_output=True, text=True,
+        env=toolpath.queue_env(), timeout=60)
+    if result.returncode != 0:
+        raise TickError(f"upload {upload_id} could not be taken: "
+                        f"{(result.stderr or '').strip()[:200]}")
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"upload {upload_id} returned junk") from exc
+    encoded = payload.get("pdf")
+    if not encoded:
+        raise TickError(f"upload {upload_id} was not in KV; it may have expired")
+    import base64
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise TickError(f"upload {upload_id} was not valid base64") from exc
+    if not data.startswith(b"%PDF-"):
+        raise TickError(f"upload {upload_id} is not a PDF")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise TickError(f"upload {upload_id} is larger than 2 MB")
+    BASE_RESUME_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(BASE_RESUME_DIR, 0o700)
+    path = BASE_RESUME_DIR / f"{key}.pdf"
+    path.write_bytes(data)
+    os.chmod(path, 0o600)
+    return path
+
+
 def _resume_command(item):
     action = item.get("action")
     if action in ("add", "update"):
@@ -1483,6 +1529,9 @@ def _resume_command(item):
                    if item.get(k) is not None}
         if not payload.get("key"):
             return None, None
+        if action == "add" and item.get("uploadId"):
+            payload["documentPath"] = str(
+                install_uploaded_resume(str(item["uploadId"]), payload["key"]))
         return [f"resume-{action}", "--input", "-"], json.dumps(payload)
     if action in ("default", "remove"):
         key = item.get("key")

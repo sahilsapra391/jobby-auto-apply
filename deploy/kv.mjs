@@ -48,3 +48,22 @@ export async function kvPut(env, key, value) {
   if (!r.ok) throw new Error(`KV write failed for ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
   return true;
 }
+
+
+/** Remove one key.
+ *
+ *  For the one payload here that is deliberately temporary: an uploaded base
+ *  resume, read once by the device and then holding somebody's document in KV
+ *  for no reason. A 404 is success, because the goal is the key being gone. */
+export async function kvDelete(env, key) {
+  const c = conf(env);
+  if (!c) throw new Error('KV is not configured');
+  const r = await fetch(`${c.base}/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${c.token}` },
+  });
+  if (!r.ok && r.status !== 404) {
+    throw new Error(`KV delete failed for ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  }
+  return true;
+}

@@ -11,6 +11,7 @@
 // The prefix argument (apply/, scan/, marked/) is kept from the Vercel Blob
 // era so the Python callers did not have to change when the backend did.
 import { readQueue, enqueue, claimOne, claimAll, takeConfig, QUEUES } from './kvqueue.mjs';
+import { kvGet, kvDelete } from './kv.mjs';
 
 const [cmd, prefix = 'marked/', id] = process.argv.slice(2);
 const queue = prefix.replace(/\/$/, '');
@@ -18,7 +19,7 @@ const env = process.env;
 
 const die = (msg) => { console.error(msg); process.exit(2); };
 
-if (cmd !== 'poll' && cmd !== 'config-take' && !QUEUES.includes(queue)) {
+if (cmd !== 'poll' && cmd !== 'config-take' && cmd !== 'upload-take' && !QUEUES.includes(queue)) {
   die(`unknown queue "${queue}"; expected one of ${QUEUES.join(', ')}`);
 }
 
@@ -36,6 +37,13 @@ try {
     console.log(JSON.stringify(await claimOne(env, queue, id || '')));
   } else if (cmd === 'claim') {
     console.log(JSON.stringify(await claimAll(env, queue)));
+  } else if (cmd === 'upload-take') {
+    // Take an uploaded base resume and remove it. One read, one delete, and the
+    // document never touches the shared queue key.
+    if (!prefix || !/^[A-Za-z0-9._-]+$/.test(prefix)) die('usage: queue.mjs upload-take <uploadId>');
+    const value = await kvGet(env, `jobby:upload:${prefix}`);
+    if (value !== null) await kvDelete(env, `jobby:upload:${prefix}`);
+    console.log(JSON.stringify({ uploadId: prefix, pdf: value }));
   } else if (cmd === 'config-take') {
     console.log(JSON.stringify(await takeConfig(env)));
   } else {
