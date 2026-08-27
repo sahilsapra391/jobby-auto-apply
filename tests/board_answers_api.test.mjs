@@ -137,18 +137,12 @@ test('an application with no record answers 404, not an empty record', async () 
   assert.match(response.headers.get('content-type') || '', /text\/plain/);
 });
 
-test('a JSON record in the KV fallback is not labelled application/pdf', async () => {
-  // Nothing is in KV today -- there was no backfill, because there were no
-  // records to back fill. But the fallback hardcoded PDF, and a record served
-  // as application/pdf is a file the browser refuses rather than a page anyone
-  // can read, so the default is now taken from the name.
-  await putDoc(process.env, NAME,
-    Buffer.from(JSON.stringify(RECORD), 'utf8').toString('base64'));
-  const response = await handler.fetch(get(`/doc/${NAME}`));
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-type'), 'application/json');
-  assert.equal(JSON.parse(await response.text()).fields.length, 3);
-});
+// The KV fallback's content type is #89's, not this file's. It was a real bug
+// -- 189 of 442 indexed artifacts are JSON, HTML or text, and the hardcoded PDF
+// was correct only while documents were the only artifact -- but one behaviour
+// wants one implementation and one test, and that one is theirs. Every record
+// this branch writes is in the index, so the fallback is unreachable for all of
+// them; the R2 path below is the one that matters here.
 
 test('a PDF still comes back as a PDF from both paths', async () => {
   const pdfKey = 'u/account-1/app/bc839847c93d9e46/resume.pdf';

@@ -546,15 +546,11 @@ async function handleDocument(request, pathname) {
     return new Response(request.method === 'HEAD' ? null : bytes, {
       status: 200,
       headers: {
-        // The R2 branch above takes its type from the index entry. This one has
-        // no entry to read, and every document KV holds is a PDF, so PDF is the
-        // right default -- but it is now a default rather than an assertion,
-        // because answer records are .json and a record served as
-        // application/pdf is a file the browser refuses to open rather than a
-        // page anyone can read.
-        'content-type': name.toLowerCase().endsWith('.json')
-          ? 'application/json'
-          : 'application/pdf',
+        // Every document KV holds is a PDF, and the names the index does not
+        // carry are exactly those legacy documents. #89 reads the index entry
+        // once for both paths and validates the value; this stays the default
+        // it falls back to.
+        'content-type': 'application/pdf',
         // inline so it opens in the browser rather than forcing a save
         'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
         ...BASE_HEADERS,
