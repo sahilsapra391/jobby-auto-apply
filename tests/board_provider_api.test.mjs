@@ -470,3 +470,58 @@ test('oversized resume wording is refused', async () => {
   }));
   assert.equal(response.status, 400);
 });
+
+// --- the projection contract ------------------------------------------------
+//
+// `publishable_state` decides what the device sends and `profilePayload`
+// decides what the page receives, and they are one contract written in two
+// languages. When they disagree the failure is silent: the device publishes a
+// field, the page reads `undefined`, nothing throws, and the board renders
+// something plausible and wrong.
+//
+// That is not hypothetical. `kind`, `category` and `groupKey` shipped to
+// production inside the published state, the page was built to read them, the
+// whole suite passed, and the Memory Bank drew 156 uncategorised rows because
+// this allowlist had not been told about them. `resumeRender` went the same way
+// and the resume editor said it had nothing to edit.
+
+test('every field the device publishes on an answer reaches the page', async () => {
+  // One record carrying every field publishable_state can put on an answer.
+  const complete = {
+    key: 'notice-period', question: 'Notice period?', value: '15 days',
+    state: 'confirmed', tags: ['logistics'], updatedAt: '2026-08-27T00:00:00Z',
+    version: 2, sensitive: false, dataClass: 'class-1', askedBy: ['acme-pm'],
+    openedAt: '2026-08-26T00:00:00Z', lastAskedAt: '2026-08-26T00:00:00Z',
+    answeredAt: '2026-08-27T00:00:00Z', note: 'a note', remembered: true,
+    kind: 'question', category: 'availability', groupKey: 'notice-period|15 days',
+  };
+  await publishBank([complete]);
+  const payload = await (await handler.fetch(request('/api/profile', undefined, 'GET'))).json();
+  const served = payload.answers[0];
+  const dropped = Object.keys(complete).filter((field) => served[field] === undefined);
+  assert.deepEqual(dropped, [],
+    'the device publishes these and the route drops them: ' + dropped.join(', '));
+});
+
+test('the rendered resume reaches the editor', async () => {
+  await publishBank([]);
+  const payload = await (await handler.fetch(request('/api/profile', undefined, 'GET'))).json();
+  assert.equal(typeof payload.resumeRender, 'string');
+});
+
+test('the three classification fields specifically survive the route', async () => {
+  // Named separately from the sweep above, because these are the ones the
+  // Memory Bank cannot draw a single category or collapse a single row without.
+  await publishBank([
+    { key: 'a', question: 'Do you require visa sponsorship?', value: 'Yes',
+      kind: 'question', category: 'work-authorisation',
+      groupKey: 'sponsorship-required|yes' },
+    { key: 'b', question: 'POLICY: how is relocation answered?', value: 'Always yes',
+      kind: 'policy' },
+  ]);
+  const payload = await (await handler.fetch(request('/api/profile', undefined, 'GET'))).json();
+  assert.equal(payload.answers[0].kind, 'question');
+  assert.equal(payload.answers[0].category, 'work-authorisation');
+  assert.equal(payload.answers[0].groupKey, 'sponsorship-required|yes');
+  assert.equal(payload.answers[1].kind, 'policy');
+});

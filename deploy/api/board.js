@@ -258,12 +258,24 @@ async function handleSearchConfig(request) {
 // arrives this fails closed instead of serving a stranger's answers.
 const VIEWER_USER_ID = process.env.JOBBY_USER_ID || 'account-1';
 
+// Every field of an answer the page is allowed to see.
+//
+// **An allowlist drops new fields silently, and it did.** The device started
+// publishing `kind`, `category` and `groupKey`, the page was built to read
+// them, every test passed, and the board showed 156 uncategorised rows because
+// this list had not been told. Nothing errored. The three names below carry a
+// reminder rather than a comment because the next field will arrive the same
+// way.
+//
+// `sensitive` and `dataClass` travel too: they no longer change what the page
+// draws, they are the classification the multi-tenant encryption path selects
+// on, per issue #82.
 const ANSWER_FIELDS = ['key', 'question', 'state', 'tags', 'updatedAt', 'version',
-  // `sensitive` and `dataClass` still travel. They no longer change what the
-  // page draws; they are the classification the multi-tenant encryption path
-  // selects on, per issue #82.
   'sensitive', 'dataClass', 'askedBy', 'openedAt', 'lastAskedAt',
-  'answeredAt', 'note', 'remembered'];
+  'answeredAt', 'note', 'remembered',
+  // Added with the Profile rebuild. Adding a field to publishable_state is only
+  // half of shipping it; this is the other half.
+  'kind', 'category', 'groupKey'];
 
 function profilePayload(state) {
   const bank = (state && state.memoryBank) || null;
@@ -289,6 +301,10 @@ function profilePayload(state) {
     identities: Array.isArray(bank.identities) ? bank.identities : [],
     resumeContent: bank.resumeContent && typeof bank.resumeContent === 'object'
       ? bank.resumeContent : null,
+    // The resume as it renders, which is what the editor shows. Dropped here
+    // for the same reason the three fields above were: the payload grew and
+    // this projection did not.
+    resumeRender: typeof bank.resumeRender === 'string' ? bank.resumeRender : '',
   };
 }
 
