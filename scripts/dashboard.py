@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand  # noqa: E402
 import clock  # noqa: E402
+import answer_record  # noqa: E402
 import company_logos  # noqa: E402
 import found_lane  # noqa: E402
 import premium_ui  # noqa: E402
@@ -52,7 +53,15 @@ def read_json(path, default):
         return default
 
 
-def load_state(root):
+def load_state(root, apps_root=None):
+    """The store, plus which applications have an answer record.
+
+    `apps_root` is the raw --root override rather than the resolved store path,
+    because that is exactly what publish.py hands r2_artifacts. Passing the
+    resolved path instead would send this to <store>/applications on a machine
+    whose documents are in REPO/applications, and every Submitted row would read
+    "not captured" while the records sat there.
+    """
     sessions = []
     sdir = root / "sessions"
     if sdir.exists():
@@ -77,12 +86,21 @@ def load_state(root):
         key = e.get("applicationId") or f"{e.get('company')}|{e.get('role')}"
         latest[key] = e
 
+    meta = read_json(root / "meta.json", {})
+    # Which applications have an answer record, decided by a directory scan here
+    # and carried in the state as ids. The records themselves are fetched when a
+    # modal opens; the deployed renderer has no applications/ folder to scan, so
+    # without this every Submitted row would read "not captured" on the board
+    # while reading correctly on the laptop.
+    if isinstance(meta, dict):
+        meta["answersCaptured"] = sorted(answer_record.captured_ids(apps_root))
+
     return {
         "profile": read_json(root / "profile.json", {}),
         "sessions": sessions,
         "history": list(latest.values()),
         "roles": read_json(root / "roles.json", {}),
-        "meta": read_json(root / "meta.json", {}),
+        "meta": meta,
         # The discovery pool. A corrupt file here must not take the whole board
         # down, but it must not silently render as an empty Found lane either:
         # the last-ingest line says when the last scan ran regardless.
@@ -476,6 +494,14 @@ def build(state, generated):
     # submitted; it must not vanish from the board when an outcome is logged.
     OUTCOMES = ("response", "interview", "offer", "rejected")
     submitted = [e for e in history if e.get("event") in ("completed",) + OUTCOMES]
+    # Written by load_state on the laptop, because the deployed renderer has no
+    # applications/ folder to scan. Ids only; the records are fetched on open.
+    captured = {
+        str(aid) for aid in ((state.get("meta") or {}).get("answersCaptured") or [])
+        if isinstance(aid, str) and aid
+    }
+    uncaptured = any(str(e.get("applicationId") or "") not in captured
+                     for e in submitted)
     # "reviewed" never confirmed, plus "submitting" with no completion after it —
     # the latter means a session died mid-submit and the platform must be checked.
     reviewed_only = {
@@ -620,6 +646,27 @@ def build(state, generated):
         short = "sent as text" if "text" in v.lower() else "not requested"
         return f'<span class="muted" title="{esc(v)}">{esc(short)}</span>'
 
+    def answers_cell(e):
+        """The form's own questions, or an honest note that nobody wrote them down.
+
+        Capture began on this branch, so every application submitted before it
+        has no record and never will: reconstructing what a form asked months
+        ago would be inventing an audit trail. "not captured" says exactly that
+        rather than opening an empty modal, which reads as a form with no
+        questions and is the one wrong answer available here.
+        """
+        aid = str(e.get("applicationId") or "")
+        if not aid or aid not in captured:
+            # Bare, with the explanation in the panel hint above rather than in
+            # a title attribute. The same sentence repeated on a hundred rows
+            # was 13 KB of page for one fact.
+            return '<span class="muted">not captured</span>'
+        return (f'<button class="btn ghost answers-open" type="button" '
+                f'data-id="{esc(aid)}" '
+                f'data-company="{esc(e.get("company") or "")}" '
+                f'data-role="{esc(e.get("role") or "")}" '
+                f'aria-haspopup="dialog" aria-controls="p-answers">Answers</button>')
+
     def sub_row(e):
         cls, label = outcome_chip.get(e.get("event"), ("", e.get("event")))
         hay = " ".join(str(x) for x in [e.get('company'), e.get('role'), label] if x)
@@ -631,11 +678,12 @@ def build(state, generated):
                 f"<td>{link(posting_url(e), 'Posting')}</td>"
                 f"<td>{proof_cell(e)}</td>"
                 f"<td>{doc_cell(e.get('resumeVariant'))}</td>"
-                f"<td>{doc_cell(e.get('coverLetter'))}</td></tr>")
+                f"<td>{doc_cell(e.get('coverLetter'))}</td>"
+                f"<td>{answers_cell(e)}</td></tr>")
 
     sub_rows = "\n".join(
         sub_row(e) for e in sorted(submitted, key=lambda x: x.get("at", ""), reverse=True)
-    ) or "<tr><td colspan='8' class='muted'>Nothing submitted yet</td></tr>"
+    ) or "<tr><td colspan='9' class='muted'>Nothing submitted yet</td></tr>"
 
     unconfirmed = "".join(
         f"<li><strong>{esc(c)}</strong><span class=\"ui-separator\">{esc(r)}</span>"
@@ -1284,9 +1332,10 @@ def build(state, generated):
 
   <div class="panel" id="p-done" role="tabpanel">
     {'<p class="hint">Already out. Check here before applying again.</p>' if submitted else ''}
+    {'<p class="hint">Answers opens the questions that form asked and what went into each one. Rows reading <em>not captured</em> were submitted before Jobby started writing that record down; nothing is reconstructed for them.</p>' if uncaptured else ''}
     {filter_bar("done", [(o, o.title()) for o in sub_states], len(submitted), wide=True)}
     {f'''<div class="sheet"><div class="tablewrap"><table>
-      <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>When</th><th>Posting</th><th>Proof</th><th>Resume</th><th>Cover letter</th></tr></thead>
+      <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>When</th><th>Posting</th><th>Proof</th><th>Resume</th><th>Cover letter</th><th>Answers</th></tr></thead>
       <tbody>{sub_rows}</tbody></table></div></div>''' if submitted else empty_state("done")}
   </div>
 
@@ -1323,6 +1372,18 @@ def build(state, generated):
     <colgroup><col style="width:25%"><col style="width:13%"><col style="width:31%"><col style="width:11%"><col style="width:20%"></colgroup>
     <thead><tr><th>Role</th><th>Dropped from</th><th>Last stage</th><th>When</th><th></th></tr></thead>
     <tbody>{dropped_rows}</tbody></table></div></div>''' if dropped else empty_state("dropped")}
+</dialog>
+
+<!-- What one employer's form asked, and what went into it. The rows are fetched
+     when this opens and built through textContent, never markup: every question
+     was written by a stranger and every answer passed through their page. -->
+<dialog class="answers-dialog" id="p-answers" aria-labelledby="answers-title">
+  <div class="dialog-head">
+    <div><p class="eyebrow" id="answers-where">Submitted</p><h2 id="answers-title">Application answers</h2></div>
+    <button class="dialog-close" id="answers-close" type="button" aria-label="Close application answers">&times;</button>
+  </div>
+  <p class="hint answers-note">What the form asked, what went in, and where each value came from. Codes, passwords and government or bank identifiers were never recorded, so those rows say so.</p>
+  <div id="answers-body"><p class="answers-loading">Reading the record...</p></div>
 </dialog>
 
 <script type="application/json" id="jb-found-data">{found_lane.payload(found, found_census, found_total)}</script>
@@ -1570,6 +1631,179 @@ def build(state, generated):
   }});
   if (droppedDialog) droppedDialog.addEventListener('click', function (event) {{
     if (event.target === droppedDialog && droppedDialog.close) droppedDialog.close();
+  }});
+
+  // The application answers modal. Records are fetched rather than embedded:
+  // the board state is near its ceiling and a hundred manifests would be a
+  // couple of hundred kilobytes of page that almost nobody opens. Nothing here
+  // touches innerHTML. Every question came off somebody else's form and every
+  // answer went through their page, so both are text and only ever text.
+  var answersDialog = document.getElementById('p-answers');
+  var answersBody = document.getElementById('answers-body');
+  var answersWhere = document.getElementById('answers-where');
+  var answersTitle = document.getElementById('answers-title');
+  var answersClose = document.getElementById('answers-close');
+  var answersCache = {{}};
+  var SOURCE_LABEL = {{ stored: 'answer store', profile: 'profile',
+                       generated: 'generated', provided: 'you' }};
+  var SOURCE_WHY = {{
+    stored: 'A confirmed answer you had already given to this question.',
+    profile: 'Taken from your profile: name, contact details, work history.',
+    generated: 'Built for this application from the tailored resume or the posting.',
+    provided: 'You supplied this one yourself while the application was in Needs you.'
+  }};
+
+  function ansEl(tag, cls, text) {{
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }}
+
+  function answerRow(field) {{
+    var row = ansEl('div', 'ans-row');
+    row.appendChild(ansEl('p', 'ans-q', field.question || 'Unlabelled field'));
+
+    // Two categories, and only one of them is a display decision.
+    //
+    // `withheld` is non-capture: the value was never written, so there is
+    // nothing here to show and nothing a click could uncover. Say which class
+    // of thing it was rather than leaving a blank row that reads as a field
+    // the form never asked about.
+    //
+    // `sensitive` is a property of the data, not an instruction to this
+    // function. Pay and demographics render like every other row, because this
+    // is one person's own board and he knows his own salary; covering it was
+    // friction with no reader it protected against. The flag stays on the
+    // record and is what a second account's board will key its own masking on.
+    var value = ansEl('div', 'ans-a');
+    if (field.unrecorded) {{
+      // A salvaged question. The form asked it; nothing wrote down the answer,
+      // and nothing ever will. Saying so per row matters as much as the banner,
+      // because a blank next to a question reads as a field left empty.
+      value.appendChild(ansEl('span', 'ans-unrecorded', 'Answer not recorded'));
+    }} else if (field.withheld) {{
+      value.appendChild(ansEl('span', 'ans-withheld',
+        'Not recorded \\u2014 ' + field.withheld));
+    }} else {{
+      value.appendChild(ansEl('span', 'ans-value', field.answer || '(left blank)'));
+    }}
+    row.appendChild(value);
+
+    if (field.unrecorded) {{
+      // No source badge and no read-back badge: both would be invented.
+      row.appendChild(ansEl('div', 'ans-meta'));
+      return row;
+    }}
+    var meta = ansEl('div', 'ans-meta');
+    var source = field.source || 'generated';
+    var badge = ansEl('span', 'ans-badge ans-src-' + source,
+                      SOURCE_LABEL[source] || source);
+    badge.title = SOURCE_WHY[source] || '';
+    meta.appendChild(badge);
+    if (field.readBack === 'differs') {{
+      // The value on the page disagreed with the value that was meant to go in.
+      // That is the failure this whole read-back pass exists to catch, so it is
+      // never quietly folded into the answer column.
+      var diff = ansEl('span', 'ans-badge ans-differs', 'read back differently');
+      diff.title = field.readBackValue
+        ? 'The page showed: ' + field.readBackValue
+        : 'The value read back off the page did not match what was entered.';
+      meta.appendChild(diff);
+    }} else if (field.readBack === 'unverified') {{
+      var un = ansEl('span', 'ans-badge ans-unverified', 'not read back');
+      un.title = 'This field was filled but its value was not read back off the page.';
+      meta.appendChild(un);
+    }}
+    if (field.note) meta.appendChild(ansEl('span', 'ans-note', field.note));
+    row.appendChild(meta);
+    return row;
+  }}
+
+  function renderAnswers(record) {{
+    answersBody.textContent = '';
+    var fields = (record && record.fields) || [];
+    if (record && record.capture === 'questions-only') {{
+      // Said before the rows rather than after, because someone scanning a
+      // column of "Answer not recorded" should already know why.
+      var salvage = ansEl('p', 'ans-salvage',
+        'These are the questions this form asked, kept by the session that '
+        + 'filled it. The answers were never written down, and nothing here '
+        + 'guesses at them.');
+      answersBody.appendChild(salvage);
+    }}
+    if (!fields.length) {{
+      answersBody.appendChild(ansEl('p', 'answers-loading',
+        'The record was written but lists no fields.'));
+      return;
+    }}
+    var counted = ansEl('p', 'answers-count',
+      fields.length + (fields.length === 1 ? ' field' : ' fields')
+      + (record.capturedAt ? ' \\u00b7 captured ' + record.capturedAt.slice(0, 10) : '')
+      + (record.ats ? ' \\u00b7 ' + record.ats : ''));
+    answersBody.appendChild(counted);
+    var list = ansEl('div', 'ans-list');
+    fields.forEach(function (f) {{ list.appendChild(answerRow(f)); }});
+    answersBody.appendChild(list);
+  }}
+
+  function openAnswers(button) {{
+    if (!answersDialog || !answersBody) return;
+    var id = button.dataset.id || '';
+    answersWhere.textContent = button.dataset.company || 'Submitted';
+    answersTitle.textContent = button.dataset.role || 'Application answers';
+    if (answersDialog.showModal) answersDialog.showModal();
+    else answersDialog.setAttribute('open', '');
+    if (answersCache[id]) {{ renderAnswers(answersCache[id]); return; }}
+    answersBody.textContent = '';
+    answersBody.appendChild(ansEl('p', 'answers-loading', 'Reading the record\\u2026'));
+    if (typeof fetch !== 'function') {{
+      answersBody.textContent = '';
+      answersBody.appendChild(ansEl('p', 'answers-loading',
+        'This copy of the board cannot reach the record.'));
+      return;
+    }}
+    // Through /doc/, the same authenticated proxy the resume and the cover
+    // letter come down. A record is the same class of per-application artifact
+    // they are, so it is the same R2 key layout, the same index, the same
+    // password gate and the same dual-read. A second route would have been a
+    // second gate to keep honest.
+    fetch('/doc/answers-' + encodeURIComponent(id) + '.json',
+          {{ credentials: 'same-origin' }})
+      .then(function (r) {{
+        // A miss answers text/plain, so the type is checked rather than
+        // trusting that 404 is the only way to not get a record.
+        var kind = r.headers && r.headers.get ? (r.headers.get('content-type') || '') : '';
+        return r.ok && kind.indexOf('json') >= 0 ? r.json() : null;
+      }})
+      .then(function (record) {{
+        if (!record || !record.fields) {{
+          answersBody.textContent = '';
+          answersBody.appendChild(ansEl('p', 'answers-loading',
+            'The record is filed on your Mac but has not been published yet.'));
+          return;
+        }}
+        answersCache[id] = record;
+        renderAnswers(record);
+      }})
+      // A saved copy of the board has no route to ask. That is not an error
+      // worth dressing up, and the rest of the row still stands.
+      .catch(function () {{
+        answersBody.textContent = '';
+        answersBody.appendChild(ansEl('p', 'answers-loading',
+          'This copy of the board cannot reach the record.'));
+      }});
+  }}
+
+  document.querySelectorAll('.answers-open').forEach(function (b) {{
+    b.addEventListener('click', function () {{ openAnswers(b); }});
+  }});
+  if (answersClose && answersDialog) answersClose.addEventListener('click', function () {{
+    if (answersDialog.close) answersDialog.close();
+    else answersDialog.removeAttribute('open');
+  }});
+  if (answersDialog) answersDialog.addEventListener('click', function (event) {{
+    if (event.target === answersDialog && answersDialog.close) answersDialog.close();
   }});
   // "Confirm submitted" moves a card out of Needs you and into Submitted. The
   // board cannot write to the store on the agent's machine, so the change is
@@ -2152,7 +2386,11 @@ def main():
         print("job-application dashboard: no store found; run store.py init first", file=sys.stderr)
         return 2
 
-    state = load_state(root)
+    # Both sides of this: main's embed cap, and this branch's raw --root
+    # override. The override is the raw argument rather than the resolved store
+    # path because that is what publish.py hands r2_artifacts, and the two have
+    # to resolve applications/ to the same directory.
+    state = load_state(root, args.root)
     if args.embed_cap:
         # Only the published state honours this. The local HTML is a file on
         # disk with no ceiling over it, and shrinking it would hide records for

@@ -27,6 +27,7 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
+import answer_record  # noqa: E402
 import experience  # noqa: E402
 import finish  # noqa: E402
 import salary  # noqa: E402
@@ -271,6 +272,51 @@ TOOLS = [
                 "detail": {"type": "string", "minLength": 1, "maxLength": 1_000},
             },
             "required": ["pending", "detail"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "record_answers",
+        "description": (
+            "File this application's question-and-answer manifest: every field the "
+            "form asked, the value entered, where it came from, and whether it was "
+            "read back. Call it once, after the read-back pass and before pre_submit."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": answer_record.MAX_FIELDS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string", "minLength": 1,
+                                "maxLength": answer_record.MAX_QUESTION_CHARS,
+                            },
+                            "answer": {
+                                "type": "string",
+                                "maxLength": answer_record.MAX_ANSWER_CHARS,
+                            },
+                            "source": {"type": "string",
+                                       "enum": list(answer_record.SOURCES)},
+                            "sourceKey": {"type": "string", "maxLength": 200},
+                            "readBack": {"type": "string",
+                                         "enum": list(answer_record.READ_BACK)},
+                            "readBackValue": {
+                                "type": "string",
+                                "maxLength": answer_record.MAX_ANSWER_CHARS,
+                            },
+                            "note": {"type": "string", "maxLength": 500},
+                        },
+                        "required": ["question", "source"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["fields"],
             "additionalProperties": False,
         },
     },
@@ -522,6 +568,22 @@ class ApplicationTools:
             raise ToolInputError("every unanswered question must also be in pending")
         detail = _text(args.get("detail"), "detail", maximum=1_000)
         return finish.park(self.context.application_id, blockers, detail, unanswered)
+
+    def _record_answers(self, args: dict[str, Any]) -> dict[str, Any]:
+        _closed(args, {"fields"})
+        fields = args.get("fields")
+        if not isinstance(fields, list):
+            raise ToolInputError("fields must be an array")
+        try:
+            return answer_record.write(
+                self.context.application_id, fields, root=self.context.root
+            )
+        except answer_record.RecordError as exc:
+            # The refusal names what was wrong, because the caller is the only
+            # thing that can fix the manifest and a blank "operation failed"
+            # leaves it guessing. The message is built from fixed strings and
+            # the caller's own field labels, never from stored answers.
+            raise ToolInputError(str(exc)[:400]) from exc
 
     def _pre_submit(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, set())

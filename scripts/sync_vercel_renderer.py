@@ -9,6 +9,7 @@ REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "scripts"
 TARGET = REPO / "deploy" / "renderer"
 FILES = (
+    "answer_record.py",
     "ats_match.py",
     "brand.py",
     # dashboard.py and found_lane.py both import this; without it the deployed

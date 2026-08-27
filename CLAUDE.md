@@ -109,6 +109,124 @@ them from. Both sides of that comparison go through `_words`, because
 and only normalising one side matches neither. A posting with no recognisable
 heading returns empty buckets rather than a guess.
 
+`scripts/answer_record.py` writes what the employer's form asked and what went
+into it, one JSON record per application, filed in `applications/<Company>/` next
+to that application's PDFs. SKILL.md had told the agent to build that manifest
+and then to throw it away, so 102 submitted applications could show the resume
+and cover letter an employer received and nothing about the twenty questions
+underneath them.
+
+**No answers survive from before capture existed, and none are invented.** The
+whole store was swept on 2026-08-27: `answers.json` is the only file in it
+holding answers, 156 entries keyed by question slug with no application in them.
+The 41 `questions*.json` files scattered through `applications/` hold question
+text and nothing else. So a record has a `capture` level. `full` is a real run.
+`questions-only` is a salvage: `answer_record.py salvage-questions` turns those
+lists into records whose rows carry the question, `unrecorded: true`, and no
+answer, no source and no read-back state, because all three would be invented.
+It recovered 16 of 102 submitted applications, 224 questions.
+
+The one thing that must never be built here is a join against `answers.json` to
+fill those rows in. It is keyed by question slug with no application, and its
+entries keep being edited — many were last touched months after the applications
+they would be attributed to. Resolving a salvaged question against it produces
+what the store would say today, presented as what the employer received then.
+That is a fabricated audit trail, and a fabricated audit trail is worse than
+none. A test asserts no stored value reaches a salvaged record.
+
+There is a second tempting source and it is worse than the join. Sessions
+write blocker text into a session's `pendingFields`, and #73 now writes the same
+strings into `answers.json` as unanswered entries carrying `askedBy`. Both live
+in a field called `question`, so backfilling salvaged records from them looks
+like recovering more of the same thing. It is not. Measured across the 13
+applications parked in `review` on 2026-08-27, 29 blocker strings, **0 of 29 are
+question-shaped**; every one is agent prose. Two verbatim:
+
+    "Email verification code (8 characters) sent to sahil...@gmail.com"
+    "Browser tools unavailable in this session"
+
+A fault report and an instruction, sitting in a field named `question`. The
+salvage reads `questions*.json` only and must keep doing so. `askedBy` was 0
+across all 156 entries when checked the same day, because that loop writes on a
+park and none has happened since it merged, so there is nothing there to take
+even if it were the right shape.
+
+That is five distinct claims now catalogued, and none of them may share a field:
+what the form asked and the agent entered (`full`), what the form asked with the
+answer lost (`questions-only`), what the agent reported being stuck on, what the
+agent saw on the confirmation page (`confirmation` on the completed event, 78 of
+102, page banners with no field values), and what an employer's email says it
+received, which does not exist yet. The `capture` level and the per-field
+`source` enum are where a new one goes. Adding a value costs one enum entry;
+blending two costs the ability to ever tell which you are looking at.
+
+Attribution follows `r2_artifacts`' rule rather than a new one: the id in the
+filename when the store knows it, otherwise the company folder and only when
+that company has exactly one application. 25 files were skipped on those
+grounds and the reasons are printed, because a company with four open roles
+gets four different forms and filing one role's questions under another's is a
+stranger's logo on someone's card.
+
+Three things that file owns rather than trusts the caller for. It withholds
+one-time codes, passwords and national or bank identifiers, keeping the question
+and dropping the value, so a secret never reaches the disk that record is about
+to migrate off. It flags a row sensitive from the question text *and* from the
+stored answer's own `sensitive` state, which is the half question text cannot
+see. And a `stored` source has to cite a key the answer store actually holds,
+because a source badge that cannot be checked is decoration. Each of those is
+covered by a test that fails when the guard is disabled, not only by one that
+passes while it works.
+
+Withholding and flagging are two different things and only one of them is about
+a reader. **A withheld value was never written**; there is nothing on disk, so
+the row says which class of thing it was and offers no affordance, because there
+is nothing behind it. **A flagged value is written and, today, shown plainly.**
+The board has one reader, he knows his own salary and his own demographics, and
+covering them behind a tap was friction protecting nobody. That is a decision
+about this account's display and it reverses the moment there is a second one: a
+stranger's compensation is not drawn plainly on a shared surface. Which is why
+the flag stays on the record rather than being deleted along with the mask. It
+is what a per-user board will mask on and what the multi-tenant plan's Class 2
+field encryption will key on, and re-deriving it later from question text alone
+would silently lose every row the answer store's own state caught. Do not
+"simplify" it away because nothing currently draws it.
+
+A record is a Class 1 artifact and goes where the PDFs go. `r2_artifacts`
+already matched `answers-<id>.json` by name before this existed, so it keys one
+`u/{userId}/app/{applicationId}/answers.json` with `application/json` and
+`r2_sync` uploads and indexes it; nothing in the publish path needed adding.
+The modal reads it through `/doc/`, the same authenticated proxy, the same
+password gate and the same R2-then-KV dual read the documents use. It has no
+route of its own on purpose: a second serving path is a second auth check and a
+second dual read to keep in step. What that did need was one line inside the KV
+fallback, where the content type was hardcoded to `application/pdf` because
+every document KV held was one. It is now taken from the name, so a record
+served from the pre-migration copy is still a page rather than a file the
+browser refuses to open.
+
+`answer_record.applications_dir` must stay character-identical to
+`r2_artifacts.applications_dir`, and `ArtifactContractTests` compares the two
+rather than restating the rule. A writer and a collector that resolve
+`applications/` differently under a redirected store produce a record nothing
+ever uploads, and the board then says "not captured" for an application whose
+record is sitting on the disk.
+
+Records are fetched, not embedded, and that is measured. Against `main` at 101
+submitted applications on 2026-08-27: the column, the modal and its script cost
+the page 16,260 bytes, a captured row adds 198, and embedding a realistic
+15-field record for every application would have cost 263,509 against roughly
+370 KB of headroom under the embed cap. So the only thing this feature puts in
+the published state is the list of captured ids, 4,137 bytes at 101, which is
+0.02 of a percentage point of the reader ceiling.
+
+That decision was taken while the state was 21.0 MB against a 20 MB ceiling and
+`guard_state_size` was refusing every publish. `state_slim` fixed that, and the
+same store measured 10.08 MB, 48.0%, an hour later. The decision does not change
+with the headroom: a record is a per-application artifact, it belongs with the
+artifacts, and carrying a hundred of them in a payload every board load pays for
+would be wrong at any occupancy.
+
+
 Those sections are what an expanded card shows, and they are fetched from
 `/api/posting` rather than embedded. Sections average about 265 bytes a record,
 the page is capped at 4MB and has about 21 bytes a job spare, and the published
@@ -356,6 +474,7 @@ ownership with fuzzy role matching, and do not weaken the ATS provenance gate.
 - `scripts/browser.py`: trusted Chrome lifecycle and per-run MCP configuration.
 - `scripts/browser_mcp_proxy.py`: application browser firewall.
 - `scripts/run_apply.py`: form-only provider task and staged upload binding.
+- `scripts/answer_record.py`: the application answer transcript, its secret and sensitivity gates.
 - `scripts/finish.py` and `scripts/application_mcp.py`: submission nonce state machine.
 - `references/oci-worker.md`: retired historical recovery path, not current setup.
 

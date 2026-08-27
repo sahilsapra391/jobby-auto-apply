@@ -155,10 +155,13 @@ python3 scripts/brief.py --id <application-id>
 One call returns the watch entry, the posting extraction, whether this is a retry and what is pending, the duplicate verdict, the base resume and identity block for the posting's country, and which documents already exist. It creates the company folder and writes the posting to `jd-<application-id>.txt`, returned as `jdPath` (per application, because several roles at one company share a folder). Do not follow it with `session-load`, `profile-get` or `ls`; that is what it just did.
 
 ```bash
+python3 scripts/answer_record.py write --id <id> --input manifest.json
 python3 scripts/finish.py --id <id> --pre-submit
 python3 scripts/finish.py --id <id> --completed --confirmation '<exact wording>' --resume <path> --cover <path>
 python3 scripts/finish.py --id <id> --park --pending '<blocker>' --detail '<what to do>'
 ```
+
+In that order. The answer record is written before the write-ahead, so a run that dies mid-submit still leaves behind what the form asked.
 
 `--pre-submit` re-reads the session, stops if the user cancelled mid-run, runs the duplicate guard, and only then writes the `submitting` write-ahead. If it refuses, it writes nothing. The guard fails closed: no answer from it means no submission. `--completed` refuses to log without the confirmation actually observed, because an unverified completion is what makes the board disagree with reality.
 
@@ -192,7 +195,29 @@ Work in order, and **verify every few fields rather than at the end.** Long form
 
 Prefer element references over coordinates. When you must click by coordinate, screenshot immediately before and confirm immediately after.
 
-**Before final review, produce the manifest.** Read every filled field back into a field → value table and diff it against the fill plan; fix mismatches before anything else. When the user's review is needed, show them the manifest — it is faster for them to check than a screenshot pass, and it is the audit trail for what the application actually said. Do not persist it: values live in the answer store, not in sessions.
+**Before final review, produce the manifest.** Read every filled field back into a field → value table and diff it against the fill plan; fix mismatches before anything else. When the user's review is needed, show them the manifest — it is faster for them to check than a screenshot pass, and it is the audit trail for what the application actually said.
+
+**Then file it, before you submit.** For a hundred and two applications this paragraph said "do not persist it", and so the record of what an employer actually asked was destroyed by instruction, once per application. That is repealed. The manifest is written down, once, after the read-back pass and before `--pre-submit`:
+
+```bash
+python3 scripts/answer_record.py write --id <application-id> --input manifest.json
+```
+
+Under the local MCP server the same thing is `jobby.record_answers`, which takes the fields and nothing else — not the application id, which is already bound, and not a sensitivity flag, which is not yours to set.
+
+The input is a list of `{question, answer, source, sourceKey, readBack, readBackValue}`:
+
+- `question` is the label as the employer worded it, not a tidied version.
+- `source` is `stored` (name that answer's own `sourceKey`), `profile`, `generated` for anything built from the tailored documents, the posting or a salary midpoint, or `provided` for anything the user supplied.
+- `readBack` is `match`, `differs` (put what the page showed in `readBackValue`), or `unverified`. `unverified` is honest where a widget would not report its value. Claiming `match` without looking is not.
+
+Record **every** question the form asked, including ones left blank and ones whose answers are private. A missing row reads as a form that never asked, which is the one wrong answer available here.
+
+**Never send a secret, and know that one cannot get through anyway.** One-time codes, verification and confirmation codes, passwords and passphrases, national and government identifiers (SSN, national insurance, passport, Aadhaar, tax id, licence number) and bank or card details are refused at the door: the question is kept so the row still exists, and the value never reaches the disk. Do not send them regardless — the guard is the floor, not the plan. Pay, date of birth and EEO and demographic answers *are* stored, flagged from the question and from the stored answer's own state, and the board keeps them covered until the user uncovers them. That flag is derived, so forgetting it changes nothing, and there is no way to clear it.
+
+A malformed manifest is refused whole, writes nothing, and names what is wrong: fix it and call once more. A `stored` source citing a key the answer store does not hold is one of those refusals, because a source badge that cannot be checked is decoration.
+
+Values still live in the answer store, not in sessions. This record is the one thing the store cannot say: what *this* form asked and what *this* submission answered.
 
 Recurring mechanics:
 - Native selects inside iframes often won't open a visible menu. Focus the field and type the exact option label.

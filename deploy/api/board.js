@@ -711,7 +711,10 @@ export default {
     }
 
     // Application documents: the exact resume and cover letter an employer
-    // received. Same password gate as the board, never cached, never indexed.
+    // received, and the record of what its form asked. Same password gate as
+    // the board, never cached, never indexed. One route, because an answer
+    // record is the same class of per-application artifact the PDFs are and a
+    // second serving path would be a second auth gate to keep honest.
     if (pathname.startsWith('/doc/')) {
       return handleDocument(request, pathname);
     }

@@ -245,6 +245,54 @@ CSS = r"""
   .dropped-dialog .rowacts-inline a,
   .dropped-dialog .rowacts-inline button { white-space:nowrap; }
 
+  /* What the employer's form asked and what went into it. It borrows the
+     dropped dialog's shell and adds nothing to the palette: every colour below
+     is an existing token, so there is no new value to define three times and no
+     way for one theme block to be missed. */
+  .answers-dialog { width:min(820px,calc(100vw - 2rem)); max-height:min(84vh,780px);
+    padding:1.35rem; border:1px solid var(--hair); border-radius:20px;
+    background:var(--bg); color:var(--ink); box-shadow:0 32px 90px rgba(24,19,33,.28); }
+  .answers-dialog[open] { animation:dialog-in .42s var(--ease); }
+  .answers-dialog::backdrop { background:rgba(24,21,30,.42); backdrop-filter:blur(8px);
+    animation:backdrop-in .3s ease; }
+  .answers-dialog .hint { text-align:left; margin:0 0 1rem; }
+  .answers-dialog #answers-body { overflow-y:auto; max-height:min(58vh,540px);
+    padding-right:.35rem; }
+  .answers-count { margin:0 0 .8rem; color:var(--ink-3); font-size:.78rem;
+    text-transform:uppercase; letter-spacing:.06em; }
+  .answers-loading { margin:0; color:var(--ink-3); font-size:.9rem; }
+  .ans-list { display:grid; gap:.55rem; }
+  .ans-row { padding:.8rem .9rem; border:1px solid var(--hair); border-radius:12px;
+    background:var(--card); }
+  .ans-q { margin:0 0 .35rem; font-size:.88rem; font-weight:600; color:var(--ink-2);
+    line-height:1.4; overflow-wrap:anywhere; }
+  .ans-a { margin:0 0 .5rem; }
+  .ans-value { font-size:.98rem; color:var(--ink); line-height:1.45;
+    white-space:pre-wrap; overflow-wrap:anywhere; }
+  /* A row whose value was never captured at all: a code, a password, an
+     identifier. Not a covered value, so it gets no affordance suggesting there
+     is something behind it. There is nothing behind it. */
+  .ans-withheld { font-size:.9rem; color:var(--orange); }
+  /* A question salvaged from before answers were recorded. Quieter than a
+     withheld row, because nothing was refused here; the value is simply gone. */
+  .ans-unrecorded { font-size:.9rem; color:var(--ink-3); font-style:italic; }
+  .ans-salvage { margin:0 0 .9rem; padding:.6rem .8rem; border-radius:10px;
+    background:var(--sunk); color:var(--ink-2); font-size:.84rem; line-height:1.5; }
+  .ans-meta { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
+  .ans-badge { padding:.16rem .5rem; border-radius:999px; font-size:.68rem;
+    font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  .ans-src-stored { background:var(--t-g); color:var(--green); }
+  .ans-src-profile { background:var(--t-p); color:var(--purple); }
+  .ans-src-generated { background:var(--sunk); color:var(--ink-2); }
+  .ans-src-provided { background:var(--t-o); color:var(--orange); }
+  .ans-differs { background:var(--t-red); color:var(--red-ink); }
+  .ans-unverified { background:var(--sunk); color:var(--ink-3); }
+  .ans-note { font-size:.78rem; color:var(--ink-3); overflow-wrap:anywhere; }
+  @media (max-width:640px) {
+    .answers-dialog { width:calc(100vw - 1rem); padding:1rem; }
+    .answers-dialog .dialog-head h2 { font-size:1.45rem; }
+  }
+
 
   /* Checkboxes were the other control the operating system was drawing. The
      continent rows go indeterminate when a continent is partly chosen, so that
@@ -358,6 +406,7 @@ CSS = r"""
   @media (prefers-reduced-motion:reduce) {
     ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) { animation:none !important; }
     .dropped-dialog[open],.dropped-dialog::backdrop,.panel { animation:none; }
+    .answers-dialog[open],.answers-dialog::backdrop { animation:none; }
   }
 """
 
