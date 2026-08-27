@@ -326,6 +326,68 @@ confirmation text. Direct completion, reuse, and cross-application use fail.
 Generated nonces begin with `jobby_`. Keep that prefix because an unprefixed
 URL-safe token can begin with `-` and argparse then reads it as an option.
 
+## The apply path fails loud, 2026-08-27
+
+Two faults were found by looking, not by any alarm, with three of five slots
+parked and nothing saying so. Both are fixed and both left a guard behind.
+
+**A provider that fails open turns a capability fault into a silent park.** One
+run held a browser server that had passed `mcp_preflight` ninety seconds
+earlier and was dead by the time a provider built its session. Codex named it
+(`required MCP servers failed to initialize`) and refused to start, which is
+correct. Claude Code took the same dead server, started the session anyway, ran
+two turns, and parked the application on a blocker addressed to a person who
+could do nothing about it. Do not read that as "Anthropic cannot fill forms":
+the server was broken for both, and what differs is only who says so.
+
+So the fence is re-checked immediately before each provider attempt rather than
+once before the loop. It costs about 1.3 seconds against a 45-minute run. And a
+park is classified after the fact: the firewall counts every accepted tool call
+into `uploads/<id>/activity.json`, and a park with zero browser calls is
+recorded as `parkClass: capability`, which the board draws in red saying the
+fault is Jobby's. A park where the agent worked the form stays a park.
+
+`mcp_preflight.REQUIRED` and `_tool_definitions` are one contract in two files,
+pinned by `FenceSurfaceContractTests`. A tool in one and not the other is either
+unguarded or impossible, and both fail quietly.
+
+The browser proxy no longer sends the Playwright child's stderr to `/dev/null`.
+That is why this fault survived so long: the client saw `connection closed:
+initialize response` and the reason was destroyed as it was produced, so every
+hand probe afterwards succeeded and the cause was never named. It is drained on
+a thread, kept to the last 40 lines, and printed when a run ends badly.
+
+**`browser_file_upload` cannot attach a file to most application forms.** It
+answers only while a file chooser is open, and the click that opens one is the
+click that hangs: the real input is usually a 1px transparent element behind a
+styled button, so Playwright waits for actionability that never arrives. A real
+GitLab run made six upload calls, got "can only be used when there is related
+modal state present" every time, and parked with both PDFs unattached.
+
+`browser_attach_file` is the replacement and it needs no chooser. It reaches the
+page as `browser_run_code_unsafe`, the one tool the firewall most deliberately
+removes, so the code is written in `ATTACH_FILE_CODE` and never assembled from
+client text: the agent chooses a target and which of its own two bound PDFs, and
+both cross into JavaScript as JSON literals. The unsafe tool stays unreachable
+by name. Two behaviours are deliberate. With no target and several file inputs
+it refuses and names them, because taking the first is how a cover letter lands
+in the resume field on a form nobody reads back. And the input is described
+before the attach, not after: a React form swaps the field out the moment it
+accepts a file, which made a working upload report a 30-second timeout on the
+live Justworks posting, and an agent told its upload failed retries it.
+
+**A fleet of parked slots is an outage wearing a designed state's clothes.**
+`parked_slot_warning` fails the same dead-man ping the board staleness uses, one
+alarm with two reasons rather than two alarms, when most of the fleet is parked
+or one slot has been held most of a day. Ages are parsed as UTC; `time.mktime`
+reads local and an alarm that is hours out is an alarm nobody keeps.
+
+`tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
+the real firewall against a real Chrome and attaches real files to a form whose
+input is hidden. Both faults were invisible to the whole suite because every
+test stopped at a seam. It is excluded from CI beside the resume render tests,
+and skips rather than fails when no browser slot is running.
+
 ## Application worker repair, 2026-08-24
 
 Read `docs/handoffs/claude-application-worker-2026-08-24.md` before changing

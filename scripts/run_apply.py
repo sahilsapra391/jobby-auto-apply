@@ -175,6 +175,40 @@ def _current_session(application_id):
     return value if isinstance(value, dict) else {"_unreadable": True}
 
 
+def tag_session(application_id, key, value):
+    """Record one fact on this application's own session record.
+
+    meta-set writes the store's global meta, which is right for the board's one
+    blocked banner and wrong for anything about a single application: every
+    application would carry the last one's tag.
+    """
+    session = _current_session(application_id)
+    if not session or session.get("_unreadable"):
+        return False
+    if value:
+        session[key] = value
+    elif key in session:
+        session.pop(key)
+    else:
+        return True
+    saved = subprocess.run(
+        [sys.executable, str(STORE), "session-save", "--id", application_id,
+         "--input", "-"],
+        input=json.dumps(session), capture_output=True, text=True,
+    )
+    return saved.returncode == 0
+
+
+def read_browser_activity(slot, application_context):
+    """What the firewall recorded for this run, or an empty record."""
+    try:
+        path = browser.activity_path(slot, application_context)
+        value = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def release_terminal_browser_slot(application_id, slot):
     """Clear page state, then remove the session's durable slot affinity."""
     cleared = browser.clear_slot(slot)
@@ -315,8 +349,13 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    overlap as authority, and never invent a required answer. IDENTITY FOR THIS REGION and
    the answer tool are the only sources for form answers.
 
-4. Fill supported fields in one batch per page, then verify the full batch once. Upload the
-   exact RESUME PDF and COVER LETTER PDF with the browser upload tool. For custom comboboxes,
+4. Fill supported fields in one batch per page, then verify the full batch once. Attach the
+   exact RESUME PDF and COVER LETTER PDF with `browser_attach_file`, one call per field.
+   Do not click an Attach or Upload button first: on most application forms the real input
+   is hidden behind it, the click waits for something that never becomes clickable, and
+   `browser_file_upload` then refuses because no file chooser opened. `browser_attach_file`
+   needs neither. Call it with no target to be told what file inputs the page has, then
+   call it again naming the one you want. For custom comboboxes,
    click the field and then its visible option. Never press Enter to accept an option because
    that can submit a form early. Use the browser select-option tool for native selects.
 
@@ -650,6 +689,33 @@ def main():
                 attempts.append({"provider": candidate, "skipped": why})
                 continue
 
+            # Preflight again, here, for this attempt. Checking once before the
+            # loop leaves the whole loop running on a ninety-second-old answer,
+            # and on 2026-08-27 that is exactly what happened: the check passed,
+            # and by the time Codex built its session the browser server closed
+            # during initialize. Codex refused to start and said so. Claude took
+            # the same dead server, started anyway, and parked the application
+            # on a blocker nobody could act on. A provider that fails open turns
+            # a capability fault into a silent park, so the fence has to hold in
+            # front of each attempt rather than once at the door. It costs about
+            # 1.3 seconds measured against a 45-minute run.
+            try:
+                mcp_preflight.check(
+                    browser.server_configs(args.slot, application_context)
+                )
+            except mcp_preflight.PreflightError as exc:
+                why = f"{exc.server} advertised no usable tools: {exc.reason}"
+                attempts.append({
+                    "provider": candidate,
+                    "skipped": why[:200],
+                    "capabilityFailure": True,
+                })
+                handle.write(f"\n=== {candidate} not started: {why} ===\n")
+                handle.write(f"handshake: {exc.capture}\n")
+                handle.flush()
+                agent_workspace.cleanup()
+                continue
+
             timed_out = False
             overflow_stream = None
             provider_stderr = ""
@@ -744,6 +810,7 @@ def main():
                 store(["meta-set", "--key", "blocked", "--value", blocked])
 
             outcome = verify_terminal_outcome(application_id, artifacts)
+            activity = read_browser_activity(args.slot, application_context)
             attempts.append({
                 "provider": candidate,
                 "providerExit": provider_exit,
@@ -752,10 +819,45 @@ def main():
                 "modelMismatch": model_mismatch,
                 "authFailed": auth_failed,
                 "terminal": outcome.get("terminal"),
+                "browserCalls": activity.get("totalCalls"),
             })
 
+            if activity.get("totalCalls"):
+                tag_session(application_id, "parkClass", "")
             if provider_exit == 0 and outcome.get("ok"):
                 break
+
+            # A park that never touched the browser is not a blocker, it is a
+            # provider that started without the tools and said something
+            # plausible about the form instead. Claude Code starts a session
+            # whose MCP server failed to connect; Codex refuses to. Treating
+            # both parks alike is what sent a capability fault to the Needs you
+            # lane, where it waited for a person who could do nothing with it.
+            if outcome.get("terminal") == "parked" and activity.get("totalCalls") == 0:
+                attempts[-1]["capabilityFailure"] = True
+                handle.write(
+                    f"=== {candidate} parked without calling a single browser "
+                    f"tool; recording a capability failure, not a blocker "
+                    f"(backend exit {activity.get('backendExit')}) ===\n"
+                )
+                for line in activity.get("backendStderr") or []:
+                    handle.write(f"  backend: {line}\n")
+                handle.flush()
+                # The park stands. The form may have been opened, and a second
+                # agent over a form it cannot see is how one goes out twice.
+                # What changes is who it is addressed to: this one is not
+                # waiting for the user.
+                tag_session(application_id, "parkClass", "capability")
+                store([
+                    "meta-set", "--key", "blocked", "--value",
+                    f"the {candidate} run had no browser tools, so nothing was "
+                    f"filled; this needs the browser server fixed, not you",
+                ])
+                provider_login.publish_status(
+                    providers.mark_unhealthy(candidate, "unavailable")
+                )
+                break
+
             if outcome.get("terminal"):
                 # Parked, submitted, cancelled or abandoned. Whatever happened,
                 # it is on the record and a second agent must not go over it.

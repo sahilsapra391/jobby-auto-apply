@@ -139,6 +139,11 @@ CSS = r"""
   .card.hold { border-top-color:var(--orange); }
   .card.ready { border-top-color:var(--green); }
   .card.ref,.card.flight { border-top-color:var(--purple); }
+  /* A park nobody can act on. Red rather than orange, because orange in this
+     lane means "a step is waiting for you" and this one is waiting for us. */
+  .card.fault { background:var(--card); border-top-color:var(--red); }
+  .fault-note { margin:.15rem 0 .6rem; color:var(--red-ink); font-size:.9rem;
+    line-height:1.45; }
   .grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
   .act { flex-wrap:wrap; gap:.45rem; }
   .act .btn { flex:0 0 auto; white-space:nowrap; padding:.52rem .7rem; }

@@ -269,6 +269,7 @@ def server_config(slot=None, application_context=None):
             str(BROWSER_MCP_PROXY),
             "--upload", resume_upload,
             "--upload", cover_upload,
+            "--activity", str(activity_path(slot, application_context)),
             "--",
             *child,
         ],
@@ -278,6 +279,23 @@ def server_config(slot=None, application_context=None):
             "PYTHONNOUSERSITE": "1",
         },
     }
+
+
+def activity_path(slot, application_context):
+    """Where the firewall records what the agent reached for.
+
+    Per slot and application, beside the staged uploads, so it is removed with
+    them and never outlives the run it describes.
+    """
+    application_id = _application_value(application_context, "applicationId")
+    # _application_value bars nulls and newlines and nothing else, which is
+    # enough for a command argument and not enough for a path segment. The
+    # staging check is the one that matters here, so it is the one used.
+    if (len(application_id) > 128 or ".." in application_id
+            or not all(character.isalnum() or character in "-_."
+                       for character in application_id)):
+        raise ValueError("application id is unsafe for an activity path")
+    return artifact_root_for(slot) / "uploads" / application_id / "activity.json"
 
 
 def _application_value(application_context, name):

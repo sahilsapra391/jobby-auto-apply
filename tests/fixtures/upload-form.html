@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Upload Fixture — two file inputs, one of them hidden</title>
+<style>
+  /* The Greenhouse and GitLab shape: the real input is a transparent pixel
+     behind a styled button, so it is not in the accessibility tree, a click on
+     the button waits for actionability that never arrives, and the chooser
+     browser_file_upload needs is never opened. */
+  #resume_file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+</style>
+<h1>Apply</h1>
+<form id="apply">
+  <label>Resume <button type="button" id="resume_button">Attach</button></label>
+  <input type="file" id="resume_file" name="resume" accept=".pdf">
+  <label>Cover letter <input type="file" id="cover_file" name="cover" accept=".pdf"></label>
+  <!-- Greenhouse's shape: the field is swapped for a "file.pdf / Remove" view the
+       instant it accepts a file, so the handle that did the attaching is detached
+       before anything can ask it what landed. -->
+  <div id="portfolio_slot">
+    <label>Portfolio <input type="file" id="portfolio_file" name="portfolio" accept=".pdf"></label>
+  </div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  // The button opens the chooser, which is exactly what a headless attach
+  // cannot satisfy. It is here so the failing path is reproducible.
+  document.getElementById('resume_button').addEventListener('click', function () {
+    document.getElementById('resume_file').click();
+  });
+  document.getElementById('portfolio_file').addEventListener('change', function (event) {
+    var name = event.target.files[0] ? event.target.files[0].name : '';
+    document.getElementById('portfolio_slot').innerHTML =
+      '<p id="portfolio_name">' + name + '</p><button type="button">Remove file</button>';
+  });
+  document.getElementById('apply').addEventListener('submit', function (event) {
+    event.preventDefault();
+  });
+</script>

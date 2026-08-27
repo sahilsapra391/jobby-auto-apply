@@ -346,5 +346,167 @@ class StatelessProtocolTests(unittest.TestCase):
                 self.assertIsNone(decision.forward)
                 self.assertTrue(decision.response["result"]["isError"])
 
+
+class AttachFileTests(unittest.TestCase):
+    """The upload that does not need a file chooser.
+
+    Playwright MCP's browser_file_upload answers only while a chooser is open,
+    and the click that opens one is the click that hangs: a file input is
+    usually a 1px transparent element behind a styled button, so Playwright
+    waits for actionability that never comes. Measured on a real GitLab form on
+    2026-08-27, where six upload calls returned "can only be used when there is
+    related modal state present" and the application parked with neither PDF
+    attached. setInputFiles needs no chooser and no visibility.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name).resolve()
+        self.resume = root / "resume.pdf"
+        self.cover = root / "cover.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\nresume")
+        self.cover.write_bytes(b"%PDF-1.4\ncover")
+        self.policy = browser_mcp_proxy.BrowserPolicy(
+            [str(self.resume), str(self.cover)]
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def forward(self, arguments):
+        decision = self.policy.prepare_client_message(
+            request(1, "browser_attach_file", arguments)
+        )
+        self.assertIsNotNone(decision.forward, decision.response)
+        return decision.forward["params"]
+
+    def test_it_reaches_the_page_as_the_one_tool_the_firewall_removes(self):
+        params = self.forward({"paths": [str(self.resume)]})
+        self.assertEqual(params["name"], "browser_run_code_unsafe")
+        self.assertEqual(set(params["arguments"]), {"code"})
+
+    def test_that_tool_is_still_unreachable_by_name(self):
+        decision = self.policy.prepare_client_message(
+            request(1, "browser_run_code_unsafe",
+                    {"code": "async (page) => 'anything at all'"})
+        )
+        self.assertIsNone(decision.forward)
+        self.assertNotIn("browser_run_code_unsafe", self.policy.tool_names)
+
+    def test_the_paths_that_reach_the_page_are_the_bound_ones(self):
+        code = self.forward({"paths": [str(self.resume)]})["arguments"]["code"]
+        self.assertIn(json.dumps(str(self.resume)), code)
+        with self.assertRaises(browser_mcp_proxy.PolicyError):
+            self.policy.validate_tool_call(
+                "browser_attach_file", {"paths": ["/etc/passwd"]}
+            )
+
+    def test_client_text_becomes_a_javascript_literal_and_never_source(self):
+        """The only two values the agent chooses cross as JSON, not as code."""
+        hostile = "'); process.exit(1); //"
+        code = self.forward(
+            {"paths": [str(self.resume)], "target": hostile}
+        )["arguments"]["code"]
+        self.assertIn(json.dumps(hostile), code)
+        self.assertNotIn("process.exit", code.replace(json.dumps(hostile), ""))
+
+    def test_the_two_separators_json_leaves_raw_are_escaped(self):
+        """U+2028 and U+2029 are legal in JSON and end a line in JavaScript."""
+        code = self.forward(
+            {"paths": [str(self.resume)], "target": "a b c"}
+        )["arguments"]["code"]
+        self.assertNotIn(" ", code)
+        self.assertNotIn(" ", code)
+        self.assertIn("\\u2028", code)
+
+    def test_it_is_advertised_only_when_the_child_can_perform_it(self):
+        without = self.policy.filter_tools_result(
+            {"tools": [{"name": "browser_snapshot"}]}
+        )
+        self.assertNotIn(
+            "browser_attach_file", [tool["name"] for tool in without["tools"]]
+        )
+        with_it = self.policy.filter_tools_result(
+            {"tools": [{"name": "browser_run_code_unsafe"}]}
+        )
+        self.assertEqual(
+            [tool["name"] for tool in with_it["tools"]], ["browser_attach_file"]
+        )
+
+    def test_its_schema_is_an_object_like_every_other(self):
+        """A bare oneOf makes a client drop the whole server's tool list."""
+        schema = next(
+            tool["inputSchema"] for tool in self.policy.tool_definitions
+            if tool["name"] == "browser_attach_file"
+        )
+        self.assertEqual(schema["type"], "object")
+        self.assertEqual(schema["properties"]["paths"]["items"]["enum"],
+                         [str(self.resume), str(self.cover)])
+
+
+class ActivityRecordTests(unittest.TestCase):
+    """A park with no browser calls is a capability failure, not a blocker.
+
+    Both look identical from outside: "Needs you", with a plausible sentence
+    about the form. One needs the user and the other needs an engineer, and the
+    firewall is the only part of a run that sees every call.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name).resolve()
+        self.resume = root / "resume.pdf"
+        self.cover = root / "cover.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\nresume")
+        self.cover.write_bytes(b"%PDF-1.4\ncover")
+        self.policy = browser_mcp_proxy.BrowserPolicy(
+            [str(self.resume), str(self.cover)]
+        )
+        self.target = root / "activity.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_it_counts_only_the_calls_the_firewall_accepted(self):
+        self.policy.prepare_client_message(request(1, "browser_snapshot", {}))
+        self.policy.prepare_client_message(request(2, "browser_snapshot", {}))
+        self.policy.prepare_client_message(
+            request(3, "browser_attach_file", {"paths": [str(self.cover)]})
+        )
+        self.policy.prepare_client_message(
+            request(4, "browser_click", {"target": "e1"})
+        )
+        self.policy.prepare_client_message(
+            request(5, "browser_file_upload", {"paths": ["/etc/passwd"]})
+        )
+        browser_mcp_proxy._write_activity(
+            str(self.target), self.policy, browser_mcp_proxy.deque(), 0
+        )
+        recorded = json.loads(self.target.read_text())
+        self.assertEqual(recorded["totalCalls"], 4)
+        self.assertEqual(recorded["calls"]["browser_snapshot"], 2)
+        self.assertNotIn("browser_file_upload", recorded["calls"])
+
+    def test_a_run_that_never_reached_the_browser_says_zero(self):
+        browser_mcp_proxy._write_activity(
+            str(self.target), self.policy,
+            browser_mcp_proxy.deque(["Error: connect ECONNREFUSED 127.0.0.1:9223"]),
+            1,
+        )
+        recorded = json.loads(self.target.read_text())
+        self.assertEqual(recorded["totalCalls"], 0)
+        self.assertEqual(recorded["backendExit"], 1)
+        # The reason used to go to DEVNULL, which is why this fault was never
+        # reproduced: every hand probe afterwards succeeded.
+        self.assertIn("ECONNREFUSED", recorded["backendStderr"][0])
+
+    def test_bookkeeping_that_cannot_be_written_does_not_fail_the_run(self):
+        browser_mcp_proxy._write_activity(
+            str(self.target.parent / "no" / "such" / "dir" / "x" / "a.json"),
+            self.policy, browser_mcp_proxy.deque(), 0,
+        )
+        browser_mcp_proxy._write_activity("", self.policy, browser_mcp_proxy.deque(), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

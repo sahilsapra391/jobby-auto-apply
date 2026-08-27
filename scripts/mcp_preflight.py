@@ -24,7 +24,7 @@ import subprocess
 import threading
 import time
 
-# The proxy's whole advertised surface. Requiring all twelve rather than a
+# The proxy's whole advertised surface. Requiring all thirteen rather than a
 # couple is deliberate: a partial list is the same fault as an empty one, and
 # an agent that discovers the gap mid-form has already opened the posting.
 REQUIRED = {
@@ -32,7 +32,7 @@ REQUIRED = {
         "browser_snapshot", "browser_find", "browser_click", "browser_hover",
         "browser_fill_form", "browser_type", "browser_press_key",
         "browser_select_option", "browser_handle_dialog", "browser_file_upload",
-        "browser_tabs", "browser_wait_for",
+        "browser_attach_file", "browser_tabs", "browser_wait_for",
     ),
     "jobby": (
         "set_phase", "resolve_answers", "experience_plan", "salary_midpoint",
