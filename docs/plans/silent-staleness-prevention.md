@@ -92,6 +92,26 @@ the board offline with every test green.
 The three unpinned rows are the actionable output of this section. Each is a
 limit the running system can reach with no test that constructs the artifact.
 
+**And one more thing to enumerate the same way: every subprocess this system
+spawns, and where its stderr goes.** Two instances make it a pattern rather than
+a coincidence, and both are the component whose job is noticing being the one
+that says nothing.
+
+`ping_health` returned None on any network error and a status every caller
+ignored, so an unreachable or misconfigured Healthchecks URL was invisible from
+inside the watcher. `browser_mcp_proxy` passed `stderr=subprocess.DEVNULL` to the
+Playwright child, so when the backend died during initialize the client saw
+"connection closed: initialize response" and the reason was destroyed in the
+same instant it was produced. That second one is why a browser fault that broke
+a real run on 2026-08-27 answered every hand probe afterwards and was never
+reproduced: the only occurrence that could have explained itself had already
+thrown the explanation away.
+
+Both are fixed. The audit is the open work: every `Popen` and `run` in
+`scripts/`, and whether a failure of that child can be read after the fact.
+A discarded stderr is not a small thing, it is a guarantee that the next
+occurrence is as unreproducible as the last one.
+
 **A guard can also stop guarding without failing.** `test_it_really_does_fail_
 when_the_slice_is_over_the_ceiling` exists to prove the ceiling bites: it
 disables slimming, builds the slice, and asserts it exceeds 20 MB. `_trim_
