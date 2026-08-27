@@ -1035,6 +1035,48 @@ class PageWeightAtCapTests(unittest.TestCase):
         self.assertLess(size, 3.7 * 1024 * 1024,
                         f"page is {size / 1024 / 1024:.2f} MB; the measured budget was 3.7")
 
+    def test_the_published_state_stays_under_the_readers_ceiling(self):
+        """The check that was missing when the board froze.
+
+        Sections were added to the published state and measured at 265 bytes a
+        record on a partial backfill. After the full-body backfill they were
+        9.38 MB of a 21.03 MB state, the deployed reader stops at 20 MB, and
+        every publish failed for hours while the board showed stale data. The
+        page-weight test guards the rendered HTML; nothing guarded this.
+        """
+        long_line = "Own the roadmap and the outcomes it drives. " * 12
+        jobs = {}
+        for i in range(found_lane.EMBED_CAP):
+            job = self.fat_job(i)
+            job["sections"] = {
+                "responsibilities": [long_line] * 14,
+                "requirements": [long_line] * 14,
+            }
+            jobs[f"j{i}"] = job
+        state = {"profile": {}, "sessions": [], "history": [], "roles": {},
+                 "meta": {}, "jobs": jobs,
+                 "searchConfig": {"locations": [{"country": "US"}]}}
+        published = dashboard.publishable_state(state)
+        size = len(json.dumps(published, separators=(",", ":")).encode())
+        self.assertLess(size, 20 * 1024 * 1024,
+                        f"published state is {size / 1024 / 1024:.2f} MB; "
+                        "the deployed reader stops at 20 MB and every publish fails")
+
+    def test_published_sections_are_cut_to_what_the_card_draws(self):
+        # The panel renders five points a column and never reads past them.
+        job = {"id": "j1", "state": "new", "company": "Acme", "title": "PM",
+               "location": {"country": "US"},
+               "sections": {"responsibilities": [f"point {i}" for i in range(12)],
+                            "requirements": ["x" * 900]}}
+        out, _total, _census = dashboard.publishable_jobs(
+            {"j1": job}, {"locations": [{"country": "US"}]})
+        sections = out["j1"]["sections"]
+        self.assertEqual(len(sections["responsibilities"]), 5)
+        self.assertEqual(len(sections["requirements"][0]),
+                         dashboard.PUBLISHED_SECTION_CHARS)
+        # The store keeps the whole parse; only the published copy is cut.
+        self.assertEqual(len(job["sections"]["responsibilities"]), 12)
+
     def test_hoisting_the_repeated_fields_actually_paid_for_itself(self):
         jobs = {f"j{i}": self.fat_job(i) for i in range(200)}
         picked, total = found_lane.select(jobs, {"locations": [{"country": "US"}]})
