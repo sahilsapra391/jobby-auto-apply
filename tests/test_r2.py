@@ -645,19 +645,47 @@ class KeyTiebreakTest(unittest.TestCase):
                          f"u/account-1/app/{self.aid}/answers.json")
 
     def test_the_winner_does_not_depend_on_which_is_seen_first(self):
-        """The whole point. Alphabet gave the right answer here by luck."""
-        (self.folder / f"answers-{self.aid}.json").write_text(json.dumps({"fields": []}))
-        (self.folder / f"questions-{self.aid}.json").write_text(json.dumps([]))
-        forward = self.plan()
-        # Force the opposite visit order by renaming so the list sorts first.
-        (self.folder / f"questions-{self.aid}.json").unlink()
-        (self.folder / f"aaa-questions-{self.aid}.json").write_text(json.dumps([]))
-        # A prefix the preference list does not know still loses to answers-.
+        """The one that has to bite, and the first version of it did not.
+
+        It renamed the loser to aaa-questions-<id>.json so it would sort first.
+        That name matches no SIDECARS pattern, so it claims no key, so there was
+        no collision to resolve and the test asserted the right outcome about
+        the wrong situation. Green under a _rank that returns 0 for everything.
+        jobby-auto-apply-a7 hit the identical trap writing the mirror of this
+        test and described it; the description is what sent me back to mine.
+
+        Within one folder the case cannot be built: among the prefixes
+        r2_artifacts recognises, "answers-" sorts before all of them, so the
+        record is always visited first. The directory is the only lever, so the
+        question list goes in a company folder that sorts earlier and rglob
+        reaches it first. That makes this the displacement case: the list holds
+        the key, the record arrives second and takes it.
+        """
+        early = self.tmp / "applications" / "AAA Staffing"
+        early.mkdir(parents=True)
+        (early / f"questions-{self.aid}.json").write_text(json.dumps(["why us"]))
+        (self.folder / f"answers-{self.aid}.json").write_text(
+            json.dumps({"capture": "questions-only", "fields": [{"q": "why us"}]}))
+
+        visited = [p.name for p in sorted((self.tmp / "applications").rglob("*"))
+                   if p.is_file()]
+        self.assertLess(visited.index(f"questions-{self.aid}.json"),
+                        visited.index(f"answers-{self.aid}.json"),
+                        "the loser has to be visited first or this proves nothing")
+
         keys = self.plan()
         self.assertEqual(keys[f"answers-{self.aid}.json"],
                          f"u/account-1/app/{self.aid}/answers.json")
-        self.assertEqual(forward[f"answers-{self.aid}.json"],
-                         keys[f"answers-{self.aid}.json"])
+        self.assertEqual(keys[f"questions-{self.aid}.json"],
+                         f"u/account-1/unfiled/AAA Staffing/questions-{self.aid}.json")
+
+    def test_rank_orders_a_record_above_the_list_it_came_from(self):
+        # Direct, so a reordering of FILENAME_PREFERENCE fails here rather than
+        # only in whichever collision test happens to notice.
+        self.assertLess(r2_artifacts._rank(f"answers-{self.aid}.json"),
+                        r2_artifacts._rank(f"questions-{self.aid}.json"))
+        self.assertLess(r2_artifacts._rank(f"questions-{self.aid}.json"),
+                        r2_artifacts._rank("something-nobody-listed.json"))
 
     def test_an_unknown_prefix_never_displaces_a_known_record(self):
         (self.folder / f"answers-{self.aid}.json").write_text(json.dumps({"fields": []}))
