@@ -475,11 +475,22 @@ class ArtifactContractTests(unittest.TestCase):
                                         .read_bytes()).hexdigest())
 
     def test_a_hand_made_questions_file_cannot_shadow_the_real_record(self):
-        # Seventeen questions-<id>.json files predate this feature, hold question
-        # text with no answers, and map to the same `answers` kind. Both want
-        # u/<user>/app/<id>/answers.json and only one can have it. Sorted path
-        # order gives it to the real record; the older file keeps its own name
-        # under unfiled/ rather than overwriting what the board reads.
+        # Question lists predate this feature, hold question text with no
+        # answers, and map to the same `answers` kind. Both want
+        # u/<user>/app/<id>/answers.json and only one can have it. The record
+        # gets it; the older file keeps its own name under unfiled/ rather than
+        # overwriting what the board reads.
+        #
+        # KNOWN WEAKNESS, and it is the reason the underlying bug survived.
+        # Today that is decided by sorted path order, and "answers-" happens to
+        # sort before "questions-", so this test would pass just as well if the
+        # rule were pure alphabet with no preference in it at all. It pins the
+        # outcome, not the reason. jobby-auto-apply-71 is replacing the tiebreak
+        # with a written preference in #89, whose own test renames the loser so
+        # it sorts first. Once that lands, this one should do the same, because
+        # a re-sync taken while a record is briefly absent is how the raw list
+        # takes the key back, and the modal then fetches an array where it
+        # expects an object and fails closed without saying so.
         import r2_artifacts
         store = self.root / "state"
         (store / "sessions").mkdir(parents=True)
