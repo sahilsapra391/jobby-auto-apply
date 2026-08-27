@@ -151,12 +151,16 @@ Records are fetched, not embedded, and that is measured. Against `main` at 101
 submitted applications on 2026-08-27: the column, the modal and its script cost
 the page 16,260 bytes, a captured row adds 198, and embedding a realistic
 15-field record for every application would have cost 263,509 against roughly
-370 KB of headroom under the embed cap. The board state has no room at all. It
-measured 21.0 MB that day against a 20 MB reader ceiling, which is over, not
-near: `publish.guard_state_size` refuses a publish from this store as it stands.
-So the only thing this feature puts in the state is the list of captured ids,
-4,137 bytes at 101, and it would still be the right call if the state were half
-empty.
+370 KB of headroom under the embed cap. So the only thing this feature puts in
+the published state is the list of captured ids, 4,137 bytes at 101, which is
+0.02 of a percentage point of the reader ceiling.
+
+That decision was taken while the state was 21.0 MB against a 20 MB ceiling and
+`guard_state_size` was refusing every publish. `state_slim` fixed that, and the
+same store measured 10.08 MB, 48.0%, an hour later. The decision does not change
+with the headroom: a record is a per-application artifact, it belongs with the
+artifacts, and carrying a hundred of them in a payload every board load pays for
+would be wrong at any occupancy.
 
 
 Those sections are what an expanded card shows, and they are fetched from
