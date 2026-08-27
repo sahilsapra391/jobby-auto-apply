@@ -562,5 +562,72 @@ class FitStateTests(unittest.TestCase):
         self.assertGreaterEqual(publish.EMBED_FLOOR, 1000)
 
 
+
+class StateGrowthWarningTests(unittest.TestCase):
+    """Watch the jump, not only the total.
+
+    The 80% ceiling warning catches slow accumulation, and slow accumulation is
+    not how this went wrong: 20.87 MB arrived because nobody added a lot and
+    several people added a little over a few days. It would also miss the
+    sharper case completely -- one change embedding something that had been
+    served from R2, a quarter megabyte in a single commit, which from 49% lands
+    at 50% and says nothing for weeks.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original = publish.LAST_STATE_BYTES
+        publish.LAST_STATE_BYTES = pathlib.Path(self.tmp.name) / "last-state-bytes"
+
+    def tearDown(self):
+        publish.LAST_STATE_BYTES = self.original
+        self.tmp.cleanup()
+
+    def test_the_first_publish_has_nothing_to_compare_against(self):
+        self.assertIsNone(publish.state_growth(10_000_000))
+
+    def test_ordinary_churn_says_nothing(self):
+        """The embed cap bounds the record count, so publish to publish the
+        state churns rather than grows. A warning that fires on that is a
+        warning nobody reads."""
+        publish.remember_state_size(10_000_000)
+        for size in (10_000_021, 10_000_528, 10_092_160, 10_100_000):
+            with self.subTest(size=size):
+                self.assertIsNone(publish.state_growth(size))
+
+    def test_a_quarter_megabyte_in_one_publish_is_reported(self):
+        """The exact scenario: answer records move from R2 into the state for a
+        faster modal, by somebody who does not think of themselves as adding a
+        lot either."""
+        publish.remember_state_size(10_000_000)
+        warning = publish.state_growth(10_262_144)
+        self.assertIsNotNone(warning)
+        self.assertIn("0.25 MB", warning)
+
+    def test_either_threshold_fires_not_both(self):
+        """A quarter megabyte at 10 MB is 2.5%. Requiring both would have
+        missed the case this was written for."""
+        publish.remember_state_size(10_000_000)
+        self.assertIsNotNone(publish.state_growth(10_300_000))   # bytes only
+        publish.remember_state_size(1_000_000)
+        self.assertIsNotNone(publish.state_growth(1_100_000))    # share only
+
+    def test_shrinking_is_never_a_warning(self):
+        publish.remember_state_size(20_000_000)
+        self.assertIsNone(publish.state_growth(13_000_000))
+
+    def test_an_unreadable_baseline_is_not_a_warning(self):
+        publish.LAST_STATE_BYTES.write_text("not a number")
+        self.assertIsNone(publish.state_growth(10_000_000))
+
+    def test_the_baseline_moves_only_on_a_publish_that_reached_kv(self):
+        """A refused publish must not move the line the next one is measured
+        against, or one bad publish hides the growth of the next."""
+        source = inspect.getsource(publish.push_content)
+        self.assertLess(source.index("mark_published()"),
+                        source.index("remember_state_size"))
+        self.assertIn("published_bytes", source)
+
+
 if __name__ == "__main__":
     unittest.main()
