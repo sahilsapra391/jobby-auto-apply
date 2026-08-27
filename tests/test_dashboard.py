@@ -1068,12 +1068,19 @@ class PageWeightAtCapTests(unittest.TestCase):
                "location": {"country": "US"},
                "sections": {"responsibilities": [f"point {i}" for i in range(12)],
                             "requirements": ["x" * 900]}}
-        out, _total, _census = dashboard.publishable_jobs(
-            {"j1": job}, {"locations": [{"country": "US"}]})
-        sections = out["j1"]["sections"]
-        self.assertEqual(len(sections["responsibilities"]), 5)
+        # Sections are cut once, in state_slim, at publishable_state. They used
+        # to be cut here as well, at a tighter character limit, and the tighter
+        # one silently won; see tests/test_state_slim.py.
+        import state_slim
+        state = dashboard.publishable_state({
+            "jobs": {"j1": job}, "sessions": [], "history": [], "roles": {},
+            "meta": {}, "profile": {"firstName": "A"},
+            "searchConfig": {"locations": [{"country": "US"}]}, "providers": {}})
+        sections = state["jobs"]["j1"]["sections"]
+        self.assertEqual(len(sections["responsibilities"]),
+                         state_slim.SECTION_MAX_LINES)
         self.assertEqual(len(sections["requirements"][0]),
-                         dashboard.PUBLISHED_SECTION_CHARS)
+                         state_slim.SECTION_MAX_CHARS)
         # The store keeps the whole parse; only the published copy is cut.
         self.assertEqual(len(job["sections"]["responsibilities"]), 12)
 

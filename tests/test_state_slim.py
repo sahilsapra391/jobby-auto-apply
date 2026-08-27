@@ -103,14 +103,34 @@ class SlimmedRecordTest(unittest.TestCase):
         self.assertEqual(self.slim["score"]["gates"], [{"label": "Years"}])
         self.assertNotIn("evidence", json.dumps(self.slim["score"]))
 
-    def test_sections_are_cut_to_the_route_s_own_limits(self):
-        # /api/posting emits twelve lines a side at four hundred characters, so
-        # trimming to the same numbers cannot change a single response.
+    def test_sections_are_cut_to_what_the_card_draws(self):
         for key in ("responsibilities", "requirements"):
             lines = self.slim["sections"][key]
-            self.assertEqual(len(lines), 12)
+            self.assertEqual(len(lines), found_lane.SECTION_POINTS)
             self.assertTrue(all(len(line) == 400 for line in lines))
         self.assertNotIn("benefits", self.slim["sections"])
+
+    def test_the_javascript_and_python_agree_on_how_many_points_a_card_draws(self):
+        """SCRIPT is a raw string, so the number is written twice. Pin them.
+
+        A card drawing six while the state sends five loses the sixth point in
+        silence, and neither half fails on its own.
+        """
+        source = (ROOT / "scripts" / "found_lane.py").read_text(encoding="utf-8")
+        self.assertIn(f"var SECTION_POINTS = {found_lane.SECTION_POINTS};", source)
+
+    def test_sections_are_cut_in_exactly_one_place(self):
+        """Two trimmers briefly existed and the worse limit won.
+
+        #78 added _trim_sections to publishable_jobs at 5 points and 200
+        characters while state_slim was cutting at 12 and 400. Stacked, the 200
+        won, so a sixth of all bullets were being visibly truncated by a
+        mechanism nobody was looking at. One trimmer, or the next change picks
+        a limit and does not get it.
+        """
+        source = (ROOT / "scripts" / "dashboard.py").read_text(encoding="utf-8")
+        self.assertNotIn("_trim_sections", source)
+        self.assertNotIn("PUBLISHED_SECTION_CHARS", source)
 
     def test_the_fields_nothing_draws_are_gone(self):
         for field in ("normTitle", "descFingerprint", "firstSeenAt", "lastSeenAt",
@@ -167,17 +187,25 @@ class RenderIsUnchangedTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(page_full.encode()).hexdigest(),
                          hashlib.sha256(page_slim.encode()).hexdigest())
 
-    def test_the_posting_route_answers_the_same(self):
-        full, slim = self._state(False), self._state(True)
+    def test_the_posting_route_answers_the_same_where_the_card_reads_it(self):
+        """Compared after the card's own slice, which is what a reader sees.
 
-        def answer(state, job_id):
+        Cutting the state to five points does change the raw /api/posting body,
+        from up to twelve down to five. It cannot change the card, because
+        renderSections slices to found_lane.SECTION_POINTS before drawing. So
+        the honest comparison is the one the reader gets, not the wire.
+        """
+        full, slim = self._state(False), self._state(True)
+        points = found_lane.SECTION_POINTS
+
+        def drawn(state, job_id):
             sections = ((state["jobs"].get(job_id) or {}).get("sections")) or {}
-            trim = lambda ls: [str(x or "")[:400] for x in (ls or [])][:12]
-            return {"responsibilities": trim(sections.get("responsibilities")),
-                    "requirements": trim(sections.get("requirements"))}
+            cut = lambda ls: [str(x or "")[:400] for x in (ls or [])][:12][:points]
+            return {"responsibilities": cut(sections.get("responsibilities")),
+                    "requirements": cut(sections.get("requirements"))}
 
         for job_id in full["jobs"]:
-            self.assertEqual(answer(full, job_id), answer(slim, job_id), job_id)
+            self.assertEqual(drawn(full, job_id), drawn(slim, job_id), job_id)
 
     def test_slimming_actually_shrank_it(self):
         size = lambda o: len(json.dumps(o, separators=(",", ":")).encode())
