@@ -210,21 +210,33 @@ class StateFitsTheCeilingTest(unittest.TestCase):
     def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
         """A bound nothing can violate is not a bound. Prove this one bites.
 
-        The embed cap is pinned at 3,400 here rather than read from
-        `found_lane`, because this test is about the shape that actually broke
-        production and that shape had 3,400 embedded records in it. Reading the
-        live cap couples the two: when it moved to 3,350 on 2026-08-26 to make
-        room for the Profile page, the unslimmed slice fell to 19,909,787
-        bytes, under the 20,971,520 ceiling, and this test stopped being able
-        to detect the fault it exists for. It failed loudly, which is the only
-        reason anyone noticed.
+        Two things had quietly taken the teeth out of it, and both are the same
+        mistake: a number here that depends on a number somewhere else.
+
+        The embed cap is pinned at 3,400 rather than read from `found_lane`,
+        because this test is about the shape that actually broke production and
+        that shape had 3,400 embedded records in it. When the cap moved to
+        3,350 on 2026-08-26 to make room for the Profile page, the unslimmed
+        slice fell by 230,700 bytes.
+
+        And `acted` is 1,200 rather than 966, re-measured on 2026-08-26. On
+        `origin/main` at e9efe5e, before this branch touched anything, the
+        original 966 produced 20,140,313 bytes against a 20,971,520 ceiling and
+        this test already failed: the section cap that PR #78 added to fix the
+        22-hour outage also shrank the unslimmed baseline it is measured
+        against, so the guard stopped being able to demonstrate the fault it
+        exists for. 1,200 is the figure the realistic-pool test above already
+        uses.
+
+        Both failed loudly rather than silently passing, which is the only
+        reason either was noticed.
         """
         original = dashboard.state_slim.slim_jobs
         original_cap = found_lane.EMBED_CAP
         dashboard.state_slim.slim_jobs = staticmethod(lambda jobs: jobs)
         found_lane.EMBED_CAP = 3400
         try:
-            unslimmed = self.published_bytes(pool(3400, acted=966))
+            unslimmed = self.published_bytes(pool(3400, acted=1200))
         finally:
             dashboard.state_slim.slim_jobs = original
             found_lane.EMBED_CAP = original_cap
