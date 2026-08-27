@@ -31,6 +31,19 @@ from mcp_stdio_client import Client  # noqa: E402
 import mcp_preflight  # noqa: E402
 
 
+class ThreadingServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+    block_on_close = False
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    """The fixture server's request log is noise in a test run."""
+
+    def log_message(self, fmt, *args):
+        pass
+
+
 def live_slot():
     """A slot whose Chrome answers, or None."""
     for slot in browser.SLOTS:
@@ -49,10 +62,13 @@ class RealBrowserUploadTests(unittest.TestCase):
         if cls.slot is None:
             raise unittest.SkipTest("no browser slot is running on this machine")
         handler = functools.partial(
-            http.server.SimpleHTTPRequestHandler,
-            directory=str(ROOT / "tests" / "fixtures"),
+            QuietHandler, directory=str(ROOT / "tests" / "fixtures")
         )
-        cls.server = socketserver.TCPServer(("127.0.0.1", 0), handler)
+        # Threading, with daemon threads and no blocking close. A single-threaded
+        # server hangs on teardown when the browser is still holding a keep-alive
+        # connection: the handler sits in a read that shutdown() cannot interrupt,
+        # and the suite stops rather than fails, which is the worse outcome.
+        cls.server = ThreadingServer(("127.0.0.1", 0), handler)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
