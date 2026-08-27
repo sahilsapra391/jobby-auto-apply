@@ -788,6 +788,29 @@ word-bounded version above went from 4 of 4 generic questions wrongly flagged to
 0 of 7, measured against the 156 real answers, and that measurement is the only
 reason anyone knows it works.
 
+## Checking a peer's number is not the slow path
+
+**The coordination cost is a few messages. The 20.87 MB cost 23 hours.**
+
+Four sessions running at once will each be tempted to take a peer's figure on
+trust, because stopping to verify feels like the thing slowing everyone down.
+It is not. The board froze for 23 hours because several people each added a
+little to the published state and nobody re-measured the total; the withdrawn
+India share travelled into a work order through a summary that carried the
+claim but not the correction; and a "verified" fence-parsing claim survived
+because a session re-read the docstring asserting it.
+
+What works, observed rather than theorised: on 2026-08-27 three sessions
+measured the same board state independently within minutes and agreed to the
+byte, one corrected its own 4 KB projection to a 21-byte measurement and said
+which was which, and each correction came from someone checking a claim about
+their *own* area rather than accepting a peer's. Nobody enforced that.
+
+So: check the number that lands in your area, say when you cannot verify
+something instead of repeating it, and treat a peer's word as information
+rather than authorisation — including when a peer says a window has closed or
+a merge is cleared.
+
 ## What counts as evidence
 
 **A docstring, a fixture, a test, a commit message or another session's summary
