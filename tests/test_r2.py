@@ -596,5 +596,85 @@ class SidecarAttributionTest(unittest.TestCase):
                          "u/account-1/unfiled/Actively AI/jd-some-application-nobody-has.txt")
 
 
+class KeyTiebreakTest(unittest.TestCase):
+    """When two files claim one key, the winner is chosen, not alphabetical.
+
+    answers-<id>.json is a captured record; questions-<id>.json is the bare
+    list it was salvaged from. Both map to app/<id>/answers.json. Sorted path
+    order happened to pick the record, and happening to be right is not being
+    right: a peer session measuring the live bucket pointed out that a re-sync
+    while the record was briefly absent would hand the key to the list, and the
+    card's modal would fetch an array where it expects an object. It fails
+    closed and silently, which is the worst way to find out.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.store_root = self.tmp / "store"
+        store(self.store_root, "init")
+        self.aid = "aa11bb22cc33dd44"
+        payload = self.tmp / "s.json"
+        payload.write_text(json.dumps({"applicationId": self.aid, "company": "Acme",
+                                       "role": "PM", "status": "active"}), encoding="utf-8")
+        store(self.store_root, "session-save", "--id", self.aid, "--input", str(payload))
+        self.folder = self.tmp / "applications" / "Acme"
+        self.folder.mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def plan(self):
+        got = r2_artifacts.collect(str(self.store_root), "account-1",
+                                   str(self.tmp / "applications"))
+        return {a["name"]: a["key"] for a in got["artifacts"]}
+
+    def test_the_record_takes_the_key_and_the_bare_list_does_not(self):
+        (self.folder / f"answers-{self.aid}.json").write_text(
+            json.dumps({"capture": "questions-only", "fields": [{"q": "why us"}]}))
+        (self.folder / f"questions-{self.aid}.json").write_text(json.dumps(["why us"]))
+        keys = self.plan()
+        self.assertEqual(keys[f"answers-{self.aid}.json"],
+                         f"u/account-1/app/{self.aid}/answers.json")
+        self.assertEqual(keys[f"questions-{self.aid}.json"],
+                         "u/account-1/unfiled/Acme/questions-" + self.aid + ".json")
+
+    def test_the_bare_list_alone_still_gets_the_key(self):
+        # Nothing better exists, so it is the best record of that application.
+        (self.folder / f"questions-{self.aid}.json").write_text(json.dumps(["why us"]))
+        self.assertEqual(self.plan()[f"questions-{self.aid}.json"],
+                         f"u/account-1/app/{self.aid}/answers.json")
+
+    def test_the_winner_does_not_depend_on_which_is_seen_first(self):
+        """The whole point. Alphabet gave the right answer here by luck."""
+        (self.folder / f"answers-{self.aid}.json").write_text(json.dumps({"fields": []}))
+        (self.folder / f"questions-{self.aid}.json").write_text(json.dumps([]))
+        forward = self.plan()
+        # Force the opposite visit order by renaming so the list sorts first.
+        (self.folder / f"questions-{self.aid}.json").unlink()
+        (self.folder / f"aaa-questions-{self.aid}.json").write_text(json.dumps([]))
+        # A prefix the preference list does not know still loses to answers-.
+        keys = self.plan()
+        self.assertEqual(keys[f"answers-{self.aid}.json"],
+                         f"u/account-1/app/{self.aid}/answers.json")
+        self.assertEqual(forward[f"answers-{self.aid}.json"],
+                         keys[f"answers-{self.aid}.json"])
+
+    def test_an_unknown_prefix_never_displaces_a_known_record(self):
+        (self.folder / f"answers-{self.aid}.json").write_text(json.dumps({"fields": []}))
+        (self.folder / f"aardvark-{self.aid}.json").write_text(json.dumps([]))
+        keys = self.plan()
+        self.assertEqual(keys[f"answers-{self.aid}.json"],
+                         f"u/account-1/app/{self.aid}/answers.json")
+        self.assertTrue(keys[f"aardvark-{self.aid}.json"].startswith("u/account-1/unfiled/"))
+
+    def test_the_demoted_file_is_still_stored_somewhere(self):
+        # Losing the key must never mean losing the file.
+        (self.folder / f"answers-{self.aid}.json").write_text(json.dumps({"fields": []}))
+        (self.folder / f"questions-{self.aid}.json").write_text(json.dumps([]))
+        keys = self.plan()
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(set(keys.values())), 2, "two files, two distinct keys")
+
+
 if __name__ == "__main__":
     unittest.main()
