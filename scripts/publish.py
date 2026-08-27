@@ -358,6 +358,97 @@ class StateTooBig(PublishError):
     """The state will not fit. Recoverable by embedding fewer records."""
 
 
+class CapacityError(Exception):
+    """A reading could not be taken. Never a number standing in for one.
+
+    The only failure state_capacity raises, deliberately. It wraps whatever went
+    wrong underneath, PublishError included, so an alarm catches one type rather
+    than keeping a list of what the publish path might throw in step. A caller
+    that has to enumerate its callee's exceptions is the same coupling as a
+    caller that has to know which store holds the state.
+    """
+
+
+# What currently holds the published state, for the alarm to print. A name
+# rather than an enum, so moving the state to R2 changes this string and
+# nothing on the caller's side.
+STATE_STORE_NAME = "Cloudflare Workers KV"
+
+# api/page.py reads the KV body under this cap before it decompresses anything,
+# and the deployed constant has to be matched here for the same reason
+# MAX_STATE_BYTES is: the reader lives in the deployment and this runs on the
+# laptop, and the two have to mean the same thing.
+MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
+
+
+def envelope_bytes(payload):
+    """What KV will actually hold: the gzip, base64'd, inside its JSON wrapper.
+
+    Measured rather than estimated at 4/3, because the wrapper's own fields are
+    part of what api/page.py reads under MAX_ENVELOPE_BYTES.
+    """
+    import base64
+    import gzip
+    body = base64.b64encode(gzip.compress(payload)).decode("ascii")
+    return len(json.dumps({
+        "schemaVersion": 1, "rendererSchemaVersion": 1, "rendererFingerprint": "",
+        "encoding": "gzip+base64", "generatedAt": "", "payload": body,
+    }).encode("utf-8"))
+
+
+def state_capacity(root=None, state=None):
+    """{"store", "limit", "size"} in bytes, for the headroom alarm to divide.
+
+    The interface exists so that the alarm never learns where the state lives.
+    Guard 3 in docs/plans/silent-staleness-prevention.md computes size/limit and
+    prints the store name it is handed; when the state moves to R2 behind a
+    pointer, this function changes and the alarm does not. That is the same rule
+    the comment saga arrived at: one place describes a thing and the rest point
+    at it.
+
+    Two properties, both requested by the alarm's author and both the difference
+    between an alarm and a decoration.
+
+    It measures rather than estimating. ``size`` is the length of the bytes that
+    would actually be written, through ``serialize_state``, the same serializer
+    ``guard_state_size`` weighs. Not a projection from a record count: the size
+    test bounded a count against EMBED_CAP while the guard weighed bytes, over a
+    fixture eighteen times too light, and stayed green through 23 hours of
+    refused publishes.
+
+    It raises rather than returning a sentinel. A ``None`` or a ``0`` reaching
+    the alarm reads as no headroom used and pages nobody, which is worse than an
+    error, and is ``ping_health`` swallowing a network failure one more time. If
+    a reading cannot be taken, that is a fact the operator needs.
+
+    The figure is the *undegraded* state, deliberately. ``fit_state`` will shrink
+    the embedded slice to make an oversized state fit, so measuring after it
+    would report healthy right up to the point records start being dropped. The
+    number worth alarming on is how close the board is to needing that.
+    """
+    try:
+        if state is None:
+            summary = build_dashboard(root)
+            state = summary["state"]
+        payload = serialize_state(state)
+        envelope = envelope_bytes(payload)
+    except Exception as exc:
+        raise CapacityError(f"could not measure the board state: {exc}") from exc
+    if not payload or not envelope:
+        raise CapacityError("the board state measured zero bytes, which it cannot be")
+
+    # Two ceilings, and the alarm wants one ratio, so it gets the nearer of them.
+    # api/page.py caps the KV response body at MAX_ENVELOPE_BYTES before it
+    # decompresses, then caps the decompressed state at MAX_STATE_BYTES. Either
+    # can bind. Today the decompressed state does, at 51.8% against the
+    # envelope's 23%, but that depends on a compression ratio nobody controls.
+    readings = (("decompressed state", len(payload), MAX_STATE_BYTES),
+                ("KV envelope", envelope, MAX_ENVELOPE_BYTES))
+    constraint, size, limit = max(readings, key=lambda r: r[1] / r[2])
+    return {"store": STATE_STORE_NAME, "limit": limit, "size": size,
+            "constraint": constraint}
+
+
 def fit_state(root, cap=None):
     """Build the board, shrinking the embedded slice until the state fits.
 
