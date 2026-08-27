@@ -390,16 +390,25 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    Once parked, stop.
 
 6. Once every field on the last step is filled and read back, call `jobby.record_answers`
-   exactly once with the whole manifest: one entry per question the form asked, in the order
-   it asked, carrying the question exactly as worded, the value entered, `source` (`stored`
+   exactly once with the whole manifest.
+
+   **Build the manifest from the read-back, not from memory.** Walk the form's own fields as
+   the verification snapshot shows them and write one entry per field you find there. Do not
+   assemble it from what you recall filling: a field you forgot you filled is missing from
+   your recollection and present on the page, and the record is supposed to say what the page
+   says. Every question the form asked gets a row, in the order it asked, including the ones
+   you left blank, the ones already prefilled, and the ones on earlier steps of a multi-step
+   form. A short record is the one failure this cannot detect for you -- the server never sees
+   the form, only what you hand it, so nothing downstream can notice a question you omitted.
+
+   Each entry carries the question exactly as worded, the value entered, `source` (`stored`
    when it came from `jobby.resolve_answers`, with that answer's `sourceKey`; `profile` for
    identity and work history; `generated` for anything built from the tailored documents,
    the posting or `jobby.salary_midpoint`; `provided` for anything the user supplied), and
    `readBack` (`match`, `differs` with the page's value in `readBackValue`, or `unverified`).
    This is the manifest from step 4 written down, and it is what the user sees under Answers
-   next to the resume and cover letter. Record what the form actually asked, including
-   questions you left blank. Do not omit a question because its answer was sensitive: the
-   server flags and masks those. Do not send a one-time code, a password or a national
+   next to the resume and cover letter. Do not omit a question because its answer was
+   sensitive: the server flags and masks those. Do not send a one-time code, a password or a national
    identifier; the server withholds them, but they should not be sent at all. A refusal
    names what is wrong with the manifest, so fix it and call once more.
 

@@ -350,5 +350,53 @@ class RecordAnswersToolTests(unittest.TestCase):
             self.assertNotIn("oneOf", tool["inputSchema"])
 
 
+class CaptureContractAgreesInBothPlacesTests(unittest.TestCase):
+    """One requirement, two readers, and they must not drift apart.
+
+    The Claude Code skill reads SKILL.md. The spawned provider reads the task
+    contract inside run_apply. Both have to tell the agent to build the manifest
+    from the read-back rather than from memory, because that is what makes a
+    short record unlikely -- and a short record is the failure nothing
+    downstream can catch. The server never sees the form, only the manifest it
+    is handed, so no gate here can notice a question that was left out.
+
+    This is the same shape as the ATS upload instruction, which also lives in
+    both: two contracts to two readers rather than two descriptions of one
+    behaviour. What makes that safe rather than the duplication the repo warns
+    about is a test comparing them, which is why this exists.
+    """
+
+    def setUp(self):
+        # Both documents are hand-wrapped prose, so a phrase that matters can
+        # straddle a line break. Compare on collapsed whitespace or the test
+        # fails on where somebody happened to wrap, which is not the contract.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        flat = lambda text: " ".join(text.split())
+        self.skill = flat((root / "SKILL.md").read_text(encoding="utf-8"))
+        self.contract = flat(
+            (root / "scripts" / "run_apply.py").read_text(encoding="utf-8"))
+
+    def test_both_require_the_manifest_to_come_from_the_read_back(self):
+        for name, text in (("SKILL.md", self.skill), ("run_apply", self.contract)):
+            with self.subTest(document=name):
+                self.assertIn("from the read-back, not from memory", text)
+                self.assertIn("recollection", text)
+
+    def test_both_require_blank_and_prefilled_questions_to_be_recorded(self):
+        # The two easiest rows to leave out, and the two that make a record
+        # look complete while describing a different form than the one sent.
+        for name, text in (("SKILL.md", self.skill), ("run_apply", self.contract)):
+            with self.subTest(document=name):
+                self.assertIn("left blank", text)
+                self.assertIn("prefilled", text)
+
+    def test_both_say_the_omission_cannot_be_caught_downstream(self):
+        # The reason the instruction has to carry the weight: there is no
+        # number in the system that says how many questions the form had.
+        for name, text in (("SKILL.md", self.skill), ("run_apply", self.contract)):
+            with self.subTest(document=name):
+                self.assertIn("never sees the form", text)
+
+
 if __name__ == "__main__":
     unittest.main()
