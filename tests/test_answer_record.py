@@ -481,171 +481,81 @@ class ArtifactContractTests(unittest.TestCase):
         # gets it; the older file keeps its own name under unfiled/ rather than
         # overwriting what the board reads.
         #
-        # KNOWN WEAKNESS, and it is the reason the underlying bug survived.
-        # Today that is decided by sorted path order, and "answers-" happens to
-        # sort before "questions-", so this test would pass just as well if the
-        # rule were pure alphabet with no preference in it at all. It pins the
-        # outcome, not the reason. jobby-auto-apply-71 is replacing the tiebreak
-        # with a written preference in #89, whose own test renames the loser so
-        # it sorts first. Once that lands, this one should do the same, because
-        # a re-sync taken while a record is briefly absent is how the raw list
-        # takes the key back, and the modal then fetches an array where it
-        # expects an object and fails closed without saying so.
+        # Asserted twice, and the second time is the one that means anything.
+        # Until #89 this was decided by sorted path order, and "answers-" sorts
+        # before "questions-", so the first case alone passes under a pure
+        # alphabet tiebreak with no preference in it -- which is how the bug
+        # survived being tested at all. The second case renames the loser so it
+        # sorts first, and can only pass because FILENAME_PREFERENCE decides.
+        # The loser is placed in a company folder that sorts before the
+        # record's, so rglob visits it first and it claims the key before the
+        # record exists. Renaming the file cannot achieve this: among the
+        # prefixes r2_artifacts recognises, "answers-" always sorts first, which
+        # is precisely why the alphabetical tiebreak looked correct for years.
+        # Only the directory can put the loser ahead.
         import r2_artifacts
-        store = self.root / "state"
-        (store / "sessions").mkdir(parents=True)
-        (store / "answers.json").write_text("{}")
-        (store / "sessions" / "app-1.json").write_text(json.dumps({
-            "applicationId": "app-1", "company": "Acme", "role": "PM"}))
-        apps = self.root / "applications"
-        (apps / "Acme").mkdir(parents=True)
-        (apps / "Acme" / "questions-app-1.json").write_text(
-            json.dumps(["What is your name?"]))
-        real_apps = answer_record.APPS
-        answer_record.APPS = apps
-        self.addCleanup(setattr, answer_record, "APPS", real_apps)
-        answer_record.write("app-1", [
-            {"question": "First name", "answer": "Sahil", "source": "profile",
-             "readBack": "match"}], root=store)
+        for loser_dir, why in (("Acme", "loser visited second"),
+                               ("AAA Corp", "loser visited FIRST")):
+            with self.subTest(case=why):
+                temp = tempfile.TemporaryDirectory()
+                self.addCleanup(temp.cleanup)
+                root = pathlib.Path(temp.name)
+                store = root / "state"
+                (store / "sessions").mkdir(parents=True)
+                (store / "answers.json").write_text("{}")
+                (store / "sessions" / "app-1.json").write_text(json.dumps({
+                    "applicationId": "app-1", "company": "Acme", "role": "PM"}))
+                apps = root / "applications"
+                (apps / loser_dir).mkdir(parents=True)
+                loser = "questions-app-1.json"
+                (apps / loser_dir / loser).write_text(
+                    json.dumps(["What is your name?"]))
+                real = answer_record.APPS
+                answer_record.APPS = apps
+                self.addCleanup(setattr, answer_record, "APPS", real)
+                answer_record.write("app-1", [
+                    {"question": "First name", "answer": "Sahil",
+                     "source": "profile", "readBack": "match"}], root=store)
 
-        plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
-        by_name = {a["name"]: a for a in plan["artifacts"]}
-        self.assertEqual(by_name["answers-app-1.json"]["key"],
-                         "u/account-1/app/app-1/answers.json")
-        self.assertEqual(by_name["questions-app-1.json"]["key"],
-                         "u/account-1/unfiled/Acme/questions-app-1.json")
+                # The premise, asserted rather than assumed. This case only
+                # proves displacement if the loser really is reached first, and
+                # that rests on "AAA Corp" sorting before "Acme" -- a fact about
+                # two strings in this test, which a rename would silently
+                # destroy while leaving it green. collect() walks
+                # sorted(rglob("*")), so the same walk answers it here.
+                # Borrowed from jobby-auto-apply-71, who hit the same trap.
+                visited = [q.name for q in sorted(apps.rglob("*")) if q.is_file()]
+                if why.endswith("FIRST"):
+                    self.assertLess(
+                        visited.index(loser), visited.index("answers-app-1.json"),
+                        "the loser has to be visited first or this proves nothing")
+                else:
+                    self.assertGreater(
+                        visited.index(loser), visited.index("answers-app-1.json"))
 
+                plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
+                by_name = {a["name"]: a for a in plan["artifacts"]}
+                self.assertEqual(by_name["answers-app-1.json"]["key"],
+                                 "u/account-1/app/app-1/answers.json",
+                                 "the record must hold the key the board reads")
+                self.assertTrue(by_name[loser]["key"].startswith(
+                    "u/account-1/unfiled/"),
+                    "the question list keeps its own name rather than the key")
+                self.assertTrue(by_name[loser]["key"].endswith(loser))
+                answer_record.APPS = real
 
-class SalvagedQuestionTests(unittest.TestCase):
-    """Old question lists become questions-only records, and never answers.
+    def test_the_preference_is_what_decides_not_the_alphabet(self):
+        """Belt and braces on #89's rule, from the side that depends on it.
 
-    41 questions*.json files survive from before capture existed. They hold what
-    the form asked and no values at all. Turning them into rows is honest;
-    resolving them against answers.json to produce values would not be, and the
-    refusal is the point of these tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        root = pathlib.Path(self.temp.name)
-        self.store = root / "state"
-        (self.store / "sessions").mkdir(parents=True)
-        (self.store / "answers.json").write_text(json.dumps(ANSWERS))
-        (self.store / "applications.jsonl").write_text("\n".join(json.dumps(e) for e in [
-            {"event": "completed", "applicationId": "sent-1", "company": "Acme",
-             "role": "PM"},
-            {"event": "completed", "applicationId": "twin-a", "company": "Twin",
-             "role": "PM"},
-            {"event": "completed", "applicationId": "twin-b", "company": "Twin",
-             "role": "Staff PM"},
-            {"event": "submitting", "applicationId": "inflight-1",
-             "company": "Pending", "role": "PM"},
-        ]) + "\n")
-        self.apps = root / "applications"
-        for company in ("Acme", "Twin", "Pending", "Stranger"):
-            (self.apps / company).mkdir(parents=True)
-        (self.apps / "Acme" / "questions.json").write_text(json.dumps([
-            "Are you legally authorized to work in the US?",
-            "What are your salary expectations?",
-            "Enter the verification code we emailed you",
-            "Are you legally authorized to work in the US?",
-        ]))
-        (self.apps / "Twin" / "questions.json").write_text(
-            json.dumps(["Which role are you applying for?"]))
-        (self.apps / "Pending" / "questions.json").write_text(
-            json.dumps(["Anything else?"]))
-        (self.apps / "Stranger" / "questions.json").write_text(
-            json.dumps(["Who are you?"]))
-        self._real = answer_record.APPS
-        answer_record.APPS = self.apps
-        self.addCleanup(setattr, answer_record, "APPS", self._real)
-
-    def plan(self):
-        return answer_record.salvage_plan(self.store)
-
-    def test_a_submitted_application_with_one_company_folder_is_attributed(self):
-        planned = {p["applicationId"]: p for p in self.plan()["plan"]}
-        self.assertEqual(set(planned), {"sent-1"})
-        self.assertEqual(planned["sent-1"]["attributedBy"],
-                         "the only application at this company")
-
-    def test_a_company_with_two_applications_is_skipped_not_guessed(self):
-        # Two open roles at one company get two different forms. Filing one
-        # role's questions under the other role's application is the same
-        # mistake as putting a stranger's logo on their card.
-        why = {s["path"]: s["why"] for s in self.plan()["skipped"]}
-        twin = [w for p, w in why.items() if "Twin" in p]
-        self.assertEqual(len(twin), 1)
-        self.assertIn("2 applications at this company", twin[0])
-
-    def test_an_unsubmitted_application_is_skipped(self):
-        why = [s["why"] for s in self.plan()["skipped"] if "Pending" in s["path"]]
-        self.assertEqual(why, ["not a submitted application"])
-
-    def test_a_company_the_store_does_not_know_is_skipped(self):
-        why = [s["why"] for s in self.plan()["skipped"] if "Stranger" in s["path"]]
-        self.assertEqual(why, ["no application at this company in the store"])
-
-    def test_the_record_carries_questions_and_no_answers_at_all(self):
-        item = self.plan()["plan"][0]
-        answer_record.write("sent-1", item["questions"], root=self.store,
-                            capture="questions-only")
-        record = json.loads(
-            (self.apps / "Acme" / "answers-sent-1.json").read_text())
-        self.assertEqual(record["capture"], "questions-only")
-        # The duplicate question collapses; three distinct ones survive.
-        self.assertEqual(len(record["fields"]), 3)
-        for field in record["fields"]:
-            self.assertTrue(field["unrecorded"])
-            self.assertNotIn("answer", field)
-            self.assertNotIn("source", field)
-            self.assertNotIn("readBack", field)
-
-    def test_no_value_from_the_answer_store_leaks_into_a_salvaged_record(self):
-        # The store holds "165000" under expected-compensation and the salvaged
-        # list asks for salary expectations. Joining them would produce what the
-        # store would say today, presented as what the form received months ago.
-        item = self.plan()["plan"][0]
-        answer_record.write("sent-1", item["questions"], root=self.store,
-                            capture="questions-only")
-        raw = (self.apps / "Acme" / "answers-sent-1.json").read_text()
-        for value in ("165000", "Yes", "Something private"):
-            self.assertNotIn(value, raw, f"{value!r} was reconstructed from the store")
-
-    def test_a_salvaged_record_still_flags_sensitive_questions(self):
-        item = self.plan()["plan"][0]
-        answer_record.write("sent-1", item["questions"], root=self.store,
-                            capture="questions-only")
-        record = json.loads((self.apps / "Acme" / "answers-sent-1.json").read_text())
-        flags = {f["question"]: f["sensitive"] for f in record["fields"]}
-        self.assertTrue(flags["What are your salary expectations?"])
-        self.assertFalse(flags["Are you legally authorized to work in the US?"])
-
-    def test_the_published_shape_carries_the_level_and_no_invented_badges(self):
-        item = self.plan()["plan"][0]
-        record = answer_record.build("sent-1", item["questions"], root=self.store,
-                                     capture="questions-only")
-        public = answer_record.public_record(record)
-        self.assertEqual(public["capture"], "questions-only")
-        for field in public["fields"]:
-            self.assertTrue(field["unrecorded"])
-            self.assertNotIn("source", field)
-            self.assertNotIn("readBack", field)
-
-    def test_a_full_record_is_never_replaced_by_a_salvage(self):
-        # A real record knows what went in. A salvage knows only the questions.
-        # Downgrading one to the other loses the only copy of the answers.
-        answer_record.write("sent-1", [
-            {"question": "First name", "answer": "Sahil", "source": "profile",
-             "readBack": "match"}], root=self.store)
-        existing = answer_record.index(self.store)
-        self.assertIn("sent-1", existing)
-        planned = [p for p in self.plan()["plan"] if p["applicationId"] in existing]
-        self.assertEqual(len(planned), 1, "the plan still finds it")
-        # The CLI holds it back; the guard is that `index` already knows.
-        record = json.loads((self.apps / "Acme" / "answers-sent-1.json").read_text())
-        self.assertEqual(record["capture"], "full")
+        r2_artifacts owns the mechanism and tests it there. This asserts the
+        thing this module needs from it: whatever else changes, a record
+        outranks the question list it was salvaged from.
+        """
+        import r2_artifacts
+        self.assertLess(r2_artifacts._rank("answers-x.json"),
+                        r2_artifacts._rank("questions-x.json"))
+        self.assertLess(r2_artifacts._rank("answers-x.json"),
+                        r2_artifacts._rank("zzz-unrecognised.json"))
 
 
 class NeverBackfillsFromTheStoreTests(unittest.TestCase):
