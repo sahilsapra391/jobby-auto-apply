@@ -674,44 +674,34 @@ class PublishedShapeTests(BankTest):
         self.assertNotIn("answer", entry)
         self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 1)
 
-    def test_a_sensitive_value_is_never_published_at_all(self):
-        """The strongest rule in this feature, and the one that survives being
-        looked at from the wrong angle.
+    def test_every_answer_is_published_including_the_sensitive_ones(self):
+        """Reverses the withholding shipped in #73, on the owner's instruction
+        after seeing it live.
 
-        Masking is a display choice. It does nothing about the copy sitting in
-        the KV blob, which is where a sensitive answer would actually live, so
-        the value is not published: not masked, not encrypted, absent. This
-        asserts against the serialised state rather than a field, because the
-        failure mode is a value surviving somewhere nobody thought to look.
+        He does not want a hidden category on his own board. It is his data
+        behind his own password, and a single user reading their own
+        compensation is a different question from a store holding other
+        people's. **This reverses when a second account exists**, and issue #82
+        is the work that reverses it.
         """
         published = dashboard.publishable_state(self.state())
-        blob = json.dumps(published)
-        self.assertNotIn("$185,000", blob)
         entry = next(a for a in published["memoryBank"]["answers"]
                      if a["key"] == "expected-comp")
-        self.assertIsNone(entry["value"])
-        self.assertTrue(entry["sensitive"])
-        self.assertTrue(entry["heldOnDevice"])
-        # Nothing pending in this path, so no string that ages into permanent.
-        self.assertNotIn("encryption", entry)
-        # The classification stays: the device-side store is still Class 2 and
-        # that work is still owed.
-        self.assertEqual(entry["dataClass"], "class-2")
-
-    def test_an_ordinary_value_still_travels(self):
-        published = dashboard.publishable_state(self.state())
-        entry = next(a for a in published["memoryBank"]["answers"]
-                     if a["key"] == "notice-period")
-        self.assertEqual(entry["value"], "15 days")
+        self.assertEqual(entry["value"], "$185,000")
         self.assertNotIn("heldOnDevice", entry)
 
-    def test_a_withheld_answer_is_not_counted_as_an_open_question(self):
-        """Both have no value on this side. Only one of them is something to
-        put in front of the user, and getting it wrong would ask them to
-        re-answer everything sensitive they have ever stored."""
-        counts = dashboard.publishable_state(self.state())["meta"]["memoryBank"]
-        self.assertEqual(counts["unanswered"], 1)
-        self.assertEqual(counts["sensitive"], 1)
+    def test_the_classification_still_travels_untouched(self):
+        """The display decision must not disturb the classification.
+
+        `sensitive` and `dataClass` are what the multi-tenant envelope
+        encryption selects on. If showing the value quietly cleared the flag,
+        #82 would later encrypt the wrong set and nobody would notice until it
+        was someone else's compensation.
+        """
+        entry = next(a for a in dashboard.publishable_state(self.state())["memoryBank"]["answers"]
+                     if a["key"] == "expected-comp")
+        self.assertTrue(entry["sensitive"])
+        self.assertEqual(entry["dataClass"], "class-2")
 
     def test_a_sensitive_question_nobody_has_answered_is_still_open(self):
         state = self.state()
@@ -719,9 +709,6 @@ class PublishedShapeTests(BankTest):
             "key": "comp-open", "question": "What compensation do you want?",
             "value": None, "state": "sensitive", "tags": ["unanswered"]}
         published = dashboard.publishable_state(state)
-        entry = next(a for a in published["memoryBank"]["answers"]
-                     if a["key"] == "comp-open")
-        self.assertFalse(entry["heldOnDevice"])
         self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 2)
 
     def test_the_counts_ride_in_meta_and_the_values_do_not(self):
@@ -729,7 +716,6 @@ class PublishedShapeTests(BankTest):
         counts = published["meta"]["memoryBank"]
         self.assertEqual(counts, {"total": 3, "unanswered": 1, "sensitive": 1,
                                   "identities": 1})
-        self.assertNotIn("$185,000", json.dumps(published))
 
     def test_an_identity_publishes_the_document_name_not_the_path(self):
         """A path is a directory layout on one person's machine and says
@@ -746,9 +732,11 @@ class PublishedShapeTests(BankTest):
         of the page, a cache of it, or its view-source."""
         published = dashboard.publishable_state(self.state())
         page = dashboard.build(published, "test")
-        for secret in ("$185,000", "15 days", "Expected compensation?",
+        # Still fetched rather than embedded. That was always a page-weight
+        # measurement first, and it holds whatever the display rules are.
+        for absent in ("$185,000", "15 days", "Expected compensation?",
                        "Notice period?", "5550001111", "1 Main St"):
-            self.assertNotIn(secret, page, secret)
+            self.assertNotIn(absent, page, absent)
 
     def test_the_page_carries_the_counts_it_is_allowed_to(self):
         published = dashboard.publishable_state(self.state())
