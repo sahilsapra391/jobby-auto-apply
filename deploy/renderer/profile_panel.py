@@ -52,7 +52,6 @@ def panel(counts=None):
     counts = counts or {}
     total = int(counts.get("total") or 0)
     unanswered = int(counts.get("unanswered") or 0)
-    sensitive = int(counts.get("sensitive") or 0)
     return f"""
     <section class="profile-page" id="profile-page" aria-labelledby="profile-title">
       <div class="settings-titlebar">
@@ -119,9 +118,6 @@ def panel(counts=None):
               Needs you<span class="chip-n" data-bank-open>{unanswered}</span>
             </button>
             <button class="bank-chip" type="button" data-bank-filter="policy">Policies</button>
-            <button class="bank-chip" type="button" data-bank-filter="sensitive">
-              Sensitive<span class="chip-n">{sensitive}</span>
-            </button>
           </div>
         </div>
 
@@ -131,10 +127,10 @@ def panel(counts=None):
       </section>
 
       <p class="credential-note">Answers are stored on Your Device and published to the board
-         behind this password so you can read and edit them here. Sensitive answers stay on
-         your device: the board is told one exists so you can replace it, never what it says.
-         Reading one back here waits on the per-user encryption in the multi-tenant plan,
-         rather than shipping without it. One-time codes and verification codes are never stored,
+         behind this password so you can read and edit them here, including compensation and
+         demographics: this is your board and your data. That changes when a second account
+         exists, and the per-user encryption in the multi-tenant plan is what changes it.
+         One-time codes and verification codes are never stored,
          and neither is an answer to anything Jobby refuses to sign on your behalf.</p>
     </section>
     """
@@ -251,7 +247,6 @@ CSS = r"""
   .bank-q { margin:0; font-weight:620; line-height:1.45; overflow-wrap:anywhere; }
   .bank-a { margin:.4rem 0 0; color:var(--ink-2); line-height:1.5; white-space:pre-wrap;
     overflow-wrap:anywhere; }
-  .bank-a.held { color:var(--ink-3); font-style:italic; }
   .bank-a.none { color:var(--orange); font-style:italic; }
   .bank-meta { margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem .5rem;
     align-items:center; }
@@ -375,9 +370,7 @@ SCRIPT = r"""
     }
 
     function isOpen(entry) {
-      // A withheld sensitive answer has no value here and is not a question
-      // waiting on anybody.
-      return !answered(entry) && !entry.heldOnDevice && entry.remembered !== false;
+      return !answered(entry) && entry.remembered !== false;
     }
 
     function stamp(value) {
@@ -624,14 +617,10 @@ SCRIPT = r"""
 
     function matches(entry) {
       if (filter === 'open' && !isOpen(entry)) return false;
-      if (filter === 'sensitive' && !entry.sensitive) return false;
       if (filter === 'policy' && (entry.tags || []).indexOf('policy') === -1) return false;
       if (!query) return true;
-      var hay = String(entry.question || '') + ' ' + (entry.tags || []).join(' ');
-      // A sensitive answer is not searchable by its text. Typing a salary into
-      // the box and watching a row appear is a disclosure of the same kind as
-      // rendering it.
-      if (!entry.sensitive) hay += ' ' + String(entry.value || '');
+      var hay = String(entry.question || '') + ' ' + (entry.tags || []).join(' ')
+        + ' ' + String(entry.value || '');
       return hay.toLowerCase().indexOf(query) !== -1;
     }
 
@@ -641,13 +630,7 @@ SCRIPT = r"""
 
       var body = el('p', 'bank-a');
       function paintValue() {
-        if (entry.heldOnDevice) {
-          // There is nothing to reveal and no control that pretends there is.
-          // The value was never sent, so a masked row with a Reveal button
-          // would be a button that cannot work.
-          body.className = 'bank-a held';
-          body.textContent = 'Answered. Held on your device, not sent to the board.';
-        } else if (!answered(entry)) {
+        if (!answered(entry)) {
           body.className = 'bank-a none';
           body.textContent = entry.remembered === false
             ? 'Filled when asked, deliberately not kept.'
@@ -678,8 +661,7 @@ SCRIPT = r"""
       row.appendChild(meta);
 
       var act = el('div', 'bank-act');
-      var edit = el('button', 'btn ghost',
-        entry.heldOnDevice ? 'Replace' : (answered(entry) ? 'Edit' : 'Answer'));
+      var edit = el('button', 'btn ghost', answered(entry) ? 'Edit' : 'Answer');
       edit.type = 'button';
       act.appendChild(edit);
       row.appendChild(act);
@@ -690,32 +672,24 @@ SCRIPT = r"""
         open = true;
         act.style.display = 'none';
         var editor = el('div', 'bank-edit');
-        if (entry.heldOnDevice) {
-          // Write-only, and said so plainly rather than by an empty box the
-          // reader has to interpret.
-          editor.appendChild(el('p', 'bank-note',
-            'Your device holds the current answer and does not send it here. '
-            + 'Anything you type replaces it.'));
-        }
         var box = el('textarea');
         box.rows = 3;
-        box.value = (!entry.heldOnDevice && answered(entry)) ? String(entry.value) : '';
-        box.setAttribute('aria-label',
-          (entry.heldOnDevice ? 'Replacement answer for: ' : 'Answer for: ')
-          + (entry.question || ''));
+        box.value = answered(entry) ? String(entry.value) : '';
+        box.setAttribute('aria-label', 'Answer for: ' + (entry.question || ''));
         editor.appendChild(box);
 
-        // The store guesses sensitivity from the question when the loop opens
-        // it, and a guess is all it can be: measured against the real corpus,
-        // the wording of "Which of the following communities do you belong to?"
-        // names nothing sensitive at all. So the person answering gets the
-        // final say, in both directions.
+        // This no longer hides anything on this board and the label must not
+        // claim it does. What it still does is set the flag the multi-tenant
+        // envelope-encryption path selects on, so the classification stays
+        // correct for the work #82 tracks, and the person answering can correct
+        // a classifier that cannot read "Which communities do you belong to?".
         var mark = el('label', 'bank-sensitive');
         var tick = el('input');
         tick.type = 'checkbox';
         tick.checked = Boolean(entry.sensitive);
         mark.appendChild(tick);
-        mark.appendChild(el('span', null, 'Sensitive: keep this hidden until I ask'));
+        mark.appendChild(el('span', null,
+          'Personal data: compensation, demographics, identity'));
         editor.appendChild(mark);
         var buttons = el('div', 'bank-act');
         var save = el('button', 'btn', 'Save');
@@ -737,7 +711,7 @@ SCRIPT = r"""
         }
         cancel.addEventListener('click', close);
 
-        if (answered(entry) || entry.heldOnDevice) {
+        if (answered(entry)) {
           // Inside the editor rather than on the resting row: forgetting an
           // answer takes opening the thing first, which is one more deliberate
           // act than a button sitting next to Edit would ask for.
@@ -829,15 +803,11 @@ SCRIPT = r"""
     function groupsFor(entries) {
       // Under a filter the grouping is the filter. Splitting a Sensitive
       // filter into "Standing policies" and "Everything else" labels 22
-      // sensitive answers as everything else, which is worse than no heading.
+      // a filtered set as "everything else", which is worse than no heading.
       if (filter !== 'all') {
-        var titles = { open: 'Needs your answer', policy: 'Standing policies',
-                       sensitive: 'Sensitive answers' };
+        var titles = { open: 'Needs your answer', policy: 'Standing policies' };
         return [{ key: filter, title: titles[filter] || 'Matching', rows: entries,
-                  note: filter === 'sensitive'
-                    ? 'Answers your device keeps to itself. The board is told they '
-                      + 'exist so you can replace one, never what they say.'
-                    : '' }];
+                  note: '' }];
       }
       var open = [], policy = [], rest = [];
       entries.forEach(function (entry) {

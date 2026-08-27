@@ -247,10 +247,11 @@ async function handleSearchConfig(request) {
 // travels in the published state and is fetched by the panel that needs it,
 // the same bargain /api/posting already makes for posting sections.
 //
-// It falls out well for privacy too, though the stronger rule is upstream: a
-// sensitive answer's value is never published at all, so this route cannot
-// serve one and no masking here is load-bearing. It carries `heldOnDevice` so
-// the page can say an answer exists without being told what it is.
+// Every answer travels, sensitive ones included: the owner asked for a board
+// with no hidden category on it, and it is his data behind his own password.
+// That reverses when a second account exists; see issue #82. What is still
+// never here is a secret, because secrets are refused at capture in store.py
+// and were never written in the first place.
 //
 // Single-user today. The payload names the account it belongs to and this
 // route refuses one that names a different account, so the day per-user state
@@ -258,11 +259,11 @@ async function handleSearchConfig(request) {
 const VIEWER_USER_ID = process.env.JOBBY_USER_ID || 'account-1';
 
 const ANSWER_FIELDS = ['key', 'question', 'state', 'tags', 'updatedAt', 'version',
+  // `sensitive` and `dataClass` still travel. They no longer change what the
+  // page draws; they are the classification the multi-tenant encryption path
+  // selects on, per issue #82.
   'sensitive', 'dataClass', 'askedBy', 'openedAt', 'lastAskedAt',
-  // `heldOnDevice` says an answer exists that this side has never been given.
-  // Without it a withheld sensitive answer is indistinguishable from a question
-  // nobody has answered, and the board would ask for answers it already has.
-  'heldOnDevice', 'answeredAt', 'note', 'remembered'];
+  'answeredAt', 'note', 'remembered'];
 
 function profilePayload(state) {
   const bank = (state && state.memoryBank) || null;

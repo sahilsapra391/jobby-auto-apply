@@ -263,6 +263,11 @@ def completed(aid, confirmation, resume, cover, nonce):
 # that did not, and it is deliberately narrow: a trailing question mark, which
 # an employer's form field label reliably has and an instruction reliably does
 # not. Over-reaching here fills the bank with rubbish the user has to clear.
+def _stamp():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def question_shaped(blocker):
     text = (blocker or "").strip()
     return text.endswith("?") and len(text) > 8
@@ -335,6 +340,36 @@ def park(aid, blockers, reason, unanswered=None):
     if r.returncode != 0:
         raise SystemExit(f"finish: session-save failed: {(r.stderr or '').strip()[:300]}")
     opened, skipped = open_in_bank(aid, blockers, unanswered)
+    # Recorded, not just returned.
+    #
+    # These two were computed and handed back to the agent as a tool result,
+    # and nothing kept them. That makes a silent loop failure indistinguishable
+    # from four other causes: the agent did not tag anything, a guard refused
+    # it, the store errored, or the loop never ran. All of those look the same
+    # afterwards, which is "the bank is empty and nobody knows why".
+    #
+    # The session is the right home. It already holds the blockers these
+    # describe, it survives for exactly as long as the application is parked,
+    # and it is the first thing anyone opens when asking why a park behaved the
+    # way it did. Written after the save above rather than into it, so a
+    # failure to record the diagnostic can never fail the park itself.
+    entry["bankCapture"] = {
+        "at": _stamp(),
+        "tagged": list(unanswered or []),
+        "opened": opened,
+        "notBanked": skipped,
+    }
+    try:
+        subprocess.run([sys.executable, str(STORE), "session-save", "--id", aid,
+                        "--input", "-"],
+                       input=json.dumps(entry), capture_output=True, text=True)
+    except OSError:
+        pass
+    # And to stderr, so it lands in the runner's own log. Never stdout: this
+    # runs inside application_mcp, which speaks JSON-RPC over stdout, and a
+    # stray line there corrupts the protocol rather than logging anything.
+    print(json.dumps({"bankCapture": {"applicationId": aid, "opened": opened,
+                                      "notBanked": skipped}}), file=sys.stderr)
     return {"parked": True, "pendingFields": entry["pendingFields"],
             "openedInBank": opened, "notBanked": skipped,
             "synced": sync_board()}

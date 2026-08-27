@@ -1255,6 +1255,45 @@ class EyeAndPassTests(unittest.TestCase):
             self.promote.watch(self.root, "j1")
 
 
+class AlarmVisibilityTests(unittest.TestCase):
+    """The alarm has to be able to report its own failure.
+
+    ping_health returns a status that every caller ignores, and returned None
+    on any network error. A misconfigured or unreachable HEALTHCHECKS_URL was
+    therefore indistinguishable, from inside the watcher, from a healthy system
+    with a working alarm.
+    """
+
+    def setUp(self):
+        self.previous = watch.LAST_PING
+        self.addCleanup(lambda: setattr(watch, "LAST_PING", self.previous))
+        watch.LAST_PING = None
+
+    def test_a_failed_ping_is_recorded_rather_than_swallowed(self):
+        with mock.patch.object(watch, "config",
+                               return_value={"HEALTHCHECKS_URL": "https://hc.example/abc"}), \
+                mock.patch.object(watch.urllib.request, "urlopen",
+                                  side_effect=OSError("no route to host")):
+            self.assertIsNone(watch.ping_health("fail", "board is stale"))
+        self.assertIsNotNone(watch.LAST_PING)
+        self.assertIn("no route to host", watch.LAST_PING["error"])
+        self.assertEqual(watch.LAST_PING["state"], "fail")
+
+    def test_status_reports_what_the_alarm_last_did_not_only_that_it_exists(self):
+        watch.LAST_PING = {"at": "2026-08-27T19:00:00Z", "state": "fail",
+                           "error": "URLError: unreachable"}
+        with mock.patch.object(watch, "config",
+                               return_value={"HEALTHCHECKS_URL": "https://hc.example/abc"}), \
+                mock.patch.object(watch, "poll_queues", return_value={}), \
+                mock.patch.object(watch, "lock_holder", return_value=None), \
+                mock.patch.object(watch, "free_apply_slots", return_value=[]), \
+                mock.patch.object(watch, "running_applications", return_value={}):
+            out = watch.status()
+        # "health" only ever meant "configured", which read as reassurance.
+        self.assertTrue(out["health"])
+        self.assertEqual(out["lastPing"]["error"], "URLError: unreachable")
+
+
 class ParkedSlotDeadlockTests(unittest.TestCase):
     """The queue that stopped because its slots were held by its own tail.
 
