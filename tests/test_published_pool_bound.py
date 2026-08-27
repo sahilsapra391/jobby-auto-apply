@@ -197,29 +197,54 @@ class StateFitsTheCeilingTest(unittest.TestCase):
         self.assertLess(self.published_bytes(pool(50000, acted=1200)),
                         publish.MAX_STATE_BYTES)
 
-    def test_the_slice_that_broke_production_would_now_be_caught(self):
-        """The regression test proper: this fails if slimming is removed.
-
-        4,366 realistic records is the exact shape that reached 21.03 MB and
-        refused every publish for 22 hours. Slimmed it is comfortably under.
-        """
-        jobs = pool(3400, acted=966)
-        self.assertEqual(len(jobs), 4366)
-        self.assertLess(self.published_bytes(jobs), publish.MAX_STATE_BYTES)
-
-    def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
-        """A bound nothing can violate is not a bound. Prove this one bites."""
+    def unslimmed_bytes(self, jobs):
         original = dashboard.state_slim.slim_jobs
-        dashboard.state_slim.slim_jobs = staticmethod(lambda jobs: jobs)
+        dashboard.state_slim.slim_jobs = staticmethod(lambda j: j)
         try:
-            unslimmed = self.published_bytes(pool(3400, acted=966))
+            return self.published_bytes(jobs)
         finally:
             dashboard.state_slim.slim_jobs = original
-        self.assertGreater(unslimmed, publish.MAX_STATE_BYTES,
+
+    def test_the_fixture_reproduces_the_weight_that_broke_production(self):
+        """3,400 selected plus 966 acted is the exact shape that froze the board.
+
+        Whole, production measured 20.87 MB against a 20 MB ceiling. The fixture
+        has to land near that or the tests below are theatre, so the calibration
+        is asserted rather than assumed.
+        """
+        whole = self.unslimmed_bytes(pool(3400, acted=966))
+        self.assertGreater(whole, 18 * 1024 * 1024, f"{whole} too light")
+        self.assertLess(whole, 24 * 1024 * 1024, f"{whole} too heavy")
+
+    def test_the_slice_that_broke_production_now_fits(self):
+        """The regression test proper: this fails if slimming is removed."""
+        jobs = pool(3400, acted=966)
+        self.assertEqual(len(jobs), 4366)
+        slimmed = self.published_bytes(jobs)
+        self.assertLess(slimmed, publish.MAX_STATE_BYTES)
+        # Headroom, not a hair's breadth. The whole point is to stop living at
+        # the ceiling, and production sat 4% over it.
+        self.assertLess(slimmed, publish.MAX_STATE_BYTES * 0.75)
+
+    def test_it_really_does_fail_when_the_slice_is_over_the_ceiling(self):
+        """A bound nothing can violate is not a bound. Prove this one bites.
+
+        A pool half again the size of the one that broke production, so the
+        unslimmed state is over the ceiling with room to spare rather than by
+        the hair that made the first version of this test knife-edge: at
+        exactly 4,366 records the fixture came to 19.2 MB, just under, and the
+        assertion was passing or failing on fixture noise.
+        """
+        jobs = pool(5100, acted=1400)
+        self.assertGreater(self.unslimmed_bytes(jobs), publish.MAX_STATE_BYTES,
                            "the unslimmed slice must exceed the ceiling, or this "
                            "test cannot detect the fault it exists for")
+        self.assertLess(self.published_bytes(jobs), publish.MAX_STATE_BYTES,
+                        "and slimming has to bring that same slice back under")
+
+    def test_the_guard_refuses_what_the_unslimmed_slice_weighs(self):
         with self.assertRaises(publish.PublishError):
-            publish.guard_state_size(b"x" * unslimmed)
+            publish.guard_state_size(b"x" * (publish.MAX_STATE_BYTES + 1))
 
 
 if __name__ == "__main__":

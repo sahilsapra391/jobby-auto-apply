@@ -103,14 +103,23 @@ class SlimmedRecordTest(unittest.TestCase):
         self.assertEqual(self.slim["score"]["gates"], [{"label": "Years"}])
         self.assertNotIn("evidence", json.dumps(self.slim["score"]))
 
-    def test_sections_are_cut_to_the_route_s_own_limits(self):
-        # /api/posting emits twelve lines a side at four hundred characters, so
-        # trimming to the same numbers cannot change a single response.
+    def test_sections_are_cut_to_what_the_card_draws(self):
         for key in ("responsibilities", "requirements"):
             lines = self.slim["sections"][key]
-            self.assertEqual(len(lines), 12)
+            self.assertEqual(len(lines), found_lane.SECTION_POINTS)
             self.assertTrue(all(len(line) == 400 for line in lines))
         self.assertNotIn("benefits", self.slim["sections"])
+
+    def test_the_javascript_and_python_agree_on_how_many_points_a_card_draws(self):
+        """SCRIPT is a raw string, so the number is written twice. Pin them.
+
+        If the card starts drawing six and the state keeps sending five, the
+        sixth point silently never appears; if the state sends twelve again,
+        seven a side are fetched and discarded. Neither shows up as a failure
+        anywhere else.
+        """
+        source = (ROOT / "scripts" / "found_lane.py").read_text(encoding="utf-8")
+        self.assertIn(f"var SECTION_POINTS = {found_lane.SECTION_POINTS};", source)
 
     def test_the_fields_nothing_draws_are_gone(self):
         for field in ("normTitle", "descFingerprint", "firstSeenAt", "lastSeenAt",

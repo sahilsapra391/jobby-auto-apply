@@ -40,11 +40,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import found_lane  # noqa: E402
 
-# What /api/posting emits: twelve lines a side, four hundred characters a line.
-# Trimming to the route's own limits cannot change a single response, because
-# the route applies exactly this before answering.
+# What an expanded card actually draws.
+#
+# The first version cut to what /api/posting emits, twelve lines a side, which
+# was provably lossless for the route's answer and still seven lines a side more
+# than any card shows: renderSections slices to found_lane.SECTION_POINTS. The
+# observation is #78's and it is worth 3.05 MB, 13.28 down to 10.22.
+#
+# The character limit stays at four hundred rather than the two hundred #78
+# proposed. Measured over the 209,956 bullets in the store, 200 visibly
+# truncates 16.04% of them and 400 truncates 3.17%. Cutting a line the reader
+# can see is a different kind of change from dropping one they never could, and
+# five times as much of it is not worth 1 MB.
 SECTION_KEYS = ("responsibilities", "requirements")
-SECTION_MAX_LINES = 12
+SECTION_MAX_LINES = found_lane.SECTION_POINTS
 SECTION_MAX_CHARS = 400
 
 # found_lane.place needs all three: a city with no country stays a city,

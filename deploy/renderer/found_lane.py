@@ -47,6 +47,13 @@ EMBED_CAP = 3400
 # One slice of the description, used by the card and by Details. It used to be
 # two overlapping slices of the same text.
 EMBED_EXCERPT_CHARS = 320
+# How many points of each posting section an expanded card draws. The card
+# slices to this, so publishing more is bytes the browser fetches and throws
+# away: 16,680 section lists in the store are longer than five, and cutting the
+# published state to five saves 3.05 MB. The number is duplicated as a literal
+# in SCRIPT below because SCRIPT is a raw string with no interpolation, and
+# tests/test_state_slim.py pins the two together.
+SECTION_POINTS = 5
 MAX_TAGS = 6
 
 # The share of the budget reserved for per-region floors. The rest is spent
