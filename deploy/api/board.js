@@ -546,10 +546,9 @@ async function handleDocument(request, pathname) {
     return new Response(request.method === 'HEAD' ? null : bytes, {
       status: 200,
       headers: {
-        // Every document KV holds is a PDF, and the names the index does not
-        // carry are exactly those legacy documents. #89 reads the index entry
-        // once for both paths and validates the value; this stays the default
-        // it falls back to.
+        // Reached only for a name the filename index does not carry, and those
+        // are exactly the legacy KV documents, every one of them a PDF. An
+        // answer record never lands here: all of them are indexed.
         'content-type': 'application/pdf',
         // inline so it opens in the browser rather than forcing a save
         'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
