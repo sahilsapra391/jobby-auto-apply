@@ -65,7 +65,12 @@ BROWSER_MCP_PROXY = Path(__file__).resolve().parent / "browser_mcp_proxy.py"
 # derives its locks from it, because two hardcoded lists that must agree is a
 # drift waiting to happen, and disagreement here means a runner attaching to
 # a browser that was never started.
-SLOT_COUNT = 5
+#
+# Eight since 2026-08-27. It was five, and five parked applications took all
+# five, which is the reason the pool now empties on anything but a live run
+# rather than the reason it was widened; a pool that can deadlock deadlocks at
+# any size. Ports run 9222 through 9229.
+SLOT_COUNT = 8
 SLOTS = [f"apply-{i}" for i in range(1, SLOT_COUNT + 1)]
 BASE_PORT = 9222
 READY_TIMEOUT = 25

@@ -599,6 +599,7 @@ def reconcile_browser_slots():
     by_slot = {}
     released = []
     parked = []
+    handled = set()
     session_ids = {entry.get("applicationId") for entry in sessions}
 
     for entry in sessions:
@@ -609,22 +610,26 @@ def reconcile_browser_slots():
         if slot in by_slot and by_slot[slot] != aid:
             raise TickError(f"browser slot {slot} is recorded for two applications")
         by_slot[slot] = aid
-        terminal = entry.get("status") == "dropped" or latest.get(aid) in {
-            "completed", "abandoned"
-        }
-        # A slot is parked to hold a half-filled form for an application the
-        # user still has to act on. An application back in Watching has no form
-        # in flight and no blocker, so the reservation is holding a profile
-        # nobody is coming back to, and there are only five.
+        # One rule: a slot is held while its application is in flight, and at no
+        # other time. Occupied slots equal In flight rows, which is what the
+        # board shows and what a person can therefore check by looking.
         #
-        # Released here rather than left to whoever moved it. Four of the five
-        # slots were held this way at 22:40 by applications sitting at status
-        # watch, which starved the queue exactly as a crossed affinity did, and
-        # the applications themselves looked perfectly healthy on the board.
-        idle = entry.get("status") == "watch" and not entry.get("pendingFields")
-        if terminal or idle:
+        # It used to be a list of exceptions -- release when terminal, release
+        # when idle in Watching, hold when parked -- and the list was wrong in
+        # the direction that costs capacity. A parked application kept its slot
+        # so a Retry could reuse the filled tab, which is a real convenience and
+        # it deadlocked the pool: five parked applications held all five slots,
+        # four queued retries could never get one, and three Drops drained into
+        # a fleet that had nothing to give them. Twenty hours, and every
+        # application involved looked healthy.
+        #
+        # The trade is deliberate. Retry now reopens the posting instead of
+        # returning to a filled form. A convenience that can take throughput to
+        # zero is not a convenience.
+        if entry.get("status") != "inflight":
             if release_browser_slot(aid, slot, entry):
                 released.append({"applicationId": aid, "slot": slot})
+            handled.add(slot)
             continue
         held = lock_holder(slot)
         if held is None:
@@ -633,13 +638,30 @@ def reconcile_browser_slots():
         elif held.get("note") != aid:
             raise TickError(f"browser slot {slot} is owned by another application")
 
-    # A terminal sync can remove its session before the watcher gets here. A
-    # parked lock with no session is still safe to release once its tabs clear.
+    # A lock whose application no longer claims it. Two ways to get here: a
+    # terminal sync removed the session before the watcher arrived, or the
+    # session dropped its `browserSlot` and the loop above never saw the pair.
+    # Both leave a lock nobody will ever release by name, which is the shape
+    # that took the pool to zero.
+    inflight_ids = {
+        entry.get("applicationId") for entry in sessions
+        if entry.get("status") == "inflight"
+    }
     for slot in APPLY_LOCKS:
+        # Already dealt with above. Without this the loop releases it a second
+        # time and reports it twice, which reads as two slots freed when one was.
+        if slot in handled:
+            continue
         held = lock_holder(slot)
-        aid = (held or {}).get("note")
-        if (held and held.get("parked") is True and aid not in session_ids
-                and release_browser_slot(aid, slot, entry=None)):
+        if not held or held.get("parked") is not True:
+            continue
+        aid = held.get("note")
+        # by_slot is keyed by slot, so ask it about the slot. Asking whether the
+        # application id was a key answered "no" for every live holder and
+        # released the whole pool, which the invariant test caught first time.
+        if aid in inflight_ids and by_slot.get(slot) == aid:
+            continue
+        if release_browser_slot(aid, slot, entry=None):
             released.append({"applicationId": aid, "slot": slot})
     return {"parked": parked, "released": released}
 
@@ -1909,6 +1931,16 @@ def tick(force_publish=False):
                         {"applicationId": aid, "slot": slot})
 
     apply_items = q.get("apply") or []
+    # A drop claimed this tick beats a stale apply for the same application,
+    # whatever order they were queued in. phase.py refuses the promotion anyway,
+    # which is the fix that holds for every caller; this stops the tick spending
+    # a slot and a document lane on work it is about to be refused, and stops
+    # the log reporting the same ids under `dropped` and `queued` in one line.
+    just_dropped = set(changed.get("dropped") or [])
+    if just_dropped:
+        apply_items = [item for item in apply_items
+                       if not (isinstance(item, dict)
+                               and item.get("applicationId") in just_dropped)]
     apply_head = choose_apply_head(apply_items)
     head_id = apply_head.get("applicationId") if isinstance(apply_head, dict) else None
     apply_tail = [item for item in apply_items if item is not apply_head]

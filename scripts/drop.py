@@ -142,6 +142,15 @@ def drop(aid, reason=""):
     for key in ("phase", "phaseDetail", "phaseAt"):
         session.pop(key, None)
     save(session)
+    # Free the slot here rather than waiting for the next reconcile. The user
+    # clicked Drop to get capacity back, and a tick later is a tick during which
+    # the board still says every slot is taken. Best-effort: reconcile releases
+    # it anyway on the next pass, so a failure here costs latency and not a slot.
+    released = False
+    try:
+        released = watch.release_browser_slot(aid, entry=dict(session))
+    except Exception:  # noqa: BLE001 - a drop must not fail on bookkeeping
+        released = False
     return {
         "applicationId": aid,
         "company": session.get("company", ""),
@@ -149,6 +158,7 @@ def drop(aid, reason=""):
         "droppedFrom": session["droppedFrom"],
         "droppedStage": session["droppedStage"],
         "agent": agent,
+        "slotReleased": released,
     }
 
 

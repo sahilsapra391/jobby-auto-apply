@@ -123,8 +123,16 @@ class SlotReconciliationTests(unittest.TestCase):
             "browserSlot": "apply-2",
         }
 
-    def test_restart_rebuilds_a_parked_reservation_from_the_session(self):
-        entry = self.parked_session()
+    def test_restart_rebuilds_a_reservation_for_a_run_that_is_still_in_flight(self):
+        """The recovery property, kept, and moved onto the rule that replaced it.
+
+        A restart loses the lock files and the sessions are what remember who
+        owned what. That still matters, but only for an application actually in
+        flight: rebuilding a reservation for one sitting in Needs you is how the
+        pool refilled itself with dead holders after every restart.
+        """
+        entry = dict(self.parked_session(), status="inflight")
+        entry.pop("pendingFields", None)
         with mock.patch.object(watch, "_sessions", return_value=[entry]), \
                 mock.patch.object(watch, "_latest_history", return_value={}):
             result = watch.reconcile_browser_slots()
@@ -133,6 +141,15 @@ class SlotReconciliationTests(unittest.TestCase):
             {"applicationId": "acme-pm", "slot": "apply-2"}
         ])
         self.assertTrue(watch.lock_holder("apply-2")["parked"])
+
+    def test_restart_does_not_rebuild_one_for_an_application_waiting_on_the_user(self):
+        entry = self.parked_session()
+        with mock.patch.object(watch, "_sessions", return_value=[entry]), \
+                mock.patch.object(watch, "_latest_history", return_value={}):
+            result = watch.reconcile_browser_slots()
+
+        self.assertEqual(result["parked"], [])
+        self.assertIsNone(watch.lock_holder("apply-2"))
 
     def test_terminal_completion_clears_tabs_and_state_before_unlock(self):
         entry = self.parked_session()
@@ -289,25 +306,47 @@ class IdleSlotReleaseTests(unittest.TestCase):
         self.assertEqual(
             result["released"], [{"applicationId": "acme-pm", "slot": "apply-2"}])
 
-    def test_a_slot_parked_for_the_user_is_kept(self):
-        # This is what the reservation is for: the form is half filled and the
-        # user has to clear a CAPTCHA or sign in before it can continue.
+    def test_a_slot_parked_for_the_user_is_released(self):
+        """Reversed on 2026-08-27, deliberately, and this is the whole change.
+
+        The reservation existed so a half-filled form survived until the user
+        cleared a CAPTCHA or signed in, and a Retry could return to it. What it
+        bought in practice was a pool that deadlocks: five parked applications
+        held all five slots, four queued retries could never get one, and three
+        Drops drained into a fleet with nothing to give them, for twenty hours,
+        with every application looking healthy.
+
+        So a park releases now and Retry reopens the posting. The form state is
+        the price and it is the right way round; a convenience that can take
+        throughput to zero is not a convenience.
+        """
         watch.park_slot("apply-2", "acme-pm")
         result = self.reconcile(
             self.session("review", pending=[{"question": "Enter the OTP"}]))
-        self.assertEqual(result["released"], [])
+        self.assertEqual(result["released"],
+                         [{"applicationId": "acme-pm", "slot": "apply-2"}])
 
     def test_a_slot_for_a_live_application_is_kept(self):
         watch.park_slot("apply-2", "acme-pm")
         self.assertEqual(self.reconcile(self.session("inflight"))["released"], [])
 
-    def test_a_watching_application_with_a_blocker_keeps_its_slot(self):
-        # Belt and braces: status and blocker disagreeing is not a reason to
-        # throw away a form somebody may still be coming back to.
-        watch.park_slot("apply-2", "acme-pm")
-        result = self.reconcile(
-            self.session("watch", pending=[{"question": "Sign in"}]))
-        self.assertEqual(result["released"], [])
+    def test_only_in_flight_keeps_a_slot_whatever_else_is_recorded(self):
+        """One rule beats a list of exceptions, and the list was what was wrong.
+
+        Status and blocker disagreeing used to buy a slot on the reasoning that
+        somebody might come back to the form. Every such exception is capacity
+        held on a maybe, and the exceptions are what let the pool reach zero.
+        """
+        for status in ("watch", "review", "active", "completed", "dropped"):
+            with self.subTest(status=status):
+                watch.park_slot("apply-2", "acme-pm")
+                result = self.reconcile(
+                    self.session(status, pending=[{"question": "Sign in"}]))
+                self.assertEqual(
+                    result["released"],
+                    [{"applicationId": "acme-pm", "slot": "apply-2"}],
+                    f"{status} held a slot",
+                )
 
 
 
