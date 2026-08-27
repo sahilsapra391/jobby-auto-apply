@@ -127,16 +127,37 @@ holds, because a source badge that cannot be checked is decoration. Each of
 those is covered by a test that fails when the guard is disabled, not only by
 one that passes while it works.
 
-Records are fetched by `/api/answers`, not embedded. Measured on 2026-08-25 at
-101 submitted applications: the column, the modal and its script cost the page
-15,641 bytes, a captured row adds 198, and embedding a realistic 15-field record
-for every application instead would have cost 263,509 against roughly 380 KB of
-headroom under the embed cap. The board state has no room at all for them: it
-measured 19.1 MB against its own 20 MB ceiling that day, so what travels in the
-state is the list of captured ids and nothing else, 4,137 bytes at 101. The
-records themselves ride the documents bundle, keyed like the PDFs and written
-only when they change, which is also why `/doc/` now requires a `.pdf` name:
-without it that route served a JSON record labelled `application/pdf`.
+A record is a Class 1 artifact and goes where the PDFs go. `r2_artifacts`
+already matched `answers-<id>.json` by name before this existed, so it keys one
+`u/{userId}/app/{applicationId}/answers.json` with `application/json` and
+`r2_sync` uploads and indexes it; nothing in the publish path needed adding.
+The modal reads it through `/doc/`, the same authenticated proxy, the same
+password gate and the same R2-then-KV dual read the documents use. It has no
+route of its own on purpose: a second serving path is a second auth check and a
+second dual read to keep in step. What that did need was one line inside the KV
+fallback, where the content type was hardcoded to `application/pdf` because
+every document KV held was one. It is now taken from the name, so a record
+served from the pre-migration copy is still a page rather than a file the
+browser refuses to open.
+
+`answer_record.applications_dir` must stay character-identical to
+`r2_artifacts.applications_dir`, and `ArtifactContractTests` compares the two
+rather than restating the rule. A writer and a collector that resolve
+`applications/` differently under a redirected store produce a record nothing
+ever uploads, and the board then says "not captured" for an application whose
+record is sitting on the disk.
+
+Records are fetched, not embedded, and that is measured. Against `main` at 101
+submitted applications on 2026-08-27: the column, the modal and its script cost
+the page 16,260 bytes, a captured row adds 198, and embedding a realistic
+15-field record for every application would have cost 263,509 against roughly
+370 KB of headroom under the embed cap. The board state has no room at all. It
+measured 21.0 MB that day against a 20 MB reader ceiling, which is over, not
+near: `publish.guard_state_size` refuses a publish from this store as it stands.
+So the only thing this feature puts in the state is the list of captured ids,
+4,137 bytes at 101, and it would still be the right call if the state were half
+empty.
+
 
 Those sections are what an expanded card shows, and they are fetched from
 `/api/posting` rather than embedded. Sections average about 265 bytes a record,
