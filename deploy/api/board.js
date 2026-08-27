@@ -552,6 +552,27 @@ async function handleDocument(request, pathname) {
     }
   }
 
+  // KV is the not-answered path, not the legacy path, and the difference is
+  // load-bearing enough to enumerate. Six ways to arrive here, three of them
+  // holding a valid index entry:
+  //
+  //   1. R2 is not configured at all
+  //   2. the index could not be read
+  //   3. the index has no entry for this name        <- the legacy documents
+  //   4. the entry's key fails the shape or dot-segment check, so a poisoned
+  //      index degrades to KV rather than to an error
+  //   5. R2 answered 404, which means the index is ahead of the bucket
+  //   6. R2 answered something else, or the fetch threw
+  //
+  // 5 is the one the dual read was built for and the one that is easy to
+  // convince yourself cannot happen: it is the window between an artifact
+  // being written locally and r2_sync putting it in the bucket. A peer session
+  // and I between us wrote three wrong comments about this block before either
+  // of us read the branch instead of the previous sentence.
+  //
+  // Everything KV actually holds is a PDF, because that is all the pre-R2
+  // publisher ever wrote, so an indexed non-PDF reaching 5 finds nothing here
+  // and falls to the error below rather than being served as the wrong type.
   const b64 = await getDoc(process.env, name).catch(() => null);
   if (b64) {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
