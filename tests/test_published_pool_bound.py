@@ -225,10 +225,8 @@ class StateFitsTheCeilingTest(unittest.TestCase):
         # this guard has now been broken from three directions by three changes
         # that each had nothing to do with it.
         original_slim = dashboard.state_slim.slim_jobs
-        original_trim = dashboard._trim_sections
         original_cap = found_lane.EMBED_CAP
         dashboard.state_slim.slim_jobs = staticmethod(lambda jobs: jobs)
-        dashboard._trim_sections = lambda job: job
         found_lane.EMBED_CAP = 3400
         try:
             unslimmed = self.published_bytes(pool(3400, acted=966))
@@ -236,7 +234,6 @@ class StateFitsTheCeilingTest(unittest.TestCase):
             # Restored in a finally, because leaving the stubs in place leaks
             # into every test that runs after this one in the same process.
             dashboard.state_slim.slim_jobs = original_slim
-            dashboard._trim_sections = original_trim
             found_lane.EMBED_CAP = original_cap
         self.assertGreater(unslimmed, publish.MAX_STATE_BYTES,
                            "the unslimmed slice must exceed the ceiling, or this "

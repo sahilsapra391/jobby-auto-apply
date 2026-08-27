@@ -75,6 +75,10 @@ EMBED_CAP = 3350
 # One slice of the description, used by the card and by Details. It used to be
 # two overlapping slices of the same text.
 EMBED_EXCERPT_CHARS = 320
+# How many points of each posting section an expanded card draws. SCRIPT below
+# is a raw string with no interpolation, so the number is written twice and
+# tests/test_state_slim.py pins the literal to this constant.
+SECTION_POINTS = 5
 MAX_TAGS = 6
 
 # The share of the budget reserved for per-region floors. The rest is spent
