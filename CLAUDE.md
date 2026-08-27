@@ -120,12 +120,26 @@ reconstructed; the Submitted row says "not captured" and means it.
 Three things that file owns rather than trusts the caller for. It withholds
 one-time codes, passwords and national or bank identifiers, keeping the question
 and dropping the value, so a secret never reaches the disk that record is about
-to migrate off. It decides which rows are masked from the question text *and*
-from the stored answer's own `sensitive` state, which is the half question text
-cannot see. And a `stored` source has to cite a key the answer store actually
-holds, because a source badge that cannot be checked is decoration. Each of
-those is covered by a test that fails when the guard is disabled, not only by
-one that passes while it works.
+to migrate off. It flags a row sensitive from the question text *and* from the
+stored answer's own `sensitive` state, which is the half question text cannot
+see. And a `stored` source has to cite a key the answer store actually holds,
+because a source badge that cannot be checked is decoration. Each of those is
+covered by a test that fails when the guard is disabled, not only by one that
+passes while it works.
+
+Withholding and flagging are two different things and only one of them is about
+a reader. **A withheld value was never written**; there is nothing on disk, so
+the row says which class of thing it was and offers no affordance, because there
+is nothing behind it. **A flagged value is written and, today, shown plainly.**
+The board has one reader, he knows his own salary and his own demographics, and
+covering them behind a tap was friction protecting nobody. That is a decision
+about this account's display and it reverses the moment there is a second one: a
+stranger's compensation is not drawn plainly on a shared surface. Which is why
+the flag stays on the record rather than being deleted along with the mask. It
+is what a per-user board will mask on and what the multi-tenant plan's Class 2
+field encryption will key on, and re-deriving it later from question text alone
+would silently lose every row the answer store's own state caught. Do not
+"simplify" it away because nothing currently draws it.
 
 A record is a Class 1 artifact and goes where the PDFs go. `r2_artifacts`
 already matched `answers-<id>.json` by name before this existed, so it keys one

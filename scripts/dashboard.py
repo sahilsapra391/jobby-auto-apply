@@ -1244,7 +1244,7 @@ def build(state, generated):
     <div><p class="eyebrow" id="answers-where">Submitted</p><h2 id="answers-title">Application answers</h2></div>
     <button class="dialog-close" id="answers-close" type="button" aria-label="Close application answers">&times;</button>
   </div>
-  <p class="hint answers-note">What the form asked, what went in, and where each value came from. Pay and demographic rows stay covered until you uncover them.</p>
+  <p class="hint answers-note">What the form asked, what went in, and where each value came from. Codes, passwords and government or bank identifiers were never recorded, so those rows say so.</p>
   <div id="answers-body"><p class="answers-loading">Reading the record...</p></div>
 </dialog>
 
@@ -1526,26 +1526,22 @@ def build(state, generated):
     var row = ansEl('div', 'ans-row');
     row.appendChild(ansEl('p', 'ans-q', field.question || 'Unlabelled field'));
 
+    // Two categories, and only one of them is a display decision.
+    //
+    // `withheld` is non-capture: the value was never written, so there is
+    // nothing here to show and nothing a click could uncover. Say which class
+    // of thing it was rather than leaving a blank row that reads as a field
+    // the form never asked about.
+    //
+    // `sensitive` is a property of the data, not an instruction to this
+    // function. Pay and demographics render like every other row, because this
+    // is one person's own board and he knows his own salary; covering it was
+    // friction with no reader it protected against. The flag stays on the
+    // record and is what a second account's board will key its own masking on.
     var value = ansEl('div', 'ans-a');
     if (field.withheld) {{
-      // Never stored, so there is nothing to reveal. Say which class of thing
-      // it was rather than leaving a blank row that reads as a missed field.
       value.appendChild(ansEl('span', 'ans-withheld',
         'Not recorded \\u2014 ' + field.withheld));
-    }} else if (field.sensitive) {{
-      var hidden = ansEl('button', 'ans-mask', 'Hidden \\u2014 tap to reveal');
-      hidden.type = 'button';
-      hidden.setAttribute('aria-expanded', 'false');
-      var shown = ansEl('span', 'ans-value', field.answer || '(left blank)');
-      shown.hidden = true;
-      hidden.addEventListener('click', function () {{
-        var open = shown.hidden;
-        shown.hidden = !open;
-        hidden.textContent = open ? 'Hide' : 'Hidden \\u2014 tap to reveal';
-        hidden.setAttribute('aria-expanded', open ? 'true' : 'false');
-      }});
-      value.appendChild(hidden);
-      value.appendChild(shown);
     }} else {{
       value.appendChild(ansEl('span', 'ans-value', field.answer || '(left blank)'));
     }}

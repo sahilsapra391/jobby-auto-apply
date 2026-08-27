@@ -371,6 +371,29 @@ class PublicRecordTests(unittest.TestCase):
         self.assertEqual(public["fields"][0]["source"], "generated")
         self.assertEqual(public["fields"][0]["readBack"], "unverified")
 
+    def test_the_sensitive_flag_survives_even_though_nothing_draws_it(self):
+        """The board shows pay and demographics plainly. The flag stays anyway.
+
+        Sahil's board has one reader who already knows his own salary, so
+        covering it was friction protecting nobody. That is a decision about a
+        display, and it does not make the data ordinary. The flag is what a
+        second account's board masks on and what the plan's Class 2 field
+        encryption keys on, and re-deriving it later from question text alone
+        would lose every row the answer store's own state caught.
+        """
+        public = answer_record.public_record({
+            "applicationId": "a", "company": "b", "fields": [
+                {"question": "What are your salary expectations?",
+                 "answer": "165000", "source": "stored", "readBack": "match",
+                 "sensitive": True},
+                {"question": "First name", "answer": "Sahil", "source": "profile",
+                 "readBack": "match", "sensitive": False},
+            ]})
+        self.assertTrue(public["fields"][0]["sensitive"])
+        self.assertFalse(public["fields"][1]["sensitive"])
+        # And the value is there to be shown, not blanked by the flag.
+        self.assertEqual(public["fields"][0]["answer"], "165000")
+
     def test_stray_keys_do_not_survive_into_the_published_record(self):
         public = answer_record.public_record({
             "applicationId": "a", "company": "b", "secretInternalPath": "/Users/x",

@@ -170,28 +170,49 @@ class UntrustedTextTests(unittest.TestCase):
             self.assertNotIn(banned, page)
 
 
-class MaskingTests(unittest.TestCase):
-    def test_a_sensitive_row_is_covered_until_it_is_uncovered(self):
-        page = build(captured=["app-captured"])
-        block = page[page.index("function answerRow"):]
-        block = block[:block.index("function renderAnswers")]
-        # The masked value is created hidden and only a click unhides it.
-        self.assertIn("if (field.withheld)", block)
-        self.assertIn("} else if (field.sensitive) {", block)
-        self.assertIn("shown.hidden = true;", block)
-        self.assertIn("Hidden \\u2014 tap to reveal", block)
-        self.assertIn("aria-expanded", block)
-        # The reveal is a button, so a keyboard reaches it too.
-        self.assertIn("ansEl('button', 'ans-mask'", block)
+class ValueDisplayTests(unittest.TestCase):
+    """Sensitive answers show plainly. Withheld ones have nothing to show.
 
-    def test_a_withheld_row_offers_no_reveal_because_nothing_was_stored(self):
+    Those are two different categories and only the first is a display choice.
+    A covered value is a decision about a reader; a withheld one is a value that
+    was never written, and no amount of clicking produces it.
+    """
+
+    def block(self):
         page = build(captured=["app-captured"])
-        block = page[page.index("function answerRow"):]
-        block = block[:block.index("function renderAnswers")]
-        withheld = block[block.index("if (field.withheld)"):
-                         block.index("} else if (field.sensitive)")]
+        return page[page.index("function answerRow"):page.index("function renderAnswers")]
+
+    def test_a_sensitive_answer_renders_like_any_other_answer(self):
+        # Sahil's own board, Sahil's own salary. Covering it was friction with
+        # no reader it protected against.
+        block = self.block()
+        self.assertNotIn("field.sensitive", block)
+        # One value branch for everything that has a value, and it is the plain
+        # one every other row uses.
+        self.assertEqual(block.count("ansEl('span', 'ans-value'"), 1)
+
+    def test_nothing_is_left_behind_that_looks_like_it_should_reveal(self):
+        # A disabled reveal path is worse than either choice: it reads as a
+        # control and does nothing. So the affordance is gone from the modal's
+        # own script, from the stylesheet, and from the copy. Scoped to the
+        # modal, because aria-expanded is how the location picker and the
+        # styled selects legitimately describe themselves.
+        page = build(captured=["app-captured"])
+        modal = page[page.index("var answersDialog"):
+                     page.index("document.querySelectorAll('.answers-open')")]
+        for dead in ("ans-mask", "tap to reveal", "shown.hidden", "aria-expanded",
+                     "'Hide'"):
+            self.assertNotIn(dead, modal, f"{dead!r} is a leftover reveal affordance")
+        self.assertNotIn("ans-mask", premium_ui.CSS)
+        self.assertNotIn("stay covered", page)
+
+    def test_a_withheld_row_says_so_and_offers_nothing_to_open(self):
+        block = self.block()
+        withheld = block[block.index("if (field.withheld)"):block.index("} else {")]
         self.assertIn("Not recorded", withheld)
-        self.assertNotIn("ans-mask", withheld)
+        self.assertNotIn("addEventListener", withheld)
+        self.assertNotIn("button", withheld)
+        self.assertIn("ans-withheld", premium_ui.CSS)
 
     def test_every_source_the_record_can_carry_has_a_badge_and_a_style(self):
         page = build(captured=["app-captured"])

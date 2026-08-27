@@ -269,13 +269,9 @@ CSS = r"""
   .ans-a { margin:0 0 .5rem; }
   .ans-value { font-size:.98rem; color:var(--ink); line-height:1.45;
     white-space:pre-wrap; overflow-wrap:anywhere; }
-  /* Masked by default. It is a button rather than a blur filter because a blur
-     still ships the text to anyone who opens the inspector, and because a
-     keyboard has to be able to reach it. */
-  .ans-mask { padding:.3rem .7rem; border:1px dashed var(--hair-strong); border-radius:9px;
-    background:var(--sunk); color:var(--ink-3); font:inherit; font-size:.82rem;
-    cursor:pointer; }
-  .ans-mask:hover { border-color:var(--purple); color:var(--ink-2); }
+  /* A row whose value was never captured at all: a code, a password, an
+     identifier. Not a covered value, so it gets no affordance suggesting there
+     is something behind it. There is nothing behind it. */
   .ans-withheld { font-size:.9rem; color:var(--orange); }
   .ans-meta { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
   .ans-badge { padding:.16rem .5rem; border-radius:999px; font-size:.68rem;
