@@ -177,11 +177,57 @@ Audit of the existing fail-closed paths:
 Three gaps: the state ceiling and the deploy-quota pause are log-only, and a
 capability refusal is invisible in the one screen built to show provider state.
 
+### 5. The template for anything that can only fully verify against live infrastructure
+
+**A real-integration test that skips in CI, paired with a contract test that
+runs in CI. Neither alone is enough and the pairing is cheap.**
+
+This came out of the apply-path repair, where both faults were invisible to
+1,838 passing tests because every test stopped at a seam: the firewall was
+tested against a stub, the provider invocation against a list of strings, and
+nothing ever asked a browser to take a file. Two behaviours in the fix were
+findable only against a real form. That a page with several file inputs must be
+refused rather than guessed at, because taking the first is how a cover letter
+lands in the resume field. And that the input has to be described before the
+attach, because React swaps the field out on accept, which made a working upload
+report a 30-second timeout.
+
+| half | example | runs where |
+|---|---|---|
+| real integration | `test_apply_end_to_end` drives the real firewall against a real Chrome and attaches real files | laptop; **skips** without a browser, excluded from CI |
+| contract | `test_apply_capability_contract` compares the two halves of one contract, checks each provider's argv, checks the tag survives the publish filter | everywhere |
+
+Rules that make the pairing work rather than decorate it. The integration half
+**skips** rather than fails where the infrastructure is absent, or people learn
+to ignore a red suite. The contract half must fail when the fix is reverted, and
+that is checked by reverting it, not assumed. And the integration half is where
+the fixture comes from: reproduce the real shape in `tests/fixtures/` once you
+have seen it, so the next person inherits the finding.
+
+Existing pairs to hold to this: `test_r2_contract` against the live bucket,
+`LogoContractTests` against `/api/company-logo`, `test_resume_pdf` against real
+Chrome. Each has the integration half; not all have the contract half.
+
+## The coordination problem wearing a test's clothes
+
+`test_it_really_does_fail_when_the_slice_is_over_the_ceiling` has now been
+disarmed from four directions by four sessions: `_trim_sections` added to the
+path it neutralises, `EMBED_CAP` moved under its premise, and two sessions
+fixing it in two branches while a third read it. None of those changes was
+wrong. None of their authors had read the guard.
+
+That is not a test problem and no further local patch fixes it. The standing fix
+is the one-integrator rule: one session lands to `main`, in an order it decides,
+and the others hold. A guard that several branches repair in parallel is a guard
+whose repairs conflict, and this one spent a day red on `main` for exactly that
+reason while three sessions each believed they had fixed it.
+
 ## Scope
 
 Guard 1's two holes and the guard 4 audit are cheap and belong in the first PR
-alongside this document. Guards 2 and 3 coordinate with the board-state session,
-because both touch state size and the status line, and two sessions editing that
-path blind is how the next one of these gets written.
+alongside this document. Guards 2 and 3 are mine, confirmed with the board-state
+session rather than assumed: they declined, having finished and being held for
+the deploy window. Guard 5 is a template rather than work, and the pair it
+describes already exists.
 
 This is a plan and a small first PR, not a sprint.
