@@ -916,8 +916,25 @@ Corollaries, each of which was learned the expensive way:
 - Announce in writing before moving that branch or restarting a service, and say
   which you are taking when two sessions could reach for the same one.
 - Merging is not deploying. A long-lived Python process does not reload modules,
-  so the arming event is the restart. `scripts/brief.py` is the exception: the
-  watcher spawns it as a subprocess, so edits to it are live on save.
+  so for anything a daemon **imports**, the arming event is the restart. For
+  anything it **spawns**, the pull is the arming event and the file is live on
+  save. **Ask which, per file, never per repo**: a deploy carrying five changed
+  scripts is routinely both at once, and on 2026-08-27 two sessions asserted the
+  wrong half of it about `browser_mcp_proxy.py` in a deploy announcement before
+  anyone ran the one `grep` that settles it.
+
+  This used to say `scripts/brief.py` is *the* exception. Measured: `watch.py`
+  spawns fourteen scripts by path — `apply_marks`, `document_worker`, `drop`,
+  `finish`, `ingest`, `phase`, `promote`, `provider_login`, `run_apply`,
+  `run_scan`, `search_config`, `store`, `sync_board` and itself — and imports
+  `agent`, `browser`, `document_job`, `provider_login`, `providers` and
+  `toolpath`. `provider_login` is on both lists, so one file can need the
+  restart for one call path and not for another.
+
+  The trap is that the two travel together. `browser_mcp_proxy.py` is spawned
+  and live on pull, while `browser.py`, which builds its argv, is imported and
+  is not. A pull without a restart delivers the launched thing and not its
+  launcher.
 - After a restart, confirm from each daemon's own start time against the
   checkout's reflog which SHA it is actually running. A healthy-looking process
   can be executing code from hours ago.
