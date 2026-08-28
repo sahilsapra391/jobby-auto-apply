@@ -115,6 +115,25 @@ def _first_line(raw: bytes | bytearray) -> str:
         if line.strip():
             return line.strip()
     return ""
+
+
+def _stdout_error_line(raw: bytes | bytearray) -> str:
+    """The last stdout line that names an error, for a failure reason.
+
+    agy speaks stream-json, so its account of a failed run goes to stdout as
+    an event, with stderr staying empty. Three Gemini document jobs exited 1
+    on 2026-08-28 and every recorded detail was the bare exit code, because
+    only stderr was consulted and the stream carrying the reason was thrown
+    away. Only lines that say "error" are considered: the stream also carries
+    the model's partial output, and a failure reason must never quote the
+    document it was generating.
+    """
+    text = bytes(raw).decode("utf-8", "replace")
+    chosen = ""
+    for line in text.splitlines():
+        if line.strip() and "error" in line.lower():
+            chosen = line.strip()
+    return chosen[:300]
 _REASON_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
 
 
@@ -2216,9 +2235,10 @@ class ProviderRunner:
             if overflow.is_set():
                 raise GenerationFailed("provider response exceeded its size limit")
             if process.returncode != 0:
+                detail = _first_line(stderr_tail) or _stdout_error_line(output)
                 raise GenerationFailed(
                     f"provider exited {process.returncode}"
-                    + (f": {_first_line(stderr_tail)}" if stderr_tail else "")
+                    + (f": {detail}" if detail else "")
                 )
             try:
                 decoded = bytes(output).decode("utf-8")
