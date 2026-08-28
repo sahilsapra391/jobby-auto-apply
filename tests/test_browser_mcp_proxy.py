@@ -2,7 +2,9 @@
 
 import io
 import json
+import os
 import pathlib
+import signal
 import subprocess
 import sys
 import tempfile
@@ -12,7 +14,9 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browser_mcp_proxy  # noqa: E402
+from mcp_stdio_client import Client  # noqa: E402
 
 
 def request(request_id, name, arguments):
@@ -506,6 +510,130 @@ class ActivityRecordTests(unittest.TestCase):
             self.policy, browser_mcp_proxy.deque(), 0,
         )
         browser_mcp_proxy._write_activity("", self.policy, browser_mcp_proxy.deque(), 0)
+
+
+STUB_BACKEND = textwrap.dedent("""
+    import json, sys
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        message = json.loads(line)
+        if "id" not in message:
+            continue
+        method = message.get("method")
+        if method == "initialize":
+            result = {"protocolVersion": "2025-06-18",
+                      "capabilities": {"tools": {}},
+                      "serverInfo": {"name": "stub", "version": "1"}}
+        elif method in ("tools/list", "server/discover"):
+            result = {"tools": []}
+        else:
+            result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message["id"],
+                                     "result": result}) + "\\n")
+        sys.stdout.flush()
+""")
+
+
+class KilledProxyStillReportsItsCallsTests(unittest.TestCase):
+    """The record has to survive the way real runs actually end: a signal.
+
+    Measured on the production Mac on 2026-08-28, five real applications had
+    staged PDFs and no activity.json; the only real record belonged to a run
+    whose Playwright backend never started, where the proxy exited on its own
+    and reached the end of main(). Measured the same day against the live CLIs,
+    codex sends its MCP child SIGTERM and Claude Code sends SIGINT, so the
+    clean-exit write had never once recorded a run that reached the form.
+
+    These drive the real proxy as a subprocess and signal it, because the fault
+    was in how the process died and no in-process call to _write_activity can
+    see that.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name).resolve()
+        self.resume = self.root / "resume.pdf"
+        self.cover = self.root / "cover.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\nresume")
+        self.cover.write_bytes(b"%PDF-1.4\ncover")
+        self.backend = self.root / "stub_backend.py"
+        self.backend.write_text(STUB_BACKEND)
+        self.activity = self.root / "uploads" / "app1" / "activity.json"
+        self.connections = []
+
+    def tearDown(self):
+        for connection in self.connections:
+            for stream in (connection.process.stdin, connection.process.stdout,
+                           connection.process.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except (OSError, ValueError):
+                    pass
+        self.temp.cleanup()
+
+    def client(self):
+        connection = Client({
+            "command": sys.executable,
+            "args": [
+                str(ROOT / "scripts" / "browser_mcp_proxy.py"),
+                "--upload", str(self.resume),
+                "--upload", str(self.cover),
+                "--activity", str(self.activity),
+                "--", sys.executable, str(self.backend),
+            ],
+        }, timeout=20)
+        self.connections.append(connection)
+        return connection
+
+    def killed_by(self, number):
+        connection = self.client()
+        connection.tool("browser_snapshot", {})
+        connection.tool("browser_find", {"text": "Resume"})
+        os.kill(connection.process.pid, number)
+        connection.process.wait(timeout=20)
+        return connection
+
+    def test_a_proxy_killed_the_way_codex_kills_it_records_the_calls(self):
+        connection = self.killed_by(signal.SIGTERM)
+        recorded = json.loads(self.activity.read_text())
+        self.assertEqual(recorded["totalCalls"], 2)
+        self.assertEqual(recorded["calls"]["browser_snapshot"], 1)
+        self.assertEqual(recorded["ended"], "SIGTERM")
+        # It still dies of what it was sent. A proxy that exited 0 here would
+        # tell its caller it finished on its own.
+        self.assertEqual(connection.process.returncode, -signal.SIGTERM)
+
+    def test_a_proxy_killed_the_way_claude_code_kills_it_records_the_calls(self):
+        connection = self.killed_by(signal.SIGINT)
+        recorded = json.loads(self.activity.read_text())
+        self.assertEqual(recorded["totalCalls"], 2)
+        self.assertEqual(recorded["ended"], "SIGINT")
+        self.assertEqual(connection.process.returncode, -signal.SIGINT)
+
+    def test_a_clean_stdin_close_still_records_the_backend_exit(self):
+        connection = self.client()
+        connection.tool("browser_snapshot", {})
+        connection.finish()
+        recorded = json.loads(self.activity.read_text())
+        self.assertEqual(recorded["totalCalls"], 1)
+        self.assertEqual(recorded["ended"], "closed")
+        self.assertEqual(recorded["backendExit"], 0)
+
+    def test_a_sigkill_leaves_no_record_at_all(self):
+        """Absent must keep meaning "nothing known", and preflight relies on it.
+
+        mcp_preflight kills this process with SIGKILL after reading its tool
+        list. If that probe left a record it would say zero calls, and the
+        next thing to read it would call a working run a capability failure.
+        """
+        connection = self.client()
+        connection.tool("browser_snapshot", {})
+        connection.process.kill()
+        connection.process.wait(timeout=20)
+        self.assertFalse(self.activity.exists())
 
 
 if __name__ == "__main__":
