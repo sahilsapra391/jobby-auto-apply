@@ -607,6 +607,70 @@ keeps its page state precisely so its application can retry into it. The skip
 message names which case it is, because "no browser at all" and "every browser
 is busy" stop the suite identically and mean opposite things.
 
+## No agent Chrome consults the keychain, and none runs a deleted binary
+
+Two separate faults, found through one symptom on 2026-08-28: a modal macOS
+"Keychain Not Found" dialog looping on the user's screen that Cancel could not
+end.
+
+**The dialog is closed at the source, and that is PR #111 rather than anything
+here.** Chrome keeps its storage key in the macOS login keychain and keychain
+access is bound to code signature, so a process whose bundle was replaced
+underneath it fails and re-asks forever. Both of the repo's Chrome launch sites,
+the slot browsers in `browser.py` and the headless renderer in `resume_pdf.py`,
+now pass `--use-mock-keychain`. An isolated agent profile and a print-to-PDF
+process need nothing the keychain holds.
+`tests/test_chrome_never_touches_the_keychain.py` pins both, and a new launch
+site anywhere is a third one to pin.
+
+The renderer half is the one that is easy to miss. The dialog belongs to
+SecurityAgent rather than to Chrome's own UI, so a headless document build
+raises it too, out of a process nobody is watching.
+
+The one-time cost was taken knowingly: cookies the slot profiles encrypted under
+the real Safe Storage key cannot be read under the mock one, so stored site
+logins reset once. LinkedIn and employer-site sessions live in those profiles
+and some email-verification flows depend on them. It should be once per profile
+rather than once per launch, because the mock key is fixed across launches and
+cookies written afterwards are encrypted under it. That has not been observed
+here yet: no slot profile has relaunched since #111 merged.
+
+**The second fault is that browsers outlive releases, and it is untidiness
+rather than an incident.** `serve()` starts a slot browser on demand and nothing
+stops it afterwards. Measured on 2026-08-28, five mains were running
+151.0.7922.174 with 151.0.7922.175 on disk, some of them up since 2026-08-25.
+Each was executing a bundle no longer at that path, so the release's fixes were
+not in effect in the browsers that fill forms on employer sites, and the helpers
+they spawned afterwards came from the replaced bundle while the main did not.
+
+The watcher compares `browser.installed_version()`, the bundle's
+`CFBundleShortVersionString`, against `browser.running_version(slot)`, CDP's own
+`Browser` field, once a minute. Not the `User-Agent` beside it: that is rounded
+to `151.0.0.0` to blunt fingerprinting, so comparing it would report every slot
+as drifted forever. An unreadable version on either side counts as no drift, so
+a moved plist cannot empty the fleet.
+
+A drifted slot with no lock on it is stopped, and not restarted. `serve()` runs
+before every apply and again inside `run_apply`, so it comes back on the new
+binary when it is next needed, and eight windows do not appear on the user's
+screen for maintenance nobody asked for. **A slot holding a live run or a parked
+application is never closed.** A form being filled and a form the user was told
+to come back to are each worth more than retiring a binary early. Those are named
+in `watch.py --status` and in the tick log, and
+`browser.py --stop --slot apply-N` retires one by hand.
+
+**Do not attach an alarm to the drift.** With `--use-mock-keychain` in place a
+stale browser is untidy and no longer something the user can see, and a dead-man
+ping that fires for untidiness is how an alarm stops being believed.
+`tests/test_chrome_drift.py` pins the ping to the board and the parked slots.
+
+The two designs were weighed the other way round at the start, so it is worth
+recording why it flipped. Recycling on drift keeps real Safe Storage and every
+stored session, and it can only cure the dialog for browsers it is allowed to
+close, which by construction excludes every slot holding a form. Mock keychain
+ends the class everywhere, the renderer included, for one reset of the stored
+logins. Ending the class everywhere won.
+
 ## Application worker repair, 2026-08-24
 
 Read `docs/handoffs/claude-application-worker-2026-08-24.md` before changing
