@@ -461,6 +461,28 @@ def running(slot=None):
     return _cdp("/json/version", slot) is not None
 
 
+def _launch_argv(slot, profile):
+    """The slot browser's launch command.
+
+    --use-mock-keychain is load-bearing and permanent. Without it Chrome asks
+    the macOS login keychain for its storage key, and after Chrome updates on
+    disk underneath a long-lived instance, or whenever the keychain is locked
+    for the launch context, that request becomes a modal "Keychain Not Found"
+    dialog no agent can see and no amount of Cancel makes stop. It looped on
+    the user's screen on 2026-08-28. An isolated agent profile needs nothing
+    from the OS keychain, so these browsers never consult it, on this machine
+    or any other user's. tests/test_chrome_never_touches_the_keychain.py pins
+    the flag here and on the PDF renderer, the repo's only two launch sites.
+    """
+    return [CHROME,
+            f"--remote-debugging-port={port_for(slot)}",
+            f"--user-data-dir={profile}",
+            "--no-first-run", "--no-default-browser-check",
+            "--use-mock-keychain",
+            # Keep it alive with a window even when the agent closes its last tab.
+            "about:blank"]
+
+
 def installed_version():
     """The Chrome build sitting on disk right now, or "" if it cannot be read.
 
@@ -548,12 +570,7 @@ def serve(slot=None):
     handle = open(log, "wb")
     try:
         subprocess.Popen(
-            [CHROME,
-             f"--remote-debugging-port={port_for(slot)}",
-             f"--user-data-dir={profile}",
-             "--no-first-run", "--no-default-browser-check",
-             # Keep it alive with a window even when the agent closes its last tab.
-             "about:blank"],
+            _launch_argv(slot, profile),
             stdout=handle, stderr=subprocess.STDOUT,
             start_new_session=True, env=toolpath.enriched_env())
     finally:

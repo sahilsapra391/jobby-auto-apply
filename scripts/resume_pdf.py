@@ -208,8 +208,16 @@ def source_fonts(pdf_path):
 
 
 def chrome_command(chrome, out, source_uri, *, profile_dir=None):
-    """Build the print command, with a bounded Linux profile for tiny workers."""
-    command = [chrome, "--headless", "--disable-gpu"]
+    """Build the print command, with a bounded Linux profile for tiny workers.
+
+    --use-mock-keychain keeps every render off the macOS login keychain.
+    Headless does not mean silent there: the keychain prompt comes from
+    SecurityAgent, not from Chrome's own UI, so a render fleet (a document
+    build, a test suite) can put a modal dialog loop on the user's screen,
+    and did on 2026-08-28. A print-to-PDF process needs nothing the keychain
+    holds.
+    """
+    command = [chrome, "--headless", "--disable-gpu", "--use-mock-keychain"]
     if os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY") == "1":
         if profile_dir is None:
             raise ToolError("low-memory Chromium requires a private profile directory")
