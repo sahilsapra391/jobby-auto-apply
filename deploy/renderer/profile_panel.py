@@ -158,6 +158,11 @@ def panel(counts=None):
             <button class="bank-chip" type="button" data-bank-kind="open">
               Needs you<span class="chip-n" data-bank-open>{unanswered}</span>
             </button>
+            <!-- Hidden until there is something in it. A filter for an empty
+                 set is an invitation to wonder what is missing. -->
+            <button class="bank-chip" type="button" data-bank-kind="dismissed" hidden>
+              Dismissed<span class="chip-n" data-kind-n="dismissed"></span>
+            </button>
           </div>
         </div>
         <div class="bank-cats" role="group" aria-label="Filter by category" data-bank-cats></div>
@@ -333,6 +338,17 @@ CSS = r"""
     padding:.16rem .48rem; font-size:.72rem; font-weight:650; }
   .bank-tag.state-sensitive { background:var(--t-red); color:var(--red); }
   .bank-tag.state-missing { background:var(--t-o); color:var(--orange); }
+
+  /* A dismissed row is struck through and set back, because it is still a real
+     record the loop consults and not a deleted one. It stays legible enough to
+     read and be put back, and quiet enough not to compete with the questions
+     that are still outstanding. */
+  .bank-row.struck { background:transparent; box-shadow:none; border-style:dashed; }
+  .bank-row.struck .bank-q { text-decoration:line-through; color:var(--ink-3);
+    font-weight:560; }
+  .bank-row.struck .bank-a.none { color:var(--ink-3); }
+  .bank-tag.state-dismissed { background:var(--sunk); color:var(--ink-3);
+    text-decoration:none; }
   .bank-when { color:var(--ink-3); font-size:.76rem; margin-left:auto; }
   .bank-act { margin-top:.7rem; display:flex; gap:.45rem; flex-wrap:wrap; }
   .bank-act .btn { padding:.44rem .8rem; font-size:.86rem; }
@@ -442,6 +458,9 @@ SCRIPT = r"""
           var live = byKey[item.body.key];
           // The store moves the version past the one the edit was made against
           // when it applies. Past it means landed; a deleted entry is gone.
+          // A delete lands by the entry going away. Every other action lands
+          // by the version moving past the one the click was made against,
+          // dismiss and restore included: both keep the record and bump it.
           var landed = item.body.action === 'delete'
             ? !live
             : live && Number(live.version || 0) > Number(item.body.version || 0);
@@ -456,8 +475,16 @@ SCRIPT = r"""
       return Boolean(entry && entry.value !== null && String(entry.value || '').trim());
     }
 
+    // A question the user has refused to answer. It carries no value, like an
+    // outstanding one, and means the opposite thing: the device's grow-only
+    // loop reads this state and stops opening the question when the next
+    // employer asks it.
+    function isDismissed(entry) {
+      return Boolean(entry) && entry.state === 'dismissed';
+    }
+
     function isOpen(entry) {
-      return !answered(entry) && entry.remembered !== false;
+      return !answered(entry) && entry.remembered !== false && !isDismissed(entry);
     }
 
     function stamp(value) {
@@ -907,11 +934,10 @@ SCRIPT = r"""
     // --- the Memory Bank -----------------------------------------------------
 
     function matches(entry) {
-      if (kind === 'open') {
-        if (!isOpen(entry)) return false;
-      } else if ((entry.kind || 'question') !== kind) {
-        return false;
-      }
+      // A dismissed row appears under its own filter and nowhere else. Leaving
+      // it in the question list would have made the click change nothing the
+      // user can see, which is the same as not having worked.
+      if (!matches_kind(entry)) return false;
       if (category && entry.category !== category) return false;
       if (!query) return true;
       var hay = String(entry.question || '') + ' ' + (entry.tags || []).join(' ')
@@ -955,7 +981,8 @@ SCRIPT = r"""
 
     function bankRow(entry, members) {
       members = members || [entry];
-      var row = el('article', 'bank-row' + (isOpen(entry) ? ' open' : ''));
+      var row = el('article', 'bank-row' + (isOpen(entry) ? ' open' : '')
+        + (isDismissed(entry) ? ' struck' : ''));
       row.appendChild(el('p', 'bank-q', entry.question || entry.key || 'Untitled question'));
       if (members.length > 1) {
         // One row, every record kept. The others are the same fact asked in
@@ -983,9 +1010,11 @@ SCRIPT = r"""
       function paintValue() {
         if (!answered(entry)) {
           body.className = 'bank-a none';
-          body.textContent = entry.remembered === false
-            ? 'Filled when asked, deliberately not kept.'
-            : 'No answer yet.';
+          body.textContent = isDismissed(entry)
+            ? 'You dismissed this. Jobby will not ask again.'
+            : (entry.remembered === false
+              ? 'Filled when asked, deliberately not kept.'
+              : 'No answer yet.');
         } else {
           body.className = 'bank-a';
           body.textContent = entry.value;
@@ -997,6 +1026,9 @@ SCRIPT = r"""
       var meta = el('p', 'bank-meta');
       var stateTag = el('span', 'bank-tag state-' + (entry.state || 'confirmed'),
         isOpen(entry) ? 'needs you' : (entry.state || 'confirmed'));
+      if (isDismissed(entry) && entry.dismissedAt) {
+        stateTag.title = 'Dismissed ' + stamp(entry.dismissedAt);
+      }
       meta.appendChild(stateTag);
       (entry.tags || []).forEach(function (tag) {
         if (tag === 'unanswered') return;
@@ -1014,8 +1046,100 @@ SCRIPT = r"""
       var act = el('div', 'bank-act');
       var edit = el('button', 'btn ghost', answered(entry) ? 'Edit' : 'Answer');
       edit.type = 'button';
-      act.appendChild(edit);
+      if (!isDismissed(entry)) act.appendChild(edit);
+      var rowNote = el('span', 'profile-message');
+
+      // Two clicks, and the second one is a different word. The same shape
+      // Forget and Remove already use, in one place instead of a third copy:
+      // the button says what it will do, arms, then does it.
+      function armed(button, resting, confirming, sending, build, onOk) {
+        var live = false;
+        button.addEventListener('click', function () {
+          if (!live) {
+            live = true;
+            button.textContent = confirming;
+            rowNote.className = 'profile-message';
+            rowNote.textContent = '';
+            return;
+          }
+          button.disabled = true;
+          button.textContent = sending;
+          var payload = build();
+          remember({ editId: payload.editId, kind: 'answer', path: '/api/answer',
+                     body: payload });
+          function failed(text) {
+            button.disabled = false;
+            live = false;
+            button.textContent = resting;
+            rowNote.className = 'profile-message bad';
+            rowNote.textContent = text;
+          }
+          post('/api/answer', payload).then(function (response) {
+            return response.json().then(function (payload2) {
+              return { ok: response.ok, payload: payload2 };
+            }).catch(function () { return { ok: response.ok, payload: null }; });
+          }).then(function (result) {
+            if (!result.ok) {
+              // Named, not "something went wrong". A Found-lane click said
+              // exactly that for five days while the server was answering with
+              // the reason every time.
+              failed('Your device would not take that. '
+                + ((result.payload && result.payload.error) || 'Nothing changed.'));
+              return;
+            }
+            onOk();
+            render();
+          }).catch(function () {
+            failed('That did not reach the queue. Nothing changed.');
+          });
+        });
+      }
+
+      if (isOpen(entry)) {
+        // The way out of Needs you for a question that will never be answered.
+        // Without it the bank only grows: five Korean-language questions from
+        // one dropped application badged the nav with a 5 that nothing could
+        // clear.
+        var never = el('button', 'btn ghost', 'Never ask this');
+        never.type = 'button';
+        never.title = 'Stop tracking this question. It can be put back.';
+        act.appendChild(never);
+        armed(never, 'Never ask this', 'Confirm, never ask', 'Dismissing\u2026',
+          function () {
+            return { editId: editId('dis'), action: 'dismiss', key: entry.key,
+                     version: Number(entry.version || 0) };
+          },
+          function () {
+            entry.state = 'dismissed';
+            entry.version = Number(entry.version || 0) + 1;
+            entry.dismissedAt = new Date().toISOString();
+            entry.tags = (entry.tags || []).filter(function (t) {
+              return t !== 'unanswered';
+            });
+          });
+      }
+
+      if (isDismissed(entry)) {
+        var back = el('button', 'btn ghost', 'Put it back');
+        back.type = 'button';
+        act.appendChild(back);
+        armed(back, 'Put it back', 'Confirm, ask again', 'Restoring\u2026',
+          function () {
+            return { editId: editId('res'), action: 'restore', key: entry.key,
+                     version: Number(entry.version || 0) };
+          },
+          function () {
+            // `missing` unless the question is Class 2 on sight, which is the
+            // device's own rule. The board cannot run that classifier, so it
+            // keeps the flag the device already set rather than guessing.
+            entry.state = entry.sensitive ? 'sensitive' : 'missing';
+            entry.version = Number(entry.version || 0) + 1;
+            delete entry.dismissedAt;
+          });
+      }
+
       row.appendChild(act);
+      row.appendChild(rowNote);
 
       var open = false;
       edit.addEventListener('click', function () {
@@ -1161,14 +1285,23 @@ SCRIPT = r"""
       'contact': 'Contact & links', 'other': 'Uncategorised'
     };
 
+    // The kind half of `matches`, without the category or the search box, so
+    // the category counts describe the list the reader is about to see.
+    function matches_kind(entry) {
+      if (kind === 'dismissed') return isDismissed(entry);
+      if (isDismissed(entry)) return false;
+      if (kind === 'open') return isOpen(entry);
+      return (entry.kind || 'question') === kind;
+    }
+
     function paintCategories() {
       var host = page.querySelector('[data-bank-cats]');
       if (!host) return;
       host.textContent = '';
-      if (kind !== 'question' && kind !== 'open') return;
+      if (kind !== 'question' && kind !== 'open' && kind !== 'dismissed') return;
       var counts = {};
       ((data && data.answers) || []).forEach(function (entry) {
-        if (kind === 'open' ? !isOpen(entry) : (entry.kind || 'question') !== 'question') return;
+        if (!matches_kind(entry)) return;
         if (!entry.category) return;
         counts[entry.category] = (counts[entry.category] || 0) + 1;
       });
@@ -1209,10 +1342,21 @@ SCRIPT = r"""
       paintCategories();
       var entries = (data.answers || []).filter(matches);
       if (!entries.length) {
-        bankHost.appendChild(el('div', 'bank-empty', data.answers && data.answers.length
-          ? 'Nothing here matches that.'
-          : 'Nothing stored yet. The first application that stops on a question will '
-            + 'put it here.'));
+        var empty;
+        if (!(data.answers && data.answers.length)) {
+          empty = 'Nothing stored yet. The first application that stops on a question '
+            + 'will put it here.';
+        } else if (kind === 'open' && !query && !category) {
+          // Reaching zero here is the good outcome, not a failed search, and
+          // it is the one the nav badge has been counting down to.
+          empty = 'Nothing is waiting on you.';
+        } else if (kind === 'dismissed' && !query && !category) {
+          empty = 'You have not dismissed any questions.';
+        } else {
+          empty = 'Nothing here matches that.';
+        }
+        bankHost.appendChild(el('div', 'bank-empty', empty));
+        paintCounts();
         return;
       }
       var rows = grouped(entries);
@@ -1228,15 +1372,24 @@ SCRIPT = r"""
     }
 
     function paintKindChips() {
-      var counts = { question: 0, policy: 0, story: 0 };
+      var counts = { question: 0, policy: 0, story: 0, dismissed: 0 };
       ((data && data.answers) || []).forEach(function (entry) {
-        var k = entry.kind || 'question';
+        // A dismissed question is counted once, as dismissed. Counting it in
+        // both places would make the three kind chips add up to more rows than
+        // the bank can show.
+        var k = isDismissed(entry) ? 'dismissed' : (entry.kind || 'question');
         if (counts[k] !== undefined) counts[k] += 1;
       });
       Object.keys(counts).forEach(function (k) {
         var node = page.querySelector('[data-kind-n="' + k + '"]');
         if (node) node.textContent = String(counts[k]);
       });
+      var dismissChip = page.querySelector('[data-bank-kind="dismissed"]');
+      if (dismissChip) {
+        // Stays visible while it is the selected filter, or emptying it would
+        // take the tab out from under the reader who is standing on it.
+        dismissChip.hidden = counts.dismissed === 0 && kind !== 'dismissed';
+      }
       Array.prototype.forEach.call(page.querySelectorAll('[data-bank-kind]'), function (chip) {
         chip.classList.toggle('on', chip.dataset.bankKind === kind);
       });

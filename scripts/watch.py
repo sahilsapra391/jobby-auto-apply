@@ -1702,11 +1702,16 @@ def apply_found_decisions(q):
 def _bank_command(item):
     """The store call one claimed answer edit becomes, or None."""
     action = item.get("action") or "save"
-    if action == "delete":
+    # Three keyed actions and they are three different claims. `delete` removes
+    # an answer. `dismiss` refuses a question the user will never answer, which
+    # is what stops the grow-only loop opening it again. `restore` undoes that.
+    KEYED = {"delete": "answer-delete", "dismiss": "answer-dismiss",
+             "restore": "answer-restore"}
+    if action in KEYED:
         key = item.get("key")
         if not key:
             return None, None
-        return ["answer-delete", "--key", str(key),
+        return [KEYED[action], "--key", str(key),
                 "--version", str(int(item.get("version") or 0)),
                 "--edit-id", str(item.get("applicationId") or "")], None
     payload = {
@@ -1880,9 +1885,21 @@ def apply_profile_edits(q):
                 refused.append({"editId": item.get("applicationId"),
                                 "why": "the store returned junk"})
                 continue
-            if out.get("applied") is False and out.get("reason") == "conflict":
-                refused.append({"editId": item.get("applicationId"),
-                                "why": f"the entry moved to version {out.get('version')}"})
+            # Each command names its own verb (`applied`, `dismissed`,
+            # `restored`, `deleted`), so a refusal is any of them coming back
+            # false with a reason. Reading only `applied` is how a refused
+            # dismissal would have been counted as a success and reported to
+            # nobody.
+            refusal = next((out.get(v) is False for v in
+                            ("applied", "dismissed", "restored", "deleted")
+                            if v in out), None)
+            if refusal and out.get("reason") not in (None, "already applied"):
+                why = out.get("reason")
+                if why == "conflict":
+                    why = f"the entry moved to version {out.get('version')}"
+                elif out.get("hint"):
+                    why = f"{why}: {out['hint']}"
+                refused.append({"editId": item.get("applicationId"), "why": why})
                 continue
             done.append(out.get("key") or out.get("default") or out.get("removed") or True)
             if queue == "answerEdits" and out.get("stored"):

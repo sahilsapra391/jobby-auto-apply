@@ -412,6 +412,53 @@ test('an answer edit is queued with its version', async () => {
   assert.equal(queue.answerEdits[0].value, '15 days');
 });
 
+// Dismissing a question is refusing it, not answering it: no question text and
+// no value ride along, only the key and the version. The route has to take that
+// shape without the 'the question is required' guard the save path applies.
+test('a dismissal is queued with only the key and the version', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'dis-1', action: 'dismiss', key: 'notice-period', version: 2,
+  }));
+  assert.equal(response.status, 202);
+  const queue = JSON.parse(values.get('jobby:queue'));
+  assert.equal(queue.answerEdits.length, 1);
+  assert.equal(queue.answerEdits[0].action, 'dismiss');
+  assert.equal(queue.answerEdits[0].key, 'notice-period');
+  assert.equal(queue.answerEdits[0].version, 2);
+  assert.equal(queue.answerEdits[0].value, undefined);
+});
+
+test('a restore is queued the same way', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'res-1', action: 'restore', key: 'notice-period', version: 3,
+  }));
+  assert.equal(response.status, 202);
+  const queue = JSON.parse(values.get('jobby:queue'));
+  assert.equal(queue.answerEdits[0].action, 'restore');
+  assert.equal(queue.answerEdits[0].version, 3);
+});
+
+// Each keyed action names itself in the refusal. 'delete needs the key' told a
+// dismissal it was a delete, which is the wrong thing to go and look for.
+test('every keyed action refuses a request with no key, by name', async () => {
+  for (const action of ['delete', 'dismiss', 'restore']) {
+    const response = await handler.fetch(request('/api/answer', {
+      editId: `k-${action}`, action, version: 0,
+    }));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, `${action} needs the key`);
+    assert.equal(values.has('jobby:queue'), false);
+  }
+});
+
+test('an action the store has no command for is refused', async () => {
+  const response = await handler.fetch(request('/api/answer', {
+    editId: 'x-1', action: 'obliterate', key: 'notice-period', version: 0,
+  }));
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error, 'unknown action');
+});
+
 test('an answer edit cannot be sent from another site', async () => {
   const bad = new Request('https://board.example/api/answer', {
     method: 'POST',
