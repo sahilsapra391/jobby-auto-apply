@@ -1484,11 +1484,25 @@ SCRIPT = r"""
     return false;
   }
 
+  // Every mutation must carry the request token: the deployed API refuses a
+  // POST without it as cross-site, and the refusal is a 403 the old version of
+  // this helper flattened into an empty object. Watch, Pass and Apply all ride
+  // this one function, so the omission silenced the whole Found lane at once.
   function post(path, body) {
     return fetch(path, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-jobby-request': '1' },
       body: JSON.stringify(body)
-    }).then(function (r) { return r.json().catch(function () { return {}; }); });
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        // A non-2xx without a JSON body (a 401, a platform error page) must
+        // not read as success; that is a lost click nobody hears about.
+        if (!r.ok && data.ok !== false) {
+          return { ok: false, error: (data && data.error) || ('HTTP ' + r.status) };
+        }
+        return data;
+      });
+    });
   }
   function el(tag, cls, text) {
     var node = document.createElement(tag);
@@ -1878,7 +1892,11 @@ SCRIPT = r"""
       forget(PASS_KEY, job.id);
       bump('found', 1);
       if (onFail) onFail(err);
-      note(article, 'That did not reach the queue. It is still here; try again.');
+      // Name the server's reason. The bare sentence hid a five-day outage:
+      // every click 403ed and the toast gave nobody a thread to pull.
+      var why = err && err.message && err.message !== 'refused'
+        ? ' (' + err.message + ')' : '';
+      note(article, 'That did not reach the queue. It is still here; try again.' + why);
       throw err;
     });
   }

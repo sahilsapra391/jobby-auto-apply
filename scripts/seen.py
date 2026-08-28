@@ -92,6 +92,23 @@ def ats_key(value):
     return ""
 
 
+def url_identifies_posting(value):
+    """Whether the URL, stripped of its query, still names one posting.
+
+    norm_url drops the query, and for most links that only sheds tracking. But
+    when the job id itself rides the query (?gh_jid=... on an employer's own
+    careers page), the stripped URL is the page every posting there shares:
+    stripe.com/jobs/search covered 258 different Stripe postings, and one
+    recorded Stripe role declared all of them already known. Measured
+    2026-08-28: 4,202 of 14,569 pool jobs carry their identity in the query.
+    Such a URL must sit out URL matching entirely; the ATS key carries it.
+    A path-borne id (boards.greenhouse.io/acme/jobs/123) survives the strip,
+    so those keep matching by URL as before.
+    """
+    raw_key = ats_key(value or "")
+    return not raw_key or ats_key(norm_url(value)) == raw_key
+
+
 def known_records(root=None):
     """Everything on record, from all three places, as match keys."""
     paths = store.paths(store.root_dir(root))
@@ -103,10 +120,10 @@ def known_records(root=None):
             ids.add(aid)
             detail.setdefault(aid, where)
         u = norm_url(url)
-        if u:
+        k = ats_key(url)
+        if u and url_identifies_posting(url):
             urls.add(u)
             detail.setdefault("url:" + u, where)
-        k = ats_key(url)
         if k and company:
             pair = (norm(company), k)
             keys.add(pair)
@@ -158,11 +175,15 @@ def check(candidate, records):
     if aid and aid in records["ids"]:
         return {"known": True, "reason": "same application id",
                 "where": records["detail"].get(aid, "on record"), "match": aid}
+    # A candidate whose identity rides its query strips to the careers page
+    # every posting at that employer shares, so the URL test is skipped for it
+    # in both directions: known_records no longer stores such URLs, and this
+    # skip covers records written before 2026-08-28 that already hold them.
     u = norm_url(url)
-    if u and u in records["urls"]:
+    k = ats_key(url)
+    if u and url_identifies_posting(url) and u in records["urls"]:
         return {"known": True, "reason": "same posting URL",
                 "where": records["detail"].get("url:" + u, "on record"), "match": u}
-    k = ats_key(url)
     if k and company and (norm(company), k) in records["keys"]:
         return {"known": True, "reason": "same job on the same ATS, different link",
                 "where": records["detail"].get("key:%s:%s" % (norm(company), k),

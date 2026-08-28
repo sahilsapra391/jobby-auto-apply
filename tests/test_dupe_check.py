@@ -93,6 +93,42 @@ class GuardTests(unittest.TestCase):
 
 
 
+class QueryKeyedUrlGuardTests(unittest.TestCase):
+    """One submitted posting must not block an employer's whole careers site.
+
+    jobs.elastic.co/jobs?gh_jid=<id> strips to jobs.elastic.co/jobs, which
+    every Elastic posting shares; matching on the stripped URL made one
+    submitted Elastic application a duplicate of all of them. Measured
+    2026-08-28: 10 of 102 submitted applications carried such URLs. Identity
+    for these lives in (company, ATS key).
+    """
+
+    def setUp(self):
+        self.history = [
+            {"at": "2026-08-01T00:00:00Z", "event": "completed",
+             "applicationId": "elastic-search-pm",
+             "company": "Elastic", "role": "Search PM"},
+        ]
+        self.roles = {
+            "elastic-search-pm": {"url": "https://jobs.elastic.co/jobs?gh_jid=1111111",
+                                  "company": "Elastic", "role": "Search PM"},
+            "elastic-obs-pm": {"url": "https://jobs.elastic.co/jobs?gh_jid=2222222",
+                               "company": "Elastic", "role": "Observability PM"},
+            "elastic-same": {"url": "https://jobs.elastic.co/jobs?gh_jid=1111111",
+                             "company": "Elastic", "role": "Search Product Lead"},
+        }
+        dupe_check.store = FakeStore(self.history, self.roles)
+
+    def test_two_postings_behind_one_careers_page_are_not_duplicates(self):
+        result = dupe_check.guard("elastic-obs-pm")
+        self.assertFalse(result["duplicate"], result)
+
+    def test_the_same_keyed_posting_is_still_a_duplicate(self):
+        result = dupe_check.guard("elastic-same")
+        self.assertTrue(result["duplicate"], result)
+        self.assertIn("exact posting", result["reason"])
+
+
 class InFlightGuardTests(unittest.TestCase):
     """Submitted history is not enough when three runs overlap.
 

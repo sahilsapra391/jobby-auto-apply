@@ -1960,6 +1960,46 @@ def sweep_stuck(queued=()):
 
 # --- the tick ---------------------------------------------------------------
 
+def ensure_application_session(aid):
+    """A session for the Apply head, promoted from the pool when it implies one.
+
+    The Apply button on a Found card sends a watch click and then an apply
+    click, and it is the watch click that creates the session (promote.py).
+    Both ride one KV key through read-modify-write with no compare-and-swap,
+    so the second enqueue can eat the first: measured on 2026-08-28, a watch
+    enqueued at 06:44:55Z vanished under its own apply, and the sessionless
+    head then failed every tick with session_missing — 88 in a row — while the
+    click sat unclaimed and every application behind it waited. An apply click
+    for a job the pool knows implies the watch that was lost, so the tick
+    recreates the session rather than dying on its absence.
+
+    Returns (refusal, promoted). refusal None means the head may proceed;
+    a non-empty string is why it never can, and the caller must claim the
+    click, because a head that can never start and is never claimed is a
+    wedge on everything behind it.
+    """
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode == 0 and (loaded.stdout or "").strip():
+        return None, False
+    result = run([sys.executable, str(REPO / "scripts" / "promote.py"),
+                  "--id", aid])
+    if result.returncode != 0:
+        why = (result.stderr or "").strip()[:160] or "unknown"
+        return f"no session, and promoting the job failed: {why}", False
+    try:
+        outcome = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        outcome = {}
+    if outcome.get("sessionCreated") or outcome.get("alreadyWatching"):
+        return None, bool(outcome.get("sessionCreated"))
+    # alreadyKnown: promote refused because the posting is already on record
+    # somewhere else, so no session exists and none is coming. Carry its
+    # reason; "notStarted" with no why is a card that just never moves.
+    reason = outcome.get("reason") or "the posting is already on record"
+    where = outcome.get("where") or "the store"
+    return f"already on record ({reason}, in {where})", False
+
+
 def do_not_start(aid):
     """Why this application must not be spawned, or None.
 
@@ -2331,6 +2371,24 @@ def tick(force_publish=False):
                 changed.setdefault("notStarted", []).append(
                     {"applicationId": head_id, "why": reason})
                 apply_head = None
+
+    # After the busy and do-not-start guards, before any provider is probed:
+    # a head with no session either gets one promoted from the pool (the
+    # watch click it implies was eaten by the queue's read-modify-write) or
+    # is refused and claimed. It must never stay at the head unstartable —
+    # that wedged the lane for 88 consecutive ticks on 2026-08-28.
+    if apply_head:
+        refusal, promoted = ensure_application_session(head_id)
+        if refusal:
+            claimed = claim_one("apply/")
+            if not claimed or claimed[0].get("applicationId") != head_id:
+                raise TickError("the Apply queue changed while declining a request")
+            q["apply"] = apply_items[1:]
+            changed.setdefault("notStarted", []).append(
+                {"applicationId": head_id, "why": refusal})
+            apply_head = None
+        elif promoted:
+            changed.setdefault("watched", []).append(head_id)
 
     if apply_head:
         if not selected_provider:

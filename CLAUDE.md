@@ -556,6 +556,52 @@ confirmation text. Direct completion, reuse, and cross-application use fail.
 Generated nonces begin with `jobby_`. Keep that prefix because an unprefixed
 URL-safe token can begin with `-` and argparse then reads it as an option.
 
+## The Found lane's Apply was dead for five days, 2026-08-28
+
+Three stacked faults, found from one screen recording of the user pressing
+Apply while nothing happened. Each fix left a guard; the numbers are measured.
+
+**Every board mutation must send `x-jobby-request: 1`.** The deployed API
+refuses a POST without it as cross-site (403, `request token missing`), and
+that check landed 2026-08-23. `found_lane.py` had grown its own `post()` on
+2026-08-19 without the header, so Watch, Pass and Apply from Found all 403ed
+for five days while the dashboard's own buttons (which send it) kept working.
+The toast said "That did not reach the queue" and named no reason, so fifteen
+sessions of bug-fixing walked past it; it now appends the server's error, and
+`tests/test_click_requests_carry_the_token.py` scans every embedded POST for
+the header and holds a floor count so the scan itself cannot rot. When a click
+"does nothing", reproduce the exact POST with the exact headers before
+reading any code.
+
+**A sessionless Apply head wedged the watcher, silently, behind one click.**
+Apply on a Found card sends watch then apply; the watch click is what creates
+the session (promote.py), and both ride one KV key through read-modify-write
+with no compare-and-swap, so the apply enqueue can eat the watch enqueue.
+The sessionless head then failed every tick with `session_missing`, nothing
+ever claimed it, and the failure printer goes quiet between the 3rd and 60th
+consecutive failure: measured 88 failed ticks behind one click, board frozen
+throughout, both alarm branches silent. `ensure_application_session` now
+promotes the head from the pool when its session is missing, and a head that
+can never start (promotion refused) is claimed and logged `notStarted` with
+promote's own reason. The lesson that outlives the fix: **a queue head that
+is never claimed and never startable is a wedge on everything behind it**,
+and "loud on the way in, then quiet" hid 56 of the 88 failures. `watch.err`
+silence is not tick health; the lock file's mtime is.
+
+**A URL whose identity rides its query is not a posting, it is a careers
+page.** `norm_url` strips queries, so `stripe.com/jobs/search?gh_jid=8160754`
+became `stripe.com/jobs/search`, which 258 different Stripe postings share:
+one recorded Stripe role made `seen.check` call every other Stripe job
+"already known", and one submitted Elastic application did the same in
+`dupe_check` (`jobs.elastic.co/jobs`). Measured store-wide: 4,202 of 14,569
+pool jobs carry their identity in the query; 10 of 102 submitted applications
+do. `seen.url_identifies_posting` is now the one place that distinction
+lives: a stripped URL participates in URL matching only when stripping lost
+nothing, and query-keyed links match by (company, ATS key) instead. Both
+matchers were measured against the real store before and after, per the
+substring-matching rule above, and the same false-positive shape applies:
+the matcher read correctly and the corpus decided what it meant.
+
 ## The apply path fails loud, 2026-08-27
 
 Two faults were found by looking, not by any alarm, with three of five slots

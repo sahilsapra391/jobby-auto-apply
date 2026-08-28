@@ -138,6 +138,51 @@ class RetentionTests(StoreFixture, unittest.TestCase):
         self.assertFalse(self.check(company="Ghost", role="Product Manager")["known"])
 
 
+class QueryKeyedUrlTests(StoreFixture, unittest.TestCase):
+    """A careers page shared by every posting must not count as one posting.
+
+    stripe.com/jobs/search?gh_jid=<id> strips to stripe.com/jobs/search, which
+    258 different Stripe postings share (measured against the real pool on
+    2026-08-28, where 4,202 of 14,569 jobs carry their identity in the query).
+    One recorded Stripe role therefore declared every other Stripe job
+    "already known", and the Apply that hit it wedged the watcher for 88
+    consecutive ticks. Identity for these lives in the ATS key.
+    """
+
+    def test_a_second_posting_behind_the_same_careers_page_is_new(self):
+        self.watch("stripe-hw", "Stripe", "Hardware Program Manager",
+                   "https://stripe.com/jobs/search?gh_jid=8160754")
+        verdict = self.check(company="Stripe", role="Terminal Logistics Lead",
+                             url="https://stripe.com/jobs/search?gh_jid=9999999")
+        self.assertFalse(verdict["known"], verdict)
+
+    def test_the_same_query_keyed_posting_is_still_known(self):
+        self.watch("stripe-hw", "Stripe", "Hardware Program Manager",
+                   "https://stripe.com/jobs/search?gh_jid=8160754")
+        verdict = self.check(company="Stripe", role="HW PM (Terminal)",
+                             url="https://stripe.com/jobs/search?gh_jid=8160754")
+        self.assertTrue(verdict["known"], verdict)
+        self.assertIn("ATS", verdict["reason"])
+
+    def test_a_stored_bare_careers_url_from_before_the_fix_does_not_match(self):
+        # Records written before 2026-08-28 can hold the stripped page in the
+        # urls set; a keyed candidate must not be matched against it.
+        self.watch("elastic-old", "Elastic", "Search PM",
+                   "https://jobs.elastic.co/jobs")
+        verdict = self.check(company="Elastic", role="Observability PM",
+                             url="https://jobs.elastic.co/jobs?gh_jid=1234567")
+        self.assertFalse(verdict["known"], verdict)
+
+    def test_a_path_borne_id_still_matches_by_url(self):
+        # The strip loses nothing here, so URL matching keeps carrying the
+        # case where both company and role are worded differently.
+        self.watch("acme-pm", "Acme", "Product Manager",
+                   "https://boards.greenhouse.io/acme/jobs/123")
+        verdict = self.check(company="Acme Corp", role="PM, Growth",
+                             url="https://boards.greenhouse.io/acme/jobs/123?src=x")
+        self.assertTrue(verdict["known"], verdict)
+
+
 class StoreBackedTests(StoreFixture, unittest.TestCase):
     def test_the_same_job_from_another_source_is_known(self):
         # No shared URL at all: the LinkedIn copy and the company's own listing.
