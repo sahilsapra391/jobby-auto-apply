@@ -44,7 +44,7 @@ def provider_payload():
 def document_bundle():
     pdf = b"%PDF-1.4\nprivate base resume"
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "applicationId": "private-application",
         "provider": "openai",
         "company": "Private Company",
@@ -58,6 +58,13 @@ def document_bundle():
             "resumes": [],
         },
         "storyFacts": "Shipped a supported product.",
+        "resumeContent": {
+            "banner": "PRODUCT MANAGER | PRIVATE WORDING",
+            "summary": "Wording the Profile page saved, not the shipped template.",
+            "areasOfExpertise": ["Product Analytics", "Customer Discovery"],
+            "technical": [{"label": "Languages", "items": "Python, TypeScript"}],
+            "roles": [{"lede": "Payments", "bullets": ["Moved 75 customers."]}],
+        },
         "writingSamples": ["A private writing sample."],
         "baseResume": {
             "name": "base-resume.pdf",
@@ -189,6 +196,105 @@ class WritingProviderRunner:
             raise self.failure
         heartbeat()
         return self.output if self.output is not None else json.dumps(provider_payload())
+
+
+def install_base_wording(store, content=None):
+    """Put the base resume wording where `materialize` now puts it.
+
+    These runtimes are hand-built rather than materialized, and until
+    2026-08-28 none of them needed this. `_base_resume_content` fell back to
+    `templates/resume-content.json` whenever the task store had no copy, and
+    with no `storeRoot` at all it reached into the developer's own
+    `~/.job-application`. Both fallbacks are gone: in production the first one
+    meant no Profile edit ever reached a resume, and every one of these tests
+    passed the whole time it was true.
+    """
+    store = pathlib.Path(store)
+    store.mkdir(parents=True, exist_ok=True)
+    if content is None:
+        content = json.loads(
+            (ROOT / "templates" / "resume-content.json").read_text())
+    (store / "resume-content.json").write_text(json.dumps(content))
+    return content
+
+
+def wording_store(case, content=None):
+    """A throwaway task store carrying the base wording, for a bare runtime."""
+    temp = tempfile.TemporaryDirectory()
+    case.addCleanup(temp.cleanup)
+    store = pathlib.Path(temp.name) / "store"
+    install_base_wording(store, content)
+    return str(store)
+
+
+class BaseResumeWordingTests(unittest.TestCase):
+    """Which wording a tailored resume starts from, and where it comes from.
+
+    The bug these pin, found 2026-08-28: `materialize` never wrote
+    `resume-content.json` into the task store, so `_base_resume_content` always
+    took its fallback and every generated resume and cover letter used the
+    repository template. The Profile page said "Saved. Your next tailored resume
+    starts from this" and no resume ever did.
+    """
+
+    def materialize(self):
+        import document_contract
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return document_contract.materialize(document_bundle(), temp.name)
+
+    def test_the_wording_comes_from_the_bundle_not_the_repository(self):
+        runtime = self.materialize()
+        got = worker._base_resume_content(runtime)
+        self.assertEqual(got, document_bundle()["resumeContent"])
+        shipped = json.loads(
+            (ROOT / "templates" / "resume-content.json").read_text())
+        self.assertNotEqual(got, shipped)
+        self.assertIn("not the shipped template", got["summary"])
+
+    def test_a_task_store_with_no_wording_fails_instead_of_substituting(self):
+        """The fallback is gone on purpose.
+
+        Reading a second file when the first is absent is exactly how one
+        document's wording was served in place of another's without anything
+        saying so.
+        """
+        runtime = self.materialize()
+        pathlib.Path(runtime["storeRoot"], "resume-content.json").unlink()
+        with self.assertRaises(worker.ResultInvalid) as caught:
+            worker._base_resume_content(runtime)
+        self.assertIn("materialized", str(caught.exception))
+
+    def test_the_worker_names_the_wording_file_once_in_the_task_store(self):
+        """A second path to the same content is how the fallback comes back."""
+        source = (ROOT / "scripts" / "document_worker.py").read_text()
+        self.assertNotIn("RESUME_BASE_CONTENT", source)
+        self.assertEqual(source.count('"resume-content.json"'), 1)
+
+    def test_reading_the_base_is_not_swallowed_by_the_openai_shape_fallback(self):
+        """`validate_provider_content` inherits the base when OpenAI's override
+        shape is wrong. Inheriting wording it could not read is not a fallback,
+        it is a run with nothing in it and no one naming why.
+        """
+        runtime = self.materialize()
+        runtime.update({"provider": "openai", "company": "Private Company",
+                        "role": "Private Role"})
+        pathlib.Path(runtime["storeRoot"], "resume-content.json").unlink()
+        generated = {
+            "resumeOverrides": {"areasOfExpertise": ["a wrong number of slots"]},
+            "coverLetter": {
+                "employer": "Private Company",
+                "role": "Private Role",
+                "salutation": "Dear Hiring Team,",
+                "opening": "An opening paragraph.",
+                "evidence": "An evidence paragraph.",
+                "closing": "A closing paragraph.",
+            },
+        }
+        with self.assertRaises(worker.ResultInvalid) as caught:
+            worker.validate_provider_content(generated, runtime)
+        self.assertIn("materialized", str(caught.exception))
 
 
 class SandboxTests(unittest.TestCase):
@@ -1051,7 +1157,8 @@ class ProviderResponseTests(unittest.TestCase):
             ]))
 
     def test_response_shape_and_resume_indexes_are_strict(self):
-        runtime = {"company": "Private Company", "role": "Private Role"}
+        runtime = {"company": "Private Company", "role": "Private Role",
+                   "storeRoot": wording_store(self)}
         payload = provider_payload()
         clean = worker.validate_provider_content(payload, runtime)
         self.assertEqual(clean["resumeOverrides"], {})
@@ -1088,7 +1195,7 @@ class ProviderResponseTests(unittest.TestCase):
     def test_openai_inherits_base_when_dynamic_override_lengths_are_invalid(self):
         runtime = {
             "company": "Private Company", "role": "Private Role",
-            "provider": "openai",
+            "provider": "openai", "storeRoot": wording_store(self),
         }
         payload = provider_payload()
         payload["resumeOverrides"] = {
@@ -1100,7 +1207,7 @@ class ProviderResponseTests(unittest.TestCase):
     def test_openai_uses_trusted_job_identity_for_the_cover_letter(self):
         runtime = {
             "company": "Private Company", "role": "Private Role",
-            "provider": "openai",
+            "provider": "openai", "storeRoot": wording_store(self),
         }
         payload = provider_payload()
         payload["coverLetter"]["employer"] = "Model spelling drift"
@@ -1166,6 +1273,7 @@ class TrustedRendererTests(unittest.TestCase):
                 }],
             }
             (store / "profile.json").write_text(json.dumps(profile))
+            install_base_wording(store)
             runtime = {
                 "taskRoot": str(root),
                 "outputRoot": str(output),
@@ -1231,6 +1339,7 @@ class TrustedRendererTests(unittest.TestCase):
                 }],
             }
             (store / "profile.json").write_text(json.dumps(profile))
+            install_base_wording(store)
             runtime = {
                 "taskRoot": str(root),
                 "outputRoot": str(output),
@@ -1311,6 +1420,7 @@ class PromptAndStatusTests(unittest.TestCase):
             (task / "writing-samples.txt").write_text(
                 "A private writing sample."
             )
+            install_base_wording(task / "store")
             (task / "store" / "profile.json").write_text(json.dumps({
                 "firstName": "Private",
                 "lastName": "Candidate",
@@ -1737,27 +1847,31 @@ class TrustedFieldNormalisationTests(unittest.TestCase):
     DOUBLE_SPACED = "Staff Product Manager-  Integrations & Advisor Platform"
 
     def test_a_double_spaced_role_is_accepted_and_normalised(self):
-        runtime = {"company": "Robinhood", "role": self.DOUBLE_SPACED}
+        runtime = {"company": "Robinhood", "role": self.DOUBLE_SPACED,
+                   "storeRoot": wording_store(self)}
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(
             clean["coverLetter"]["role"],
             "Staff Product Manager- Integrations & Advisor Platform")
 
     def test_an_employer_whose_spacing_normalises_is_accepted(self):
-        runtime = {"company": "Acme  Corporation", "role": "Private Role"}
+        runtime = {"company": "Acme  Corporation", "role": "Private Role",
+                   "storeRoot": wording_store(self)}
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(clean["coverLetter"]["employer"], "Acme Corporation")
 
     def test_a_non_breaking_space_in_the_title_is_accepted(self):
         # 'Voice Product Analytics\xa0- Associate' is in the pool verbatim.
         runtime = {"company": "Private Company",
-                   "role": "Voice Product Analytics\xa0- Associate"}
+                   "role": "Voice Product Analytics\xa0- Associate",
+                   "storeRoot": wording_store(self)}
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(clean["coverLetter"]["role"],
                          "Voice Product Analytics - Associate")
 
     def test_an_ordinary_role_still_passes_unchanged(self):
-        runtime = {"company": "Private Company", "role": "Private Role"}
+        runtime = {"company": "Private Company", "role": "Private Role",
+                   "storeRoot": wording_store(self)}
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(clean["coverLetter"]["role"], "Private Role")
         self.assertEqual(clean["coverLetter"]["employer"], "Private Company")

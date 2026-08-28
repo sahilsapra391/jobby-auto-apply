@@ -77,7 +77,6 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_PDF_BYTES = 16 * 1024 * 1024
 PROVIDER_ACTIONS = frozenset(("connect", "disconnect", "refresh"))
 MAX_AUTH_FILE_BYTES = 2 * 1024 * 1024
-RESUME_BASE_CONTENT = REPO / "templates" / "resume-content.json"
 RESUME_TEMPLATE = REPO / "templates" / "resume.html"
 COVER_TEMPLATE = REPO / "templates" / "cover-letter.html"
 RESUME_OVERRIDE_KEYS = frozenset((
@@ -1178,19 +1177,28 @@ def _model_text(
 
 
 def _base_resume_content(runtime):
-    """The wording a tailored resume starts from.
+    """The wording a tailored resume starts from, as the bundle carried it.
 
-    The Profile page edits this. The board cannot write to a tracked repository
-    file, so the edit lands beside the rest of the store and is preferred here.
-    The shipped template stays the fallback and the shape reference: the store
-    refuses an override whose list lengths differ from it, so the two can never
-    disagree about how many slots the template has.
+    The Profile page edits `resume-content.json` in the store, and that edit was
+    invisible for as long as this feature has existed. This read the
+    task-private store, `document_contract.materialize` wrote only `profile.json`
+    and `story-facts.txt` into it, so the file was never there and every resume
+    and cover letter fell back to the repository's `templates/resume-content.json`
+    instead. Measured on 2026-08-28 against a real materialized bundle for
+    application 7923ca442c573811: the task store held those two files and
+    nothing else, and this returned the shipped template while the store copy on
+    the same machine said something different.
+
+    The wording is transported now, so there is no local fallback left and that
+    is deliberate. Reading a second file when the first is absent is how this
+    substituted one document's wording for another's without saying so, and a
+    silent substitution is indistinguishable from working.
     """
-    root = Path(runtime.get("storeRoot") or "~/.job-application").expanduser()
-    override = root / "resume-content.json"
-    if override.exists():
-        return _read_small_json(override, MAX_PROMPT_SECTION_BYTES)
-    return _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
+    path = Path(runtime["storeRoot"]) / "resume-content.json"
+    if not path.is_file():
+        raise ResultInvalid(
+            "the base resume wording was not materialized for this task")
+    return _read_small_json(path, MAX_PROMPT_SECTION_BYTES)
 
 
 def _validate_resume_overrides(
@@ -1345,8 +1353,12 @@ def validate_provider_content(
         raise ResultInvalid("coverLetter has an invalid shape")
     company = str(runtime.get("company") or "").strip()
     role = str(runtime.get("role") or "").strip()
+    # Outside the fallback below. That fallback is about the shape of the
+    # model's overrides, and "inherit the verified base wording" only means
+    # something once the base has actually been read. Swallowing a failure to
+    # read it would leave the run with no wording and no one naming why.
+    base = _base_resume_content(runtime)
     try:
-        base = _base_resume_content(runtime)
         overrides = _validate_resume_overrides(raw["resumeOverrides"], base)
     except ResultInvalid:
         if not openai:
