@@ -274,6 +274,9 @@ const VIEWER_USER_ID = process.env.JOBBY_USER_ID || 'account-1';
 const ANSWER_FIELDS = ['key', 'question', 'state', 'tags', 'updatedAt', 'version',
   'sensitive', 'dataClass', 'askedBy', 'openedAt', 'lastAskedAt',
   'answeredAt', 'note', 'remembered',
+  // A question the user refused. Without this the page cannot tell a dismissed
+  // row from an outstanding one, and would keep counting it in Needs you.
+  'dismissedAt',
   // Added with the Profile rebuild. Adding a field to publishable_state is only
   // half of shipping it; this is the other half.
   'kind', 'category', 'groupKey'];
@@ -319,7 +322,10 @@ function boundedString(value, limit) {
   return value.length <= limit ? value : null;
 }
 
-const ANSWER_ACTIONS = new Set(['save', 'delete']);
+// `dismiss` and `restore` carry the key and the version, the same shape as
+// `delete`, and are refusing a question rather than removing an answer.
+const ANSWER_ACTIONS = new Set(['save', 'delete', 'dismiss', 'restore']);
+const ANSWER_KEYED = new Set(['delete', 'dismiss', 'restore']);
 const RESUME_ACTIONS = new Set(['default', 'content', 'remove', 'add', 'update']);
 
 async function handleAnswerEdit(request) {
@@ -350,8 +356,8 @@ async function handleAnswerEdit(request) {
         extra.tags = body.tags.filter((t) => typeof t === 'string').slice(0, 20)
           .map((t) => t.slice(0, 60));
       }
-    } else if (!extra.key) {
-      return json({ ok: false, error: 'delete needs the key' }, 400);
+    } else if (ANSWER_KEYED.has(action) && !extra.key) {
+      return json({ ok: false, error: `${action} needs the key` }, 400);
     }
     return json({ ok: true, ...(await kvEnqueue(process.env, 'answerEdits', editId, extra)) }, 202);
   } catch (err) {

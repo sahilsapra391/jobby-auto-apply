@@ -25,7 +25,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-ANSWER_STATES = {"confirmed", "inferred", "missing", "sensitive"}
+# "dismissed" is the user saying they will never answer this. It is the only
+# state that means something about their intent rather than about the value, and
+# it is the one the grow-only loop consults before opening a question again.
+ANSWER_STATES = {"confirmed", "inferred", "missing", "sensitive", "dismissed"}
 # "inflight" means an Apply run is under way: the role has left the watch
 # list but nothing has been submitted yet.
 SESSION_STATUSES = {"watch", "inflight", "active", "review", "completed",
@@ -148,6 +151,18 @@ def answered(entry):
         if text is not None and str(text).strip():
             return True
     return False
+
+
+def dismissed(entry):
+    """True when the user has said they will never answer this question.
+
+    Distinct from every other reason an entry carries no value, and the
+    distinction is the whole feature. `missing` is a question nobody has got to
+    yet. `remembered is False` is a value that was filled once and deliberately
+    not kept. This is a question the user has refused, and it is the only one of
+    the three that must stop the grow-only loop from opening it again.
+    """
+    return isinstance(entry, dict) and entry.get("state") == "dismissed"
 
 
 # A one-time code is worthless a minute after it arrives and dangerous for as
@@ -1490,6 +1505,21 @@ def cmd_answer_open(args):
         # every time an employer asks.
         return {"key": key, "opened": False,
                 "reason": "the user chose not to store this value"}
+    if dismissed(stored):
+        # The tombstone, and the reason dismissal is a state on the record
+        # rather than a delete. A deleted row is simply absent, and absent is
+        # what this loop reads as "never asked", so the next park would open the
+        # same question again and the user would dismiss it again forever. The
+        # `askedBy` list still grows, so a question dismissed once and asked by
+        # nine more employers can still be found and reconsidered.
+        asked = [a for a in (stored.get("askedBy") or []) if isinstance(a, str)]
+        if application and application not in asked:
+            entry = dict(stored)
+            entry["askedBy"] = (asked + [application])[:50]
+            entry["lastAskedAt"] = now()
+            _bank_write(root, key, entry, answers)
+        return {"key": key, "opened": False,
+                "reason": "the user dismissed this question"}
 
     entry = dict(stored or {})
     asked = [a for a in (entry.get("askedBy") or []) if isinstance(a, str)]
@@ -1516,6 +1546,79 @@ def cmd_answer_open(args):
     _bank_write(root, key, entry, answers)
     return {"key": key, "opened": stored is None, "joined": stored is not None,
             "askedBy": entry["askedBy"]}
+
+
+def _bank_state_change(args, dismiss, verb):
+    """Move one entry between `dismissed` and outstanding, from the board.
+
+    The same version-and-editId discipline `cmd_answer_edit` uses, for the same
+    reason: the board replays clicks it remembers, so this arrives twice and the
+    second one must do nothing rather than fight the first.
+    """
+    root = root_dir(args.root)
+    answers = read_json(paths(root)["answers"], {})
+    key = (args.key or "").strip()
+    stored = answers.get(key)
+    if stored is None:
+        return {"key": key, verb: False, "reason": "no such entry"}
+    edit_id = (args.edit_id or "").strip()
+    if stored.get("lastEditId") == edit_id and edit_id:
+        return {"key": key, verb: False, "reason": "already applied",
+                "version": bank_version(stored)}
+    seen = int(args.version or 0)
+    if bank_version(stored) != seen:
+        return {"key": key, verb: False, "reason": "conflict",
+                "version": bank_version(stored), "seen": seen}
+    if answered(stored):
+        # An answer that stayed on a dismissed record would still fill forms,
+        # because `find_answer` selects on the value and not on the state. So
+        # the two acts stay separate: Forget removes an answer, this refuses a
+        # question. Neither one quietly does the other's job.
+        return {"key": key, verb: False, "reason": "this entry holds an answer",
+                "hint": "forget the answer first; dismissing does not delete one"}
+
+    entry = dict(stored)
+    entry["updatedAt"] = now()
+    entry["version"] = seen + 1
+    if edit_id:
+        entry["lastEditId"] = edit_id
+    tags = [t for t in (entry.get("tags") or []) if t != "unanswered"]
+    if dismiss:
+        entry["state"] = "dismissed"
+        entry["dismissedAt"] = now()
+        entry.pop("openedAt", None)
+        entry["tags"] = tags
+    else:
+        # Restored to exactly the state the loop opens a question in, derived
+        # from the question rather than from whatever it held before, so an
+        # entry that has been round the loop is indistinguishable from one that
+        # never left it.
+        entry["state"] = ("sensitive" if sensitive_question(entry.get("question") or "")
+                          else "missing")
+        entry.pop("dismissedAt", None)
+        entry["openedAt"] = now()
+        entry["tags"] = tags + ["unanswered"]
+    classify(entry)
+    _bank_write(root, key, entry, answers)
+    return {"key": key, verb: True, "version": entry["version"],
+            "state": entry["state"]}
+
+
+def cmd_answer_dismiss(args):
+    """Refuse a question for good, without answering it.
+
+    The bank grows on its own: every application that parks on a question it
+    cannot answer plants that question here. Nothing removed one that the user
+    was never going to answer, so five Korean-language questions from one
+    dropped Coupang application sat in Needs you badging the nav with a number
+    that could not reach zero.
+    """
+    return _bank_state_change(args, True, "dismissed")
+
+
+def cmd_answer_restore(args):
+    """Undo a dismissal, putting the question back among the outstanding."""
+    return _bank_state_change(args, False, "restored")
 
 
 # --- base resumes -----------------------------------------------------------
@@ -2124,6 +2227,8 @@ COMMANDS = {
     "answer-edit": cmd_answer_edit,
     "answer-open": cmd_answer_open,
     "answer-delete": cmd_answer_delete,
+    "answer-dismiss": cmd_answer_dismiss,
+    "answer-restore": cmd_answer_restore,
     "resume-content-get": cmd_resume_content_get,
     "resume-content-put": cmd_resume_content_put,
     "resume-default": cmd_resume_default,
@@ -2162,6 +2267,9 @@ def build_parser():
     sp = sub.add_parser("answer-open"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("answer-delete"); sp.add_argument("--key", required=True)
     sp.add_argument("--version", default=0); sp.add_argument("--edit-id")
+    for name in ("answer-dismiss", "answer-restore"):
+        sp = sub.add_parser(name); sp.add_argument("--key", required=True)
+        sp.add_argument("--version", default=0); sp.add_argument("--edit-id")
     sp = sub.add_parser("resume-content-put"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("resume-default"); sp.add_argument("--key", required=True)
     sp = sub.add_parser("resume-add"); sp.add_argument("--input", required=True)

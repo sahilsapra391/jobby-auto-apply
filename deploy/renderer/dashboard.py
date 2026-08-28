@@ -286,9 +286,16 @@ def bank_counts(bank):
     entries = bank.get("answers") or []
     return {
         "total": len(entries),
+        # Three reasons an entry carries no value and only one of them is
+        # outstanding. `remembered is False` was filled and not kept; a
+        # dismissed one the user has refused. Counting either would badge the
+        # nav with a number nothing can clear, which is what dismissal exists
+        # to end.
         "unanswered": sum(1 for e in entries
                           if not store.answered(e)
-                          and e.get("remembered") is not False),
+                          and e.get("remembered") is not False
+                          and not store.dismissed(e)),
+        "dismissed": sum(1 for e in entries if store.dismissed(e)),
         "sensitive": sum(1 for e in entries if e.get("sensitive")),
         "identities": len(bank.get("identities") or []),
         "questions": sum(1 for e in entries if e.get("kind") == "question"),

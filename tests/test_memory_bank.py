@@ -843,11 +843,28 @@ class PublishedShapeTests(BankTest):
         published = dashboard.publishable_state(state)
         self.assertEqual(published["meta"]["memoryBank"]["unanswered"], 2)
 
+    def test_a_dismissed_question_leaves_the_unanswered_count(self):
+        """The number the nav badge draws. It could not reach zero before.
+
+        Five Korean-language questions from one already-dropped application sat
+        in Needs you with no way to clear them but to answer them, and the user
+        was never going to. `tests/test_dismissed_questions.py` is the rest of
+        this; here it is only the published number.
+        """
+        state = self.state()
+        state["answers"]["gone"] = {
+            "key": "gone", "question": "Do you require a Korea work visa?",
+            "value": None, "state": "dismissed", "tags": []}
+        counts = dashboard.publishable_state(state)["meta"]["memoryBank"]
+        self.assertEqual(counts["unanswered"], 1)
+        self.assertEqual(counts["dismissed"], 1)
+        self.assertEqual(counts["total"], 4)
+
     def test_the_counts_ride_in_meta_and_the_values_do_not(self):
         published = dashboard.publishable_state(self.state())
         counts = published["meta"]["memoryBank"]
-        self.assertEqual(counts, {"total": 3, "unanswered": 1, "sensitive": 1,
-                                  "identities": 1, "questions": 3,
+        self.assertEqual(counts, {"total": 3, "unanswered": 1, "dismissed": 0,
+                                  "sensitive": 1, "identities": 1, "questions": 3,
                                   "policies": 0, "stories": 0})
 
     def test_an_identity_publishes_the_document_name_not_the_path(self):
