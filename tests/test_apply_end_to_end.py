@@ -27,6 +27,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -142,6 +143,41 @@ class RealBrowserUploadTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self.temp.name).resolve()
+        # The slot stays real; the artifact tree under it does not have to.
+        # Playwright's --output-dir and the firewall's --activity path both hang
+        # off browser.ARTIFACTS, and the only thing here that must be real is the
+        # slot's CDP port, which port_for derives from the slot name alone. Left
+        # pointing at the real tree, this filed an application called "endtoend"
+        # and a heap of console logs under a live slot's artifact root. That was
+        # harmless only because _write_activity sits after StdioProxy.run() and
+        # no real run reaches it. PR #112 adds the signal handlers that make it
+        # reachable, and from then on a row called endtoend sits among real
+        # applications for anyone measuring which runs reached the browser.
+        #
+        # server_configs below is what tells the firewall child where to write,
+        # and the read-back at the end of the upload test resolves through
+        # browser.activity_path, so both ends move together and neither
+        # assertion changes.
+        # All three, because server_config mkdirs the profile directory as well
+        # as the artifact root, and _profile_dir falls back to PROFILE for a slot
+        # it does not recognise. Measured: with only ARTIFACTS moved, this module
+        # still created browser-profile/ in the home.
+        #
+        # Deliberately not store_isolation.begin(). This test asks
+        # watch.free_apply_slots() which slots a real application is holding, and
+        # that answer has to come from the device's own store. Isolating it would
+        # make every slot look free and put the test back on the live-slot
+        # collision that picking candidates from free_apply_slots() fixed.
+        # browser.STATE and watch.STATE_DIR are separate constants, so moving the
+        # first leaves that lookup alone.
+        state = root / "state"
+        for redirect in (
+            mock.patch.object(browser, "STATE", state),
+            mock.patch.object(browser, "PROFILE", state / "browser-profile"),
+            mock.patch.object(browser, "ARTIFACTS", state / "browser-artifacts"),
+        ):
+            redirect.start()
+            self.addCleanup(redirect.stop)
         self.resume = root / "resume.pdf"
         self.cover = root / "cover-letter.pdf"
         self.resume.write_bytes(b"%PDF-1.4\n" + b"r" * 2048)

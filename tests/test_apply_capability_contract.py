@@ -18,6 +18,7 @@ the half of the contract a green check actually proves.
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -98,7 +99,6 @@ class ProviderCarriesTheBrowserTests(unittest.TestCase):
         }
 
     def test_each_apply_provider_receives_both_servers(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as name:
             root = pathlib.Path(name).resolve()
             context = self.context(root)
@@ -157,7 +157,6 @@ class AbsentEvidenceIsNotEvidenceTests(unittest.TestCase):
         self.assertNotEqual(activity.get("totalCalls"), 0)
 
     def test_an_unreadable_record_reads_the_same_way(self):
-        import tempfile
         import run_apply
         with tempfile.TemporaryDirectory() as name:
             broken = pathlib.Path(name) / "activity.json"
