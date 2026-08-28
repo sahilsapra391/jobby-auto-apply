@@ -345,6 +345,30 @@ def _reason_counts(kept):
     return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
+def _restore_object(client, key, expected_sha, name, destination):
+    """Fetch one stored object, verify its stamped hash, and write it whole.
+
+    Verifies the hash it was stored with before writing, and writes through a
+    temporary file in the destination directory so a partial download can never
+    be handed to a file chooser as a complete one.
+    """
+    body = client.get(key)
+    if body is None:
+        raise r2.R2Error(f"{name!r} is indexed at {key} but R2 has no object there")
+    digest = hashlib.sha256(body).hexdigest()
+    if expected_sha and digest != expected_sha:
+        raise r2.R2Error(f"{name!r} came back with a different hash than it was stored with")
+    destination = Path(destination).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
+        handle.write(body)
+        temp = Path(handle.name)
+    temp.chmod(0o600)
+    os.replace(temp, destination)
+    return {"name": name, "key": key, "bytes": len(body),
+            "sha256": digest, "path": str(destination)}
+
+
 def materialise(name, destination, root=None, user_id=r2.DEFAULT_USER_ID,
                 client=None):
     """Bring an evicted artifact back to disk, by the filename it had.
@@ -353,32 +377,47 @@ def materialise(name, destination, root=None, user_id=r2.DEFAULT_USER_ID,
     needs it back: the form agent uploads a PDF to the employer by path, and the
     browser firewall pins that path by device, inode, size and sha256. A retry
     on an application whose documents were evicted has to stage them again.
-
-    Verifies the hash it was stored with before writing, and writes through a
-    temporary file in the destination directory so a partial download can never
-    be handed to a file chooser as a complete one.
     """
     index, _ambiguous = doc_index_from_manifest(root)
     entry = index.get(name)
     if not entry:
         raise r2.R2Error(f"no stored artifact is named {name!r}")
     client = client or r2.client(user_id=user_id)
-    body = client.get(entry["key"])
-    if body is None:
-        raise r2.R2Error(f"{name!r} is indexed at {entry['key']} but R2 has no object there")
-    digest = hashlib.sha256(body).hexdigest()
-    if entry.get("sha256") and digest != entry["sha256"]:
-        raise r2.R2Error(f"{name!r} came back with a different hash than it was stored with")
+    return _restore_object(client, entry["key"], entry.get("sha256"), name,
+                           destination)
 
-    destination = Path(destination).expanduser()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
-        handle.write(body)
-        temp = Path(handle.name)
-    temp.chmod(0o600)
-    os.replace(temp, destination)
-    return {"name": name, "key": entry["key"], "bytes": len(body),
-            "sha256": digest, "path": str(destination)}
+
+def materialise_application(application_id, folder, root=None,
+                            user_id=r2.DEFAULT_USER_ID, client=None):
+    """Bring back every artifact R2 attributes to one application.
+
+    The retry path is why this exists as more than --get. Eviction removes
+    local artifacts once an application reaches a terminal outcome, and
+    drop.py --restore makes that outcome reversible, so a retried application
+    can reach the runner with its documents safely in R2 and nothing on disk.
+    The runner used to refuse with "the tailored resume and cover letter are
+    not both ready" and consume the click, observed on 6c3824319c68c547 on
+    2026-08-28. Restoring is bounded by the manifest's attribution for this
+    application id, keyed under u/{user}/app/{id}/, verifies each stored hash,
+    and leaves files already on disk alone.
+    """
+    manifest = load_manifest(root)["objects"]
+    prefix = f"u/{user_id}/app/{application_id}/"
+    wanted = [(key, record) for key, record in sorted(manifest.items())
+              if key.startswith(prefix) and (record or {}).get("name")]
+    if not wanted:
+        return []
+    client = client or r2.client(user_id=user_id)
+    folder = Path(folder).expanduser()
+    restored = []
+    for key, record in wanted:
+        name = record["name"]
+        destination = folder / name
+        if destination.is_file():
+            continue
+        restored.append(_restore_object(client, key, record.get("sha256"),
+                                        name, destination))
+    return restored
 
 
 def push_application(application_id, root=None, user_id=r2.DEFAULT_USER_ID,

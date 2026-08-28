@@ -91,6 +91,41 @@ def load_brief(application_id):
     return _parse_json_result(result, "application brief")
 
 
+def restage_evicted_documents(application_id, summary):
+    """Bring evicted artifacts back from R2 before refusing this run.
+
+    Eviction removes local artifacts once an application reaches a terminal
+    outcome, and drop.py --restore makes that outcome reversible, so a retried
+    application can reach this runner with its documents safely in R2 and
+    nothing on disk. Refusing then consumes the user's click over a file the
+    store can produce in a second. Quiet when R2 is not configured or holds
+    nothing attributed to this application: the existing refusal stands and
+    names what is missing. A restage failure is reported, not raised, for the
+    same reason.
+    """
+    folder = summary.get("folder")
+    if not folder:
+        return []
+    try:
+        import r2
+        import r2_sync
+        if not r2.configured():
+            return []
+        restored = r2_sync.materialise_application(application_id, folder)
+    except Exception as exc:  # noqa: BLE001 - the refusal must still be reported
+        print(json.dumps({"event": "restage_failed",
+                          "applicationId": application_id,
+                          "error": f"{type(exc).__name__}: {exc}"[:200]}),
+              file=sys.stderr)
+        return []
+    if restored:
+        print(json.dumps({"event": "documents_restaged",
+                          "applicationId": application_id,
+                          "files": [item["name"] for item in restored]}),
+              file=sys.stderr)
+    return restored
+
+
 def _file_digest(path):
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -501,6 +536,9 @@ def main():
             raise ApplyRefusal("the user cancelled this application")
         if _refuse_duplicate(application_id, summary):
             return 1
+        if (summary.get("documentsReady") is not True
+                and restage_evicted_documents(application_id, summary)):
+            summary = load_brief(application_id)
         artifacts = artifact_snapshot(summary)
         prompt = build_prompt(summary, artifacts)
     except ApplyRefusal as exc:
