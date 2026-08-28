@@ -550,24 +550,58 @@ ATTACH_FILE_CODE = """async (page) => {
     });
   };
   let inputs = [];
+  // Why each resolution step failed. A bare `continue` swallowed these, so a
+  // selector that matched nothing and a selector that matched a button arrived
+  // as one message and neither could be corrected. Same shape as sending a
+  // child's stderr to /dev/null: the one occurrence able to explain itself
+  // threw the explanation away.
+  const why = [];
+  // One description of the page's file inputs, shared by both failure branches
+  // so they cannot drift into describing it differently. Numbered, because
+  // "1 of 2" is what a caller needs to pick the other one.
+  const listFileInputs = async () => {
+    const all = page.locator('input[type=file]');
+    const total = await all.count();
+    const seen = [];
+    for (let index = 0; index < total; index++) {
+      seen.push((index + 1) + ' of ' + total + ': ' + await all.nth(index).evaluate(describe));
+    }
+    return seen;
+  };
   if (ref) {
     const at = /^e[0-9]+$/.test(ref) ? page.locator('aria-ref=' + ref) : page.locator(ref);
     for (const scope of [at, at.locator('input[type=file]'),
                          at.locator('xpath=./ancestor::*[position()<=3]//input[@type=\"file\"]')]) {
       let total = 0;
-      try { total = await scope.count(); } catch (error) { continue; }
+      try { total = await scope.count(); }
+      catch (error) { why.push(String(error).split('\\n')[0]); continue; }
       for (let index = 0; index < total; index++) {
         const candidate = scope.nth(index);
         let shape = '';
         try {
           shape = await candidate.evaluate((node) =>
             node.tagName.toLowerCase() + ':' + (node.getAttribute('type') || ''));
-        } catch (error) { continue; }
+        } catch (error) { why.push(String(error).split('\\n')[0]); continue; }
         if (shape === 'input:file') inputs.push(candidate);
+        else if (shape) why.push('matched a ' + shape + ', not a file input');
       }
       if (inputs.length) break;
     }
-    if (!inputs.length) throw new Error('the target resolved to no file input');
+    if (!inputs.length) {
+      // Say what the page actually has, the way the no-target branch does.
+      // This used to stop at "matched nothing", which is a dead end for the one
+      // caller that most needs telling: an agent that passed a wrong target
+      // cannot correct itself from that. On 2026-08-28 one spent six escalating
+      // selectors on a SmartRecruiters form and parked, while the branch for
+      // the better-behaved caller -- no target at all -- was listing every file
+      // input on the page.
+      const seen = await listFileInputs();
+      throw new Error('the target resolved to no file input'
+        + (why.length ? ' (' + why.slice(0, 3).join('; ') + ')' : '')
+        + '; ' + (seen.length
+            ? 'the page has ' + seen.length + ': ' + seen.join(' ; ')
+            : 'and the page has none at all'));
+    }
   } else {
     const all = page.locator('input[type=file]');
     const total = await all.count();
@@ -577,12 +611,8 @@ ATTACH_FILE_CODE = """async (page) => {
     // caller say which; the hidden ones carry no accessibility ref, so a CSS
     // selector in `target` is the handle that always exists.
     if (total > 1) {
-      const seen = [];
-      for (let index = 0; index < total; index++) {
-        seen.push((index + 1) + ' of ' + total + ': ' + await all.nth(index).evaluate(describe));
-      }
       throw new Error('the page has ' + total + ' file inputs; pass target to choose one: '
-                      + seen.join(' ; '));
+                      + (await listFileInputs()).join(' ; '));
     }
     inputs = [all.first()];
   }
