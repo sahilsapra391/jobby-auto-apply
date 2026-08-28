@@ -1261,6 +1261,106 @@ indistinguishable from success is not a safety check, which is why this asks a
 program that fails loudly instead of a pattern that fails silently.
 
 
+### An announcement is not a lock
+
+**Announcing a deploy tells nobody anything until they read it. Two sessions can
+both announce, both be right, and both be the owner. Re-read the inbox
+immediately before pulling, not just before gating.**
+
+On 2026-08-28 that happened. Two sessions announced a deploy of the same
+production checkout from the same base, `cc860a3`, within about a minute of each
+other. Both named themselves sole owner. Both had measured a clean gate and
+reported the numbers, and the numbers agreed: nine locks free, `document-tasks/`
+empty, nothing inflight. Neither had read the other's message when they sent
+their own, because both were written in the gap between finishing a gate and
+acting on it, which is exactly the gap the other's announcement lands in.
+
+**The gates were not insufficient. They were irrelevant.** Every reading either
+session took was about the machine, and the hazard was another session's
+intention, which leaves no trace in the machine until it acts. `watch.py
+--status` cannot see an agent that has decided to deploy and not yet moved. So
+more checking does not help, and adding a sixth check to the list above would not
+have caught it. That is why this rule sits here rather than in the gate list.
+
+**Be precise about what the hazard was, because the obvious fix is the wrong
+one.** It was not that the two would have deployed different trees. Both
+intended `git pull --ff-only origin main`, and whenever either ran it that day it
+would have landed `1a69452`, because that is what the ref held. The hazard was
+two sessions cycling the same three daemons minutes apart, each believing it
+owned the window, each having gated correctly against a machine state that said
+nothing about the other's intention. Writing this up as a SHA divergence invites
+the remedy "announce a SHA and pull exactly that SHA", which would not have
+helped here and would have made the deploy that ran carry less: the session that
+moved announced `cc860a3 -> c5671b6` and landed `1a69452`, six commits further
+on, because `c5671b6` had been superseded between its announcement and its pull.
+
+**What luck supplied was the timing, and calling it a protocol success would be
+false.** The second PR merged into the gap between the first session's
+announcement and its pull, so the two targets converged instead of arriving
+minutes apart. Reverse those sixty seconds and one session restarts three
+services that the other has just brought up. Nothing in either gate would have
+been different.
+
+Measured from the production reflog rather than from anyone's account of it:
+
+```
+01:26:51  cc860a3
+01:45:05  1a69452   announced as cc860a3 -> c5671b6
+01:51:39  28f9970   announced as 1a69452 -> 28f9970, landed as announced
+```
+
+`git merge-base --is-ancestor c5671b6 1a69452` is true, six commits apart.
+
+What did work was social and it is worth copying. The second session read the
+first's announcement before pulling, stopped, said "I have touched nothing", and
+asked which of two options to take rather than proceeding on the assumption its
+own window was clear. Nothing was lost because somebody held.
+
+**Three sessions independently noticing an unwritten rule is evidence the rule is
+needed. It is not evidence that any of them was authorised to write it.** Those
+are different claims, and the second rides in on the first very easily. While
+deconflicting who should write this section, one session offered another "take it
+if your user says go and I will stand down", which sounds like coordination and
+functions as the missing half of an authorisation the other's user had not given.
+A peer's willingness to defer is not an instruction. The rule the two settled on
+is the one to keep: neither writes until one has an explicit instruction from
+their own user, and whoever gets it announces before writing rather than after.
+
+**The real fix is a lock, not another rule about telling each other things.**
+Every mechanism that failed here was a message. What is wanted is something a
+second session finds already held rather than has to be told about, taken for the
+length of the pull and the restart, with a stale-lock story for a session that
+dies mid-deploy. Until that exists, the protocol above is the whole of the
+protection, and it depends on everyone reading their inbox at the right moment,
+which is the kind of rule this file elsewhere calls already broken.
+
+**While the lock does not exist, verify the restart against the HEAD that
+actually held when the services came up, not against the SHA you meant to
+deploy.** Main moved four times in forty minutes that evening under several
+sessions. One session pulled a SHA, somebody fast-forwarded the checkout between
+its pull and its restart, and its daemons armed on a commit it had not deployed;
+it only knew because it read the reflog rather than its own intent. The third
+deploy of the night is the contrast case and the cheap check: it confirmed no
+reflog entry fell between its pull at 01:51:39 and its restarts at 01:51:47,
+which is the only reason it could say the services came up on what it announced.
+
+One thing the gate list genuinely was missing, and it is a different fault from
+the one above. Work running from a *worktree* against production's browsers holds
+no production lock and passes every check in the previous section. A live
+`browser_mcp_proxy` was found this way during the same window, and it turned out
+to be another session's `test_apply_end_to_end` against a real Chrome. So:
+
+```
+ps aux | grep -E "run_apply|document_worker|browser_mcp_proxy" | grep -v grep
+```
+
+The production `document_worker` appears in that list every time and is not work
+in flight. Read each pid's full command line with `ps -o command= -p <pid>` when
+the answer depends on a flag: the same evening, a session piped `ps` through
+`cut -c1-240`, lost `--use-mock-keychain` past the truncation, and nearly
+reported a correctly-launched browser as stale. Truncate for display, query for a
+decision, never the same command for both.
+
 ## A change is done when the running system consumes it
 
 **A merged file, a written pack, or a deployed bundle that nothing reads is not
