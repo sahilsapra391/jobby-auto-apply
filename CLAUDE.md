@@ -303,7 +303,7 @@ Every agent task pins an exact model:
 
 - OpenAI: `gpt-5.6-luna`
 - Anthropic: `claude-sonnet-5`
-- Gemini: `gemini-3.7-flash`
+- Gemini: `gemini-3.7-flash-medium`
 
 Gemini must report the requested served model through its bounded telemetry
 record. A remap or missing record fails closed.
@@ -333,6 +333,94 @@ transport. This keeps the existing serial lease, crash recovery, bounded
 payload, and result-validation contract. Encryption, decryption, provider
 execution, HTML/PDF rendering, geometric checks, and file installation all run
 on the Mac. KV receives ciphertext and fixed status metadata.
+
+## The Profile page's wording travels, it is not read off the disk
+
+**Everything the document worker needs is in the bundle. The one input that was
+not is the one that never worked.**
+
+`_base_resume_content` read `resume-content.json` out of the task-private store
+and fell back to `templates/resume-content.json`. `materialize` wrote
+`profile.json` and `story-facts.txt` into that store and nothing else, so the
+file was never there, the fallback was the only path, and every resume and cover
+letter Jobby has generated started from the repository template. The Profile
+page saves an edit and answers "Saved. Your next tailored resume starts from
+this." No resume ever did.
+
+Measured on 2026-08-28, because a docstring asserting the store copy "is
+preferred here" is exactly the kind of claim that is not evidence for itself.
+`build_bundle` for the real application `7923ca442c573811` then `materialize`:
+the task store held those two files, and `_base_resume_content` on that runtime
+returned a dict equal to the shipped template and unequal to the store copy
+sitting on the same machine.
+
+So the wording goes through the bundle now. `build_bundle` resolves it through
+`store.resume_content`, which already answers with the device copy when the
+Profile page has been used and the template otherwise; `validate_bundle` checks
+its shape; `materialize` writes it beside `profile.json` at 0600. The bundle
+schema is 2, so a job encrypted before this and claimed after fails by name
+rather than quietly reverting.
+
+**An empty `document-tasks/` does not cover that window, and believing it does
+is the trap.** That directory holds *claimed* work. A bundle encrypted under the
+old schema and sitting unclaimed in the KV queue is not in it, and a worker that
+only speaks the new schema will claim it after the restart and reject it. It
+fails by name, which is what should happen, but it fails on a job the user
+already watched be accepted, so they see a failed application rather than a
+deploy artifact. Raised by a peer session on 2026-08-28 while reviewing this
+change, and it was right.
+
+So a schema bump gates on the queue as well as the directory. Both are cheap:
+
+```
+~/.job-application/document-tasks/ empty          -> nothing claimed
+no session documentJob.state in queued|claimed|running -> nothing waiting
+```
+
+Measured before this merged: 13 `documentJob` entries across the store, all
+`ready`, nothing queued or claimed. `document_job.retry_failed` rebuilds the
+bundle under the current schema, so a job caught by this is recoverable with the
+board's own Retry, but recovering it costs the user a click they did not earn
+and should be avoided rather than relied on.
+
+**Both of those checks read local state, and neither reads the queue.** The
+transport is Cloudflare KV and `document_job.py` cannot enumerate it: all five
+subcommands (`ensure`, `sync`, `retry`, `poll`, `show`) require `--id`, so it can
+only answer about a job whose id you already hold, and `show` resolves to
+`get_state`, which reads the session on disk. There is no "list what is waiting".
+
+The gate is sound anyway, and the reason is an ordering rather than a
+coincidence. `_ensure_unlocked` calls `_save_state` *before* `_submit`, with the
+comment saying why: if the process stops after Cloudflare accepts the request,
+the next pass reuses the same id. So a job cannot exist in KV without a local
+session already recording it, and enumerating sessions is complete by
+construction. The mirror can lag the other way, reading `queued` for a job that
+has finished, which only makes the gate hold when it need not.
+
+That completeness is a property of the single-device deployment, not of the
+check. Section 6 of `docs/plans/multi-tenant-architecture.md` is what would
+invalidate it: once another device can enqueue, the local mirror stops being the
+whole queue and this gate needs a real KV enumeration behind it.
+
+**No local fallback is left in the worker and none may be added back.** Reading
+a second file when the first is absent is precisely how one document's wording
+was served in place of another's for as long as the feature has existed, and a
+substitution that says nothing is indistinguishable from working. A missing file
+now fails the job by name. For the same reason, reading the base sits outside
+the OpenAI override-shape fallback: inheriting "the verified base wording" means
+something only once the base has been read, and swallowing the failure to read
+it leaves a run with no wording and nobody naming why.
+
+The shape check does not count list lengths, on purpose. `store._same_shape`
+counts slots because it stands next to the template. This endpoint does not,
+which is the whole reason the wording is transported, and `resume_build.render`
+is the check that does hold the template and refuses a mismatch.
+
+The tests are the other half of the lesson. Ten worker tests exercised this path
+and all ten passed throughout, because they built runtimes by hand and inherited
+the same fallback the product did; four had no `storeRoot` at all and were
+reading the developer's own `~/.job-application`. A test that supplies an input
+the real caller does not supply is testing a configuration nobody ships.
 
 ## Artifacts live in R2, and the board links to them by filename
 
@@ -489,6 +577,48 @@ into `uploads/<id>/activity.json`, and a park with zero browser calls is
 recorded as `parkClass: capability`, which the board draws in red saying the
 fault is Jobby's. A park where the agent worked the form stays a park.
 
+**That counter is written when the proxy is signalled, not only when it exits,
+and for two months it was only the latter.** The write sat at the end of
+`main()`, after `StdioProxy.run()` returns, which a process killed by a signal
+never reaches. Measured on 2026-08-28 over every staged upload directory on the
+production Mac: five real applications with their PDFs still staged and no
+`activity.json` between them, and the one real record belonging to the run whose
+Playwright backend never started, where the proxy exited on its own. Measured
+the same day against the live CLIs with a signal-recording MCP server, codex
+sends its MCP child SIGTERM and Claude Code sends SIGTERM to the server it
+spawns for discovery and SIGINT to the one running the session. Neither ever
+closes stdin, so no run that reached a form had ever written a record.
+
+The consequence was asymmetric, which is why nothing looked broken. The
+capability branch still fired, because a backend that fails to start lets the
+proxy exit cleanly and write `totalCalls` 0. What never fired was the positive
+half: `attempts[].browserCalls` was `None` for every real run and the
+`tag_session(application_id, "parkClass", "")` clearing had never once run.
+
+`_install_activity_signal_handlers` writes on SIGTERM, SIGINT and SIGHUP and
+then dies of what it was sent, so the exit status still reports the signal. Two
+things it must keep doing. It reads `process.returncode` rather than calling
+`poll()`, because `poll` takes subprocess's non-reentrant waitpid lock and a
+handler runs on the main thread that may be holding it; a deadlock inside the
+bookkeeping would cost the run the thing the bookkeeping is for. And it
+snapshots the stderr deque, which the drain thread is still appending to, since
+iterating one under a concurrent append raises `RuntimeError` and best-effort
+has to mean it on what is now the common path.
+
+**An absent record still means "nothing known" and that is load-bearing, not
+incidental.** `mcp_preflight` kills this process with `process.kill()`, SIGKILL,
+which cannot be caught, so a probe leaves nothing behind that could be read as a
+run which made zero calls. Verified against the real preflight and the real
+Playwright backend on 2026-08-28: thirteen tools advertised, no file written. Do
+not give preflight a graceful shutdown without moving that distinction
+somewhere else first.
+
+Verified the way CLAUDE.md asks for: a real `gpt-5.6-luna` run through the real
+firewall and the real `@playwright/mcp@0.0.79` recorded
+`{"browser_find":1,"browser_snapshot":1}`, `totalCalls` 2, `ended` SIGTERM; a
+real `claude-sonnet-5` run recorded `totalCalls` 1, `ended` SIGINT, its
+discovery probe's zero-call record correctly overwritten by the session's.
+
 `mcp_preflight.REQUIRED` and `_tool_definitions` are one contract in two files,
 pinned by `FenceSurfaceContractTests`. A tool in one and not the other is either
 unguarded or impossible, and both fail quietly.
@@ -517,6 +647,67 @@ in the resume field on a form nobody reads back. And the input is described
 before the attach, not after: a React form swaps the field out the moment it
 accepts a file, which made a working upload report a 30-second timeout on the
 live Justworks posting, and an agent told its upload failed retries it.
+
+## The file input cannot say whether the attach worked, 2026-08-28
+
+**`setInputFiles` resolving proves Playwright wrote files onto the DOM element.
+Everything that decides the outcome happens afterwards, in the page's own
+change handler, and `node.files` reports the same emptiness for all of it.**
+
+Three shapes, measured: SmartRecruiters takes the file off the input, sends it,
+and sets `input.value = ''` so re-choosing the same file still fires change,
+which empties `node.files` on **success**. Greenhouse swaps the field out for
+its own "file.pdf / Remove" view, which detaches the node the read would ask.
+And a form that rejects on type or size empties it on **failure**. So a tool
+reading only the input has to be wrong somewhere, and this one was wrong in
+both directions at once: across every `browser_attach_file` call ever recorded,
+the `node.files` confirmation branch fired zero times, five calls threw on a
+SmartRecruiters attach that had landed, and the two successes it ever reported
+both came out of the detached-node catch, from an `error` the code never read.
+
+Versant `6c3824319c68c547` is the proof of the first direction. Both targeted
+calls answered "the input reported no file after the attachment"; that
+application's own park note says the resume is attached; and the snapshot it
+took immediately after the last failed call has `resume.pdf` rendered beside
+the field. SWIGGY `40c1f32b247a885a` produced the identical error the same
+night, so this is SmartRecruiters and not Easy Apply.
+
+**The second observable is the page's own rendering of the filename, and it is
+scoped rather than searched for.** Both bound filenames are generic, so a
+document-wide `text.includes(name)` would confirm a resume from help text or
+from the cover letter beside it. The scopes are the input's own ancestors,
+innermost first, crossing shadow boundaries, and they are captured as a live
+handle **before** the attach, because the container that ends up showing the
+name is frequently the one the page rewrote. A match must be a text node's own
+text, must be a change against a baseline taken before the attach, and must not
+sit inside an alert: a form that rejects a file names that file in its error.
+
+**Do not flip the unconfirmed case into an attached-but-unconfirmed success.**
+It is the same observation as a rejection, so flipping it converts a false
+negative into a false positive, and the costs are not symmetric. A false
+negative parks a run and a person looks at it. A false positive walks an agent
+toward submit believing a resume is attached, under a real name, and cannot be
+recalled. What did change is the wording: unconfirmed rather than failed,
+carrying the page's own complaint when there is one, and telling the agent to
+read the field rather than attach again, which is the retry loop the Justworks
+case already warned about. The detached-node catch is held to the same
+standard, and reports the error it used to discard.
+
+**Both SmartRecruiters file inputs carry `id=file-input`, legally**, because
+each sits in its own `spl-dropzone` open shadow root where the id is unique.
+Playwright's CSS engine pierces those roots and finds two; `document.querySelector`
+finds none. So the id named neither, every error on that form read identically,
+and two sessions concluded from those logs that `nth=0` and `nth=1` had
+resolved to the same element, on evidence that could not support it. `describe()`
+now prints the way out of the element, which does tell them apart:
+`spl-dropzone[data-test=apply-with-resume-container]` is the autocomplete
+helper and `spl-dropzone[data-test=resume-upload]` is the resume field. Do not
+scope anything here on the id.
+
+`tests/fixtures/clearing-upload-form.html` reproduces both directions in one
+page, with the input inside an open shadow root and the ids duplicated the way
+the real form has them. It needs a live browser slot like the rest of
+`test_apply_end_to_end.py`, so it skips in CI.
 
 **A parked application may retry into its own slot, and only its own.**
 `candidate_apply_slots` returns the affinity slot when it is parked under the
@@ -936,8 +1127,32 @@ Corollaries, each of which was learned the expensive way:
 - Announce in writing before moving that branch or restarting a service, and say
   which you are taking when two sessions could reach for the same one.
 - Merging is not deploying. A long-lived Python process does not reload modules,
-  so the arming event is the restart. `scripts/brief.py` is the exception: the
-  watcher spawns it as a subprocess, so edits to it are live on save.
+  so for anything a daemon **imports**, the arming event is the restart. For
+  anything it **spawns**, the pull is the arming event and the file is live on
+  save. **Ask which, per file, never per repo**: a deploy carrying five changed
+  scripts is routinely both at once, and on 2026-08-27 two sessions asserted the
+  wrong half of it about `browser_mcp_proxy.py` in a deploy announcement before
+  anyone ran the one `grep` that settles it.
+
+  This used to say `scripts/brief.py` is *the* exception. Measured: `watch.py`
+  spawns fourteen scripts by path — `apply_marks`, `document_worker`, `drop`,
+  `finish`, `ingest`, `phase`, `promote`, `provider_login`, `run_apply`,
+  `run_scan`, `search_config`, `store`, `sync_board` and itself — and imports
+  `agent`, `browser`, `document_job`, `provider_login`, `providers` and
+  `toolpath`. `provider_login` is on both lists — imported at `watch.py:54`,
+  spawned at `watch.py:827` — so the granularity is the call path, not even the
+  file.
+
+  **When a doc says "X is the exception", suspect that X is the only case
+  anyone checked.** `brief.py` was not the exception, it was the instance
+  somebody happened to notice, and the rule got written around the observation
+  rather than the mechanism. The other fourteen were in the same file the whole
+  time, findable by the same grep.
+
+  The trap is that the two travel together. `browser_mcp_proxy.py` is spawned
+  and live on pull, while `browser.py`, which builds its argv, is imported and
+  is not. A pull without a restart delivers the launched thing and not its
+  launcher.
 - After a restart, confirm from each daemon's own start time against the
   checkout's reflog which SHA it is actually running. A healthy-looking process
   can be executing code from hours ago.
@@ -1181,6 +1396,71 @@ The cost of this is a few kilobytes a run. The cost of not doing it, measured
 three times now, is that the one occurrence able to name the cause is the one
 occurrence guaranteed not to.
 
+### The vendor's own log is a diagnostic path, 2026-08-28
+
+**agy writes the reason for a failed run to a file and hands back nothing. So
+the fourth source in the failure chain is agy's log, joined by conversation id.**
+
+Five Gemini document jobs failed 10 to 13 seconds after provider start, exit 1,
+across two applications between 01:22Z and 03:59Z. The whole recorded account
+of each was:
+
+    provider exited 1: event : result , result : conversation id :
+    a3d7c777-5cb0-4202-8731-fd37d5ee00ba , status : ERROR , response : , error :
+
+Three sources were consulted and all three were empty. Stderr was empty. The
+terminal result carried `status: ERROR` with an empty response *and a genuinely
+empty error string*, not one the 140-character cap had cut. The weak
+last-line-naming-an-error fallback then quoted that same empty event back, and
+spent 36 of its 140 characters on a conversation id.
+
+The reason existed the whole time, in `~/.gemini/antigravity-cli/log/cli-*.log`:
+
+    pubsub: Publish killing slow subscriber "...": subscriber fell behind
+    updates, stalled for 5s
+    Print mode: conversation update stream failed: subscriber fell behind
+    updates, stalled for 5s
+
+**What it is.** An internal race in agy 1.1.22, not a fault of ours. The killed
+subscriber is agy's own idle-watcher: goroutine dumps in all four logs show it
+created by `WaitForConversationFullyIdle` under `printmode.pollResponse`, while
+`processModelStream` blocks publishing the first step to it. The publisher gives
+up after 5s, which fails the conversation update stream, which makes print mode
+emit that empty ERROR result and exit 1. Our stdout reader is not involved: the
+stall begins ~0.4s after the user message is forwarded and before the model has
+returned anything to write.
+
+**What it is not, each ruled out by measurement rather than by argument.** Not
+size or an agy streaming limit: the identical 634,903-byte stdin line, one
+NDJSON line built by the real `build_run_invocation`, succeeded 6 of 6 on
+2026-08-28 after the window. Not the bundle: the same Robinhood bundle succeeded
+at 01:18:53Z and failed at 03:59Z. Not quota or auth: the logs show
+`authenticated via keyring`, no quota error, and the successes bracket the
+failures. Not contention between agy processes: across all 142 agy runs of
+2026-08-27 the overlap count is zero, every run. Not machine load from form
+runs: only 1 of the 4 failures overlapped a live apply slot.
+
+**It did not reproduce and that is reported rather than smoothed over.** 6 of 6
+succeeded against the real prompt after the window closed, versus 4 of 5 real
+document runs failing inside it. Likeliest cause is a timing-sensitive race
+whose trigger has not been identified, not a condition anyone has cleared. If
+Gemini document jobs start failing this way again, read the CLI log first.
+
+The failure chain is now four sources, strongest first: stderr, then the first
+stream event carrying a *non-empty* error (earliest wins, because the terminal
+result's is empty), then agy's log, then the weak line match. UUIDs are stripped
+from a reason so the cap buys information.
+
+Two guards on that log read, both load-bearing and both tested by disabling
+them. The match is an allowlist of `printmode.go` and `pubsub.go` at severity E,
+never a search for "error", and any line containing `@` is refused: the same
+file records the signed-in Google account, and with both guards removed the
+recovered "reason" is `applyAuthResult: email=...@gmail.com`. And the join is by
+conversation id, never by taking the newest file, because runs overlap and a
+neighbour's fault attributed to this job is worse than no reason at all. The
+scan is bounded by age rather than by count; a count of twelve missed a real
+failure log sitting at rank fourteen.
+
 ## Checking a peer's number is not the slow path
 
 **The coordination cost is a few messages. The 20.87 MB cost 23 hours.**
@@ -1224,3 +1504,225 @@ cannot see where it came from.
 So: quantify the claim and state what was and was not observed. "Intermittent,
 observed on X at Y, not reproduced on Z" rather than "every time". Where a fix
 addresses a failure you have not reproduced, say "likeliest cause", not "was".
+
+## A test may not write the device's own store
+
+**Every test module that drives store-writing code gets a `setUpModule` calling
+`store_isolation.begin()`. Nothing else keeps fixtures out of the real
+`~/.job-application`, and nothing about a fixture announces itself once it is
+in there.**
+
+Measured 2026-08-28, having gone unnoticed since at least 2026-08-25:
+`usage.jsonl` held **3,372 fabricated rows against 29 real ones**, fifteen more
+per suite run, every one carrying a plausible application id, a real pinned
+model name and a real `taskKind`. `summary` averages over all of them, so the
+answer to "what does one application cost" was a statement about the test
+suite. Alongside it: `sessions/acme-pm.json`, a fabricated application sitting
+in Needs you pending on "Enter the OTP", written by the same store CLI a real
+run uses; `acme-pm` filed among 190 real entries in `roles.json`; the live
+`browser-mcp-apply-1.json` rewritten; and `providers.json`, the registry the
+three services read for connection order and health.
+
+Nothing failed, because none of these paths is supposed to complain.
+
+Four things this class does that make it invisible, each of which cost a
+separate round of looking:
+
+**A CI runner's home is disposable, so the whole class is harmless there.** It
+only ever damages the machine that also holds the real applications. Do not
+expect green checks to say anything about it.
+
+**A store path as a default argument silently defeats any redirect.** Python
+binds a default once, when the `def` runs, so `state_file=STATE_FILE` goes on
+naming the path the module held at import however the constant is set
+afterwards. `ProviderRegistry()` and `_default_registry()` therefore had two
+different behaviours, decided by whether the caller typed an argument. Five
+sites had it; `NoStorePathIsAFrozenDefaultTests` now walks `scripts/` and fails
+on a sixth.
+
+**Redirecting `JOB_APPLICATION_DIR` alone finds only half of it.** The rest are
+`Path.home()` constants evaluated at import, which no environment variable can
+reach. Sweep with `HOME` redirected, not `JOB_APPLICATION_DIR`.
+
+**A per-module run proves nothing about a suite run.** Four test modules
+execute a `scripts/` module by hand and assign it over its `sys.modules` entry,
+orphaning the original — and the original is what `run_apply.providers` and
+every other importer still points at. Redirecting what `sys.modules` holds
+moved the copy nobody calls. `test_provider_runners` was clean on its own and
+wrote the real registry in a full run, and the difference is only whether the
+swapping module got loaded.
+
+Two mechanisms answer it. `tests/store_isolation.py` moves a module's store,
+discovering constants by walking the module graph rather than by holding a
+list, so one added tomorrow is covered without anyone remembering. And
+`provider_usage.record` refuses to write the device ledger when it detects a
+test runner, which is the backstop for the one file whose corruption is silent
+by construction; that detection is measured rather than asserted, by importing
+the apply path in a fresh interpreter and checking neither `unittest` nor
+`pytest` lands in `sys.modules`. Measured with the isolation deliberately
+removed from `test_provider_runners`: ten rows written without the guard, zero
+with it.
+
+That backstop reports itself with `sys.stderr.write`, not `print`, and the
+difference is not style. The tests that reach it are the ones driving
+`run_apply.main()`, and every one of them is wrapped in
+`mock.patch("builtins.print")` to keep the runner readable. The first version
+refused all ten rows and said so zero times — a diagnostic silenced by exactly
+the runs it existed to explain, which is this repo's oldest failure shape in a
+new place.
+
+**The guarantee is about writes, and reads are a different one.** A test that
+reads the device's own `resume-content.json` and passes because of what it found
+there is non-hermetic, and no count of files that appeared will ever say so.
+`document_worker._base_resume_content` was the one store-root resolution under
+`scripts/` that ignored `JOB_APPLICATION_DIR` — thirteen others honour it — and
+#107 gave it a third caller inside `_ats_checks`, which is validation. It is
+fixed, but that closed an instance rather than the class.
+
+Finding the next one is a sweep, and there is no cheaper way:
+
+```bash
+python3 tests/store_isolation.py
+```
+
+It is deliberately not in CI, for the reason above.
+
+### Interim, and delete only this subsection when it is done
+
+**Everything under this heading expires when the fix is in every checkout.
+Nothing below it does.** They are separated because the deletion is the moment
+the two get confused, and the confusion runs toward "a redirect is all you
+need", which is the dangerous direction. Retire this when a full suite run from
+a fresh checkout measurably writes nothing into the real store.
+
+Measured 2026-08-28: nine worktrees plus the production checkout hold ten copies
+of the five writing modules, and a copy is per-worktree while an agreement to
+hold off is per-session. So a quiet window cannot be granted by asking; it can
+only be taken and immediately re-measured. That is also why the production
+checkout matters here, since it is a place nobody thinks of as somewhere tests
+run.
+
+Until then, the interim instruction for anyone running the suite on this machine
+is `HOME=$(mktemp -d)` in front of it. **Give that instruction with its cost
+attached: one failure and seven skips, all store-absence.** Both halves matter
+and the second is the one people scroll past.
+
+The failure is
+`test_resume_build.ShippedTemplateTests.test_the_shipped_template_and_base_render_together`,
+which asserts "SAHIL SAPRA" appears in the rendered HTML and gets empty name and
+contact divs because the profile lives in the real store. Three sessions hit
+exactly that one, independently, at 2124, 2126 and 2134 tests.
+
+The seven skips are the real cost. Measured 2026-08-28: three "no answer store
+on this machine", one each for no rendered resumes, no real job store, no
+profile, and no profile at the redirected path. Those are the tests that check
+against the real corpus, which is precisely the class that exists because a
+synthetic fixture could not have caught the thing: `LiveCorpusTests`,
+`test_no_pii`'s tracked-file scan, the resume round-trip over every resume ever
+written, and the real state's fit under the publish ceiling. A redirected run
+reporting 2,124 passed has less coverage than the number implies and says so
+only in a skip count. **If seven ever becomes eight, notice.**
+
+### Durable, and none of it expires with the fix above
+
+**A redirected home isolates the store, not the machine.**
+`tests/test_apply_end_to_end.py` does not skip under one: `browser.running`
+probes the real CDP ports and never consults `HOME`, so it drives a real apply
+slot either way, and it reserves nothing while doing so (see the missing-lock
+note below). Its *file* writes do follow `HOME`, because `browser.ARTIFACTS`
+derives from `Path.home()` in the test process. Chrome's own absolute
+`--user-data-dir` governs the browser profile, which is a different path and not
+where artifacts land. Measured: a redirected `discover` run put its
+`activity.json` in the throwaway home and left the real tree untouched.
+
+**So `watch.py --status` before a full run, always, and this does not expire
+with the store fix.** Not because a redirect leaks, but because that module
+reaches past the filesystem entirely to a real browser, which no store isolation
+can address. #109 stops it taking a slot the watcher holds; two concurrent test
+runs choosing the same free slot is still unguarded. While the interim
+subsection above is also in force there are two precautions rather than one, and
+they answer different hazards; when it is retired this one remains.
+
+**The attribution trap here is worth more than the rule.** Every run of that
+module uses `applicationId` "endtoend", so every run on a given slot writes the
+same `browser-artifacts/<slot>/uploads/endtoend/activity.json`. Neither the path
+nor the timestamp can tell one session's run from another's, and on a machine
+with several sessions the obvious inference is wrong. On 2026-08-28 two sessions
+independently found that file in the real store, each dated it to their own
+redirected run, and concluded the redirect was unsafe. It was neither of theirs:
+its contents read
+
+    {"browser_attach_file":1,"browser_find":1,"browser_snapshot":1,"browser_tabs":2}
+
+and at that moment the only test file calling `browser_tabs` was a third
+session's unmerged branch, on an authorised unredirected run. Two people checked
+that a file existed, at a plausible time, in the right place, and both were
+wrong about who wrote it. **Open the file before concluding anything from its
+presence in that tree.**
+
+**That discriminator has already expired, which is the real warning.** #115
+merged the `browser_tabs` calls into `tests/test_apply_end_to_end.py` on main,
+so every session's run now produces the same call mix again and the contents no
+longer attribute anything either. Do not grep for the tool name: `browser_tabs`
+is an ordinary firewall tool in `browser_mcp_proxy.py` and in
+`mcp_preflight.REQUIRED`, and has been throughout, so finding it proves nothing
+about which test wrote a record. **There is currently no reliable way to
+attribute one of these files between sessions.** The fix is the slot lock noted
+below, which would let a run declare what it is using; until then, if you need
+to know who wrote one, ask on the machine rather than infer.
+
+**Provenance is the one property you cannot check by reading the artifact**,
+because the artifact is identical either way, and it is where careful people
+went wrong three times on 2026-08-28. A shared `activity.json` said nothing
+about which of ten checkouts wrote it. A mechanism claim ("that file is imported
+by the watcher, so a pull without a restart delivers nothing") travelled two
+hops from the person who guessed it to a person taking a deploy, gathering
+confidence at each hop and never a measurement; it is spawned, and one `grep`
+settled it. And a session offered a memory note back to its own author as
+independent corroboration, which would have counted one write as three sources
+had the author not checked the mtime and found themselves.
+
+None of those was careless, and all three are the same thing: a claim about
+where something came from, which the thing itself cannot answer. Ask the source,
+`grep` the tree, read the mtime. Do not reason about it.
+
+**And verifying every claim in a list is not verifying the conclusion drawn from
+it.** A fourth session was handed three mechanisms behind that wrong rule --
+`browser.running` never reads `HOME`, Chrome is launched with an absolute
+`--user-data-dir`, the file is present in the real store -- checked all three
+against the code, found all three true, and reported the conclusion verified. It
+was still wrong, because the conclusion rested on a fourth link nobody had
+stated: that the artifact path follows the profile path. It does not.
+`browser.ARTIFACTS` derives from `Path.home()` in the test process while
+`--user-data-dir` is Chrome's own profile, and the two are unrelated. Checking
+the three claims harder would never have found it. What found it was opening the
+file.
+
+So when you are asked to check somebody's reasoning, the question is not whether
+each stated claim holds. It is what the conclusion actually rests on, and whether
+that is in the list at all. This is the same shape as the near-miss where "null
+token counts" looked like a fixture tell and was a property of every row in the
+store: real evidence, internally consistent, pointing at the wrong thing. Both
+times the fix was to go and look at the specific object rather than reason about
+the class it belongs to.
+
+`tests/test_apply_end_to_end.py` is excluded from the sweep, and the reason is
+not a leak. It drives a real Chrome on a real apply slot, so the firewall
+writing `browser-mcp-apply-N.json` and an `activity.json` under
+`browser-artifacts` is the behaviour under test. #109 is what stops it reaching
+a slot it has no business in: `live_slot` takes its candidates from
+`watch.free_apply_slots` rather than from whichever Chrome answers, so a busy or
+parked slot is left alone. Before it, the module opened fixture tabs in a browser
+that was filling somebody's real application. Both of its failures observed here
+on 2026-08-28 were that plus the stale `totalCalls == 2` constant #109 also
+fixed, and both are gone on main.
+
+**Slot selection and page selection are two problems and #109 fixed one.**
+Playwright picks a page when it connects and stays on it, so a tab an earlier
+run abandoned is still current and opening another over CDP does not move off
+it. Found on 2026-08-28 in a genuinely free slot: a test drove a leftover
+`upload-form.html`, attached to that page's input, and passed, because the
+fixture it thought it was on and the one it was actually on both contain the
+words "Cover letter". A real assertion about the wrong subject, which is the
+same shape as the salvaged-answer join and the Adzuna fixture. Select the tab by
+URL rather than trusting whatever the connection landed on.

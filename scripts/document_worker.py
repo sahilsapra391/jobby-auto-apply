@@ -77,7 +77,6 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_PDF_BYTES = 16 * 1024 * 1024
 PROVIDER_ACTIONS = frozenset(("connect", "disconnect", "refresh"))
 MAX_AUTH_FILE_BYTES = 2 * 1024 * 1024
-RESUME_BASE_CONTENT = REPO / "templates" / "resume-content.json"
 RESUME_TEMPLATE = REPO / "templates" / "resume.html"
 COVER_TEMPLATE = REPO / "templates" / "cover-letter.html"
 RESUME_OVERRIDE_KEYS = frozenset((
@@ -117,6 +116,61 @@ def _first_line(raw: bytes | bytearray) -> str:
     return ""
 
 
+# A conversation id is 36 characters of pure noise inside a 140-character cap,
+# and it sat in front of the only informative part of every recorded Gemini
+# failure. It is stripped from a reason, never from the joins below.
+_UUID = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+
+def _stream_events(raw: bytes | bytearray) -> "list[dict[str, Any]]":
+    """Every NDJSON object a stream-json provider wrote, in order."""
+    events: list[dict[str, Any]] = []
+    for line in bytes(raw).decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _stream_conversation_id(raw: bytes | bytearray) -> str:
+    """The conversation this run was, for joining agy's own log to it."""
+    for event in _stream_events(raw):
+        for value in event.values():
+            if isinstance(value, Mapping):
+                found = value.get("conversation_id")
+                if isinstance(found, str) and found.strip():
+                    return found.strip()
+    return ""
+
+
+def _stream_error(raw: bytes | bytearray) -> str:
+    """The first non-empty error a stream-json provider reported.
+
+    Earliest wins, deliberately. agy ends a failed run with a terminal result
+    whose status is ERROR and whose error string is empty, so taking the last
+    error-shaped event recorded the fact of a failure and none of its cause.
+    Where the stream does carry a reason it is in an event before that one.
+    """
+    for event in _stream_events(raw):
+        # Top level first, then the one wrapper agy puts around a result. Only
+        # a field actually named "error" is read, so the model's own partial
+        # draft can never become a failure reason.
+        for holder in (event, *(v for v in event.values() if isinstance(v, Mapping))):
+            error = holder.get("error")
+            if isinstance(error, str) and error.strip():
+                return " ".join(_UUID.sub("", error).split())[:300]
+    return ""
+
+
 def _stdout_error_line(raw: bytes | bytearray) -> str:
     """The last stdout line that names an error, for a failure reason.
 
@@ -127,13 +181,91 @@ def _stdout_error_line(raw: bytes | bytearray) -> str:
     away. Only lines that say "error" are considered: the stream also carries
     the model's partial output, and a failure reason must never quote the
     document it was generating.
+
+    This is the weakest of the three sources and runs last. A line that merely
+    contains the word "error" is evidence that something failed, not a reason.
     """
     text = bytes(raw).decode("utf-8", "replace")
     chosen = ""
     for line in text.splitlines():
         if line.strip() and "error" in line.lower():
             chosen = line.strip()
-    return chosen[:300]
+    return " ".join(_UUID.sub("", chosen).split())[:300]
+
+
+# agy writes one log per run under here, named for its start time.
+AGY_LOG_DIR = Path("~/.gemini/antigravity-cli/log")
+MAX_AGY_LOG_BYTES = 1024 * 1024
+# Comfortably longer than any document run, so the log of the run that just
+# failed is always in range, and short enough that a stale file never is.
+MAX_AGY_LOG_AGE_SECONDS = 2 * 60 * 60
+MAX_AGY_LOGS_SCANNED = 60
+# The line shapes agy uses to say a print-mode run failed. An allowlist, not a
+# search for "error": the same file records the signed-in Google account on its
+# OAuth lines, and a reason is not worth writing an email address into every
+# job log to obtain. Both of these modules are about the print run itself and
+# neither reports an identity.
+_AGY_FAULT = re.compile(r"\bE\d{4} [0-9:.]+ +\d+ (printmode|pubsub)\.go:\d+\] (.+)$")
+
+
+def _agy_log_reason(conversation_id: str, *, log_dir: Path | str = AGY_LOG_DIR) -> str:
+    """Why agy says a print-mode run failed, from agy's own log.
+
+    THE REASON NEVER REACHES THIS PROCESS. That is the whole point of this
+    function. A failed agy run exits 1 with stderr empty and a terminal result
+    event whose status is ERROR, whose response is empty and whose error is the
+    empty string, so both of the sources above have nothing to report. The
+    sentence naming the cause is written only to the CLI's own log file.
+
+    Measured on 2026-08-28: five Gemini document jobs failed and every one
+    recorded "provider exited 1" plus an empty error field, while each run's
+    log held the same two lines, which say what actually happened:
+
+        pubsub: Publish killing slow subscriber "...": subscriber fell behind
+        updates, stalled for 5s
+        Print mode: conversation update stream failed: subscriber fell behind
+        updates, stalled for 5s
+
+    Joined to the run by conversation id rather than by picking the newest
+    file. Runs overlap, and attributing a neighbour's fault to this job is
+    worse than reporting no reason at all.
+    """
+    if not conversation_id or not _UUID.fullmatch(conversation_id):
+        return ""
+    # Newest first, and bounded by age rather than by count. agy never prunes
+    # this directory, which held 442 files when this was written, and the run
+    # that has just failed wrote one of the newest. A count alone is the wrong
+    # bound: six unrelated runs in between pushed a real failure to rank 14 and
+    # a cap of twelve reported no reason for a fault sitting on the disk.
+    cutoff = time.time() - MAX_AGY_LOG_AGE_SECONDS
+    try:
+        candidates = sorted(
+            (item for item in Path(log_dir).expanduser().glob("cli-*.log")
+             if item.stat().st_mtime >= cutoff),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )[:MAX_AGY_LOGS_SCANNED]
+    except OSError:
+        return ""
+    for path in candidates:
+        try:
+            if path.stat().st_size > MAX_AGY_LOG_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if conversation_id not in text:
+            continue
+        for line in text.splitlines():
+            if "@" in line:
+                continue
+            found = _AGY_FAULT.search(line)
+            if found:
+                return " ".join(_UUID.sub("", found.group(2)).split())[:300]
+        return ""
+    return ""
+
+
 _REASON_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
 
 
@@ -1178,19 +1310,38 @@ def _model_text(
 
 
 def _base_resume_content(runtime):
-    """The wording a tailored resume starts from.
+    """The wording a tailored resume starts from, as the bundle carried it.
 
-    The Profile page edits this. The board cannot write to a tracked repository
-    file, so the edit lands beside the rest of the store and is preferred here.
-    The shipped template stays the fallback and the shape reference: the store
-    refuses an override whose list lengths differ from it, so the two can never
-    disagree about how many slots the template has.
+    The Profile page edits `resume-content.json` in the store, and that edit was
+    invisible for as long as this feature has existed. This read the
+    task-private store, `document_contract.materialize` wrote only `profile.json`
+    and `story-facts.txt` into it, so the file was never there and every resume
+    and cover letter fell back to the repository's `templates/resume-content.json`
+    instead. Measured on 2026-08-28 against a real materialized bundle for
+    application 7923ca442c573811: the task store held those two files and
+    nothing else, and this returned the shipped template while the store copy on
+    the same machine said something different.
+
+    The wording is transported now, so there is no local fallback left and that
+    is deliberate. Reading a second file when the first is absent is how this
+    substituted one document's wording for another's without saying so, and a
+    silent substitution is indistinguishable from working.
+
+    #116 found the same line from the other side and is worth recording, because
+    it explains why this got worse rather than staying merely wrong. The old
+    fallback ended in a literal `~/.job-application` that no `JOB_APPLICATION_DIR`
+    redirect could move, and it was the only store-root resolution under
+    `scripts/` that ignored the environment. That stayed survivable while the
+    two callers were the prompt and the render. #107 added a third inside
+    `_ats_checks`, which is validation, so from then on a test could pass or
+    fail on the contents of a file it never wrote. Requiring the task store's
+    own copy answers both faults with one rule.
     """
-    root = Path(runtime.get("storeRoot") or "~/.job-application").expanduser()
-    override = root / "resume-content.json"
-    if override.exists():
-        return _read_small_json(override, MAX_PROMPT_SECTION_BYTES)
-    return _read_small_json(RESUME_BASE_CONTENT, MAX_PROMPT_SECTION_BYTES)
+    path = Path(runtime["storeRoot"]) / "resume-content.json"
+    if not path.is_file():
+        raise ResultInvalid(
+            "the base resume wording was not materialized for this task")
+    return _read_small_json(path, MAX_PROMPT_SECTION_BYTES)
 
 
 def _validate_resume_overrides(
@@ -1345,8 +1496,12 @@ def validate_provider_content(
         raise ResultInvalid("coverLetter has an invalid shape")
     company = str(runtime.get("company") or "").strip()
     role = str(runtime.get("role") or "").strip()
+    # Outside the fallback below. That fallback is about the shape of the
+    # model's overrides, and "inherit the verified base wording" only means
+    # something once the base has actually been read. Swallowing a failure to
+    # read it would leave the run with no wording and no one naming why.
+    base = _base_resume_content(runtime)
     try:
-        base = _base_resume_content(runtime)
         overrides = _validate_resume_overrides(raw["resumeOverrides"], base)
     except ResultInvalid:
         if not openai:
@@ -2235,7 +2390,16 @@ class ProviderRunner:
             if overflow.is_set():
                 raise GenerationFailed("provider response exceeded its size limit")
             if process.returncode != 0:
-                detail = _first_line(stderr_tail) or _stdout_error_line(output)
+                # Four sources, strongest first, because the strong ones were
+                # empty for every Gemini failure on 2026-08-28 and the run then
+                # recorded its exit code and nothing else. A stream that names
+                # its own fault is believed; agy's log is asked only when the
+                # stream says a run failed without saying why; and a line that
+                # merely contains the word "error" is the last resort it was.
+                detail = _first_line(stderr_tail) or _stream_error(output)
+                if not detail and invocation.provider_id == "gemini":
+                    detail = _agy_log_reason(_stream_conversation_id(output))
+                detail = detail or _stdout_error_line(output)
                 raise GenerationFailed(
                     f"provider exited {process.returncode}"
                     + (f": {detail}" if detail else "")
@@ -2265,7 +2429,10 @@ class DocumentWorker:
     def __init__(
         self,
         *,
-        state_dir: Path = DEFAULT_STATE_DIR,
+        # None, not DEFAULT_STATE_DIR: a default argument binds once, at import,
+        # so it keeps naming the path this module held then. See
+        # providers.ProviderRegistry.__init__.
+        state_dir: Path | None = None,
         transport: Any | None = None,
         control_transport: Any | None = None,
         registry: providers.ProviderRegistry | None = None,
@@ -2292,7 +2459,9 @@ class DocumentWorker:
         monotonic: Callable[[], float] = time.monotonic,
         provider_controls: bool = True,
     ):
-        self.state_dir = private_directory(Path(state_dir).expanduser().resolve())
+        self.state_dir = private_directory(
+            Path(state_dir if state_dir is not None
+                 else DEFAULT_STATE_DIR).expanduser().resolve())
         self.task_dir = private_directory(self.state_dir / "document-tasks")
         self.log_dir = private_directory(self.state_dir / "document-logs")
         self.transport = transport or NodeTransport()

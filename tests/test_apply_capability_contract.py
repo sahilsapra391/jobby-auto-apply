@@ -23,10 +23,24 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browser  # noqa: E402
 import browser_mcp_proxy  # noqa: E402
 import mcp_preflight  # noqa: E402
 import providers  # noqa: E402
+import store_isolation  # noqa: E402
+
+
+def setUpModule():
+    # Building a real invocation writes the slot's firewall config. Unisolated,
+    # asking for apply-1 rewrote ~/.job-application/browser-mcp-apply-1.json,
+    # the file a live Chrome slot's fence is configured from, and created a
+    # browser-profile for a browser this module never opens.
+    store_isolation.begin()
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 class FenceSurfaceContractTests(unittest.TestCase):

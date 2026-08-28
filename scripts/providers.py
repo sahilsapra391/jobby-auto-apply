@@ -870,7 +870,9 @@ def build_run_invocation(
     prompt: str,
     *,
     workspace: Path | str = REPO,
-    state_dir: Path | str = STATE_DIR,
+    # None, not STATE_DIR: see ProviderRegistry.__init__ for why a store path
+    # may not be a default argument.
+    state_dir: Path | str | None = None,
     writable_dirs: Sequence[Path | str] = (),
     browser_slot: str | None = None,
     browser_adapter: Any | None = None,
@@ -888,7 +890,7 @@ def build_run_invocation(
         raise ProviderError(f"{PROVIDER_INFO[provider_id]['cli']} is not installed")
 
     work = Path(workspace).expanduser().resolve()
-    state = Path(state_dir).expanduser().resolve()
+    state = Path(state_dir if state_dir is not None else STATE_DIR).expanduser().resolve()
     # Provider tools never receive repository or state-directory access. The
     # trusted runner passes task facts in the prompt and exposes only narrow MCP
     # actions. In particular, config.env and browser profiles are not agent
@@ -1172,16 +1174,25 @@ def _normalize_state(raw: Any) -> dict[str, Any]:
 
 
 class ProviderRegistry:
+    # `state_file` defaults to None and resolves STATE_FILE here rather than
+    # naming it in the signature. A default argument is bound once, when the
+    # class is defined, so `ProviderRegistry()` kept writing the path this
+    # module held at import no matter what STATE_FILE was set to afterwards.
+    # The three bare constructions -- two in watch.py, one in provider_login.py
+    # -- therefore ignored a redirected registry while _default_registry(),
+    # which passes STATE_FILE explicitly, honoured it. Two behaviours from one
+    # constructor, decided by whether the caller typed an argument.
     def __init__(
         self,
-        state_file: Path | str = STATE_FILE,
+        state_file: Path | str | None = None,
         *,
         probe_fn: Callable[[str], ProbeResult] | None = None,
         model_probe_fn: Callable[[str], ProbeResult] | None = None,
         binary_resolver: Callable[[str, bool], str | None] | None = None,
         clock: Callable[[], datetime] | None = None,
     ):
-        self.state_file = Path(state_file).expanduser()
+        self.state_file = Path(state_file if state_file is not None
+                               else STATE_FILE).expanduser()
         self.lock_file = self.state_file.with_name(f"{self.state_file.name}.lock")
         self.probe_fn = probe_fn or probe_provider
         self.model_probe_fn = model_probe_fn or (probe_fn if probe_fn else probe_model_access)

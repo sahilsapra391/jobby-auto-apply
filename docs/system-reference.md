@@ -192,7 +192,7 @@ selected account's API usage quota.
 
 The command builder pins a model for every document, form, and scan task:
 OpenAI `gpt-5.6-luna`, Anthropic `claude-sonnet-5`, and Gemini
-`gemini-3.7-flash`. No spawned task inherits the CLI default.
+`gemini-3.7-flash-medium`. No spawned task inherits the CLI default.
 
 Provider-neutral does not mean provider-decided safety. Duplicate refusal,
 artifact acceptance, allowed output paths, pre-submit write-ahead, confirmation
@@ -464,7 +464,7 @@ claims one job at a time, requires the provider saved in the request to be
 connected and healthy on the device, and starts the matching native CLI without
 a browser. It does not use another connected provider when that check fails.
 The shared command builder pins `gpt-5.6-luna`, `claude-sonnet-5`, or
-`gemini-3.7-flash`, so a vendor CLI default cannot change the task later.
+`gemini-3.7-flash-medium`, so a vendor CLI default cannot change the task later.
 
 The provider receives inline task data in an empty read-only sandbox and returns
 bounded prose overrides and cover-letter content as structured JSON. Claude
@@ -719,7 +719,7 @@ application").
 | PDF inspection | **pymupdf** | Geometric verification |
 | Vector tracing | **potrace** | Favicon: 40KB raster → 263-byte vector |
 | Agent runtime | Native **OpenAI Codex**, **Anthropic Claude Code**, and Google agent CLI | Ordered health selection and stage-boundary failover |
-| Fixed models | OpenAI `gpt-5.6-luna`; Anthropic `claude-sonnet-5`; Gemini `gemini-3.7-flash` | Every task names its model instead of inheriting a CLI default |
+| Fixed models | OpenAI `gpt-5.6-luna`; Anthropic `claude-sonnet-5`; Gemini `gemini-3.7-flash-medium` | Every task names its model instead of inheriting a CLI default |
 | Scheduling | Three Mac **launchd** services | Five-second orchestration, serial documents, two-second provider controls |
 | Monitoring | **healthchecks.io** dead-man's switch | |
 | Store | **JSON + JSONL on disk**, stdlib only | |
