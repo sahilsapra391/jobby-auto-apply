@@ -303,7 +303,7 @@ Every agent task pins an exact model:
 
 - OpenAI: `gpt-5.6-luna`
 - Anthropic: `claude-sonnet-5`
-- Gemini: `gemini-3.7-flash`
+- Gemini: `gemini-3.7-flash-medium`
 
 Gemini must report the requested served model through its bounded telemetry
 record. A remap or missing record fails closed.
@@ -577,6 +577,48 @@ into `uploads/<id>/activity.json`, and a park with zero browser calls is
 recorded as `parkClass: capability`, which the board draws in red saying the
 fault is Jobby's. A park where the agent worked the form stays a park.
 
+**That counter is written when the proxy is signalled, not only when it exits,
+and for two months it was only the latter.** The write sat at the end of
+`main()`, after `StdioProxy.run()` returns, which a process killed by a signal
+never reaches. Measured on 2026-08-28 over every staged upload directory on the
+production Mac: five real applications with their PDFs still staged and no
+`activity.json` between them, and the one real record belonging to the run whose
+Playwright backend never started, where the proxy exited on its own. Measured
+the same day against the live CLIs with a signal-recording MCP server, codex
+sends its MCP child SIGTERM and Claude Code sends SIGTERM to the server it
+spawns for discovery and SIGINT to the one running the session. Neither ever
+closes stdin, so no run that reached a form had ever written a record.
+
+The consequence was asymmetric, which is why nothing looked broken. The
+capability branch still fired, because a backend that fails to start lets the
+proxy exit cleanly and write `totalCalls` 0. What never fired was the positive
+half: `attempts[].browserCalls` was `None` for every real run and the
+`tag_session(application_id, "parkClass", "")` clearing had never once run.
+
+`_install_activity_signal_handlers` writes on SIGTERM, SIGINT and SIGHUP and
+then dies of what it was sent, so the exit status still reports the signal. Two
+things it must keep doing. It reads `process.returncode` rather than calling
+`poll()`, because `poll` takes subprocess's non-reentrant waitpid lock and a
+handler runs on the main thread that may be holding it; a deadlock inside the
+bookkeeping would cost the run the thing the bookkeeping is for. And it
+snapshots the stderr deque, which the drain thread is still appending to, since
+iterating one under a concurrent append raises `RuntimeError` and best-effort
+has to mean it on what is now the common path.
+
+**An absent record still means "nothing known" and that is load-bearing, not
+incidental.** `mcp_preflight` kills this process with `process.kill()`, SIGKILL,
+which cannot be caught, so a probe leaves nothing behind that could be read as a
+run which made zero calls. Verified against the real preflight and the real
+Playwright backend on 2026-08-28: thirteen tools advertised, no file written. Do
+not give preflight a graceful shutdown without moving that distinction
+somewhere else first.
+
+Verified the way CLAUDE.md asks for: a real `gpt-5.6-luna` run through the real
+firewall and the real `@playwright/mcp@0.0.79` recorded
+`{"browser_find":1,"browser_snapshot":1}`, `totalCalls` 2, `ended` SIGTERM; a
+real `claude-sonnet-5` run recorded `totalCalls` 1, `ended` SIGINT, its
+discovery probe's zero-call record correctly overwritten by the session's.
+
 `mcp_preflight.REQUIRED` and `_tool_definitions` are one contract in two files,
 pinned by `FenceSurfaceContractTests`. A tool in one and not the other is either
 unguarded or impossible, and both fail quietly.
@@ -605,6 +647,67 @@ in the resume field on a form nobody reads back. And the input is described
 before the attach, not after: a React form swaps the field out the moment it
 accepts a file, which made a working upload report a 30-second timeout on the
 live Justworks posting, and an agent told its upload failed retries it.
+
+## The file input cannot say whether the attach worked, 2026-08-28
+
+**`setInputFiles` resolving proves Playwright wrote files onto the DOM element.
+Everything that decides the outcome happens afterwards, in the page's own
+change handler, and `node.files` reports the same emptiness for all of it.**
+
+Three shapes, measured: SmartRecruiters takes the file off the input, sends it,
+and sets `input.value = ''` so re-choosing the same file still fires change,
+which empties `node.files` on **success**. Greenhouse swaps the field out for
+its own "file.pdf / Remove" view, which detaches the node the read would ask.
+And a form that rejects on type or size empties it on **failure**. So a tool
+reading only the input has to be wrong somewhere, and this one was wrong in
+both directions at once: across every `browser_attach_file` call ever recorded,
+the `node.files` confirmation branch fired zero times, five calls threw on a
+SmartRecruiters attach that had landed, and the two successes it ever reported
+both came out of the detached-node catch, from an `error` the code never read.
+
+Versant `6c3824319c68c547` is the proof of the first direction. Both targeted
+calls answered "the input reported no file after the attachment"; that
+application's own park note says the resume is attached; and the snapshot it
+took immediately after the last failed call has `resume.pdf` rendered beside
+the field. SWIGGY `40c1f32b247a885a` produced the identical error the same
+night, so this is SmartRecruiters and not Easy Apply.
+
+**The second observable is the page's own rendering of the filename, and it is
+scoped rather than searched for.** Both bound filenames are generic, so a
+document-wide `text.includes(name)` would confirm a resume from help text or
+from the cover letter beside it. The scopes are the input's own ancestors,
+innermost first, crossing shadow boundaries, and they are captured as a live
+handle **before** the attach, because the container that ends up showing the
+name is frequently the one the page rewrote. A match must be a text node's own
+text, must be a change against a baseline taken before the attach, and must not
+sit inside an alert: a form that rejects a file names that file in its error.
+
+**Do not flip the unconfirmed case into an attached-but-unconfirmed success.**
+It is the same observation as a rejection, so flipping it converts a false
+negative into a false positive, and the costs are not symmetric. A false
+negative parks a run and a person looks at it. A false positive walks an agent
+toward submit believing a resume is attached, under a real name, and cannot be
+recalled. What did change is the wording: unconfirmed rather than failed,
+carrying the page's own complaint when there is one, and telling the agent to
+read the field rather than attach again, which is the retry loop the Justworks
+case already warned about. The detached-node catch is held to the same
+standard, and reports the error it used to discard.
+
+**Both SmartRecruiters file inputs carry `id=file-input`, legally**, because
+each sits in its own `spl-dropzone` open shadow root where the id is unique.
+Playwright's CSS engine pierces those roots and finds two; `document.querySelector`
+finds none. So the id named neither, every error on that form read identically,
+and two sessions concluded from those logs that `nth=0` and `nth=1` had
+resolved to the same element, on evidence that could not support it. `describe()`
+now prints the way out of the element, which does tell them apart:
+`spl-dropzone[data-test=apply-with-resume-container]` is the autocomplete
+helper and `spl-dropzone[data-test=resume-upload]` is the resume field. Do not
+scope anything here on the id.
+
+`tests/fixtures/clearing-upload-form.html` reproduces both directions in one
+page, with the input inside an open shadow root and the ids duplicated the way
+the real form has them. It needs a live browser slot like the rest of
+`test_apply_end_to_end.py`, so it skips in CI.
 
 **A parked application may retry into its own slot, and only its own.**
 `candidate_apply_slots` returns the affinity slot when it is parked under the
@@ -1187,6 +1290,71 @@ restarts.
 The cost of this is a few kilobytes a run. The cost of not doing it, measured
 three times now, is that the one occurrence able to name the cause is the one
 occurrence guaranteed not to.
+
+### The vendor's own log is a diagnostic path, 2026-08-28
+
+**agy writes the reason for a failed run to a file and hands back nothing. So
+the fourth source in the failure chain is agy's log, joined by conversation id.**
+
+Five Gemini document jobs failed 10 to 13 seconds after provider start, exit 1,
+across two applications between 01:22Z and 03:59Z. The whole recorded account
+of each was:
+
+    provider exited 1: event : result , result : conversation id :
+    a3d7c777-5cb0-4202-8731-fd37d5ee00ba , status : ERROR , response : , error :
+
+Three sources were consulted and all three were empty. Stderr was empty. The
+terminal result carried `status: ERROR` with an empty response *and a genuinely
+empty error string*, not one the 140-character cap had cut. The weak
+last-line-naming-an-error fallback then quoted that same empty event back, and
+spent 36 of its 140 characters on a conversation id.
+
+The reason existed the whole time, in `~/.gemini/antigravity-cli/log/cli-*.log`:
+
+    pubsub: Publish killing slow subscriber "...": subscriber fell behind
+    updates, stalled for 5s
+    Print mode: conversation update stream failed: subscriber fell behind
+    updates, stalled for 5s
+
+**What it is.** An internal race in agy 1.1.22, not a fault of ours. The killed
+subscriber is agy's own idle-watcher: goroutine dumps in all four logs show it
+created by `WaitForConversationFullyIdle` under `printmode.pollResponse`, while
+`processModelStream` blocks publishing the first step to it. The publisher gives
+up after 5s, which fails the conversation update stream, which makes print mode
+emit that empty ERROR result and exit 1. Our stdout reader is not involved: the
+stall begins ~0.4s after the user message is forwarded and before the model has
+returned anything to write.
+
+**What it is not, each ruled out by measurement rather than by argument.** Not
+size or an agy streaming limit: the identical 634,903-byte stdin line, one
+NDJSON line built by the real `build_run_invocation`, succeeded 6 of 6 on
+2026-08-28 after the window. Not the bundle: the same Robinhood bundle succeeded
+at 01:18:53Z and failed at 03:59Z. Not quota or auth: the logs show
+`authenticated via keyring`, no quota error, and the successes bracket the
+failures. Not contention between agy processes: across all 142 agy runs of
+2026-08-27 the overlap count is zero, every run. Not machine load from form
+runs: only 1 of the 4 failures overlapped a live apply slot.
+
+**It did not reproduce and that is reported rather than smoothed over.** 6 of 6
+succeeded against the real prompt after the window closed, versus 4 of 5 real
+document runs failing inside it. Likeliest cause is a timing-sensitive race
+whose trigger has not been identified, not a condition anyone has cleared. If
+Gemini document jobs start failing this way again, read the CLI log first.
+
+The failure chain is now four sources, strongest first: stderr, then the first
+stream event carrying a *non-empty* error (earliest wins, because the terminal
+result's is empty), then agy's log, then the weak line match. UUIDs are stripped
+from a reason so the cap buys information.
+
+Two guards on that log read, both load-bearing and both tested by disabling
+them. The match is an allowlist of `printmode.go` and `pubsub.go` at severity E,
+never a search for "error", and any line containing `@` is refused: the same
+file records the signed-in Google account, and with both guards removed the
+recovered "reason" is `applyAuthResult: email=...@gmail.com`. And the join is by
+conversation id, never by taking the newest file, because runs overlap and a
+neighbour's fault attributed to this job is worse than no reason at all. The
+scan is bounded by age rather than by count; a count of twelve missed a real
+failure log sitting at rank fourteen.
 
 ## Checking a peer's number is not the slow path
 

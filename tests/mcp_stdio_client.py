@@ -64,7 +64,15 @@ class Client:
         return self.call("tools/call", {"name": name, "arguments": arguments})
 
     def finish(self):
-        """Close stdin the way a finishing provider CLI does, and wait."""
+        """Close stdin and wait, which is the path a dying backend takes.
+
+        Not what a provider CLI does. Measured on 2026-08-28: codex sends its
+        MCP child SIGTERM and Claude Code sends SIGINT, and neither ever closes
+        stdin. This method used to claim otherwise, and that belief is why the
+        activity record was written only at the end of main() for two months
+        without anyone noticing no real run produced one. `close()` is the
+        method that ends a proxy the way production ends it.
+        """
         self.process.stdin.close()
         self.process.wait(timeout=self.timeout)
 

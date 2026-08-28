@@ -919,5 +919,151 @@ class BankEditBoundaryTests(unittest.TestCase):
         self.assertIsNone(store.topic_answer(
             {"new-noncompete": opened["new-noncompete"]}, "Do you have a non-compete?"))
 
+EEO = {
+    "gender": {"question": "What is your gender?", "value": "Male",
+               "state": "sensitive", "tags": ["gender-identity"]},
+    "ethnicity": {"question": "What is your ethnicity?",
+                  "value": "Asian (South Asian / Indian); not Hispanic or Latino",
+                  "state": "sensitive", "tags": ["race-ethnicity"]},
+    "veteran": {"question": "Are you a veteran?", "value": "No",
+                "state": "sensitive", "tags": ["military-status"]},
+    "have-disability": {"question": "Do you have a disability?", "value": "No",
+                        "state": "confirmed", "tags": ["disability-status"]},
+}
+
+
+class EeoTopicTests(unittest.TestCase):
+    """The block every US application ends with, which nothing else reaches.
+
+    Overlap scoring cannot: "military status" and "veteran" share no words at
+    all, and "disability-status" against "have-disability" scores 0.33, below
+    the 0.4 needed even to be offered as a candidate. And a sensitive answer is
+    barred from fuzzy matching by design, which closes the remaining path for
+    three of these four. On 2026-08-28 a real application parked on gender,
+    race, military and disability with all four answered nine days earlier.
+    """
+
+    def test_the_wordings_a_form_actually_uses_resolve(self):
+        for question, expected in (
+            ("What is your gender identity?", "Male"),
+            ("Please select your gender identity from the list below", "Male"),
+            ("What is your race or ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
+            ("What is your race/ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
+            ("What is your military status?", "No"),
+            ("Are you a protected veteran?", "No"),
+            ("Veteran status (select one)", "No"),
+            ("What is your disability status?", "No"),
+            ("Do you have a disability? (Form CC-305)", "No"),
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(store.find_answer(EEO, question).get("value"), expected)
+
+    def test_a_sensitive_answer_reaches_these_only_by_topic(self):
+        """Not an implementation detail: it is why the markers are needed.
+
+        `find_answer` refuses to fuzzy-match a sensitive entry, so without a
+        marker these questions have no route to an answer at all.
+        """
+        untagged = {"gender": {**EEO["gender"], "tags": []}}
+        self.assertIsNone(
+            store.find_answer(untagged, "What is your gender identity?").get("value"))
+        tagged = {"gender": {**EEO["gender"], "tags": ["gender-identity"]}}
+        self.assertEqual(
+            store.find_answer(tagged, "What is your gender identity?")["value"], "Male")
+
+    def test_the_near_misses_these_markers_must_not_take(self):
+        """Each of these was a real hit during measurement, or a documented trap.
+
+        The first two are different questions with different answers, not other
+        wordings of one question, and both were caught against the real corpus.
+        The last two are the substring failures CLAUDE.md records.
+        """
+        for question in (
+            # Conduct, not status. Real Axon question.
+            "Have you ever been discharged from the Armed Forces under dishonorable conditions?",
+            # Wants Yes or No; the stored value is a descriptive string. Real
+            # Versant question.
+            "Are you Hispanic or Latino?",
+            # Asks for something rather than stating a fact.
+            "Do you require a reasonable accommodation for a disability during the interview?",
+            "How do you embrace ambiguity?",
+            "What is your average deal size?",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(store.find_answer(EEO, question).get("value"))
+
+    def test_an_opened_eeo_question_never_answers_itself(self):
+        opened = dict(EEO)
+        opened["gender-identity"] = {"question": "What is your gender identity?*",
+                                     "value": None, "state": "sensitive",
+                                     "tags": ["unanswered", "gender-identity"]}
+        # The tracking entry is skipped and the real one still answers.
+        self.assertEqual(
+            store.find_answer(opened, "What is your gender identity?*")["value"], "Male")
+
+
+class GovernmentOfficialTopicTests(unittest.TestCase):
+    """A marker filed under the wrong topic answers with the wrong answer.
+
+    Both entries below are a standing "No", so the mistake is invisible in the
+    value and only shows in which question the answer came from. Robinhood asks
+    a bribery-and-corruption declaration about government officials; the
+    conflicts entry is about a client's director. Answering the first from the
+    second is sourcing a legal declaration from a question nobody asked.
+    """
+
+    ANSWERS = {
+        "client-officer": {
+            "question": ("Are you related to, by birth, adoption or marriage, or a close "
+                         "associate of a current or former director, officer or senior "
+                         "employee of a client?"),
+            "value": "No", "state": "confirmed",
+            "tags": ["legal-declaration", "relationships-conflicts"]},
+        "or-close-relative-current-or-former-government-official": {
+            "question": "Are you or a close relative a current or former government official?",
+            "value": "No", "state": "confirmed",
+            "tags": ["legal-declaration", "government-official"]},
+    }
+
+    ROBINHOOD = ("Robinhood adheres to applicable laws and regulations in relation to "
+                 "government officials given inherent bribery and/or corruption risk. "
+                 "a) Do you currently hold or have you held, within the last 5 years, a "
+                 "position as a government official? b) Have you been referred or "
+                 "recommended for this position by a government official? c) Are you "
+                 "related to or have a close personal relationship with a government "
+                 "official?")
+
+    def test_it_answers_from_the_government_entry_not_the_client_one(self):
+        found = store.find_answer(self.ANSWERS, self.ROBINHOOD)
+        self.assertEqual(found["value"], "No")
+        self.assertEqual(found["topic"], "government-official")
+
+    def test_the_client_question_still_reaches_the_client_entry(self):
+        found = store.find_answer(
+            self.ANSWERS, "Are you a close associate of a director of a client?")
+        self.assertEqual(found["topic"], "relationships-conflicts")
+
+    def test_the_fallback_this_separation_does_NOT_close(self):
+        """Ordering fixes the live case; it does not remove the fault.
+
+        Written after the assertion I first put here failed. I had claimed that
+        keeping the government markers out of the conflicts list stops a
+        government question reaching the client answer. It does not: this
+        question also says "close personal relationship", which is a conflicts
+        marker on its own account, so with no government answer tagged it still
+        falls through to the client entry.
+
+        Ordering is what makes the real store correct, because the government
+        entry is tagged and its topic is scanned first. Nothing structural
+        prevents the fallback, and a test asserting otherwise would have been a
+        guard that was not there. Recorded rather than fixed: the answer is
+        "No" either way, so the cost is provenance, and the honest place to
+        close it is a topic that can say a question is not its own.
+        """
+        only_client = {"client-officer": self.ANSWERS["client-officer"]}
+        fell_through = store.find_answer(only_client, self.ROBINHOOD)
+        self.assertEqual(fell_through.get("topic"), "relationships-conflicts")
+
+
 if __name__ == "__main__":
     unittest.main()
