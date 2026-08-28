@@ -1244,25 +1244,32 @@ PARKED_SLOT_STALE_SECONDS = 6 * 3600
 PARKED_SLOT_FRACTION = 0.6
 
 
+def lock_age_seconds(held):
+    """How long this lock has been held, or 0.0 when the stamp is unreadable.
+
+    The stamps are UTC. time.mktime reads local, so it lands hours out, and an
+    alarm that is hours out is an alarm nobody keeps. Written once here rather
+    than at each caller, because that mistake is invisible in review and costs
+    the same every time it is made.
+    """
+    try:
+        at = calendar.timegm(
+            time.strptime(str((held or {}).get("at")), "%Y-%m-%dT%H:%M:%SZ")
+        )
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, time.time() - at)
+
+
 def parked_apply_slots():
     """Each parked slot with its age in seconds, oldest first."""
-    now = time.time()
     parked = []
     for name in APPLY_LOCKS:
         held = lock_holder(name)
         if not held or held.get("parked") is not True:
             continue
-        try:
-            # The stamps are UTC. time.mktime reads local, so it lands hours out
-            # and an alarm that is hours out is an alarm nobody keeps.
-            at = calendar.timegm(
-                time.strptime(str(held.get("at")), "%Y-%m-%dT%H:%M:%SZ")
-            )
-            age = max(0.0, now - at)
-        except (TypeError, ValueError):
-            age = 0.0
         parked.append({"slot": name, "applicationId": held.get("note") or "",
-                       "ageSeconds": int(age)})
+                       "ageSeconds": int(lock_age_seconds(held))})
     return sorted(parked, key=lambda entry: -entry["ageSeconds"])
 
 
@@ -1288,6 +1295,127 @@ def parked_slot_warning():
                 f"against a {PARKED_SLOT_STALE_SECONDS / 3600:.0f}h limit. "
                 "It is holding capacity for a page nobody has come back to.")
     return ""
+
+
+# A Chrome update replaces the bundle in place and the fleet does not notice.
+# serve() starts a slot browser on demand and nothing stops it afterwards, so
+# unattended Chrome mains routinely outlive several releases: measured on
+# 2026-08-28, five were running 151.0.7922.174 with .175 on disk, some of them
+# up since 2026-08-25. Such a process is executing a binary that is no longer at
+# that path, so it is not running the fixes the release carried, and the helpers
+# it spawns from then on come from the replaced bundle while the main does not.
+# Chrome's own answer is the "relaunch to update" prompt, and nobody is sitting
+# in front of these to click it.
+#
+# This is hygiene, not incident response, and the distinction is load-bearing.
+# The incident that led here was a looping macOS "Keychain Not Found" dialog:
+# keychain access is bound to code signature, and a process whose bundle moved
+# underneath it fails and re-asks forever. PR #111 closed that class at the
+# source rather than managing it, by passing --use-mock-keychain at both of the
+# repo's Chrome launch sites, so no Jobby browser consults the keychain at all.
+#
+# So do not attach an alarm to this. With #111 in place a drifted browser is
+# untidy rather than something the user can see, and a dead-man ping that fires
+# for untidiness is how an alarm stops being believed. It belongs in --status
+# and in the tick log, which is where it is.
+#
+# Checked once a minute, not once a tick. The probe is one HTTP call per slot
+# and a Chrome release is not a four-second event.
+CHROME_CHECK_SECONDS = 60
+_CHROME_CHECK = {"at": 0.0, "installed": "", "recycled": [], "held": []}
+
+
+def chrome_version_drift():
+    """Which slots are running a Chrome older than the one on disk.
+
+    Reports, decides nothing. A slot with no browser up cannot drift, and an
+    unreadable version on either side counts as no drift: acting on a version
+    nobody could read would take the fleet down the first time the plist moved
+    or a browser was slow to answer.
+    """
+    installed = browser.installed_version()
+    versions = {}
+    drifted = []
+    for slot in APPLY_LOCKS:
+        version = browser.running_version(slot)
+        versions[slot] = version or None
+        if not installed or not version or version == installed:
+            continue
+        held = lock_holder(slot)
+        drifted.append({
+            "slot": slot,
+            "running": version,
+            "installed": installed,
+            # None is an idle browser: nothing is in it, so it is free to go.
+            "holder": ("parked" if (held or {}).get("parked") is True
+                       else "live" if held else None),
+            "applicationId": (held or {}).get("note") or "",
+            "heldSinceSeconds": int(lock_age_seconds(held)) if held else 0,
+        })
+    return {"installed": installed, "running": versions, "drifted": drifted}
+
+
+def recycle_updated_browsers(now=None, force=False):
+    """Stop idle slot browsers left behind by a Chrome update.
+
+    Idle means no lock at all: no live runner and no parked application. Those
+    two hold something worth far more than the tidiness, a form being filled and
+    a form the user was told to come back to, and closing either to retire a
+    binary is a real loss traded for a cosmetic gain. They are named in --status
+    and left alone.
+
+    Stopped, not restarted. serve() runs before every apply and again inside
+    run_apply, so a recycled slot comes back on the new binary the moment it is
+    needed. Starting eight browsers here would put eight windows on the user's
+    screen for maintenance they did not ask for, and this codebase has already
+    paid once for an agent taking the screen away from them.
+    """
+    now = time.time() if now is None else now
+    if not force and now - _CHROME_CHECK["at"] < CHROME_CHECK_SECONDS:
+        return _CHROME_CHECK
+    drift = chrome_version_drift()
+    recycled, held = [], []
+    for entry in drift["drifted"]:
+        if entry["holder"] is not None:
+            held.append(entry)
+            continue
+        try:
+            stopped = browser.stop_slot(entry["slot"])
+        except (OSError, ValueError) as exc:
+            held.append({**entry, "error": f"{type(exc).__name__}: {exc}"[:120]})
+            continue
+        (recycled if stopped else held).append(entry)
+    _CHROME_CHECK.update({"at": now, "installed": drift["installed"],
+                          "recycled": recycled, "held": held})
+    return _CHROME_CHECK
+
+
+def chrome_drift_message(entries):
+    """Say which browsers are on a Chrome that is no longer on disk.
+
+    Ages stay out of it. The tick's log line is compared against the last one to
+    decide whether to print, and a number that moves every minute would print
+    the same standing condition forever.
+    """
+    entries = [entry for entry in entries if isinstance(entry, dict)]
+    if not entries:
+        return ""
+    installed = entries[0].get("installed") or "the installed build"
+    old = sorted({entry.get("running") or "?" for entry in entries})
+    where = ", ".join(
+        f"{entry['slot']} ({entry.get('holder') or 'idle'}"
+        + (f", {entry['applicationId']}" if entry.get("applicationId") else "")
+        + ")"
+        for entry in entries
+    )
+    return (f"Chrome updated to {installed} under {len(entries)} agent "
+            f"browser{'s' if len(entries) > 1 else ''} still running "
+            f"{'/'.join(old)}: {where}. They are executing a bundle that is no "
+            "longer on disk, so the release's fixes are not in effect in them. "
+            "An idle one is recycled within the minute; a live slot clears when "
+            "its run ends; a parked one clears when you finish or drop its "
+            "application, or with "
+            "`python3 scripts/browser.py --stop --slot <slot>`.")
 
 
 def publishing_paused():
@@ -1950,6 +2078,21 @@ def tick(force_publish=False):
     if slot_changes["parked"] or slot_changes["released"]:
         changed["browserSlots"] = slot_changes
 
+    # After the reconcile, so a slot released a moment ago counts as idle now
+    # rather than waiting a tick, and before the apply head is chosen, so a
+    # recycled slot is served fresh by the same tick that hands it out.
+    chrome = recycle_updated_browsers()
+    if chrome["recycled"] or chrome["held"]:
+        changed["chromeUpdated"] = {
+            "installed": chrome["installed"],
+            "recycled": [entry["slot"] for entry in chrome["recycled"]],
+            # No ages: this line is compared against the last one to decide
+            # whether to log, and a moving number logs forever.
+            "held": [{"slot": entry["slot"], "holder": entry["holder"],
+                      "applicationId": entry["applicationId"]}
+                     for entry in chrome["held"]],
+        }
+
     # Drops first, and before anything is spawned. A drop can be the user
     # stopping a run that is happening right now, so acting on it late means the
     # agent keeps filling a form the user has already said no to.
@@ -2362,6 +2505,13 @@ def status():
                     "running": running_applications(),
                     "parked": parked,
                     "parkedWarning": parked_slot_warning() or None}
+    # Probed here rather than read from the last tick's cache, because a person
+    # asking is asking about now. Idle drift shows too: the watcher will recycle
+    # it within the minute, and a status that hid it would read as "uniform"
+    # over a fleet that is not.
+    drift = chrome_version_drift()
+    out["chrome"] = {**drift,
+                     "warning": chrome_drift_message(drift["drifted"]) or None}
     out["blocked"] = blocked_message() or None
     try:
         out["providers"] = providers.public_status()

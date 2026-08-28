@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
@@ -39,6 +40,11 @@ PROFILE = STATE / "browser-profile"
 CONFIG = STATE / "browser-mcp.json"
 ARTIFACTS = STATE / "browser-artifacts"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_INFO_PLIST = Path("/Applications/Google Chrome.app/Contents/Info.plist")
+# Short, because the caller asks every slot in a loop and a wedged Chrome
+# answers nothing at all. Eight slots at the four seconds `_cdp` defaults to
+# would cost half a minute of a four-second tick.
+CHROME_VERSION_TIMEOUT = 2
 # Pinned rather than @latest: an unattended pipeline should not change the tool
 # that fills application forms because a release happened overnight.
 PACKAGE = "@playwright/mcp@0.0.79"
@@ -455,6 +461,66 @@ def running(slot=None):
     return _cdp("/json/version", slot) is not None
 
 
+def installed_version():
+    """The Chrome build sitting on disk right now, or "" if it cannot be read.
+
+    macOS replaces the whole bundle in place when Keystone lands a release, so
+    a browser started before an update carries on executing a binary that is no
+    longer at that path. Nothing in Chrome tells the fleet this happened, and
+    the two answers, this one and running_version, are the only place it shows.
+
+    Empty on any failure rather than raising. The one caller uses this to decide
+    whether to take browsers down, and a recycle keyed on a version that could
+    not be read would empty the fleet the first time the plist moved.
+    """
+    try:
+        info = plistlib.loads(CHROME_INFO_PLIST.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return ""
+    version = info.get("CFBundleShortVersionString")
+    return version.strip() if isinstance(version, str) else ""
+
+
+def running_version(slot=None):
+    """The build a slot's browser is actually executing, or "" if it is down.
+
+    From CDP's own ``Browser`` field, which carries the full build
+    (``Chrome/151.0.7922.175``). Deliberately not the ``User-Agent`` string
+    beside it: that is rounded to ``151.0.0.0`` to stop sites fingerprinting the
+    patch level, so comparing it against the installed build would report every
+    slot as drifted forever.
+    """
+    payload = _cdp("/json/version", slot, timeout=CHROME_VERSION_TIMEOUT)
+    if not isinstance(payload, dict):
+        return ""
+    name = payload.get("Browser")
+    if not isinstance(name, str) or "/" not in name:
+        return ""
+    return name.split("/", 1)[1].strip()
+
+
+def stop_slot(slot):
+    """Shut one slot's browser down. False if one is still up afterwards.
+
+    The answer is about the state the slot is left in, not about whether this
+    call had to do anything, because that is what every caller acts on: a browser
+    that had already exited is as stopped as one this took down.
+    """
+    if slot not in SLOTS:
+        raise ValueError("unknown browser slot")
+    if not running(slot):
+        return True
+    # Chrome exposes no clean shutdown over the HTTP endpoint, so close the
+    # tabs and let it exit, then fall back to a signal.
+    for t in tabs(slot):
+        _cdp(f"/json/close/{t['id']}", slot)
+    time.sleep(1)
+    if running(slot):
+        subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
+                       capture_output=True)
+    return not running(slot)
+
+
 def serve(slot=None):
     """Start a slot's browser if it is not already up.
 
@@ -528,23 +594,22 @@ def clone_logins():
     return {"cloned": True, "slots": done, "from": str(src)}
 
 
-def stop_all():
-    """Shut every slot's browser down, for cloning or a clean restart."""
+def stop_all(slots=None):
+    """Shut slot browsers down, for cloning or a clean restart.
+
+    With no argument, every slot. One slot at a time exists for the case where
+    a Chrome update has left exactly one browser behind and taking the rest down
+    would cost a live run its form.
+    """
+    targets = list(SLOTS) if slots is None else [s for s in slots if s in SLOTS]
     stopped = []
-    for slot in SLOTS:
+    for slot in targets:
         if not running(slot):
             continue
-        # Chrome exposes no clean shutdown over the HTTP endpoint, so close the
-        # tabs and let it exit, then fall back to a signal.
-        for t in tabs(slot):
-            _cdp(f"/json/close/{t['id']}", slot)
-        time.sleep(1)
-        if running(slot):
-            subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
-                           capture_output=True)
+        stop_slot(slot)
         stopped.append(slot)
     time.sleep(1)
-    return {"stopped": stopped, "stillRunning": [s for s in SLOTS if running(s)]}
+    return {"stopped": stopped, "stillRunning": [s for s in targets if running(s)]}
 
 
 def tabs(slot=None):
@@ -805,7 +870,8 @@ def main():
     g.add_argument("--serve", action="store_true",
                    help="start a slot's browser if it is not already up")
     g.add_argument("--serve-all", action="store_true", help="start every slot's browser")
-    g.add_argument("--stop", action="store_true", help="shut every slot's browser down")
+    g.add_argument("--stop", action="store_true",
+                   help="shut every slot's browser down, or just --slot's")
     g.add_argument("--clone-logins", action="store_true",
                    help="copy the signed-in profile from the first slot to the others, "
                         "so a sign-in is done once rather than once per slot")
@@ -829,7 +895,7 @@ def main():
         print(json.dumps(out, indent=2))
         return 0 if all(not v.get("error") for v in out.values()) else 1
     if args.stop:
-        print(json.dumps(stop_all(), indent=2))
+        print(json.dumps(stop_all([args.slot] if args.slot else None), indent=2))
         return 0
     if args.clone_logins:
         out = clone_logins()
@@ -847,8 +913,10 @@ def main():
     if args.check:
         ok, why = available()
         out = {"ok": ok, "reason": why,
+               "installedChrome": installed_version() or None,
                "slots": {slot: {"running": running(slot), "port": port_for(slot),
                                 "profile": str(_profile_dir(slot)),
+                                "chrome": running_version(slot) or None,
                                 "tabs": len(tabs(slot)) if running(slot) else 0}
                          for slot in SLOTS}}
         print(json.dumps(out, indent=2))
