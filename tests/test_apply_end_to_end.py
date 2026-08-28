@@ -20,6 +20,7 @@ import functools
 import http.server
 import json
 import pathlib
+import re
 import socketserver
 import sys
 import tempfile
@@ -202,6 +203,42 @@ class RealBrowserUploadTests(unittest.TestCase):
             time.sleep(0.2)
         self.fail("the upload form never appeared on the page")
 
+    def focus_fixture(self, connection, name):
+        """Point the browser at the tab this test opened, and say what it cost.
+
+        Playwright picks a page when it connects and stays on it. A tab a
+        previous run left behind therefore stays current, and opening a second
+        one over CDP does not move it. With one fixture that was invisible.
+        With two it is not: the clearing-form test drove upload-form.html and
+        its wait passed anyway, because both pages say "Cover letter". Selecting
+        by URL is what makes each test about its own page rather than about
+        whatever the slot happened to be showing.
+
+        Returns the number of tool calls it made, because they are accepted
+        calls like any other and the firewall counts them.
+        """
+        listed = connection.tool("browser_tabs", {"action": "list"})
+        text = listed["result"]["content"][0]["text"]
+        for line in text.splitlines():
+            found = re.match(r"\s*-\s*(\d+):", line)
+            if found and name in line:
+                connection.tool("browser_tabs",
+                                {"action": "select", "index": int(found.group(1))})
+                return 2
+        self.fail(f"the slot has no tab showing {name}: {text}")
+
+    def outcome(self, reply):
+        """The tool's own answer, without the source it echoes underneath.
+
+        The reply carries the whole of ATTACH_FILE_CODE back in a fenced block,
+        and that source contains the words Error and Timeout. Asserting against
+        the raw reply therefore tests the tool's comments, which is how two of
+        these assertions passed before they were true and two failed after they
+        were.
+        """
+        text = reply["result"]["content"][0]["text"]
+        return text.split("### Ran Playwright code")[0].strip()
+
     def client(self):
         connection = Client(self.config)
         self.addCleanup(connection.close)
@@ -218,6 +255,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """Fault 2: six upload calls, both PDFs unattached, application parked."""
         self.open_fixture()
         connection = self.client()
+        self.focus_fixture(connection, "upload-form.html")
         self.wait_for_form(connection)
 
         def text(reply):
@@ -258,12 +296,13 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture()
         connection = self.client()
+        self.focus_fixture(connection, "upload-form.html")
         self.wait_for_form(connection)
-        reply = connection.tool("browser_attach_file", {
+        reply = self.outcome(connection.tool("browser_attach_file", {
             "paths": [str(self.resume)], "target": "#portfolio_file",
             "element": "portfolio upload",
-        })["result"]["content"][0]["text"]
-        self.assertNotIn("Error", reply)
+        }))
+        self.assertNotIn("### Error", reply)
         self.assertIn("attached", reply)
         self.assertIn(self.resume.name, reply)
         self.assertIn("shows " + self.resume.name, reply)
@@ -294,14 +333,18 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture("clearing-upload-form.html")
         connection = self.client()
-        self.wait_for_form(connection, "Cover letter")
-        reply = connection.tool("browser_attach_file", {
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
             "paths": [str(self.resume)],
             "target": "input[type=file] >> nth=0",
             "element": "resume field",
-        })["result"]["content"][0]["text"]
-        self.assertNotIn("Error", reply)
+        }))
+        self.assertNotIn("### Error", reply)
         self.assertIn("attached", reply)
+        # The field it actually touched, not merely some field. The first
+        # version of this test drove the other fixture and passed.
+        self.assertIn("data-test=resume-upload", reply)
         # The evidence is named, not asserted. The input itself still says
         # nothing, and saying so is the point: the success came from the page.
         self.assertIn("reports no file", reply)
@@ -327,12 +370,14 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture("clearing-upload-form.html")
         connection = self.client()
-        self.wait_for_form(connection, "Cover letter")
-        reply = connection.tool("browser_attach_file", {
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
             "paths": [str(self.resume)],
             "target": "input[type=file] >> nth=1",
             "element": "cover letter field",
-        })["result"]["content"][0]["text"]
+        }))
+        self.assertIn("data-test=cover-letter-upload", reply)
         self.assertIn("unconfirmed", reply)
         # And the page's own reason is carried out rather than dropped, which
         # is the difference between "no file" and a fault someone can act on.
@@ -349,10 +394,11 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture("clearing-upload-form.html")
         connection = self.client()
-        self.wait_for_form(connection, "Cover letter")
-        reply = connection.tool("browser_attach_file", {
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
             "paths": [str(self.resume)],
-        })["result"]["content"][0]["text"]
+        }))
         self.assertIn("2 file inputs", reply)
         self.assertIn("resume-upload", reply)
         self.assertIn("cover-letter-upload", reply)
@@ -372,6 +418,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         self.open_fixture()
         connection = self.client()
+        selecting = self.focus_fixture(connection, "upload-form.html")
         probes = self.wait_for_form(connection)
         connection.tool("browser_snapshot", {})
         connection.tool("browser_attach_file",
@@ -384,7 +431,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         self.assertEqual(recorded["calls"].get("browser_snapshot"), 1)
         self.assertEqual(recorded["calls"].get("browser_attach_file"), 1)
         # Still exact: an uncounted call or a double-counted one fails here.
-        self.assertEqual(recorded["totalCalls"], probes + 2)
+        self.assertEqual(recorded["totalCalls"], probes + selecting + 2)
         self.assertEqual(recorded["backendExit"], 0)
 
 

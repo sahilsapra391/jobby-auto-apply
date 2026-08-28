@@ -23,7 +23,11 @@
   confirmation, would call a rejection an upload and let an agent walk toward
   submit believing a resume is attached.
 -->
-<h1>Apply</h1>
+<!-- The heading is deliberately not the other fixture's. Both pages say
+     "Cover letter", so a wait keyed on that text cannot tell which of them
+     the browser is actually showing, and the first version of these tests
+     drove upload-form.html and passed. -->
+<h1>Apply with clearing fields</h1>
 <form id="apply">
   <div class="field" data-test="resume-field">
     <h3>Resume</h3>
