@@ -1002,5 +1002,68 @@ class EeoTopicTests(unittest.TestCase):
             store.find_answer(opened, "What is your gender identity?*")["value"], "Male")
 
 
+class GovernmentOfficialTopicTests(unittest.TestCase):
+    """A marker filed under the wrong topic answers with the wrong answer.
+
+    Both entries below are a standing "No", so the mistake is invisible in the
+    value and only shows in which question the answer came from. Robinhood asks
+    a bribery-and-corruption declaration about government officials; the
+    conflicts entry is about a client's director. Answering the first from the
+    second is sourcing a legal declaration from a question nobody asked.
+    """
+
+    ANSWERS = {
+        "client-officer": {
+            "question": ("Are you related to, by birth, adoption or marriage, or a close "
+                         "associate of a current or former director, officer or senior "
+                         "employee of a client?"),
+            "value": "No", "state": "confirmed",
+            "tags": ["legal-declaration", "relationships-conflicts"]},
+        "or-close-relative-current-or-former-government-official": {
+            "question": "Are you or a close relative a current or former government official?",
+            "value": "No", "state": "confirmed",
+            "tags": ["legal-declaration", "government-official"]},
+    }
+
+    ROBINHOOD = ("Robinhood adheres to applicable laws and regulations in relation to "
+                 "government officials given inherent bribery and/or corruption risk. "
+                 "a) Do you currently hold or have you held, within the last 5 years, a "
+                 "position as a government official? b) Have you been referred or "
+                 "recommended for this position by a government official? c) Are you "
+                 "related to or have a close personal relationship with a government "
+                 "official?")
+
+    def test_it_answers_from_the_government_entry_not_the_client_one(self):
+        found = store.find_answer(self.ANSWERS, self.ROBINHOOD)
+        self.assertEqual(found["value"], "No")
+        self.assertEqual(found["topic"], "government-official")
+
+    def test_the_client_question_still_reaches_the_client_entry(self):
+        found = store.find_answer(
+            self.ANSWERS, "Are you a close associate of a director of a client?")
+        self.assertEqual(found["topic"], "relationships-conflicts")
+
+    def test_the_fallback_this_separation_does_NOT_close(self):
+        """Ordering fixes the live case; it does not remove the fault.
+
+        Written after the assertion I first put here failed. I had claimed that
+        keeping the government markers out of the conflicts list stops a
+        government question reaching the client answer. It does not: this
+        question also says "close personal relationship", which is a conflicts
+        marker on its own account, so with no government answer tagged it still
+        falls through to the client entry.
+
+        Ordering is what makes the real store correct, because the government
+        entry is tagged and its topic is scanned first. Nothing structural
+        prevents the fallback, and a test asserting otherwise would have been a
+        guard that was not there. Recorded rather than fixed: the answer is
+        "No" either way, so the cost is provenance, and the honest place to
+        close it is a topic that can say a question is not its own.
+        """
+        only_client = {"client-officer": self.ANSWERS["client-officer"]}
+        fell_through = store.find_answer(only_client, self.ROBINHOOD)
+        self.assertEqual(fell_through.get("topic"), "relationships-conflicts")
+
+
 if __name__ == "__main__":
     unittest.main()
