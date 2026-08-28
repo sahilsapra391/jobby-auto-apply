@@ -534,14 +534,43 @@ def load(application_id, path=None, root=None):
     return record if isinstance(record, dict) else None
 
 
-def captured_ids(root=None):
-    """Every application that has a record, by id.
+# u/{userId}/app/{applicationId}/answers.json, the key a record is filed under.
+_RECORD_KEY = re.compile(r"^u/[^/]+/app/([A-Za-z0-9_-]{1,64})/answers\.json$")
 
-    The board asks this once per render to decide which Submitted rows offer
-    Answers and which say "not captured", so it is a directory scan rather than
-    a read of a hundred files.
+
+def uploaded_ids(root=None):
+    """Records R2 holds, from the local upload manifest.
+
+    The disk scan stopped being sufficient the moment artifacts started living
+    in R2. r2_sync.prune deletes a local file once the bucket is verified to
+    hold it, correctly, and after one sweep 16 records existed in R2 and 2 on
+    disk. A board reading only the disk called the other 14 "not captured" while
+    their records sat one fetch away, which is the same lie the salvage exists
+    to avoid, told about the present instead of the past.
+
+    The manifest is the right memory because it records which *filename* won
+    each key. A key whose name is questions-<id>.json is a bare question list
+    that claimed the record's key, not a record, and it must not count.
     """
-    return set(index(root))
+    manifest = _read_json(Path(root or root_dir()) / "r2-manifest.json", {})
+    objects = manifest.get("objects") if isinstance(manifest, dict) else None
+    found = set()
+    for key, entry in (objects or {}).items():
+        match = _RECORD_KEY.match(str(key))
+        if match and str((entry or {}).get("name") or "").startswith("answers-"):
+            found.add(match.group(1))
+    return found
+
+
+def captured_ids(root=None):
+    """Every application whose answers the board can actually show.
+
+    Disk and bucket, unioned. Disk alone misses everything pruned; the manifest
+    alone misses anything written since the last sync, which is exactly the
+    fresh record a just-finished run leaves behind. Neither is a superset of
+    the other and the board needs both.
+    """
+    return set(index(root)) | uploaded_ids(root)
 
 
 def public_record(record):

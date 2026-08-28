@@ -111,7 +111,7 @@ class RecordFileTests(unittest.TestCase):
         self.write([{"question": "First name", "answer": "Sahil",
                      "source": "profile", "readBack": "match"}])
         self.assertTrue((self.apps / "Acme" / "answers-app-1.json").exists())
-        self.assertEqual(answer_record.captured_ids(), {"app-1"})
+        self.assertEqual(answer_record.captured_ids(self.store), {"app-1"})
         self.assertEqual(answer_record.load("app-1")["company"], "Acme")
 
     def test_a_record_is_written_owner_only(self):
@@ -127,7 +127,7 @@ class RecordFileTests(unittest.TestCase):
                      "source": "profile", "readBack": "match"}])
         self.write([{"question": "Last name", "answer": "Sapra",
                      "source": "profile", "readBack": "match"}], "app-2")
-        self.assertEqual(answer_record.captured_ids(), {"app-1", "app-2"})
+        self.assertEqual(answer_record.captured_ids(self.store), {"app-1", "app-2"})
         self.assertEqual(self.read("app-2")["fields"][0]["question"], "Last name")
 
     # --- secrets are never written ----------------------------------------
@@ -263,7 +263,7 @@ class RecordFileTests(unittest.TestCase):
                          "source": "stored", "sourceKey": "invented-key",
                          "readBack": "match"}])
         self.assertIn("not in the answer store", str(caught.exception))
-        self.assertEqual(answer_record.captured_ids(), set())
+        self.assertEqual(answer_record.captured_ids(self.store), set())
 
     def test_a_stored_source_with_no_key_is_refused(self):
         with self.assertRaises(answer_record.RecordError):
@@ -646,6 +646,86 @@ class NeverBackfillsFromTheStoreTests(unittest.TestCase):
                        'entry["answer"]', "entry.get(\"answer\")"):
             self.assertNotIn(banned, body,
                              f"{banned} would copy a stored answer into a record")
+
+
+class SurvivesAPruneTests(unittest.TestCase):
+    """The board must still offer a record whose local copy has been evicted.
+
+    r2_sync.prune deletes a local artifact once the bucket is verified to hold
+    it. That is correct and it is the whole point of the migration. It also
+    means the disk stops being the register of what exists: measured on the
+    real store, 16 records in R2 and 2 on disk after one sweep. A board reading
+    only the disk calls the other 14 "not captured", which is the same lie the
+    salvage exists to avoid, told about the present instead of the past.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        self.apps = self.root / "applications"
+        self.apps.mkdir()
+        real = answer_record.APPS
+        answer_record.APPS = self.apps
+        self.addCleanup(setattr, answer_record, "APPS", real)
+
+    def manifest(self, objects):
+        (self.root / "r2-manifest.json").write_text(json.dumps(
+            {"bucket": "jobby-artifacts", "schemaVersion": 1,
+             "userId": "account-1", "objects": objects}))
+
+    def test_a_pruned_record_is_still_offered(self):
+        self.manifest({"u/account-1/app/app-1/answers.json": {
+            "name": "answers-app-1.json", "bytes": 900,
+            "contentType": "application/json"}})
+        self.assertEqual(answer_record.index(self.root), {})
+        self.assertEqual(answer_record.captured_ids(self.root), {"app-1"})
+
+    def test_a_question_list_holding_the_key_does_not_count_as_a_record(self):
+        # The key is the record's, but the manifest says a bare question list
+        # won it. Counting that offers a modal that fetches an array and finds
+        # no fields, which fails closed and silently -- the worst shape.
+        self.manifest({"u/account-1/app/app-2/answers.json": {
+            "name": "questions-app-2.json", "bytes": 136,
+            "contentType": "application/json"}})
+        self.assertEqual(answer_record.captured_ids(self.root), set())
+
+    def test_disk_and_bucket_are_unioned_because_neither_contains_the_other(self):
+        # A record written since the last sync is on disk and not in the
+        # manifest. A pruned one is in the manifest and not on disk.
+        (self.root / "sessions").mkdir()
+        (self.root / "answers.json").write_text("{}")
+        (self.root / "sessions" / "fresh.json").write_text(json.dumps(
+            {"applicationId": "fresh", "company": "Acme", "role": "PM"}))
+        answer_record.write("fresh", [
+            {"question": "First name", "answer": "Sahil", "source": "profile",
+             "readBack": "match"}], root=self.root)
+        self.manifest({"u/account-1/app/pruned/answers.json": {
+            "name": "answers-pruned.json", "bytes": 900,
+            "contentType": "application/json"}})
+        self.assertEqual(answer_record.captured_ids(self.root), {"fresh", "pruned"})
+
+    def test_a_missing_or_malformed_manifest_is_not_a_crash(self):
+        for payload in (None, "{}", '{"objects": null}', "not json",
+                        '{"objects": {"nonsense": {}}}'):
+            with self.subTest(payload=payload):
+                target = self.root / "r2-manifest.json"
+                if payload is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_text(payload)
+                self.assertEqual(answer_record.captured_ids(self.root), set())
+
+    def test_only_the_record_key_shape_counts(self):
+        # An unfiled artifact is not a record for an application, whatever it
+        # is called, and must not put a button on somebody's row.
+        self.manifest({
+            "u/account-1/unfiled/Acme/answers-loose.json": {
+                "name": "answers-loose.json"},
+            "u/account-1/app/real/answers.json": {"name": "answers-real.json"},
+            "u/account-1/app/other/resume.pdf": {"name": "answers-odd.pdf"},
+        })
+        self.assertEqual(answer_record.captured_ids(self.root), {"real"})
 
 
 class HistoryStaysClosedTests(unittest.TestCase):
