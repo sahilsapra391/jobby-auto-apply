@@ -34,10 +34,14 @@ import importlib.util
 import json
 import pathlib
 import plistlib
+import sys
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import store_isolation  # noqa: E402
 
 INSTALLED = "151.0.7922.175"
 OLD = "151.0.7922.174"
@@ -52,6 +56,18 @@ def load(name):
 
 watch = load("watch")
 browser = watch.browser
+
+
+def setUpModule():
+    # This module patches LOCK_DIR itself, so nothing here was reaching the real
+    # store. It takes the isolation anyway: `browser.STATE`, `ARTIFACTS` and the
+    # profile paths are Path.home() constants, and the next test added to this
+    # file inherits the guarantee rather than having to notice it needs one.
+    store_isolation.begin()
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 class InstalledVersionTests(unittest.TestCase):
