@@ -1352,10 +1352,25 @@ python3 tests/store_isolation.py
 
 It is deliberately not in CI, for the reason above.
 
-Until this is merged everywhere, the interim instruction for anyone running the
-suite on this machine is `HOME=$(mktemp -d)` in front of it. **Give that
-instruction with its cost attached: one failure and seven skips, all
-store-absence.** Both halves matter and the second is the one people scroll past.
+### Interim, and delete only this subsection when it is done
+
+**Everything under this heading expires when the fix is in every checkout.
+Nothing below it does.** They are separated because the deletion is the moment
+the two get confused, and the confusion runs toward "a redirect is all you
+need", which is the dangerous direction. Retire this when a full suite run from
+a fresh checkout measurably writes nothing into the real store.
+
+Measured 2026-08-28: nine worktrees plus the production checkout hold ten copies
+of the five writing modules, and a copy is per-worktree while an agreement to
+hold off is per-session. So a quiet window cannot be granted by asking; it can
+only be taken and immediately re-measured. That is also why the production
+checkout matters here, since it is a place nobody thinks of as somewhere tests
+run.
+
+Until then, the interim instruction for anyone running the suite on this machine
+is `HOME=$(mktemp -d)` in front of it. **Give that instruction with its cost
+attached: one failure and seven skips, all store-absence.** Both halves matter
+and the second is the one people scroll past.
 
 The failure is
 `test_resume_build.ShippedTemplateTests.test_the_shipped_template_and_base_render_together`,
@@ -1373,6 +1388,8 @@ written, and the real state's fit under the publish ceiling. A redirected run
 reporting 2,124 passed has less coverage than the number implies and says so
 only in a skip count. **If seven ever becomes eight, notice.**
 
+### Durable, and none of it expires with the fix above
+
 **A redirected home isolates the store, not the machine.**
 `tests/test_apply_end_to_end.py` does not skip under one: `browser.running`
 probes the real CDP ports and never consults `HOME`, so it drives a real apply
@@ -1383,11 +1400,13 @@ derives from `Path.home()` in the test process. Chrome's own absolute
 where artifacts land. Measured: a redirected `discover` run put its
 `activity.json` in the throwaway home and left the real tree untouched.
 
-So the full instruction has two halves that answer different hazards: redirect
-the store with `HOME=$(mktemp -d)`, **and check `watch.py --status` before a
-full run** — not because the redirect leaks, but because that module reaches
-past it to a real browser. #109 stops it taking a slot the watcher holds; two
-concurrent test runs choosing the same free slot is still unguarded.
+**So `watch.py --status` before a full run, always, and this does not expire
+with the store fix.** Not because a redirect leaks, but because that module
+reaches past the filesystem entirely to a real browser, which no store isolation
+can address. #109 stops it taking a slot the watcher holds; two concurrent test
+runs choosing the same free slot is still unguarded. While the interim
+subsection above is also in force there are two precautions rather than one, and
+they answer different hazards; when it is retired this one remains.
 
 **The attribution trap here is worth more than the rule.** Every run of that
 module uses `applicationId` "endtoend", so every run on a given slot writes the
