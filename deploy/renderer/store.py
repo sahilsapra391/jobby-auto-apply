@@ -596,6 +596,34 @@ TOPIC_MARKERS = [
         "lgbtq", "lgbtqia", "lgbt community", "lesbian, gay",
         "gay, bisexual", "transgender community", "transgender (lgbt",
     )),
+    # BEFORE relationships-conflicts, because the two topics hold different
+    # answers to questions that share vocabulary. Scanning is in list order and
+    # the first topic with a tagged answer wins, so the position IS the
+    # behaviour, and it is the whole of the fix.
+    #
+    # What the position does not do is close the fallback. A question about
+    # government officials usually also says "close personal relationship",
+    # which is a conflicts marker on its own account, so with no government
+    # answer tagged it still reaches the client entry. Ordering makes the live
+    # store correct rather than making the fault impossible; the test says so
+    # rather than asserting a guard that is not here.
+    #
+    # The first version put "government official" into relationships-conflicts
+    # and it matched there. `topic_answer` returned that topic's tagged entry,
+    # which is "Are you related to ... a director, officer or senior employee
+    # of a CLIENT". The agent read a "No" whose stored question was about
+    # clients, judged it did not cover a question about governments, and parked
+    # rather than answer a bribery-and-corruption declaration out of the wrong
+    # source. It was right to, and the fault was mine: a topic answers with one
+    # of its own tagged entries, so a marker filed under the wrong topic
+    # returns the wrong question's answer.
+    #
+    # Only the clean entry is tagged. `related-to-government-official` carries
+    # the same "No" wrapped in prose about a standing instruction, which is
+    # right to read and wrong to type into a form field.
+    ("government-official", (
+        "government official", "public official", "politically exposed",
+    )),
     ("relationships-conflicts", (
         "close associate", "conflict of interest", "conflicts of interest",
         "related to, by birth", "related by birth", "birth, adoption or marriage",
@@ -617,7 +645,7 @@ TOPIC_MARKERS = [
         # the probes.
         "familial relationship", "personal/familial",
         "outside business activities", "close personal relationship",
-        "government official", "public official", "close relationship with one",
+        "close relationship with one",
     )),
     # Deliberately AFTER relationships-conflicts, which is scanned first and
     # wins: "is a relative of yours a former employee here" is a question about
