@@ -202,6 +202,78 @@ class LockTests(unittest.TestCase):
         self.assertIsNone(watch.lock_holder("apply"))
 
 
+class EnsureApplicationSessionTests(unittest.TestCase):
+    """A sessionless Apply head must be promoted or refused, never left.
+
+    The Apply button on a Found card sends watch then apply, and the queue's
+    read-modify-write can eat the watch click. The sessionless head then
+    failed every tick with session_missing while nothing claimed it: measured
+    2026-08-28, 88 consecutive failed ticks behind one click, the board frozen
+    the whole time. ensure_application_session is the tick's answer, and its
+    contract is: None means proceed, a string means the caller must claim the
+    click because this head can never start.
+    """
+
+    def _session(self, exists):
+        result = SimpleNamespace(returncode=0 if exists else 2,
+                                 stdout='{"applicationId": "x"}' if exists else "",
+                                 stderr="")
+        return mock.patch.object(watch, "store", return_value=result)
+
+    def _promote(self, returncode=0, stdout="", stderr=""):
+        result = SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+        return mock.patch.object(watch, "run", return_value=result)
+
+    def test_an_existing_session_passes_without_promoting(self):
+        with self._session(True), self._promote() as promoted:
+            refusal, created = watch.ensure_application_session("x")
+        self.assertIsNone(refusal)
+        self.assertFalse(created)
+        promoted.assert_not_called()
+
+    def test_a_pool_job_is_promoted_and_proceeds(self):
+        with self._session(False), self._promote(
+                stdout='{"sessionCreated": true, "watched": "x"}'):
+            refusal, created = watch.ensure_application_session("x")
+        self.assertIsNone(refusal)
+        self.assertTrue(created)
+
+    def test_a_posting_already_on_record_is_refused_with_the_reason(self):
+        with self._session(False), self._promote(
+                stdout='{"sessionCreated": false, "alreadyKnown": true,'
+                       ' "reason": "same posting URL", "where": "the role index"}'):
+            refusal, created = watch.ensure_application_session("x")
+        self.assertIsNotNone(refusal)
+        self.assertIn("same posting URL", refusal)
+        self.assertFalse(created)
+
+    def test_an_unknown_id_is_refused_not_left_to_wedge(self):
+        with self._session(False), self._promote(
+                returncode=2, stderr="promote: no job with id junk"):
+            refusal, created = watch.ensure_application_session("junk")
+        self.assertIsNotNone(refusal)
+        self.assertIn("no job", refusal)
+
+    def test_already_watching_means_the_session_is_there_and_we_proceed(self):
+        with self._session(False), self._promote(
+                stdout='{"alreadyWatching": true, "sessionCreated": false}'):
+            refusal, created = watch.ensure_application_session("x")
+        self.assertIsNone(refusal)
+
+    def test_the_tick_consults_it_before_any_document_work(self):
+        # The wiring is what stops the wedge, so its removal must fail a test:
+        # the ensure runs after the do-not-start guards and before the head's
+        # provider probes or document job are ever touched.
+        source = inspect.getsource(watch.tick)
+        ensure_at = source.find("ensure_application_session")
+        self.assertGreater(ensure_at, -1, "tick() no longer ensures a session "
+                           "for the Apply head; a sessionless head wedges the "
+                           "lane (88 failed ticks on 2026-08-28)")
+        self.assertLess(source.find("do_not_start"), ensure_at)
+        self.assertLess(ensure_at, source.find("document_candidate_order"))
+        self.assertLess(ensure_at, source.find("prepare_document_head"))
+
+
 class TickErrorTests(unittest.TestCase):
     def test_unconfigured_queue_raises_rather_than_looking_empty(self):
         # The original defect. poll_queues must never return {} on failure,
