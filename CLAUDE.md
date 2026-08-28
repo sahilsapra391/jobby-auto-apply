@@ -1064,3 +1064,185 @@ cannot see where it came from.
 So: quantify the claim and state what was and was not observed. "Intermittent,
 observed on X at Y, not reproduced on Z" rather than "every time". Where a fix
 addresses a failure you have not reproduced, say "likeliest cause", not "was".
+
+## A test may not write the device's own store
+
+**Every test module that drives store-writing code gets a `setUpModule` calling
+`store_isolation.begin()`. Nothing else keeps fixtures out of the real
+`~/.job-application`, and nothing about a fixture announces itself once it is
+in there.**
+
+Measured 2026-08-28, having gone unnoticed since at least 2026-08-25:
+`usage.jsonl` held **3,372 fabricated rows against 29 real ones**, fifteen more
+per suite run, every one carrying a plausible application id, a real pinned
+model name and a real `taskKind`. `summary` averages over all of them, so the
+answer to "what does one application cost" was a statement about the test
+suite. Alongside it: `sessions/acme-pm.json`, a fabricated application sitting
+in Needs you pending on "Enter the OTP", written by the same store CLI a real
+run uses; `acme-pm` filed among 190 real entries in `roles.json`; the live
+`browser-mcp-apply-1.json` rewritten; and `providers.json`, the registry the
+three services read for connection order and health.
+
+Nothing failed, because none of these paths is supposed to complain.
+
+Four things this class does that make it invisible, each of which cost a
+separate round of looking:
+
+**A CI runner's home is disposable, so the whole class is harmless there.** It
+only ever damages the machine that also holds the real applications. Do not
+expect green checks to say anything about it.
+
+**A store path as a default argument silently defeats any redirect.** Python
+binds a default once, when the `def` runs, so `state_file=STATE_FILE` goes on
+naming the path the module held at import however the constant is set
+afterwards. `ProviderRegistry()` and `_default_registry()` therefore had two
+different behaviours, decided by whether the caller typed an argument. Five
+sites had it; `NoStorePathIsAFrozenDefaultTests` now walks `scripts/` and fails
+on a sixth.
+
+**Redirecting `JOB_APPLICATION_DIR` alone finds only half of it.** The rest are
+`Path.home()` constants evaluated at import, which no environment variable can
+reach. Sweep with `HOME` redirected, not `JOB_APPLICATION_DIR`.
+
+**A per-module run proves nothing about a suite run.** Four test modules
+execute a `scripts/` module by hand and assign it over its `sys.modules` entry,
+orphaning the original — and the original is what `run_apply.providers` and
+every other importer still points at. Redirecting what `sys.modules` holds
+moved the copy nobody calls. `test_provider_runners` was clean on its own and
+wrote the real registry in a full run, and the difference is only whether the
+swapping module got loaded.
+
+Two mechanisms answer it. `tests/store_isolation.py` moves a module's store,
+discovering constants by walking the module graph rather than by holding a
+list, so one added tomorrow is covered without anyone remembering. And
+`provider_usage.record` refuses to write the device ledger when it detects a
+test runner, which is the backstop for the one file whose corruption is silent
+by construction; that detection is measured rather than asserted, by importing
+the apply path in a fresh interpreter and checking neither `unittest` nor
+`pytest` lands in `sys.modules`. Measured with the isolation deliberately
+removed from `test_provider_runners`: ten rows written without the guard, zero
+with it.
+
+That backstop reports itself with `sys.stderr.write`, not `print`, and the
+difference is not style. The tests that reach it are the ones driving
+`run_apply.main()`, and every one of them is wrapped in
+`mock.patch("builtins.print")` to keep the runner readable. The first version
+refused all ten rows and said so zero times — a diagnostic silenced by exactly
+the runs it existed to explain, which is this repo's oldest failure shape in a
+new place.
+
+**The guarantee is about writes, and reads are a different one.** A test that
+reads the device's own `resume-content.json` and passes because of what it found
+there is non-hermetic, and no count of files that appeared will ever say so.
+`document_worker._base_resume_content` was the one store-root resolution under
+`scripts/` that ignored `JOB_APPLICATION_DIR` — thirteen others honour it — and
+#107 gave it a third caller inside `_ats_checks`, which is validation. It is
+fixed, but that closed an instance rather than the class.
+
+Finding the next one is a sweep, and there is no cheaper way:
+
+```bash
+python3 tests/store_isolation.py
+```
+
+It is deliberately not in CI, for the reason above.
+
+Until this is merged everywhere, the interim instruction for anyone running the
+suite on this machine is `HOME=$(mktemp -d)` in front of it. **Give that
+instruction with its cost attached: one failure and seven skips, all
+store-absence.** Both halves matter and the second is the one people scroll past.
+
+The failure is
+`test_resume_build.ShippedTemplateTests.test_the_shipped_template_and_base_render_together`,
+which asserts "SAHIL SAPRA" appears in the rendered HTML and gets empty name and
+contact divs because the profile lives in the real store. Three sessions hit
+exactly that one, independently, at 2124, 2126 and 2134 tests.
+
+The seven skips are the real cost. Measured 2026-08-28: three "no answer store
+on this machine", one each for no rendered resumes, no real job store, no
+profile, and no profile at the redirected path. Those are the tests that check
+against the real corpus, which is precisely the class that exists because a
+synthetic fixture could not have caught the thing: `LiveCorpusTests`,
+`test_no_pii`'s tracked-file scan, the resume round-trip over every resume ever
+written, and the real state's fit under the publish ceiling. A redirected run
+reporting 2,124 passed has less coverage than the number implies and says so
+only in a skip count. **If seven ever becomes eight, notice.**
+
+**A redirected home isolates the store, not the machine.**
+`tests/test_apply_end_to_end.py` does not skip under one: `browser.running`
+probes the real CDP ports and never consults `HOME`, so it drives a real apply
+slot either way, and it reserves nothing while doing so (see the missing-lock
+note below). Its *file* writes do follow `HOME`, because `browser.ARTIFACTS`
+derives from `Path.home()` in the test process. Chrome's own absolute
+`--user-data-dir` governs the browser profile, which is a different path and not
+where artifacts land. Measured: a redirected `discover` run put its
+`activity.json` in the throwaway home and left the real tree untouched.
+
+**The attribution trap here is worth more than the rule.** Every run of that
+module uses `applicationId` "endtoend", so every run on a given slot writes the
+same `browser-artifacts/<slot>/uploads/endtoend/activity.json`. Neither the path
+nor the timestamp can tell one session's run from another's, and on a machine
+with several sessions the obvious inference is wrong. On 2026-08-28 two sessions
+independently found that file in the real store, each dated it to their own
+redirected run, and concluded the redirect was unsafe. It was neither of theirs:
+its contents read
+
+    {"browser_attach_file":1,"browser_find":1,"browser_snapshot":1,"browser_tabs":2}
+
+and at that moment the only test file calling `browser_tabs` was a third
+session's unmerged branch, on an authorised unredirected run. Two people checked
+that a file existed, at a plausible time, in the right place, and both were
+wrong about who wrote it. **Open the file before concluding anything from its
+presence in that tree.**
+
+**That discriminator has already expired, which is the real warning.** #115
+merged the `browser_tabs` calls into `tests/test_apply_end_to_end.py` on main,
+so every session's run now produces the same call mix again and the contents no
+longer attribute anything either. Do not grep for the tool name: `browser_tabs`
+is an ordinary firewall tool in `browser_mcp_proxy.py` and in
+`mcp_preflight.REQUIRED`, and has been throughout, so finding it proves nothing
+about which test wrote a record. **There is currently no reliable way to
+attribute one of these files between sessions.** The fix is the slot lock noted
+below, which would let a run declare what it is using; until then, if you need
+to know who wrote one, ask on the machine rather than infer.
+
+**And verifying every claim in a list is not verifying the conclusion drawn from
+it.** A fourth session was handed three mechanisms behind that wrong rule --
+`browser.running` never reads `HOME`, Chrome is launched with an absolute
+`--user-data-dir`, the file is present in the real store -- checked all three
+against the code, found all three true, and reported the conclusion verified. It
+was still wrong, because the conclusion rested on a fourth link nobody had
+stated: that the artifact path follows the profile path. It does not.
+`browser.ARTIFACTS` derives from `Path.home()` in the test process while
+`--user-data-dir` is Chrome's own profile, and the two are unrelated. Checking
+the three claims harder would never have found it. What found it was opening the
+file.
+
+So when you are asked to check somebody's reasoning, the question is not whether
+each stated claim holds. It is what the conclusion actually rests on, and whether
+that is in the list at all. This is the same shape as the near-miss where "null
+token counts" looked like a fixture tell and was a property of every row in the
+store: real evidence, internally consistent, pointing at the wrong thing. Both
+times the fix was to go and look at the specific object rather than reason about
+the class it belongs to.
+
+`tests/test_apply_end_to_end.py` is excluded from the sweep, and the reason is
+not a leak. It drives a real Chrome on a real apply slot, so the firewall
+writing `browser-mcp-apply-N.json` and an `activity.json` under
+`browser-artifacts` is the behaviour under test. #109 is what stops it reaching
+a slot it has no business in: `live_slot` takes its candidates from
+`watch.free_apply_slots` rather than from whichever Chrome answers, so a busy or
+parked slot is left alone. Before it, the module opened fixture tabs in a browser
+that was filling somebody's real application. Both of its failures observed here
+on 2026-08-28 were that plus the stale `totalCalls == 2` constant #109 also
+fixed, and both are gone on main.
+
+**Slot selection and page selection are two problems and #109 fixed one.**
+Playwright picks a page when it connects and stays on it, so a tab an earlier
+run abandoned is still current and opening another over CDP does not move off
+it. Found on 2026-08-28 in a genuinely free slot: a test drove a leftover
+`upload-form.html`, attached to that page's input, and passed, because the
+fixture it thought it was on and the one it was actually on both contain the
+words "Cover letter". A real assertion about the wrong subject, which is the
+same shape as the salvaged-answer join and the Adzuna fixture. Select the tab by
+URL rather than trusting whatever the connection landed on.

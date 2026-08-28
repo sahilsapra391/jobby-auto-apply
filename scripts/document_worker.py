@@ -1098,7 +1098,17 @@ def _base_resume_content(runtime):
     refuses an override whose list lengths differ from it, so the two can never
     disagree about how many slots the template has.
     """
-    root = Path(runtime.get("storeRoot") or "~/.job-application").expanduser()
+    # The fallback consults JOB_APPLICATION_DIR, the way store.root_dir and
+    # every other store-root resolution under scripts/ does. It was the one
+    # exception, and a literal path is one no redirect can move: a caller with
+    # no storeRoot in its runtime read the device's own resume-content.json
+    # however the store had been pointed. Harmless while this ran only in the
+    # prompt and render paths; #107 gave it a third caller inside _ats_checks,
+    # which is validation, so a test could now pass or fail on the contents of
+    # a file it never wrote.
+    root = Path(runtime.get("storeRoot")
+                or os.environ.get("JOB_APPLICATION_DIR")
+                or "~/.job-application").expanduser()
     override = root / "resume-content.json"
     if override.exists():
         return _read_small_json(override, MAX_PROMPT_SECTION_BYTES)
@@ -2176,7 +2186,10 @@ class DocumentWorker:
     def __init__(
         self,
         *,
-        state_dir: Path = DEFAULT_STATE_DIR,
+        # None, not DEFAULT_STATE_DIR: a default argument binds once, at import,
+        # so it keeps naming the path this module held then. See
+        # providers.ProviderRegistry.__init__.
+        state_dir: Path | None = None,
         transport: Any | None = None,
         control_transport: Any | None = None,
         registry: providers.ProviderRegistry | None = None,
@@ -2203,7 +2216,9 @@ class DocumentWorker:
         monotonic: Callable[[], float] = time.monotonic,
         provider_controls: bool = True,
     ):
-        self.state_dir = private_directory(Path(state_dir).expanduser().resolve())
+        self.state_dir = private_directory(
+            Path(state_dir if state_dir is not None
+                 else DEFAULT_STATE_DIR).expanduser().resolve())
         self.task_dir = private_directory(self.state_dir / "document-tasks")
         self.log_dir = private_directory(self.state_dir / "document-logs")
         self.transport = transport or NodeTransport()
