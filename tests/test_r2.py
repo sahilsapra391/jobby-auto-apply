@@ -840,5 +840,109 @@ class EvictionTest(unittest.TestCase):
         self.assertEqual(out["objects"], 0)
 
 
+class PreferenceSurvivesEvictionTest(unittest.TestCase):
+    """Two correct operations whose composition destroyed content in R2.
+
+    answers-<id>.json and questions-<id>.json both claim app/<id>/answers.json,
+    and the collector prefers the record. Evict the record -- correctly, it is
+    safely in R2 -- and the question list is the only claimant left, so the next
+    sync sees a changed sha for that key and writes a bare array over the
+    record. Neither step is wrong on its own.
+
+    It happened on the live bucket: two records overwritten, 2,655 bytes to 838
+    and 1,118 to 136, found by jobby-auto-apply-a7 sampling R2 rather than by
+    any test here. Both were recovered from the pre-eviction snapshot.
+
+    The preference was deliberate within one scan from #96. This makes it
+    durable across scans, because once the winner is off disk the manifest is
+    the only memory that it ever won.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.store_root = self.tmp / "store"
+        store(self.store_root, "init")
+        self.aid = "aa11bb22cc33dd44"
+        payload = self.tmp / "s.json"
+        payload.write_text(json.dumps({"applicationId": self.aid, "company": "Acme",
+                                       "role": "PM", "status": "active"}))
+        store(self.store_root, "session-save", "--id", self.aid, "--input", str(payload))
+        self.folder = self.tmp / "applications" / "Acme"
+        self.folder.mkdir(parents=True)
+        self.record = self.folder / f"answers-{self.aid}.json"
+        self.questions = self.folder / f"questions-{self.aid}.json"
+        self.record.write_text(json.dumps(
+            {"capture": "questions-only", "fields": [{"q": f"q{n}"} for n in range(18)]}))
+        self.questions.write_text(json.dumps([f"q{n}" for n in range(18)]))
+        self.apps_dir = str(self.tmp / "applications")
+        self.key = f"u/account-1/app/{self.aid}/answers.json"
+        self.client = FakeClient()
+        r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                     apply=True, client=self.client)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stored(self):
+        return json.loads(self.client.objects[self.key]["body"])
+
+    def test_the_record_wins_the_key_while_both_are_on_disk(self):
+        self.assertIsInstance(self.stored(), dict)
+
+    def test_the_question_list_cannot_take_the_key_once_the_record_is_gone(self):
+        """The regression. Without the guard this overwrites and loses data."""
+        self.record.unlink()
+        result = r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                              apply=True, client=self.client)
+        self.assertEqual(result.get("refusedDowngrade"), 1)
+        self.assertIsInstance(self.stored(), dict, "R2 must still hold the record")
+        self.assertEqual(len(self.stored()["fields"]), 18)
+
+    def test_the_refusal_says_which_file_was_kept_and_which_was_turned_away(self):
+        self.record.unlink()
+        result = r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                              apply=True, client=self.client)
+        self.assertEqual(result["downgrades"], [{
+            "key": self.key, "stored": f"answers-{self.aid}.json",
+            "refused": f"questions-{self.aid}.json"}])
+
+    def test_a_better_file_still_displaces_a_worse_stored_one(self):
+        """The guard must not freeze the key against genuine improvement.
+
+        This is the repair path: after the damage, the manifest recorded the
+        question list, and putting the record back had to be allowed.
+        """
+        self.record.unlink()
+        r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                     apply=True, client=self.client)
+        self.questions.unlink()
+        self.record.write_text(json.dumps({"capture": "full", "fields": [{"q": "back"}]}))
+        result = r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                              apply=True, client=self.client)
+        self.assertEqual(result["uploaded"], 1)
+        self.assertEqual(self.stored()["capture"], "full")
+
+    def test_the_same_file_updating_itself_is_never_a_downgrade(self):
+        self.record.write_text(json.dumps({"capture": "full", "fields": [{"q": "revised"}]}))
+        result = r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                              apply=True, client=self.client)
+        self.assertEqual(result.get("refusedDowngrade", 0), 0)
+        self.assertEqual(self.stored()["capture"], "full")
+
+    def test_the_guard_is_reachable_at_all(self):
+        """It was not, for one commit, and a green run hid it.
+
+        The first version called _rank unqualified. That NameError only fires on
+        the branch the guard exists for, so a sync where no name differed passed
+        cleanly and proved nothing. Same shape as every other green-and-
+        meaningless check this week.
+        """
+        self.record.unlink()
+        result = r2_sync.sync(str(self.store_root), "account-1", self.apps_dir,
+                              apply=True, client=self.client)
+        self.assertGreater(result.get("refusedDowngrade", 0), 0,
+                           "the guard's own branch has to execute in some test")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -187,6 +187,30 @@ def sync(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
         for artifact in artifacts:
             key, digest = artifact["key"], artifact["sha256"]
             entry = known.get(key)
+
+            # The preference has to outlive the local tree, or eviction undoes
+            # it. answers-<id>.json and questions-<id>.json both claim
+            # app/<id>/answers.json, and r2_artifacts picks the record. Evict
+            # the record -- correctly, it is safely in R2 -- and the question
+            # list is the only claimant left, so the next sync sees a changed
+            # sha for that key and writes a bare array over the record.
+            #
+            # Both operations were individually correct and their composition
+            # destroyed content in R2. It happened: two answer records were
+            # overwritten, 2,655 bytes to 838 and 1,118 to 136, found by
+            # jobby-auto-apply-a7 sampling the live bucket rather than by
+            # anything here. #96 made the preference deliberate within one
+            # scan; this makes it durable across scans, because the manifest is
+            # the only memory of the winner once the file is gone.
+            incumbent = (entry or {}).get("name")
+            if incumbent and incumbent != artifact["name"] \
+                    and r2_artifacts._rank(artifact["name"]) \
+                        > r2_artifacts._rank(incumbent):
+                result["refusedDowngrade"] = result.get("refusedDowngrade", 0) + 1
+                result.setdefault("downgrades", []).append(
+                    {"key": key, "stored": incumbent, "refused": artifact["name"]})
+                continue
+
             if entry and entry.get("sha256") == digest:
                 result["skippedByManifest"] += 1
                 # The record is the index's source now, so a field added after
