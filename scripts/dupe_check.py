@@ -21,6 +21,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
+sys.path.insert(0, str(REPO / "scripts"))
+import seen  # noqa: E402  (the ATS key patterns live in one place)
+
 
 class StoreUnreadable(RuntimeError):
     """The history could not be read, so nothing can be ruled out."""
@@ -49,7 +52,18 @@ def norm(value):
 
 
 def norm_url(value):
-    """Strip tracking noise so the same posting matches across channels."""
+    """Strip tracking noise so the same posting matches across channels.
+
+    A URL whose identity rides its query strips to the employer's shared
+    careers page: jobs.elastic.co/jobs names every Elastic posting at once,
+    and one submitted Elastic application matched all of them here (measured
+    2026-08-28, 10 of 102 submitted URLs keyed this way). Those answer "" and
+    match by (company, ATS key) instead; a path-borne id survives the strip
+    and keeps matching by URL. seen.url_identifies_posting is the one place
+    that distinction lives.
+    """
+    if not seen.url_identifies_posting(value or ""):
+        return ""
     u = (value or "").split("?")[0].rstrip("/").lower()
     return re.sub(r"^https?://(www\.)?", "", u)
 
@@ -72,7 +86,17 @@ def submitted_index():
     pairs = {(norm(e.get("company")), norm(e.get("role"))) for e in done}
     urls = {norm_url((roles.get(e.get("applicationId")) or {}).get("url")) for e in done}
     urls.discard("")
-    return done, ids, pairs, urls, roles
+    # Query-keyed URLs left the urls set above, so their identity lives here:
+    # (company, ATS key), scoped by company because a Workday requisition
+    # number repeats across tenants.
+    keys = set()
+    for e in done:
+        entry = roles.get(e.get("applicationId")) or {}
+        k = seen.ats_key(entry.get("url") or "")
+        company = e.get("company") or entry.get("company")
+        if k and company:
+            keys.add((norm(company), k))
+    return done, ids, pairs, urls, keys, roles
 
 
 def in_flight(exclude):
@@ -92,7 +116,7 @@ def in_flight(exclude):
 
 
 def guard(aid):
-    done, ids, pairs, urls, roles = submitted_index()
+    done, ids, pairs, urls, keys, roles = submitted_index()
     entry = store(["session-load", "--id", aid]) or roles.get(aid) or {}
     company, role = entry.get("company"), entry.get("role")
     url = entry.get("url")
@@ -106,7 +130,14 @@ def guard(aid):
         same_role = (company and role
                      and norm(other.get("company")) == norm(company)
                      and norm(other.get("role")) == norm(role))
-        same_url = url and other_url and norm_url(other_url) == norm_url(url)
+        # norm_url answers "" for query-keyed URLs, and "" == "" must not read
+        # as the same posting; those compare by ATS key, within the company.
+        nu, onu = norm_url(url), norm_url(other_url)
+        uk = seen.ats_key(url or "")
+        ok = seen.ats_key(other_url or "")
+        same_url = bool((nu and nu == onu)
+                        or (uk and uk == ok and company
+                            and norm(other.get("company")) == norm(company)))
         if same_role or same_url:
             return {"duplicate": True,
                     "reason": f"another run is applying to this same posting right now "
@@ -114,21 +145,30 @@ def guard(aid):
     if company and role and (norm(company), norm(role)) in pairs:
         return {"duplicate": True,
                 "reason": f"already applied to {company} — {role} under a different id"}
+    k = seen.ats_key(url or "")
+    if k and company and (norm(company), k) in keys:
+        return {"duplicate": True, "reason": f"already applied to this exact posting: {url}"}
     if url and norm_url(url) in urls:
         return {"duplicate": True, "reason": f"already applied to this exact posting: {url}"}
     return {"duplicate": False, "company": company, "role": role}
 
 
 def audit():
-    done, ids, pairs, urls, roles = submitted_index()
+    done, ids, pairs, urls, keys, roles = submitted_index()
     by_id = collections.Counter(e.get("applicationId") for e in done)
     by_pair = collections.defaultdict(set)
     by_url = collections.defaultdict(set)
+    by_key = collections.defaultdict(set)
     for e in done:
         by_pair[(norm(e.get("company")), norm(e.get("role")))].add(e.get("applicationId"))
-        u = norm_url((roles.get(e.get("applicationId")) or {}).get("url"))
+        entry = roles.get(e.get("applicationId")) or {}
+        u = norm_url(entry.get("url"))
         if u:
             by_url[u].add(e.get("applicationId"))
+        k = seen.ats_key(entry.get("url") or "")
+        company = e.get("company") or entry.get("company")
+        if k and company:
+            by_key[(norm(company), k)].add(e.get("applicationId"))
 
     problems = []
     for aid, n in by_id.items():
@@ -141,6 +181,10 @@ def audit():
     for u, aids in by_url.items():
         if len(aids) > 1:
             problems.append({"kind": "same posting url", "url": u, "ids": sorted(aids)})
+    for (c, k), aids in by_key.items():
+        if len(aids) > 1:
+            problems.append({"kind": "same posting key", "company": c, "key": k,
+                             "ids": sorted(aids)})
     return {"submitted": len(done), "duplicates": problems, "clean": not problems}
 
 
