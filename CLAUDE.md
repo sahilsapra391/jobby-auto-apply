@@ -928,8 +928,15 @@ Corollaries, each of which was learned the expensive way:
   `finish`, `ingest`, `phase`, `promote`, `provider_login`, `run_apply`,
   `run_scan`, `search_config`, `store`, `sync_board` and itself — and imports
   `agent`, `browser`, `document_job`, `provider_login`, `providers` and
-  `toolpath`. `provider_login` is on both lists, so one file can need the
-  restart for one call path and not for another.
+  `toolpath`. `provider_login` is on both lists — imported at `watch.py:54`,
+  spawned at `watch.py:827` — so the granularity is the call path, not even the
+  file.
+
+  **When a doc says "X is the exception", suspect that X is the only case
+  anyone checked.** `brief.py` was not the exception, it was the instance
+  somebody happened to notice, and the rule got written around the observation
+  rather than the mechanism. The other fourteen were in the same file the whole
+  time, findable by the same grep.
 
   The trap is that the two travel together. `browser_mcp_proxy.py` is spawned
   and live on pull, while `browser.py`, which builds its argv, is imported and
