@@ -3,6 +3,8 @@
 import io
 import json
 import os
+import re
+import shutil
 import pathlib
 import signal
 import subprocess
@@ -634,6 +636,135 @@ class KilledProxyStillReportsItsCallsTests(unittest.TestCase):
         connection.process.kill()
         connection.process.wait(timeout=20)
         self.assertFalse(self.activity.exists())
+
+
+class TheGeneratedScriptIsRealJavaScriptTests(unittest.TestCase):
+    """Nothing in this suite had ever parsed the script the proxy sends.
+
+    It is a Python string that becomes JavaScript in someone else's process, so
+    every test of it was a string comparison and every string comparison passed
+    while the script was broken. Two faults survived a green run on 2026-08-28
+    within ten minutes of each other:
+
+      a helper called and never defined -- a ReferenceError on the first form
+      that hit that branch;
+
+      `split('\\n')` written inside a triple-quoted string, so Python turned it
+      into a real newline before the JavaScript ever saw it and the string
+      literal ended mid-line.
+
+    Both are invisible to assertIn and obvious to a parser. node is already a
+    hard dependency of this repo's test suite.
+    """
+
+    CASES = (
+        (["/a.pdf"], None),
+        (["/a.pdf", "/b.pdf"], "e12"),
+        (["/a.pdf"], "#resume"),
+        (["/a.pdf"], "'); process.exit(1); //"),
+    )
+
+    @staticmethod
+    def node():
+        """Node, found the way the rest of the repo finds it.
+
+        Bare "node" assumes a PATH, and the CI-equivalent command runs with a
+        stripped one, so the first version of this errored rather than skipped
+        on a machine without it. toolpath is what every other caller uses.
+        """
+        try:
+            import toolpath
+            return toolpath.node()
+        except Exception:  # noqa: BLE001 - absence is the answer
+            return shutil.which("node")
+
+    def parse(self, code):
+        binary = self.node()
+        if not binary:
+            self.skipTest("node is not available to parse the generated script")
+        return subprocess.run(
+            [binary, "--check", "-"],
+            input="const page = null; const fn = " + code + "; void fn;",
+            capture_output=True, text=True,
+        )
+
+    def test_every_shape_it_generates_parses(self):
+        for paths, ref in self.CASES:
+            with self.subTest(ref=ref, files=len(paths)):
+                done = self.parse(browser_mcp_proxy._attach_file_code(paths, ref))
+                self.assertEqual(done.returncode, 0, done.stderr[:400])
+
+    def test_it_would_notice_a_broken_script(self):
+        """The negative control, since a checker that never fails proves nothing."""
+        done = self.parse("async (page) => { const x = ; }")
+        self.assertNotEqual(done.returncode, 0)
+
+    @staticmethod
+    def executable(code):
+        """The script with its comments and string literals removed.
+
+        Both have to go before anything counts identifiers. The message
+        "the field could not be read back (" contains a bare `back(` that is
+        prose, and a comment naming a helper would vouch for its own absence --
+        the same prose-matching trap that has already cost two tests tonight.
+        """
+        out, quote, escaped, comment = [], None, False, False
+        for index, char in enumerate(code):
+            if comment:
+                if char == "\n":
+                    comment = False
+                    out.append(char)
+                continue
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in "'\"`":
+                quote = char
+                continue
+            if char == "/" and code[index + 1:index + 2] == "/":
+                comment = True
+                continue
+            out.append(char)
+        return "".join(out)
+
+    def test_no_bare_function_is_called_without_being_declared(self):
+        """The undefined-helper case: parses fine, ReferenceError at runtime.
+
+        Bare calls only. `x.foo()` is a method on some object and says nothing
+        about our scope; `foo()` has to be something we declared or a global.
+        An allowlist of Playwright method names was the first shape of this and
+        it was wrong -- it grew a new entry every time the script touched a new
+        part of the API, which is a check that erodes rather than holds.
+        """
+        code = self.executable(browser_mcp_proxy._attach_file_code(["/a.pdf"], "e1"))
+        # Not preceded by a dot, so a bare call rather than a method.
+        bare = set(re.findall(r"(?<![.\w])([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", code))
+        keywords = {"if", "for", "while", "catch", "switch", "return", "function",
+                    "async", "await", "typeof", "new", "of", "in"}
+        globals_ = {"Error", "Array", "String", "Number", "Boolean", "Object",
+                    "JSON", "Promise", "RegExp", "Math"}
+        for name in sorted(bare - keywords - globals_):
+            declared = (f"const {name}" in code or f"let {name}" in code
+                        or f"function {name}" in code or f"({name})" in code
+                        or f"({name}," in code or f", {name})" in code)
+            self.assertTrue(declared, f"{name}() is called but never declared")
+
+    def test_that_check_can_actually_see_an_undeclared_call(self):
+        """A checker that matches nothing passes for the wrong reason."""
+        code = self.executable(
+            "async (page) => { // calls helperInAComment()\n"
+            "  const note = 'mentions inAString()';\n"
+            "  return missingHelper(note); }"
+        )
+        bare = set(re.findall(r"(?<![.\w])([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", code))
+        self.assertIn("missingHelper", bare)
+        self.assertNotIn("helperInAComment", bare)
+        self.assertNotIn("inAString", bare)
 
 
 if __name__ == "__main__":
