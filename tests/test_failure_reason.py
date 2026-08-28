@@ -66,14 +66,31 @@ class WorkerErrorReasonTests(unittest.TestCase):
         self.assertEqual(
             "coverLetter has an invalid shape: role is too short", exc.reason())
 
-    def test_unsupported_terms_gives_the_count_and_never_the_terms(self):
-        """The class exists to keep those terms inside the worker."""
+    def test_unsupported_terms_names_the_terms_for_the_local_log(self):
+        """The count alone cost a day on application 7923ca442c573811.
+
+        These are words from the employer's public posting, not document text.
+        `NodeTransport.fail` still sends a code and nothing else, which is what
+        `test_the_terms_never_reach_the_transport` holds.
+        """
         terms = ["custody", "advisor workflow", "ai-native", "next-generation custody"]
-        exc = worker.UnsupportedTerms(terms)
-        reason = exc.reason()
+        reason = worker.UnsupportedTerms(terms).reason()
         self.assertIn("4", reason)
         for term in terms:
-            self.assertNotIn(term, reason)
+            self.assertIn(term, reason)
+
+    def test_the_named_terms_are_bounded(self):
+        terms = [f"term{index}" for index in range(40)]
+        reason = worker.UnsupportedTerms(terms).reason()
+        self.assertLessEqual(len(reason), worker.MAX_FAILURE_REASON)
+        named = [term for term in terms if term in reason]
+        self.assertLessEqual(len(named), worker.UnsupportedTerms.LOGGED_TERMS)
+        self.assertIn("40", reason)
+
+    def test_a_hostile_term_is_still_scrubbed(self):
+        reason = worker.UnsupportedTerms(["<script>alert(1)</script>"]).reason()
+        self.assertNotIn("<", reason)
+        self.assertNotIn(">", reason)
 
     def test_every_failure_class_can_produce_a_reason(self):
         for cls in (worker.WorkerError, worker.InvalidRequest,

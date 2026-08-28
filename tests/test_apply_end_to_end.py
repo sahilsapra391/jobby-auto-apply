@@ -8,15 +8,19 @@ Fault 1 was a browser server that advertised nothing to a live client. Fault 2
 was an upload tool that cannot work on a form whose file input is hidden, which
 is most of them.
 
-Excluded from CI for the same reason test_resume_pdf is: it needs Chrome, npx
-and the Playwright package. It skips rather than fails when they are absent, so
-running the suite on a machine without them stays honest about what it proved.
+CI runs this module and it skips there. It is not on the workflow's exclusion
+list the way test_resume_pdf is; it needs Chrome, npx and the Playwright
+package, and `live_slot` finds no browser on a runner, so it skips rather than
+fails and a machine without them stays honest about what it proved. Which means
+only the production Mac ever exercises any of this, and a failure here sits
+behind a wall of green checks until somebody runs the suite by hand.
 """
 
 import functools
 import http.server
 import json
 import pathlib
+import re
 import socketserver
 import sys
 import tempfile
@@ -30,6 +34,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browser  # noqa: E402
 from mcp_stdio_client import Client  # noqa: E402
 import mcp_preflight  # noqa: E402
+import watch  # noqa: E402
 
 
 class ThreadingServer(socketserver.ThreadingTCPServer):
@@ -46,8 +51,35 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def live_slot():
-    """A slot whose Chrome answers, or None."""
-    for slot in browser.SLOTS:
+    """A slot whose Chrome answers and that no application is using, or None.
+
+    Both halves matter and the second one was missing. Every slot whose Chrome
+    is up on the production Mac is a production slot, so taking the first one
+    took whichever slot the watcher was in the middle of using. On 2026-08-28
+    that was apply-1, holding a real SmartRecruiters application: this suite
+    opened fixture tabs in that browser while an agent was filling somebody's
+    job application, and its three browser tests failed with "the upload form
+    never appeared" because the page they were driving was not the fixture.
+
+    A running Chrome and an unused Chrome are identical from the browser's
+    side, and only the lock tells them apart. `reserve` writes <slot>.lock
+    before the watcher spawns run_apply, so this asks `free_apply_slots` rather
+    than restating what free means: the watcher's definition is the one that
+    has to be right, and borrowing it means this follows if it ever changes.
+    Parked slots are excluded by it too, for a better reason than tidiness,
+    since a parked slot keeps its page state precisely so its application can
+    retry into it.
+
+    Worth knowing: `lock_holder` repairs as it reads, converting a dead
+    holder's lock into a parked one when the application still owns the slot.
+    That is the watcher's own recovery and it runs every couple of seconds
+    anyway, so asking here only ever performs it a moment sooner.
+    """
+    try:
+        free = watch.free_apply_slots()
+    except Exception:  # noqa: BLE001 - absence is the answer
+        return None
+    for slot in free:
         try:
             if browser.running(slot):
                 return slot
@@ -56,11 +88,38 @@ def live_slot():
     return None
 
 
+def owned_slots():
+    """Running slots an application holds, so a skip can say which case it is.
+
+    "No browser at all" and "every browser is busy" both stop this suite, and
+    a run that cannot tell them apart reads as the machine being unequipped
+    when it is only busy.
+    """
+    try:
+        free = set(watch.free_apply_slots())
+    except Exception:  # noqa: BLE001 - absence is the answer
+        return []
+    held = []
+    for slot in browser.SLOTS:
+        try:
+            if slot not in free and browser.running(slot):
+                held.append(slot)
+        except Exception:  # noqa: BLE001 - absence is the answer
+            continue
+    return held
+
+
 class RealBrowserUploadTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.slot = live_slot()
         if cls.slot is None:
+            busy = owned_slots()
+            if busy:
+                raise unittest.SkipTest(
+                    "every running browser slot is held by an application: "
+                    + ", ".join(busy)
+                )
             raise unittest.SkipTest("no browser slot is running on this machine")
         handler = functools.partial(
             QuietHandler, directory=str(ROOT / "tests" / "fixtures")
@@ -97,8 +156,8 @@ class RealBrowserUploadTests(unittest.TestCase):
         )["browser"]
         self.addCleanup(self.temp.cleanup)
 
-    def open_fixture(self):
-        """Open the fixture and wait until Chrome is actually showing it.
+    def open_fixture(self, name="upload-form.html"):
+        """Open a fixture and wait until Chrome is actually showing it.
 
         `_open_tab` returns when Chrome has created the tab, not when the page
         has parsed. Attaching immediately raced the load and lost about one run
@@ -106,7 +165,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         reads exactly like the tool being broken and is the test being wrong.
         Another session lost an afternoon to it believing it was their diff.
         """
-        url = f"http://127.0.0.1:{self.port}/upload-form.html"
+        url = f"http://127.0.0.1:{self.port}/{name}"
         opened = browser._open_tab(url, self.slot)
         target = (opened or {}).get("id") if isinstance(opened, dict) else None
         if target:
@@ -115,28 +174,70 @@ class RealBrowserUploadTests(unittest.TestCase):
         while time.monotonic() < deadline:
             here = next((t for t in browser.tabs(self.slot)
                          if t.get("id") == target), None)
-            if here and "upload-form.html" in (here.get("url") or ""):
+            if here and name in (here.get("url") or ""):
                 break
             time.sleep(0.1)
         else:
             self.fail("the fixture page never loaded in the slot")
         return target
 
-    def wait_for_form(self, connection):
+    def wait_for_form(self, connection, marker="Cover letter"):
         """And wait until the document has the inputs, not just the address.
 
         The URL is set before the body parses, so the tab reporting the fixture
         is necessary and not sufficient. This asks the page itself, through the
         same firewall the agent uses, which is the only thing that can answer.
+
+        Returns how many probes that took. They are accepted tool calls like
+        any other, so the firewall counts them, and a caller asserting on that
+        count cannot know the number without being told.
         """
+        probes = 0
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            found = connection.tool("browser_find", {"text": "Cover letter"})
+            found = connection.tool("browser_find", {"text": marker})
+            probes += 1
             text = found.get("result", {}).get("content", [{}])[0].get("text", "")
-            if "Cover letter" in text and "No matches" not in text:
-                return
+            if marker in text and "No matches" not in text:
+                return probes
             time.sleep(0.2)
         self.fail("the upload form never appeared on the page")
+
+    def focus_fixture(self, connection, name):
+        """Point the browser at the tab this test opened, and say what it cost.
+
+        Playwright picks a page when it connects and stays on it. A tab a
+        previous run left behind therefore stays current, and opening a second
+        one over CDP does not move it. With one fixture that was invisible.
+        With two it is not: the clearing-form test drove upload-form.html and
+        its wait passed anyway, because both pages say "Cover letter". Selecting
+        by URL is what makes each test about its own page rather than about
+        whatever the slot happened to be showing.
+
+        Returns the number of tool calls it made, because they are accepted
+        calls like any other and the firewall counts them.
+        """
+        listed = connection.tool("browser_tabs", {"action": "list"})
+        text = listed["result"]["content"][0]["text"]
+        for line in text.splitlines():
+            found = re.match(r"\s*-\s*(\d+):", line)
+            if found and name in line:
+                connection.tool("browser_tabs",
+                                {"action": "select", "index": int(found.group(1))})
+                return 2
+        self.fail(f"the slot has no tab showing {name}: {text}")
+
+    def outcome(self, reply):
+        """The tool's own answer, without the source it echoes underneath.
+
+        The reply carries the whole of ATTACH_FILE_CODE back in a fenced block,
+        and that source contains the words Error and Timeout. Asserting against
+        the raw reply therefore tests the tool's comments, which is how two of
+        these assertions passed before they were true and two failed after they
+        were.
+        """
+        text = reply["result"]["content"][0]["text"]
+        return text.split("### Ran Playwright code")[0].strip()
 
     def client(self):
         connection = Client(self.config)
@@ -154,6 +255,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         """Fault 2: six upload calls, both PDFs unattached, application parked."""
         self.open_fixture()
         connection = self.client()
+        self.focus_fixture(connection, "upload-form.html")
         self.wait_for_form(connection)
 
         def text(reply):
@@ -182,28 +284,142 @@ class RealBrowserUploadTests(unittest.TestCase):
         timeout for an upload that had worked. An agent told its upload failed
         retries it, which on a real form is the expensive kind of wrong. Seen on
         the live Justworks posting on 2026-08-27.
+
+        What this test asserts changed on 2026-08-28. It used to prove only
+        that the reply did not mention a timeout, and the code under it reached
+        that answer by assuming any read-back failure meant acceptance -- from
+        an `error` it never looked at, so a navigation, a destroyed context and
+        an expired timeout all became the same confident sentence. Now the
+        success has to be earned from the page: the container the field sat in
+        shows the filename afterwards. The suppressed error is reported beside
+        it rather than thrown away.
         """
         self.open_fixture()
         connection = self.client()
+        self.focus_fixture(connection, "upload-form.html")
         self.wait_for_form(connection)
-        reply = connection.tool("browser_attach_file", {
+        reply = self.outcome(connection.tool("browser_attach_file", {
             "paths": [str(self.resume)], "target": "#portfolio_file",
             "element": "portfolio upload",
-        })["result"]["content"][0]["text"]
-        self.assertNotIn("Timeout", reply)
+        }))
+        self.assertNotIn("### Error", reply)
         self.assertIn("attached", reply)
         self.assertIn(self.resume.name, reply)
+        self.assertIn("shows " + self.resume.name, reply)
+        # The read-back fault is named rather than discarded. It is the value
+        # that says whether this branch was right, and it used to be unread.
+        self.assertIn("could not be read back", reply)
         # And the page really does hold it.
         found = connection.tool(
             "browser_find", {"text": self.resume.name}
         )["result"]["content"][0]["text"]
         self.assertIn(self.resume.name, found)
 
+    def test_a_field_that_clears_itself_on_accept_is_not_called_a_failure(self):
+        """The 2026-08-28 fault: a working attach reported as no file attached.
+
+        Two SmartRecruiters forms produced it the same night, Versant
+        6c3824319c68c547 and SWIGGY 40c1f32b247a885a. Versant proves the
+        direction on its own: both targeted calls returned "the input reported
+        no file after the attachment", and that application's own park note
+        says the resume is attached. The snapshot it took immediately after the
+        last failed call has the filename rendered beside the field.
+
+        The component takes the file off the input and clears `input.value` so
+        that re-choosing the same file still fires change, which empties
+        `node.files` on success. Measured on the live Versant posting on
+        2026-08-28, where both file inputs sit in their own `spl-dropzone`
+        shadow root and both carry id=file-input.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+            "target": "input[type=file] >> nth=0",
+            "element": "resume field",
+        }))
+        self.assertNotIn("### Error", reply)
+        self.assertIn("attached", reply)
+        # The field it actually touched, not merely some field. The first
+        # version of this test drove the other fixture and passed.
+        self.assertIn("data-test=resume-upload", reply)
+        # The evidence is named, not asserted. The input itself still says
+        # nothing, and saying so is the point: the success came from the page.
+        self.assertIn("reports no file", reply)
+        self.assertIn("shows " + self.resume.name, reply)
+        found = connection.tool(
+            "browser_find", {"text": self.resume.name}
+        )["result"]["content"][0]["text"]
+        self.assertIn(self.resume.name, found)
+
+    def test_a_field_that_rejects_the_file_is_not_called_a_success(self):
+        """The other direction, and the one with a submission behind it.
+
+        A field that rejects on type or size clears itself exactly as a field
+        that accepts does, so `node.files` cannot tell them apart. Nor can a
+        page-wide search for the filename: the rejection names the file. This
+        is why the confirmation is scoped to the field's own neighbourhood, why
+        it is a change against a baseline taken before the attach, and why a
+        match inside an alert does not count.
+
+        A false negative parks a run and a person looks at it. A false positive
+        walks an agent toward submit believing a resume is attached, under a
+        real name, and cannot be recalled.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+            "target": "input[type=file] >> nth=1",
+            "element": "cover letter field",
+        }))
+        self.assertIn("data-test=cover-letter-upload", reply)
+        self.assertIn("unconfirmed", reply)
+        # And the page's own reason is carried out rather than dropped, which
+        # is the difference between "no file" and a fault someone can act on.
+        self.assertIn("was rejected", reply)
+
+    def test_two_inputs_sharing_one_id_are_still_told_apart(self):
+        """Both SmartRecruiters inputs carry id=file-input, legally.
+
+        Each is unique inside its own shadow root. So the id names neither, and
+        every error on that form read identically -- from which two sessions
+        concluded that nth=0 and nth=1 had resolved to the same element, on
+        evidence that could not support it. The way out of the element is what
+        distinguishes them.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.focus_fixture(connection, "clearing-upload-form.html")
+        self.wait_for_form(connection, "Apply with clearing fields")
+        reply = self.outcome(connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+        }))
+        self.assertIn("2 file inputs", reply)
+        self.assertIn("resume-upload", reply)
+        self.assertIn("cover-letter-upload", reply)
+
     def test_the_run_is_recorded_as_having_reached_the_browser(self):
-        """A park with zero calls is a capability failure; this is the other case."""
+        """A park with zero calls is a capability failure; this is the other case.
+
+        The total is asserted per tool and against the probes actually sent,
+        rather than against a constant. It was 2, correct when this test made
+        exactly two calls, and stale three hours later when the fix for the
+        load race put a readiness probe in front of them: that probe is an
+        accepted call and the firewall counts it, so the file recorded 3 and
+        the one local invariant the apply browser path has failed on the
+        production Mac while every check stayed green. Writing 3 would have
+        been the same bug waiting for a slow load, because the probe loop
+        runs until the page answers and a busy machine needs more than one.
+        """
         self.open_fixture()
         connection = self.client()
-        self.wait_for_form(connection)
+        selecting = self.focus_fixture(connection, "upload-form.html")
+        probes = self.wait_for_form(connection)
         connection.tool("browser_snapshot", {})
         connection.tool("browser_attach_file",
                         {"paths": [str(self.cover)], "target": "#cover_file"})
@@ -211,7 +427,11 @@ class RealBrowserUploadTests(unittest.TestCase):
         recorded = json.loads(
             browser.activity_path(self.slot, self.context).read_text()
         )
-        self.assertEqual(recorded["totalCalls"], 2)
+        self.assertEqual(recorded["calls"].get("browser_find"), probes)
+        self.assertEqual(recorded["calls"].get("browser_snapshot"), 1)
+        self.assertEqual(recorded["calls"].get("browser_attach_file"), 1)
+        # Still exact: an uncounted call or a double-counted one fails here.
+        self.assertEqual(recorded["totalCalls"], probes + selecting + 2)
         self.assertEqual(recorded["backendExit"], 0)
 
 

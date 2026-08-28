@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import html
 import json
 import os
 import re
@@ -114,6 +115,158 @@ def _first_line(raw: bytes | bytearray) -> str:
         if line.strip():
             return line.strip()
     return ""
+
+
+# A conversation id is 36 characters of pure noise inside a 140-character cap,
+# and it sat in front of the only informative part of every recorded Gemini
+# failure. It is stripped from a reason, never from the joins below.
+_UUID = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+
+def _stream_events(raw: bytes | bytearray) -> "list[dict[str, Any]]":
+    """Every NDJSON object a stream-json provider wrote, in order."""
+    events: list[dict[str, Any]] = []
+    for line in bytes(raw).decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _stream_conversation_id(raw: bytes | bytearray) -> str:
+    """The conversation this run was, for joining agy's own log to it."""
+    for event in _stream_events(raw):
+        for value in event.values():
+            if isinstance(value, Mapping):
+                found = value.get("conversation_id")
+                if isinstance(found, str) and found.strip():
+                    return found.strip()
+    return ""
+
+
+def _stream_error(raw: bytes | bytearray) -> str:
+    """The first non-empty error a stream-json provider reported.
+
+    Earliest wins, deliberately. agy ends a failed run with a terminal result
+    whose status is ERROR and whose error string is empty, so taking the last
+    error-shaped event recorded the fact of a failure and none of its cause.
+    Where the stream does carry a reason it is in an event before that one.
+    """
+    for event in _stream_events(raw):
+        # Top level first, then the one wrapper agy puts around a result. Only
+        # a field actually named "error" is read, so the model's own partial
+        # draft can never become a failure reason.
+        for holder in (event, *(v for v in event.values() if isinstance(v, Mapping))):
+            error = holder.get("error")
+            if isinstance(error, str) and error.strip():
+                return " ".join(_UUID.sub("", error).split())[:300]
+    return ""
+
+
+def _stdout_error_line(raw: bytes | bytearray) -> str:
+    """The last stdout line that names an error, for a failure reason.
+
+    agy speaks stream-json, so its account of a failed run goes to stdout as
+    an event, with stderr staying empty. Three Gemini document jobs exited 1
+    on 2026-08-28 and every recorded detail was the bare exit code, because
+    only stderr was consulted and the stream carrying the reason was thrown
+    away. Only lines that say "error" are considered: the stream also carries
+    the model's partial output, and a failure reason must never quote the
+    document it was generating.
+
+    This is the weakest of the three sources and runs last. A line that merely
+    contains the word "error" is evidence that something failed, not a reason.
+    """
+    text = bytes(raw).decode("utf-8", "replace")
+    chosen = ""
+    for line in text.splitlines():
+        if line.strip() and "error" in line.lower():
+            chosen = line.strip()
+    return " ".join(_UUID.sub("", chosen).split())[:300]
+
+
+# agy writes one log per run under here, named for its start time.
+AGY_LOG_DIR = Path("~/.gemini/antigravity-cli/log")
+MAX_AGY_LOG_BYTES = 1024 * 1024
+# Comfortably longer than any document run, so the log of the run that just
+# failed is always in range, and short enough that a stale file never is.
+MAX_AGY_LOG_AGE_SECONDS = 2 * 60 * 60
+MAX_AGY_LOGS_SCANNED = 60
+# The line shapes agy uses to say a print-mode run failed. An allowlist, not a
+# search for "error": the same file records the signed-in Google account on its
+# OAuth lines, and a reason is not worth writing an email address into every
+# job log to obtain. Both of these modules are about the print run itself and
+# neither reports an identity.
+_AGY_FAULT = re.compile(r"\bE\d{4} [0-9:.]+ +\d+ (printmode|pubsub)\.go:\d+\] (.+)$")
+
+
+def _agy_log_reason(conversation_id: str, *, log_dir: Path | str = AGY_LOG_DIR) -> str:
+    """Why agy says a print-mode run failed, from agy's own log.
+
+    THE REASON NEVER REACHES THIS PROCESS. That is the whole point of this
+    function. A failed agy run exits 1 with stderr empty and a terminal result
+    event whose status is ERROR, whose response is empty and whose error is the
+    empty string, so both of the sources above have nothing to report. The
+    sentence naming the cause is written only to the CLI's own log file.
+
+    Measured on 2026-08-28: five Gemini document jobs failed and every one
+    recorded "provider exited 1" plus an empty error field, while each run's
+    log held the same two lines, which say what actually happened:
+
+        pubsub: Publish killing slow subscriber "...": subscriber fell behind
+        updates, stalled for 5s
+        Print mode: conversation update stream failed: subscriber fell behind
+        updates, stalled for 5s
+
+    Joined to the run by conversation id rather than by picking the newest
+    file. Runs overlap, and attributing a neighbour's fault to this job is
+    worse than reporting no reason at all.
+    """
+    if not conversation_id or not _UUID.fullmatch(conversation_id):
+        return ""
+    # Newest first, and bounded by age rather than by count. agy never prunes
+    # this directory, which held 442 files when this was written, and the run
+    # that has just failed wrote one of the newest. A count alone is the wrong
+    # bound: six unrelated runs in between pushed a real failure to rank 14 and
+    # a cap of twelve reported no reason for a fault sitting on the disk.
+    cutoff = time.time() - MAX_AGY_LOG_AGE_SECONDS
+    try:
+        candidates = sorted(
+            (item for item in Path(log_dir).expanduser().glob("cli-*.log")
+             if item.stat().st_mtime >= cutoff),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )[:MAX_AGY_LOGS_SCANNED]
+    except OSError:
+        return ""
+    for path in candidates:
+        try:
+            if path.stat().st_size > MAX_AGY_LOG_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if conversation_id not in text:
+            continue
+        for line in text.splitlines():
+            if "@" in line:
+                continue
+            found = _AGY_FAULT.search(line)
+            if found:
+                return " ".join(_UUID.sub("", found.group(2)).split())[:300]
+        return ""
+    return ""
+
+
 _REASON_DISALLOWED = re.compile(r"[^A-Za-z0-9 ,.:%()'-]+")
 
 
@@ -162,23 +315,37 @@ class ResultInvalid(WorkerError):
 
 
 class UnsupportedTerms(ResultInvalid):
-    """Internal ATS rejection carrying terms that must never leave the worker."""
+    """Internal ATS rejection carrying terms that never cross the transport."""
+
+    #: Terms named in the local log. The rest are counted.
+    LOGGED_TERMS = 8
 
     def __init__(self, terms: list[str]):
         self.terms = list(terms)
         super().__init__("the tailored resume contains unsupported terms")
 
     def reason(self) -> str:
-        """The count, never the terms.
+        """The terms, bounded, in the local log only.
 
-        The terms are job-description keywords rather than document text, but
-        this class exists to keep them inside the worker and that is not mine
-        to relax. The count alone still separates the two cases that matter:
-        a handful of stray words, or a posting whose core vocabulary the
-        candidate has no evidence for. The second is the gate working.
+        This used to be the count alone, and the count cost a day. Application
+        7923ca442c573811 failed this gate four times saying "1 unsupported
+        term(s)", and finding out which word it was meant rebuilding the whole
+        check offline against the real store. It was "aligned".
+
+        Naming them is safe by construction rather than by care. Every element
+        is drawn from `ats_match.keywords(jd_text)`, so each one is a word or
+        pair from the employer's public posting; none of it is the candidate's
+        document text, which is the thing this class exists to contain. The
+        line still goes only to the per-job log on this machine, and
+        `failure_reason` scrubs and truncates it. `NodeTransport.fail` sends a
+        member of FAILURE_CODES and nothing else, so this reaches no queue.
         """
+        shown = ", ".join(self.terms[: self.LOGGED_TERMS])
+        rest = len(self.terms) - self.LOGGED_TERMS
+        if rest > 0:
+            shown += f", and {rest} more"
         return failure_reason(
-            f"{len(self.terms)} unsupported term(s) the base resume cannot source")
+            f"{len(self.terms)} unsupported term(s) no source can support: {shown}")
 
 
 class TransportError(RuntimeError):
@@ -609,6 +776,23 @@ def _regular_output(output_root: Path, name: str, maximum: int) -> Path:
     return path
 
 
+def _base_content_prose(value: Any) -> str:
+    """Every string the base resume content holds, and none of its field names.
+
+    Tokenising the raw JSON would put `areasOfExpertise`, `lede` and `banner`
+    into the evidence set, which are schema, not anything the candidate wrote.
+    Entities are unescaped because the content stores `&amp;` and the rendered
+    page shows `&`, and the two have to tokenise alike.
+    """
+    if isinstance(value, str):
+        return html.unescape(value)
+    if isinstance(value, Mapping):
+        return " ".join(_base_content_prose(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_base_content_prose(item) for item in value)
+    return ""
+
+
 def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]:
     try:
         jd_text = Path(runtime["jobDescriptionPath"]).read_text(
@@ -619,17 +803,54 @@ def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]
         facts_text = Path(runtime["storyFactsPath"]).read_text(
             encoding="utf-8", errors="replace"
         )
+        # The wording the render starts from, which is the one piece of
+        # evidence this gate was missing. See the comment below.
+        content_text = _base_content_prose(_base_resume_content(runtime))
     except (OSError, RuntimeError, SystemExit) as exc:
         raise ResultInvalid("resume text could not be checked") from exc
 
     keywords = ats_match.keywords(jd_text, 60)
     tailored_tokens = ats_match.tokens(tailored_text)
-    allowed = set(ats_match.tokens(base_text)) | set(ats_match.tokens(facts_text))
+    # Three sources of evidence, all of them the candidate's own and none of
+    # them the model's. The base PDF is the resume he selected; the story facts
+    # are his verified record; the base content is the wording every tailored
+    # resume is built out of, held to it by `resume_build.assert_integrity`.
+    #
+    # The third was missing and that made the gate unsatisfiable. The render
+    # starts from the base content and the evidence came from the base PDF, so
+    # any word the two say differently was scored as unsourced even with every
+    # override stripped. Measured against the real store on 2026-08-28: 47
+    # tokens in the base-only render were absent from the PDF and the facts,
+    # and application 7923ca442c573811 (Robinhood) died on one of them, the
+    # base content's "aligned" against the base PDF's "align". A posting whose
+    # keywords land on one of those 47 could never be built, whatever the
+    # provider returned, because the retry falls back to exactly the wording
+    # being rejected.
+    #
+    # This does not widen what a model may claim. Overrides are model text and
+    # are not added here, so an invented term is still caught, and what the
+    # gate refuses is unchanged: a claim the candidate has no evidence for.
+    #
+    # Evidence stays in reading order, one stream per source, because a term is
+    # matched against the resume with `contains` and has to be sourced with the
+    # same function or the two disagree. A set has no adjacency, so a bigram
+    # could be found in the document and then be unsourceable by construction:
+    # "custom move" matched the render's "customers moved" and was refused
+    # because the evidence set held "moved" and not "move". One stream per
+    # source rather than one concatenated stream, so this check never reads a
+    # pair across a seam; the rule below it is what actually admits a pair
+    # whose two words come from different sources.
+    evidence = [
+        ats_match.tokens(base_text),
+        ats_match.tokens(facts_text),
+        ats_match.tokens(content_text),
+    ]
+    allowed = set().union(*(set(stream) for stream in evidence))
     allowed_joined = " ".join(sorted(allowed))
     matched = [term for term in keywords if ats_match.contains(tailored_tokens, term)]
     unsourced = []
     for term in matched:
-        if ats_match.contains(list(allowed), term):
+        if any(ats_match.contains(stream, term) for stream in evidence):
             continue
         if all(part in allowed for part in term.split()):
             continue
@@ -2157,9 +2378,19 @@ class ProviderRunner:
             if overflow.is_set():
                 raise GenerationFailed("provider response exceeded its size limit")
             if process.returncode != 0:
+                # Four sources, strongest first, because the strong ones were
+                # empty for every Gemini failure on 2026-08-28 and the run then
+                # recorded its exit code and nothing else. A stream that names
+                # its own fault is believed; agy's log is asked only when the
+                # stream says a run failed without saying why; and a line that
+                # merely contains the word "error" is the last resort it was.
+                detail = _first_line(stderr_tail) or _stream_error(output)
+                if not detail and invocation.provider_id == "gemini":
+                    detail = _agy_log_reason(_stream_conversation_id(output))
+                detail = detail or _stdout_error_line(output)
                 raise GenerationFailed(
                     f"provider exited {process.returncode}"
-                    + (f": {_first_line(stderr_tail)}" if stderr_tail else "")
+                    + (f": {detail}" if detail else "")
                 )
             try:
                 decoded = bytes(output).decode("utf-8")
@@ -2492,7 +2723,9 @@ class DocumentWorker:
                     if corrected == generated:
                         raise
                     self.artifact_renderer(runtime, corrected)
-                    log.record("unsupported ATS overrides removed")
+                    log.record(
+                        "unsupported ATS overrides removed", reason=exc.reason()
+                    )
                     runtime["checks"] = self.artifact_validator(runtime)
                 packed = self.pack_result(runtime)
             except Exception as exc:
@@ -2513,7 +2746,12 @@ class DocumentWorker:
                 if detail_event:
                     log.record(detail_event)
                 if stage_event:
-                    log.record(stage_event)
+                    # The ATS stage is the only one here whose cause is a word
+                    # rather than a rule, and the word is the whole diagnosis.
+                    log.record(
+                        stage_event,
+                        reason=exc.reason() if isinstance(exc, UnsupportedTerms) else "",
+                    )
                 raise ResultInvalid("generated artifacts failed validation") from exc
             log.record("artifacts validated")
 

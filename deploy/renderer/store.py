@@ -482,6 +482,44 @@ TOPIC_MARKERS = [
         "political contribution", "political contributions",
         "political action committee", "contribution to any political",
     )),
+    # The EEO block, which every US application ends with and which overlap
+    # scoring cannot reach. Two reasons it cannot, and both had to be true for
+    # this to keep happening. The words differ: "military status" and "veteran"
+    # share nothing at all, and "disability-status" against "have-disability"
+    # scores 0.33, under the 0.4 needed even to be offered as a candidate. And
+    # a sensitive answer is barred from fuzzy matching on purpose, so the one
+    # path left open to the others was closed to these by design.
+    #
+    # So the Robinhood application parked on gender, race, military and
+    # disability with every one of them answered on 2026-08-19, and the agent
+    # was shown no candidate to follow up because there was none to show.
+    #
+    # Every phrase here carries the question's own shape with it, because the
+    # near misses are questions with different answers rather than different
+    # wordings of one question. Measured over 254 real questions from the store
+    # and the captured forms, plus nine adversarial probes: 2 correct hits each
+    # and 0 false positives. Two phrases were cut by that measurement and are
+    # listed so nobody adds them back. "armed forces" matched Axon's "discharged
+    # from the Armed Forces under dishonorable conditions", which is conduct,
+    # not status. "hispanic or latino" matched Versant's "Are you Hispanic or
+    # Latino?", which wants Yes or No and would have been handed a descriptive
+    # ethnicity string. A bare "a disability" is absent too: it appears in
+    # accommodation requests, which ask for something rather than state a fact.
+    ("gender-identity", (
+        "gender identity", "what is your gender", "select your gender",
+        "gender (select",
+    )),
+    ("race-ethnicity", (
+        "race or ethnicity", "race/ethnicity", "what is your ethnicity",
+        "what is your race", "racial or ethnic", "ethnic background",
+    )),
+    ("military-status", (
+        "military status", "veteran status", "protected veteran",
+        "are you a veteran",
+    )),
+    ("disability-status", (
+        "disability status", "do you have a disability", "form cc-305",
+    )),
     # Willingness only, never authorisation. "background check" on its own is
     # deliberately absent: it appears just as often in "I authorise the company
     # to obtain a consumer report", and signing that is the user's act, not a
@@ -562,6 +600,24 @@ TOPIC_MARKERS = [
         "close associate", "conflict of interest", "conflicts of interest",
         "related to, by birth", "related by birth", "birth, adoption or marriage",
         "immediate family member employed", "relative employed by",
+        # Finance compliance blocks ask this without using either of the two
+        # words above. Robinhood asks for "Personal/Familial Relationships,
+        # Outside Business Activities, qualifying investments, or Intellectual
+        # Property Ownership" in one field, and asks separately whether the
+        # applicant holds or has held a government position, was referred by
+        # someone who does, or has a close relationship with one. Both parked
+        # the 2026-08-28 application against a standing "NO, always" recorded
+        # on 2026-08-19.
+        #
+        # "close relationship with one" rather than "close relationship":
+        # measured against 254 real questions plus six probes, the bare phrase
+        # also takes "Do you have a close relationship with your current
+        # manager?", which is not a conflict disclosure. With these phrases the
+        # additions hit 5 questions, all of them the intended ones, and none of
+        # the probes.
+        "familial relationship", "personal/familial",
+        "outside business activities", "close personal relationship",
+        "government official", "public official", "close relationship with one",
     )),
     # Deliberately AFTER relationships-conflicts, which is scanned first and
     # wins: "is a relative of yours a former employee here" is a question about

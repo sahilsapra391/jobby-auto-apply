@@ -830,7 +830,11 @@ class WorkerPipelineTests(unittest.TestCase):
         self.assertNotIn("summary", self.render_calls[1][1]["resumeOverrides"])
         log = (self.worker.log_dir / f"{JOB_ID}.log").read_text()
         self.assertIn("unsupported ATS overrides removed", log)
-        self.assertNotIn("unsupported platform", log)
+        # The term is named in the local log, because which word the gate
+        # caught is the whole diagnosis. It is a posting keyword, and it goes
+        # no further than this file: the transport carries a fixed code.
+        self.assertIn("unsupported platform", log)
+        self.assertFalse(self.transport.failed)
 
     def test_cross_section_unsupported_phrase_falls_back_to_base_resume(self):
         generated = {
@@ -1512,6 +1516,108 @@ class ArtifactValidationTests(unittest.TestCase):
         self.assertEqual(
             self.runtime["artifactValidationDetail"], "cover_overflow"
         )
+
+
+class AtsProvenanceTests(unittest.TestCase):
+    """What the gate must refuse, and what it must never refuse.
+
+    The second half is the one that was missing. Application 7923ca442c573811
+    failed four times on the word "aligned": the render starts from the base
+    resume content, the evidence came only from the base resume PDF, and the
+    two say "aligned" and "align". Stripping the model's overrides fell back to
+    exactly the wording being rejected, so the retry could not converge and no
+    provider could ever have built it.
+    """
+
+    BASE_PDF = (
+        "Sahil Sapra. Product manager. Shipped payments platform work and "
+        "align with operations partners. Enterprise customers moved to the "
+        "new billing service."
+    )
+    FACTS = "Ran discovery with 30 operators. Cut onboarding from 8 weeks to 2."
+    CONTENT = {
+        "banner": "Product Manager",
+        "summary": "Aligned engineering, QA and go-to-market partners on release scope.",
+        "roles": [{"lede": "Payments", "bullets": ["Enterprise customers moved with no downtime."]}],
+    }
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = pathlib.Path(self.temp.name)
+        store = root / "store"
+        store.mkdir()
+        (store / "resume-content.json").write_text(json.dumps(self.CONTENT))
+        (store / "facts.txt").write_text(self.FACTS)
+        self.jd = root / "jd.txt"
+        self.runtime = {
+            "storeRoot": str(store),
+            "baseResumePath": str(root / "base.pdf"),
+            "jobDescriptionPath": str(self.jd),
+            "storyFactsPath": str(store / "facts.txt"),
+        }
+        self.resume = root / "resume.pdf"
+        self.resume.write_bytes(b"%PDF-1.4\n")
+
+    def check(self, jd_text, tailored_text):
+        self.jd.write_text(jd_text)
+        with (
+            mock.patch.object(worker.ats_match, "pdf_text", return_value=self.BASE_PDF),
+            mock.patch.object(
+                worker.ats_match, "document_text", return_value=tailored_text
+            ),
+        ):
+            return worker._ats_checks(self.runtime, self.resume)
+
+    def test_base_wording_is_evidence_so_a_stripped_retry_can_converge(self):
+        """The exact Robinhood failure: base content "aligned", base PDF "align"."""
+        jd = (
+            "Aligned partners drive the advisor platform. Aligned teams own "
+            "aligned outcomes across the aligned roadmap."
+        )
+        tailored = worker._base_content_prose(self.CONTENT)
+        self.assertIn("aligned", worker.ats_match.tokens(tailored))
+        self.assertNotIn("aligned", worker.ats_match.tokens(self.BASE_PDF))
+        self.assertEqual(0, self.check(jd, tailored)["unsourcedTerms"])
+
+    def test_a_term_no_source_supports_is_still_refused(self):
+        jd = (
+            "Custody custody custody. Next-generation custody for advisors, "
+            "with custodian vendors across the custody platform."
+        )
+        tailored = worker._base_content_prose(self.CONTENT) + " Led custody programs."
+        with self.assertRaises(worker.UnsupportedTerms) as caught:
+            self.check(jd, tailored)
+        self.assertIn("custody", caught.exception.terms)
+
+    def test_the_model_cannot_source_a_term_from_its_own_override(self):
+        """Evidence is the three candidate-owned sources, never the draft."""
+        jd = "Custody custody custody advisors custody platform custody work."
+        tailored = "Custody custody custody, custody everywhere, custody again."
+        with self.assertRaises(worker.UnsupportedTerms):
+            self.check(jd, tailored)
+
+    def test_a_bigram_is_sourced_by_the_adjacency_that_matched_it(self):
+        """Evidence is ordered, because `contains` searches an ordered stream.
+
+        A set has no adjacency, so this pair matched the document and was then
+        unsourceable however plainly the base resume said it.
+        """
+        jd = (
+            "Customer move programs. Customer move planning, customer move "
+            "delivery and customer move reporting for every customer move."
+        )
+        tailored = "Enterprise customers moved with no downtime."
+        self.assertEqual(0, self.check(jd, tailored)["unsourcedTerms"])
+
+    def test_content_field_names_are_not_evidence(self):
+        prose = worker._base_content_prose(self.CONTENT)
+        self.assertIn("Payments", prose)
+        for field in ("banner", "summary", "roles", "lede", "bullets"):
+            self.assertNotIn(field, prose)
+
+    def test_content_entities_tokenise_as_the_page_renders_them(self):
+        self.assertEqual("R&D", worker._base_content_prose({"x": "R&amp;D"}))
 
 
 class DurabilityTests(unittest.TestCase):
