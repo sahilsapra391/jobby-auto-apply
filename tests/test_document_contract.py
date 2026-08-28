@@ -19,7 +19,7 @@ spec.loader.exec_module(contract)
 def bundle():
     pdf = b"%PDF-1.4\nbase"
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "applicationId": "acme-pm",
         "provider": "openai",
         "company": "Acme",
@@ -28,6 +28,13 @@ def bundle():
         "jobDescription": "Build a reliable product roadmap.",
         "profile": {"firstName": "Test", "lastName": "Candidate", "resumes": []},
         "storyFacts": "Shipped a real product.",
+        "resumeContent": {
+            "banner": "PRODUCT MANAGER | PRIVATE WORDING",
+            "summary": "Wording the Profile page saved, not the shipped template.",
+            "areasOfExpertise": ["Product Analytics", "Customer Discovery"],
+            "technical": [{"label": "Languages", "items": "Python, TypeScript"}],
+            "roles": [{"lede": "Payments", "bullets": ["Moved 75 customers."]}],
+        },
         "writingSamples": ["A short professional note."],
         "baseResume": {
             "name": "base-resume.pdf",
@@ -74,6 +81,72 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(pathlib.Path(runtime["storeRoot"], "profile.json").stat().st_mode & 0o777,
                              0o600)
 
+    def test_materialize_carries_the_profile_wording_into_the_task_store(self):
+        """The defect this file did not catch, measured on 2026-08-28.
+
+        `materialize` wrote `profile.json` and `story-facts.txt` and stopped, so
+        the worker's task store never held the wording and every resume fell
+        back to `templates/resume-content.json`. The old
+        `test_materialize_writes_private_endpoint_files` passed throughout,
+        because it asserted the files that were written rather than the ones a
+        render needs.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = contract.materialize(bundle(), tmp)
+            written = pathlib.Path(runtime["storeRoot"], "resume-content.json")
+            self.assertTrue(written.is_file())
+            self.assertEqual(written.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(written.read_text()),
+                             bundle()["resumeContent"])
+            self.assertEqual(runtime["resumeContentPath"], str(written))
+
+    def test_the_wording_is_a_file_beside_the_profile_not_a_runtime_field(self):
+        """Same rule the profile and the story facts follow.
+
+        task.json is written to disk unencrypted for the length of the run.
+        Content that has a file goes in the file; duplicating it into the
+        runtime would put the same paragraphs in two places and make the next
+        person guess which one a reader is looking at.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = contract.materialize(bundle(), tmp)
+            self.assertNotIn("resumeContent", runtime)
+            packed = json.dumps(runtime)
+            self.assertNotIn("not the shipped template", packed)
+
+    def test_a_bundle_with_no_resume_wording_is_refused(self):
+        task = bundle()
+        del task["resumeContent"]
+        with self.assertRaises(contract.DocumentContractError):
+            contract.validate_bundle(task)
+
+    def test_resume_wording_of_the_wrong_shape_is_refused(self):
+        """Named per field, because "invalid bundle" sends nobody anywhere."""
+        cases = {
+            "banner": 7,
+            "summary": None,
+            "areasOfExpertise": ["fine", 3],
+            "technical": [{"label": "Languages"}],
+            "roles": [],
+        }
+        for field, value in cases.items():
+            with self.subTest(field=field):
+                task = bundle()
+                task["resumeContent"][field] = value
+                with self.assertRaises(contract.DocumentContractError) as caught:
+                    contract.validate_bundle(task)
+                self.assertIn("base resume wording", str(caught.exception))
+
+    def test_wording_shape_does_not_count_list_lengths(self):
+        """`store._same_shape` counts slots; this endpoint has nothing to count
+        against, and `resume_build.render` is the check that holds the template.
+        """
+        task = bundle()
+        task["resumeContent"]["areasOfExpertise"] = ["only one"]
+        task["resumeContent"]["roles"][0]["bullets"] = ["a", "b", "c"]
+        self.assertIsNone(
+            contract._resume_content_problem(task["resumeContent"]))
+
     def test_tampered_base_resume_is_rejected(self):
         task = bundle()
         task["baseResume"]["contentBase64"] = base64.b64encode(b"%PDF-changed").decode()
@@ -91,7 +164,7 @@ class ResultTests(unittest.TestCase):
                 "sha256": __import__("hashlib").sha256(data).hexdigest(),
                 "contentBase64": base64.b64encode(data).decode(),
             }
-        return {"schemaVersion": 1, "applicationId": "acme-pm",
+        return {"schemaVersion": 2, "applicationId": "acme-pm",
                 "provider": "openai", "files": files}
 
     def test_install_is_atomic_and_returns_both_pdf_paths(self):

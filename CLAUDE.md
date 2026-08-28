@@ -334,6 +334,94 @@ payload, and result-validation contract. Encryption, decryption, provider
 execution, HTML/PDF rendering, geometric checks, and file installation all run
 on the Mac. KV receives ciphertext and fixed status metadata.
 
+## The Profile page's wording travels, it is not read off the disk
+
+**Everything the document worker needs is in the bundle. The one input that was
+not is the one that never worked.**
+
+`_base_resume_content` read `resume-content.json` out of the task-private store
+and fell back to `templates/resume-content.json`. `materialize` wrote
+`profile.json` and `story-facts.txt` into that store and nothing else, so the
+file was never there, the fallback was the only path, and every resume and cover
+letter Jobby has generated started from the repository template. The Profile
+page saves an edit and answers "Saved. Your next tailored resume starts from
+this." No resume ever did.
+
+Measured on 2026-08-28, because a docstring asserting the store copy "is
+preferred here" is exactly the kind of claim that is not evidence for itself.
+`build_bundle` for the real application `7923ca442c573811` then `materialize`:
+the task store held those two files, and `_base_resume_content` on that runtime
+returned a dict equal to the shipped template and unequal to the store copy
+sitting on the same machine.
+
+So the wording goes through the bundle now. `build_bundle` resolves it through
+`store.resume_content`, which already answers with the device copy when the
+Profile page has been used and the template otherwise; `validate_bundle` checks
+its shape; `materialize` writes it beside `profile.json` at 0600. The bundle
+schema is 2, so a job encrypted before this and claimed after fails by name
+rather than quietly reverting.
+
+**An empty `document-tasks/` does not cover that window, and believing it does
+is the trap.** That directory holds *claimed* work. A bundle encrypted under the
+old schema and sitting unclaimed in the KV queue is not in it, and a worker that
+only speaks the new schema will claim it after the restart and reject it. It
+fails by name, which is what should happen, but it fails on a job the user
+already watched be accepted, so they see a failed application rather than a
+deploy artifact. Raised by a peer session on 2026-08-28 while reviewing this
+change, and it was right.
+
+So a schema bump gates on the queue as well as the directory. Both are cheap:
+
+```
+~/.job-application/document-tasks/ empty          -> nothing claimed
+no session documentJob.state in queued|claimed|running -> nothing waiting
+```
+
+Measured before this merged: 13 `documentJob` entries across the store, all
+`ready`, nothing queued or claimed. `document_job.retry_failed` rebuilds the
+bundle under the current schema, so a job caught by this is recoverable with the
+board's own Retry, but recovering it costs the user a click they did not earn
+and should be avoided rather than relied on.
+
+**Both of those checks read local state, and neither reads the queue.** The
+transport is Cloudflare KV and `document_job.py` cannot enumerate it: all five
+subcommands (`ensure`, `sync`, `retry`, `poll`, `show`) require `--id`, so it can
+only answer about a job whose id you already hold, and `show` resolves to
+`get_state`, which reads the session on disk. There is no "list what is waiting".
+
+The gate is sound anyway, and the reason is an ordering rather than a
+coincidence. `_ensure_unlocked` calls `_save_state` *before* `_submit`, with the
+comment saying why: if the process stops after Cloudflare accepts the request,
+the next pass reuses the same id. So a job cannot exist in KV without a local
+session already recording it, and enumerating sessions is complete by
+construction. The mirror can lag the other way, reading `queued` for a job that
+has finished, which only makes the gate hold when it need not.
+
+That completeness is a property of the single-device deployment, not of the
+check. Section 6 of `docs/plans/multi-tenant-architecture.md` is what would
+invalidate it: once another device can enqueue, the local mirror stops being the
+whole queue and this gate needs a real KV enumeration behind it.
+
+**No local fallback is left in the worker and none may be added back.** Reading
+a second file when the first is absent is precisely how one document's wording
+was served in place of another's for as long as the feature has existed, and a
+substitution that says nothing is indistinguishable from working. A missing file
+now fails the job by name. For the same reason, reading the base sits outside
+the OpenAI override-shape fallback: inheriting "the verified base wording" means
+something only once the base has been read, and swallowing the failure to read
+it leaves a run with no wording and nobody naming why.
+
+The shape check does not count list lengths, on purpose. `store._same_shape`
+counts slots because it stands next to the template. This endpoint does not,
+which is the whole reason the wording is transported, and `resume_build.render`
+is the check that does hold the template and refuses a mismatch.
+
+The tests are the other half of the lesson. Ten worker tests exercised this path
+and all ten passed throughout, because they built runtimes by hand and inherited
+the same fallback the product did; four had no `storeRoot` at all and were
+reading the developer's own `~/.job-application`. A test that supplies an input
+the real caller does not supply is testing a configuration nobody ships.
+
 ## Artifacts live in R2, and the board links to them by filename
 
 Generated resumes and cover letters (PDF and HTML), cached job descriptions and

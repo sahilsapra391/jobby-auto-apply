@@ -19,7 +19,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_TEXT_BYTES = 512 * 1024
 MAX_BASE_RESUME_BYTES = 12 * 1024 * 1024
 SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -127,6 +127,47 @@ def _reduced_profile(profile, selected):
     }
 
 
+def _resume_content_problem(value):
+    """Why this base resume wording cannot be transported, or None.
+
+    Shape only, never list lengths. `store._same_shape` refuses an edit whose
+    lengths disagree with the template, and it can, because it is standing next
+    to the template. This endpoint is not, and that is the whole point: the
+    wording travels in the bundle so the worker never reads the repository copy.
+    `resume_build.render` counts the slots it fills and refuses a mismatch,
+    which is the check that does have the template in hand.
+    """
+    if not isinstance(value, dict) or not value:
+        return "it is not a JSON object"
+    if len(json.dumps(value).encode()) > MAX_TEXT_BYTES:
+        return f"it is larger than {MAX_TEXT_BYTES} bytes"
+    for field in ("banner", "summary"):
+        if not isinstance(value.get(field), str):
+            return f"{field} must be text"
+    areas = value.get("areasOfExpertise")
+    if not isinstance(areas, list) or any(
+            not isinstance(item, str) for item in areas):
+        return "areasOfExpertise must be a list of text"
+    technical = value.get("technical")
+    if not isinstance(technical, list):
+        return "technical must be a list"
+    for index, row in enumerate(technical):
+        if not isinstance(row, dict) or not isinstance(row.get("label"), str) \
+                or not isinstance(row.get("items"), str):
+            return f"technical row {index + 1} needs a label and items"
+    roles = value.get("roles")
+    if not isinstance(roles, list) or not roles:
+        return "roles must be a non-empty list"
+    for index, role in enumerate(roles):
+        if not isinstance(role, dict):
+            return f"role {index + 1} must be an object"
+        bullets = role.get("bullets")
+        if not isinstance(bullets, list) or any(
+                not isinstance(item, str) for item in bullets):
+            return f"role {index + 1} needs a list of text bullets"
+    return None
+
+
 def build_bundle(application_id, provider, root=None):
     """Build one minimal document payload from the local application store."""
     if not SAFE_NAME.fullmatch(str(application_id or "")):
@@ -144,6 +185,16 @@ def build_bundle(application_id, provider, root=None):
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise DocumentContractError("the local profile cannot be read") from exc
+
+        # The store's copy when the Profile page has been used, the shipped
+        # template otherwise. `store.resume_content` already resolves that, and
+        # resolving it here is what makes the wording transported content rather
+        # than something the worker reads off whichever disk it happens to be on.
+        content = store.resume_content(store.root_dir())
+        problem = _resume_content_problem(content)
+        if problem:
+            raise DocumentContractError(
+                f"the base resume wording cannot be sent: {problem}")
 
         base_path = Path(summary.get("baseResume") or "").expanduser()
         if not base_path.is_file():
@@ -191,6 +242,7 @@ def build_bundle(application_id, provider, root=None):
             "region": summary.get("region"),
             "jobDescription": job_text,
             "profile": _reduced_profile(profile, selected),
+            "resumeContent": content,
             "storyFacts": _read_text(summary.get("storyFacts"), "the story facts"),
             "writingSamples": samples,
             "baseResume": {
@@ -217,6 +269,10 @@ def validate_bundle(bundle):
         raise DocumentContractError("document output names are incomplete")
     if any(not SAFE_NAME.fullmatch(str(outputs[key])) for key in required):
         raise DocumentContractError("a document output name is unsafe")
+    problem = _resume_content_problem(bundle.get("resumeContent"))
+    if problem:
+        raise DocumentContractError(
+            f"the base resume wording is invalid: {problem}")
     encoded = str((bundle.get("baseResume") or {}).get("contentBase64") or "")
     try:
         resume = base64.b64decode(encoded, validate=True)
@@ -250,6 +306,12 @@ def materialize(bundle, directory):
     (store_root / "story-facts.txt").write_text(
         str(bundle.get("storyFacts") or ""), encoding="utf-8")
     (store_root / "story-facts.txt").chmod(0o600)
+    # Beside profile.json and story-facts.txt, and for the same reason. The
+    # worker reads its wording from here and nowhere else, so a Profile edit
+    # reaches a resume by travelling, not by the worker sharing the Mac's disk.
+    (store_root / "resume-content.json").write_text(
+        json.dumps(bundle["resumeContent"], indent=2), encoding="utf-8")
+    (store_root / "resume-content.json").chmod(0o600)
     (root / "writing-samples.txt").write_text(
         "\n\n--- SAMPLE ---\n\n".join(bundle.get("writingSamples") or []),
         encoding="utf-8")
@@ -258,7 +320,7 @@ def materialize(bundle, directory):
     runtime = {
         key: value for key, value in bundle.items()
         if key not in ("baseResume", "profile", "storyFacts", "writingSamples",
-                       "jobDescription")
+                       "jobDescription", "resumeContent")
     }
     runtime.update({
         "taskRoot": str(root),
@@ -267,6 +329,7 @@ def materialize(bundle, directory):
         "baseResumePath": str(root / "base-resume.pdf"),
         "jobDescriptionPath": str(root / "job-description.txt"),
         "storyFactsPath": str(store_root / "story-facts.txt"),
+        "resumeContentPath": str(store_root / "resume-content.json"),
         "writingSamplesPath": str(root / "writing-samples.txt"),
     })
     task_path = root / "task.json"
