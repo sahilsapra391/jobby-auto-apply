@@ -383,6 +383,25 @@ bundle under the current schema, so a job caught by this is recoverable with the
 board's own Retry, but recovering it costs the user a click they did not earn
 and should be avoided rather than relied on.
 
+**Both of those checks read local state, and neither reads the queue.** The
+transport is Cloudflare KV and `document_job.py` cannot enumerate it: all five
+subcommands (`ensure`, `sync`, `retry`, `poll`, `show`) require `--id`, so it can
+only answer about a job whose id you already hold, and `show` resolves to
+`get_state`, which reads the session on disk. There is no "list what is waiting".
+
+The gate is sound anyway, and the reason is an ordering rather than a
+coincidence. `_ensure_unlocked` calls `_save_state` *before* `_submit`, with the
+comment saying why: if the process stops after Cloudflare accepts the request,
+the next pass reuses the same id. So a job cannot exist in KV without a local
+session already recording it, and enumerating sessions is complete by
+construction. The mirror can lag the other way, reading `queued` for a job that
+has finished, which only makes the gate hold when it need not.
+
+That completeness is a property of the single-device deployment, not of the
+check. Section 6 of `docs/plans/multi-tenant-architecture.md` is what would
+invalidate it: once another device can enqueue, the local mirror stops being the
+whole queue and this gate needs a real KV enumeration behind it.
+
 **No local fallback is left in the worker and none may be added back.** Reading
 a second file when the first is absent is precisely how one document's wording
 was served in place of another's for as long as the feature has existed, and a
