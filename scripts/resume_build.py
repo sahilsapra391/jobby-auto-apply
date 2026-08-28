@@ -200,6 +200,22 @@ def assert_integrity(base, tailored):
                 f"{where} repeats the word {word!r} back to back"
             )
 
+    # A list row printed twice is a duplicated line on the page. This was not
+    # hypothetical: the shipped template itself carried the technical row
+    # "Languages & Frameworks" twice, and every one of the ten newest rendered
+    # resumes on 2026-08-28 showed that line doubled. Employers received them.
+    for field in ("areasOfExpertise", "technical"):
+        seen = {}
+        for index, row in enumerate(tailored.get(field) or []):
+            key = _normalized(json.dumps(row, sort_keys=True)
+                              if isinstance(row, dict) else str(row))
+            if key and key in seen:
+                raise ResumeIntegrityError(
+                    f"{field} rows {seen[key] + 1} and {index + 1} are the "
+                    "same line twice"
+                )
+            seen[key] = index
+
 
 def safe(text):
     """Text to HTML, leaving entities that are already correct alone."""
