@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
@@ -39,6 +40,11 @@ PROFILE = STATE / "browser-profile"
 CONFIG = STATE / "browser-mcp.json"
 ARTIFACTS = STATE / "browser-artifacts"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_INFO_PLIST = Path("/Applications/Google Chrome.app/Contents/Info.plist")
+# Short, because the caller asks every slot in a loop and a wedged Chrome
+# answers nothing at all. Eight slots at the four seconds `_cdp` defaults to
+# would cost half a minute of a four-second tick.
+CHROME_VERSION_TIMEOUT = 2
 # Pinned rather than @latest: an unattended pipeline should not change the tool
 # that fills application forms because a release happened overnight.
 PACKAGE = "@playwright/mcp@0.0.79"
@@ -477,6 +483,140 @@ def _launch_argv(slot, profile):
             "about:blank"]
 
 
+def installed_version():
+    """The Chrome build sitting on disk right now, or "" if it cannot be read.
+
+    macOS replaces the whole bundle in place when Keystone lands a release, so
+    a browser started before an update carries on executing a binary that is no
+    longer at that path. Nothing in Chrome tells the fleet this happened, and
+    the two answers, this one and running_version, are the only place it shows.
+
+    Empty on any failure rather than raising. The one caller uses this to decide
+    whether to take browsers down, and a recycle keyed on a version that could
+    not be read would empty the fleet the first time the plist moved.
+    """
+    try:
+        info = plistlib.loads(CHROME_INFO_PLIST.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return ""
+    version = info.get("CFBundleShortVersionString")
+    return version.strip() if isinstance(version, str) else ""
+
+
+def running_version(slot=None):
+    """The build a slot's browser is actually executing, or "" if it is down.
+
+    From CDP's own ``Browser`` field, which carries the full build
+    (``Chrome/151.0.7922.175``). Deliberately not the ``User-Agent`` string
+    beside it: that is rounded to ``151.0.0.0`` to stop sites fingerprinting the
+    patch level, so comparing it against the installed build would report every
+    slot as drifted forever.
+    """
+    payload = _cdp("/json/version", slot, timeout=CHROME_VERSION_TIMEOUT)
+    if not isinstance(payload, dict):
+        return ""
+    name = payload.get("Browser")
+    if not isinstance(name, str) or "/" not in name:
+        return ""
+    return name.split("/", 1)[1].strip()
+
+
+def running_launch(slot):
+    """The argv of the live browser main for this slot, or [] if none.
+
+    Read from the process table because nothing else knows. CDP reports the
+    build a browser is running and says nothing about how it was started, so a
+    browser launched before a flag was added to _launch_argv is invisible to
+    every other check here: same binary, same version, different configuration.
+
+    Helpers are excluded by --type. They inherit much of the main's command line,
+    and counting one as the main would answer about a renderer.
+
+    Deliberately not a launch record written beside the slot at serve() time.
+    That was proposed and it inverts what this is for: a file we wrote is our
+    claim about a process, while ps is the process. The two can disagree, and
+    the case that started this is exactly where they would have. pid 54233 was
+    launched by code that predated both the flag and any such record, so it
+    would have had no entry, and a check keyed on records has to read a missing
+    one as either "stale" or "unknown". ps answered it with neither guess. The
+    benefit offered, that a record outlives the process, is not one: a browser
+    that has exited raises no dialog and needs no recycling.
+
+    Truncation was the fragility worth checking and it is not one here. macOS ps
+    returned complete argv at every length probed on 2026-08-28, up to 8,211
+    bytes with the final argument intact; the slot's own line is 238. A guard
+    against a limit that was not reached would be machinery for a fault nobody
+    has seen, so there is none. Re-measure before assuming it holds elsewhere.
+    """
+    if slot not in SLOTS:
+        raise ValueError("unknown browser slot")
+    result = subprocess.run(["ps", "-Ao", "command="], capture_output=True,
+                            text=True, timeout=20)
+    port = f"--remote-debugging-port={port_for(slot)}"
+    profile = f"--user-data-dir={_profile_dir(slot)}"
+    for line in (result.stdout or "").splitlines():
+        argv = line.split()
+        if port in argv and profile in argv and not any(
+                item.startswith("--type=") for item in argv):
+            return argv
+    return []
+
+
+def missing_launch_flags(slot):
+    """Flags _launch_argv sets now that this slot's browser was not given.
+
+    A running Chrome cannot be told a new flag, so the only way to apply one is
+    to start the process again. That makes this the second half of drift: the
+    binary can be current while the configuration is two commits old.
+    """
+    argv = running_launch(slot)
+    if not argv:
+        return []
+    wanted = [item for item in _launch_argv(slot, _profile_dir(slot))
+              if item.startswith("--")]
+    return [flag for flag in wanted if flag not in argv]
+
+
+def _wait_until_down(slot, seconds):
+    """Poll until the slot stops answering CDP. False if it never does."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if not running(slot):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+def stop_slot(slot, timeout=10):
+    """Shut one slot's browser down. False if one is still up afterwards.
+
+    The answer is about the state the slot is left in, not about whether this
+    call had to do anything, because that is what every caller acts on: a browser
+    that had already exited is as stopped as one this took down.
+
+    Which is why both waits are polls rather than a fixed sleep. SIGTERM asks
+    Chrome to exit and Chrome takes its time about it, so reading the port the
+    instant after `pkill` returns catches a browser mid-shutdown and calls it a
+    refusal. Measured against a real Chrome on 2026-08-28: it reported False
+    every time while the browser was in fact going down. A recycler that trusts
+    that answer reports a slot it successfully retired as one it could not.
+    """
+    if slot not in SLOTS:
+        raise ValueError("unknown browser slot")
+    if not running(slot):
+        return True
+    # Chrome exposes no clean shutdown over the HTTP endpoint, so close the
+    # tabs and let it exit, then fall back to a signal.
+    for t in tabs(slot):
+        _cdp(f"/json/close/{t['id']}", slot)
+    if _wait_until_down(slot, min(2, timeout)):
+        return True
+    subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
+                   capture_output=True)
+    return _wait_until_down(slot, timeout)
+
+
 def serve(slot=None):
     """Start a slot's browser if it is not already up.
 
@@ -545,23 +685,22 @@ def clone_logins():
     return {"cloned": True, "slots": done, "from": str(src)}
 
 
-def stop_all():
-    """Shut every slot's browser down, for cloning or a clean restart."""
+def stop_all(slots=None):
+    """Shut slot browsers down, for cloning or a clean restart.
+
+    With no argument, every slot. One slot at a time exists for the case where
+    a Chrome update has left exactly one browser behind and taking the rest down
+    would cost a live run its form.
+    """
+    targets = list(SLOTS) if slots is None else [s for s in slots if s in SLOTS]
     stopped = []
-    for slot in SLOTS:
+    for slot in targets:
         if not running(slot):
             continue
-        # Chrome exposes no clean shutdown over the HTTP endpoint, so close the
-        # tabs and let it exit, then fall back to a signal.
-        for t in tabs(slot):
-            _cdp(f"/json/close/{t['id']}", slot)
-        time.sleep(1)
-        if running(slot):
-            subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
-                           capture_output=True)
+        stop_slot(slot)
         stopped.append(slot)
     time.sleep(1)
-    return {"stopped": stopped, "stillRunning": [s for s in SLOTS if running(s)]}
+    return {"stopped": stopped, "stillRunning": [s for s in targets if running(s)]}
 
 
 def tabs(slot=None):
@@ -822,7 +961,8 @@ def main():
     g.add_argument("--serve", action="store_true",
                    help="start a slot's browser if it is not already up")
     g.add_argument("--serve-all", action="store_true", help="start every slot's browser")
-    g.add_argument("--stop", action="store_true", help="shut every slot's browser down")
+    g.add_argument("--stop", action="store_true",
+                   help="shut every slot's browser down, or just --slot's")
     g.add_argument("--clone-logins", action="store_true",
                    help="copy the signed-in profile from the first slot to the others, "
                         "so a sign-in is done once rather than once per slot")
@@ -846,7 +986,7 @@ def main():
         print(json.dumps(out, indent=2))
         return 0 if all(not v.get("error") for v in out.values()) else 1
     if args.stop:
-        print(json.dumps(stop_all(), indent=2))
+        print(json.dumps(stop_all([args.slot] if args.slot else None), indent=2))
         return 0
     if args.clone_logins:
         out = clone_logins()
@@ -864,8 +1004,10 @@ def main():
     if args.check:
         ok, why = available()
         out = {"ok": ok, "reason": why,
+               "installedChrome": installed_version() or None,
                "slots": {slot: {"running": running(slot), "port": port_for(slot),
                                 "profile": str(_profile_dir(slot)),
+                                "chrome": running_version(slot) or None,
                                 "tabs": len(tabs(slot)) if running(slot) else 0}
                          for slot in SLOTS}}
         print(json.dumps(out, indent=2))
