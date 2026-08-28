@@ -10,8 +10,9 @@ advertised list were maintained by hand in two files, and a park told you
 nothing about whether the agent ever had a browser.
 
 What this cannot do is drive a real browser; that is test_apply_end_to_end,
-which needs Chrome and npx and is excluded from CI for the same reason the PDF
-render tests are.
+which needs Chrome and npx. Unlike the PDF render tests it is not excluded from
+CI, so it runs there and skips, which comes to the same thing: this module is
+the half of the contract a green check actually proves.
 """
 
 import json

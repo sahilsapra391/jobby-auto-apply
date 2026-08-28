@@ -8,9 +8,12 @@ Fault 1 was a browser server that advertised nothing to a live client. Fault 2
 was an upload tool that cannot work on a form whose file input is hidden, which
 is most of them.
 
-Excluded from CI for the same reason test_resume_pdf is: it needs Chrome, npx
-and the Playwright package. It skips rather than fails when they are absent, so
-running the suite on a machine without them stays honest about what it proved.
+CI runs this module and it skips there. It is not on the workflow's exclusion
+list the way test_resume_pdf is; it needs Chrome, npx and the Playwright
+package, and `live_slot` finds no browser on a runner, so it skips rather than
+fails and a machine without them stays honest about what it proved. Which means
+only the production Mac ever exercises any of this, and a failure here sits
+behind a wall of green checks until somebody runs the suite by hand.
 """
 
 import functools
@@ -30,6 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browser  # noqa: E402
 from mcp_stdio_client import Client  # noqa: E402
 import mcp_preflight  # noqa: E402
+import watch  # noqa: E402
 
 
 class ThreadingServer(socketserver.ThreadingTCPServer):
@@ -46,8 +50,35 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def live_slot():
-    """A slot whose Chrome answers, or None."""
-    for slot in browser.SLOTS:
+    """A slot whose Chrome answers and that no application is using, or None.
+
+    Both halves matter and the second one was missing. Every slot whose Chrome
+    is up on the production Mac is a production slot, so taking the first one
+    took whichever slot the watcher was in the middle of using. On 2026-08-28
+    that was apply-1, holding a real SmartRecruiters application: this suite
+    opened fixture tabs in that browser while an agent was filling somebody's
+    job application, and its three browser tests failed with "the upload form
+    never appeared" because the page they were driving was not the fixture.
+
+    A running Chrome and an unused Chrome are identical from the browser's
+    side, and only the lock tells them apart. `reserve` writes <slot>.lock
+    before the watcher spawns run_apply, so this asks `free_apply_slots` rather
+    than restating what free means: the watcher's definition is the one that
+    has to be right, and borrowing it means this follows if it ever changes.
+    Parked slots are excluded by it too, for a better reason than tidiness,
+    since a parked slot keeps its page state precisely so its application can
+    retry into it.
+
+    Worth knowing: `lock_holder` repairs as it reads, converting a dead
+    holder's lock into a parked one when the application still owns the slot.
+    That is the watcher's own recovery and it runs every couple of seconds
+    anyway, so asking here only ever performs it a moment sooner.
+    """
+    try:
+        free = watch.free_apply_slots()
+    except Exception:  # noqa: BLE001 - absence is the answer
+        return None
+    for slot in free:
         try:
             if browser.running(slot):
                 return slot
@@ -56,11 +87,38 @@ def live_slot():
     return None
 
 
+def owned_slots():
+    """Running slots an application holds, so a skip can say which case it is.
+
+    "No browser at all" and "every browser is busy" both stop this suite, and
+    a run that cannot tell them apart reads as the machine being unequipped
+    when it is only busy.
+    """
+    try:
+        free = set(watch.free_apply_slots())
+    except Exception:  # noqa: BLE001 - absence is the answer
+        return []
+    held = []
+    for slot in browser.SLOTS:
+        try:
+            if slot not in free and browser.running(slot):
+                held.append(slot)
+        except Exception:  # noqa: BLE001 - absence is the answer
+            continue
+    return held
+
+
 class RealBrowserUploadTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.slot = live_slot()
         if cls.slot is None:
+            busy = owned_slots()
+            if busy:
+                raise unittest.SkipTest(
+                    "every running browser slot is held by an application: "
+                    + ", ".join(busy)
+                )
             raise unittest.SkipTest("no browser slot is running on this machine")
         handler = functools.partial(
             QuietHandler, directory=str(ROOT / "tests" / "fixtures")
@@ -128,13 +186,19 @@ class RealBrowserUploadTests(unittest.TestCase):
         The URL is set before the body parses, so the tab reporting the fixture
         is necessary and not sufficient. This asks the page itself, through the
         same firewall the agent uses, which is the only thing that can answer.
+
+        Returns how many probes that took. They are accepted tool calls like
+        any other, so the firewall counts them, and a caller asserting on that
+        count cannot know the number without being told.
         """
+        probes = 0
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             found = connection.tool("browser_find", {"text": "Cover letter"})
+            probes += 1
             text = found.get("result", {}).get("content", [{}])[0].get("text", "")
             if "Cover letter" in text and "No matches" not in text:
-                return
+                return probes
             time.sleep(0.2)
         self.fail("the upload form never appeared on the page")
 
@@ -200,10 +264,21 @@ class RealBrowserUploadTests(unittest.TestCase):
         self.assertIn(self.resume.name, found)
 
     def test_the_run_is_recorded_as_having_reached_the_browser(self):
-        """A park with zero calls is a capability failure; this is the other case."""
+        """A park with zero calls is a capability failure; this is the other case.
+
+        The total is asserted per tool and against the probes actually sent,
+        rather than against a constant. It was 2, correct when this test made
+        exactly two calls, and stale three hours later when the fix for the
+        load race put a readiness probe in front of them: that probe is an
+        accepted call and the firewall counts it, so the file recorded 3 and
+        the one local invariant the apply browser path has failed on the
+        production Mac while every check stayed green. Writing 3 would have
+        been the same bug waiting for a slow load, because the probe loop
+        runs until the page answers and a busy machine needs more than one.
+        """
         self.open_fixture()
         connection = self.client()
-        self.wait_for_form(connection)
+        probes = self.wait_for_form(connection)
         connection.tool("browser_snapshot", {})
         connection.tool("browser_attach_file",
                         {"paths": [str(self.cover)], "target": "#cover_file"})
@@ -211,7 +286,11 @@ class RealBrowserUploadTests(unittest.TestCase):
         recorded = json.loads(
             browser.activity_path(self.slot, self.context).read_text()
         )
-        self.assertEqual(recorded["totalCalls"], 2)
+        self.assertEqual(recorded["calls"].get("browser_find"), probes)
+        self.assertEqual(recorded["calls"].get("browser_snapshot"), 1)
+        self.assertEqual(recorded["calls"].get("browser_attach_file"), 1)
+        # Still exact: an uncounted call or a double-counted one fails here.
+        self.assertEqual(recorded["totalCalls"], probes + 2)
         self.assertEqual(recorded["backendExit"], 0)
 
 

@@ -623,8 +623,31 @@ fence lying, and the fence is not lying, it is answering a different question.
 `tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
 the real firewall against a real Chrome and attaches real files to a form whose
 input is hidden. Both faults were invisible to the whole suite because every
-test stopped at a seam. It is excluded from CI beside the resume render tests,
-and skips rather than fails when no browser slot is running.
+test stopped at a seam. Unlike the resume render tests it is *not* on the
+workflow's exclusion list: CI runs it and it skips there, because no slot
+answers on a runner. So the only machine that ever executes it is this one, and
+a failure in it is invisible to every green check until the suite is run by
+hand. That is how a stale constant in it survived: the count it asserts became
+wrong three hours after it was written, when the fix for a load race added a
+readiness probe whose calls the firewall counts like any other. Assert such a
+total against what the test knows it sent, never against a literal.
+
+**That suite drives production slots, so it has to ask whether one is free
+rather than whether one is up.** Every slot whose Chrome answers on this Mac is
+a production slot. `live_slot` took the first one that answered, and on
+2026-08-28 that was apply-1 while an agent was filling a real SmartRecruiters
+application in it: the suite opened fixture tabs in that browser and its three
+browser tests failed with "the upload form never appeared", because the page
+they were driving belonged to somebody's job application. A running Chrome and
+an unused Chrome are identical from the browser's side, and only the lock tells
+them apart, so it now takes its candidates from `watch.free_apply_slots` rather
+than restating what free means: `reserve` writes the slot lock before spawning
+`run_apply`, the watcher's definition is the one that has to be right, and
+borrowing it means the test follows if it ever changes. Parked slots are
+excluded by it too, for a better reason than tidiness, since a parked slot
+keeps its page state precisely so its application can retry into it. The skip
+message names which case it is, because "no browser at all" and "every browser
+is busy" stop the suite identically and mean opposite things.
 
 ## Application worker repair, 2026-08-24
 
@@ -927,6 +950,62 @@ than one of them.
 stop halfway, a run about to start or a collision you can see, say so where the
 other sessions will read it. What is forbidden is the silent half. The rule is
 not about the pause, it is about nobody knowing the system is in two states.
+
+### Knowing it is safe, before step 2
+
+The rule above says restart every service. It did not say how to know that is
+safe to do, and on 2026-08-28 that gap cost a near-miss.
+
+**Ask `watch.py --status` and read `locks`. One command, already pid-checked.**
+
+```
+python3 scripts/watch.py --status
+```
+
+```json
+"locks": { "apply-1": null, "apply-2": null, ... , "scan": null }
+```
+
+- `null` is a free slot.
+- A lock with `"parked": true` holds a slot for an application waiting on the
+  user. There is no process behind it and restarting over it is safe.
+- **Anything else is a browser in the middle of somebody's application.** That
+  is the one to wait for.
+
+Corroborate with `document-tasks/` being empty, which is document jobs rather
+than form runs, and with no session in status `inflight`. Three checks, one
+command each, and they cover different work:
+
+```
+watch.py --status, locks all null or parked  -> no form run mid-flight
+~/.job-application/document-tasks/ empty     -> no document job mid-flight
+no session status "inflight"                 -> corroborates both
+```
+
+**The worked example.** A session checked `document-tasks/`, found it empty,
+and restarted. `apply-1` had been claimed 88 seconds earlier by a live form run
+that its check could not see:
+
+```
+apply-1 taken at    : 23:56:26   pid 12927, live, not parked
+checkout moved at   : 23:57:46
+watcher restarted at: 23:57:54
+```
+
+It resolved benignly. The runner is a spawned child rather than the service, so
+`kickstart -k` did not kill it; it ran to its own end and released the slot, and
+the new watcher never had to arbitrate a lock held by a process it did not
+spawn. But the application was mid-form with no parent for the duration, which
+is not a state anyone chose, and had it been mid-submit rather than at "Queued"
+the cost would have been a duplicate application under a real name.
+
+**And the reason the rule names a command rather than a file glob.** That
+session's first check was `ls ~/.job-application/locks/apply-*.json`, which
+returned "no matches found" because the files are `.lock`. A wrong glob and an
+empty directory are the same output. A safety check whose failure mode is
+indistinguishable from success is not a safety check, which is why this asks a
+program that fails loudly instead of a pattern that fails silently.
+
 
 ## A change is done when the running system consumes it
 
