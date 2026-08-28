@@ -16,9 +16,23 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import document_worker as worker  # noqa: E402
 import providers  # noqa: E402
 import resume_pdf  # noqa: E402
+import store_isolation  # noqa: E402
+
+
+def setUpModule():
+    # process_claim() records the documents phase's token spend, and the worker
+    # takes a state_dir but provider_usage does not: it resolves its own path,
+    # so a temporary state_dir alone left five fixture rows a run in the real
+    # ledger under the applicationId "private-application".
+    store_isolation.begin()
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 JOB_ID = "12345678-1234-4234-9234-123456789abc"

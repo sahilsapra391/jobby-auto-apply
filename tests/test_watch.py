@@ -29,6 +29,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import store_isolation  # noqa: E402
 
 
 def load(name):
@@ -41,6 +44,22 @@ def load(name):
 toolpath = load("toolpath")
 agent = load("agent")
 watch = load("watch")
+
+
+def setUpModule():
+    # Health and failover assertions write the provider registry, and unisolated
+    # that is the device's own providers.json: the file that says which accounts
+    # are connected, in what order, and whether each is healthy. A fixture
+    # marking a provider unhealthy there diverts real work to another account.
+    #
+    # The three modules above are passed explicitly because load() builds them
+    # with spec_from_file_location, so they never enter sys.modules and the
+    # scan cannot find them.
+    store_isolation.begin(toolpath, agent, watch)
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 class ToolPathTests(unittest.TestCase):

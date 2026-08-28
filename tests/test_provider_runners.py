@@ -12,12 +12,25 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import agent
 import providers
 import application_mcp  # noqa: E402
 import run_apply
 import run_scan
+import store_isolation  # noqa: E402
+
+
+def setUpModule():
+    # Driving run_apply.main() reaches provider_usage.record(), which writes to
+    # the device's own usage.jsonl unless the store is moved. Ten fixture rows a
+    # run, and the cost report reads every line it finds.
+    store_isolation.begin()
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 def completed(stdout="", stderr="", code=0):

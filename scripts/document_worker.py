@@ -1326,6 +1326,16 @@ def _base_resume_content(runtime):
     is deliberate. Reading a second file when the first is absent is how this
     substituted one document's wording for another's without saying so, and a
     silent substitution is indistinguishable from working.
+
+    #116 found the same line from the other side and is worth recording, because
+    it explains why this got worse rather than staying merely wrong. The old
+    fallback ended in a literal `~/.job-application` that no `JOB_APPLICATION_DIR`
+    redirect could move, and it was the only store-root resolution under
+    `scripts/` that ignored the environment. That stayed survivable while the
+    two callers were the prompt and the render. #107 added a third inside
+    `_ats_checks`, which is validation, so from then on a test could pass or
+    fail on the contents of a file it never wrote. Requiring the task store's
+    own copy answers both faults with one rule.
     """
     path = Path(runtime["storeRoot"]) / "resume-content.json"
     if not path.is_file():
@@ -2419,7 +2429,10 @@ class DocumentWorker:
     def __init__(
         self,
         *,
-        state_dir: Path = DEFAULT_STATE_DIR,
+        # None, not DEFAULT_STATE_DIR: a default argument binds once, at import,
+        # so it keeps naming the path this module held then. See
+        # providers.ProviderRegistry.__init__.
+        state_dir: Path | None = None,
         transport: Any | None = None,
         control_transport: Any | None = None,
         registry: providers.ProviderRegistry | None = None,
@@ -2446,7 +2459,9 @@ class DocumentWorker:
         monotonic: Callable[[], float] = time.monotonic,
         provider_controls: bool = True,
     ):
-        self.state_dir = private_directory(Path(state_dir).expanduser().resolve())
+        self.state_dir = private_directory(
+            Path(state_dir if state_dir is not None
+                 else DEFAULT_STATE_DIR).expanduser().resolve())
         self.task_dir = private_directory(self.state_dir / "document-tasks")
         self.log_dir = private_directory(self.state_dir / "document-logs")
         self.transport = transport or NodeTransport()
