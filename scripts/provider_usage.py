@@ -289,6 +289,59 @@ def ledger_path(root=None):
     return root / "usage.jsonl"
 
 
+def live_ledger():
+    """The device's own ledger, ignoring wherever this process has been pointed.
+
+    Named separately from `ledger_path()` because the two answer different
+    questions: that one is "where does this call write", this one is "which file
+    is the real measurement", and the guard below compares them. It has to
+    ignore JOB_APPLICATION_DIR for that comparison to mean anything: a guard
+    that followed the redirect would protect the temporary directory and leave
+    the ledger open.
+    """
+    return ledger_path(Path("~/.job-application"))
+
+
+def _under_test_runner():
+    """True when this process is a test run rather than a real one.
+
+    Measured rather than assumed. Nothing under scripts/ imports unittest or
+    pytest, and importing run_apply, document_worker, watch, providers, publish
+    or ingest leaves neither name in sys.modules, so this cannot be true on the
+    apply path. `LiveLedgerGuardTests` pins both halves of that.
+    """
+    return "unittest" in sys.modules or "pytest" in sys.modules
+
+
+def refusal_reason(path):
+    """Why a test run may not write to `path`, or None when the write proceeds.
+
+    A fixture row is not distinguishable from a real one once it is a line in
+    this file. It carries a plausible application id, one of the three pinned
+    model names and a real taskKind, and `summary` reads every line it finds.
+    Measured on this device 2026-08-28: 3,372 fabricated rows against 29 real
+    ones, accumulated since 2026-08-25 at fifteen a suite run, unnoticed,
+    because telemetry is the one thing here designed never to complain.
+
+    The comparison is against the one real path rather than against "was a root
+    passed", so a test that redirects JOB_APPLICATION_DIR to a temporary
+    directory is allowed and a test that names the device store explicitly is
+    not. Which is the right way round: what matters is the file, not the syntax
+    the caller reached it with.
+    """
+    if not _under_test_runner():
+        return None
+    live = live_ledger()
+    try:
+        if Path(path).resolve() != live.resolve():
+            return None
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return (f"refusing to write {live} from a test run. Point the store at a "
+            "temporary directory (root=, or JOB_APPLICATION_DIR) so fixture "
+            "rows never reach the ledger `summary` reports from.")
+
+
 def record(application_id, provider, model, task_kind, usage, *,
            root=None, prices=None, now=None):
     """Append one usage row. Returns the row, or None if it could not be written.
@@ -297,6 +350,22 @@ def record(application_id, provider, model, task_kind, usage, *,
     filled in and possibly submitted, and losing the telemetry for that run is
     an acceptable outcome in a way that losing the run is not.
     """
+    try:
+        path = ledger_path(root)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    refusal = refusal_reason(path)
+    if refusal is not None:
+        # sys.stderr.write, not print. The tests that trigger this are the ones
+        # driving run_apply.main(), and they patch builtins.print to keep the
+        # runner's output readable -- so a printed diagnostic was swallowed by
+        # the exact runs it exists to explain. Measured: the guard correctly
+        # refused all ten rows and said so zero times.
+        #
+        # Loud, and once per refused row rather than once per process. A correct
+        # suite writes nothing here, so any line at all is the regression.
+        sys.stderr.write(f"provider_usage: {refusal}\n")
+        return None
     prices = prices if prices is not None else load_prices()
     row = Record(
         at=now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -311,7 +380,6 @@ def record(application_id, provider, model, task_kind, usage, *,
         unpricedReason=unpriced_reason(usage, model, prices),
     )
     try:
-        path = ledger_path(root)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(asdict(row), sort_keys=True)
         # Append rather than rewrite: concurrent apply slots write here, and a

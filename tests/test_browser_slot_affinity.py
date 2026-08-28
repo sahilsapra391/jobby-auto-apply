@@ -11,10 +11,25 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import browser  # noqa: E402
 import run_apply  # noqa: E402
+import store_isolation  # noqa: E402
 import watch  # noqa: E402
+
+
+def setUpModule():
+    # reconcile_browser_slots() saves the sessions it reconciles through the
+    # real store CLI. Unisolated, that filed acme-pm in the device's own
+    # sessions/ and roles.json: a fabricated application sitting in Needs you,
+    # pending on "Enter the OTP", written by the same command a real run uses
+    # and so indistinguishable from one.
+    store_isolation.begin()
+
+
+def tearDownModule():
+    store_isolation.end()
 
 
 class ParkedReservationTests(unittest.TestCase):

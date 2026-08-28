@@ -27,7 +27,13 @@ def _provider(provider_id):
 
 
 def _path(provider_id, root):
-    return Path(root).expanduser() / _provider(provider_id)
+    # `root` arrives as None from every caller that did not name one. A default
+    # argument would bind SECRET_DIR once, at import, and go on naming the real
+    # key directory however this module's constant is later set: which is how a
+    # test suite writes to a path it believed it had redirected. See
+    # providers.ProviderRegistry.__init__.
+    base = Path(root if root is not None else SECRET_DIR).expanduser()
+    return base / _provider(provider_id)
 
 
 def _validate(secret):
@@ -37,7 +43,7 @@ def _validate(secret):
     return value
 
 
-def store(provider_id, secret, root=SECRET_DIR):
+def store(provider_id, secret, root=None):
     """Atomically save one API key without ever returning or printing it."""
     value = _validate(secret)
     target = _path(provider_id, root)
@@ -63,7 +69,7 @@ def store(provider_id, secret, root=SECRET_DIR):
         Path(temporary).unlink(missing_ok=True)
 
 
-def load(provider_id, root=SECRET_DIR):
+def load(provider_id, root=None):
     """Read one private key, or return None when it has not been connected."""
     target = _path(provider_id, root)
     try:
@@ -77,7 +83,7 @@ def load(provider_id, root=SECRET_DIR):
     return _validate(target.read_text(encoding="utf-8"))
 
 
-def delete(provider_id, root=SECRET_DIR):
+def delete(provider_id, root=None):
     target = _path(provider_id, root)
     try:
         info = target.lstat()
