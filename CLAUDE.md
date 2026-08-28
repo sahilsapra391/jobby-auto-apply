@@ -489,6 +489,48 @@ into `uploads/<id>/activity.json`, and a park with zero browser calls is
 recorded as `parkClass: capability`, which the board draws in red saying the
 fault is Jobby's. A park where the agent worked the form stays a park.
 
+**That counter is written when the proxy is signalled, not only when it exits,
+and for two months it was only the latter.** The write sat at the end of
+`main()`, after `StdioProxy.run()` returns, which a process killed by a signal
+never reaches. Measured on 2026-08-28 over every staged upload directory on the
+production Mac: five real applications with their PDFs still staged and no
+`activity.json` between them, and the one real record belonging to the run whose
+Playwright backend never started, where the proxy exited on its own. Measured
+the same day against the live CLIs with a signal-recording MCP server, codex
+sends its MCP child SIGTERM and Claude Code sends SIGTERM to the server it
+spawns for discovery and SIGINT to the one running the session. Neither ever
+closes stdin, so no run that reached a form had ever written a record.
+
+The consequence was asymmetric, which is why nothing looked broken. The
+capability branch still fired, because a backend that fails to start lets the
+proxy exit cleanly and write `totalCalls` 0. What never fired was the positive
+half: `attempts[].browserCalls` was `None` for every real run and the
+`tag_session(application_id, "parkClass", "")` clearing had never once run.
+
+`_install_activity_signal_handlers` writes on SIGTERM, SIGINT and SIGHUP and
+then dies of what it was sent, so the exit status still reports the signal. Two
+things it must keep doing. It reads `process.returncode` rather than calling
+`poll()`, because `poll` takes subprocess's non-reentrant waitpid lock and a
+handler runs on the main thread that may be holding it; a deadlock inside the
+bookkeeping would cost the run the thing the bookkeeping is for. And it
+snapshots the stderr deque, which the drain thread is still appending to, since
+iterating one under a concurrent append raises `RuntimeError` and best-effort
+has to mean it on what is now the common path.
+
+**An absent record still means "nothing known" and that is load-bearing, not
+incidental.** `mcp_preflight` kills this process with `process.kill()`, SIGKILL,
+which cannot be caught, so a probe leaves nothing behind that could be read as a
+run which made zero calls. Verified against the real preflight and the real
+Playwright backend on 2026-08-28: thirteen tools advertised, no file written. Do
+not give preflight a graceful shutdown without moving that distinction
+somewhere else first.
+
+Verified the way CLAUDE.md asks for: a real `gpt-5.6-luna` run through the real
+firewall and the real `@playwright/mcp@0.0.79` recorded
+`{"browser_find":1,"browser_snapshot":1}`, `totalCalls` 2, `ended` SIGTERM; a
+real `claude-sonnet-5` run recorded `totalCalls` 1, `ended` SIGINT, its
+discovery probe's zero-call record correctly overwritten by the session's.
+
 `mcp_preflight.REQUIRED` and `_tool_definitions` are one contract in two files,
 pinned by `FenceSurfaceContractTests`. A tool in one and not the other is either
 unguarded or impossible, and both fail quietly.
