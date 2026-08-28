@@ -581,8 +581,37 @@ fence lying, and the fence is not lying, it is answering a different question.
 `tests/test_apply_end_to_end.py` is the invariant none of this had. It drives
 the real firewall against a real Chrome and attaches real files to a form whose
 input is hidden. Both faults were invisible to the whole suite because every
-test stopped at a seam. It is excluded from CI beside the resume render tests,
-and skips rather than fails when no browser slot is running.
+test stopped at a seam.
+
+**It is not excluded from CI, and a local full-suite run beside a working
+daemon can drive a real application's browser.** This paragraph said the
+opposite until 2026-08-28. `checks.yml` excludes `test_resume_pdf` and
+`test_resume_build` and nothing else, which the section on CI further down this
+file has always said correctly, so the file contradicted itself and the wrong
+half was the reassuring one.
+
+What actually protects CI is an accident: `live_slot()` finds no Chrome there,
+so the module raises `SkipTest`. On this machine the slots do have Chrome up,
+including the slots holding parked applications, and `live_slot()` returns the
+first one that answers without asking whether an application is using it. So
+`python3 -m unittest discover -s tests` reaches into a live browser, and the
+test failing rather than skipping is the proof that it found one.
+
+That has already happened more than once, on 2026-08-27 and 2026-08-28, and it
+is not visible as itself: the failure looks like flakiness, passes on a re-run
+once the application has finished, and gets written off. One session recorded it
+as "flaky under parallel load" in a report to the user before knowing any of
+this.
+
+Until the module checks whether the slot it picked is busy, treat a full-suite
+run as something that touches live applications. Check the same way a restart
+does (`watch.py --status`, see the deploy section), or run the suite with the
+module excluded. A busy-slot guard that skips instead of colliding is the real
+fix and belongs in the module rather than in anyone's habits.
+
+This is the same shape as the glob in the deploy section, one layer up: **a
+document asserting a guard that does not exist reads exactly like the guard
+being there.** Nobody checks a protection they have been told they have.
 
 ## Application worker repair, 2026-08-24
 
