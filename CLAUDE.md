@@ -1194,11 +1194,24 @@ So: one owner per deploy, announced before, and these four in one action rather
 than one of them.
 
 ```
+0. take the deploy lock, and stop if somebody already holds it
 1. announce it, and say which services are going down
 2. pull the production checkout, staying on main
 3. restart all three services, dependencies before the orchestrator
-4. verify each service's start time postdates the reflog entry for the new SHA
+4. verify no reflog entry fell between the pull and the restarts
+5. release the deploy lock
 ```
+
+Step 0 is the one that actually excludes a second owner, and step 4 is stricter
+than it used to be for a reason given below. Both are cheap:
+
+```bash
+python3 scripts/deploy_lock.py take --owner <session> --note "<from> -> <to>"
+```
+
+It refuses with exit 1 and names the holder. `watch.py --status` reports it
+under `deploy`, so the gate command everybody already runs answers this too and
+there is no second command to remember.
 
 **A held deploy that is announced is completely fine.** If there is a reason to
 stop halfway, a run about to start or a collision you can see, say so where the
@@ -1326,13 +1339,85 @@ A peer's willingness to defer is not an instruction. The rule the two settled on
 is the one to keep: neither writes until one has an explicit instruction from
 their own user, and whoever gets it announces before writing rather than after.
 
-**The real fix is a lock, not another rule about telling each other things.**
-Every mechanism that failed here was a message. What is wanted is something a
-second session finds already held rather than has to be told about, taken for the
-length of the pull and the restart, with a stale-lock story for a session that
-dies mid-deploy. Until that exists, the protocol above is the whole of the
-protection, and it depends on everyone reading their inbox at the right moment,
-which is the kind of rule this file elsewhere calls already broken.
+**It happened twice in ninety minutes, and the second one was not a near-miss.**
+`jobby-auto-apply-71` pulled at 02:11:31 and restarted at 02:11:44.
+`nervous-cerf` pulled at 02:12:09, twenty-five seconds *after* those restarts,
+leaving the daemons resident on `3a34a51` while the disk read `eb27ec8`. That is
+the two-commits-at-once state this file already forbids, produced by two sessions
+that both announced and both gated correctly. Checking only "the start times
+postdate the entry I expect" passes for each of them separately, which is why
+step 4 above now asks whether any reflog entry fell *between* the pull and the
+restarts. That is the check that caught it.
+
+**So the fix is a lock, not another rule about telling each other things.** Every
+mechanism that failed here was a message. `scripts/deploy_lock.py` is the lock: a
+second session finds it held rather than has to be told, and the refusal names
+who holds it, because the next question is always who.
+
+It is a lease rather than a pid lock, and `runlock` learned about leases rather
+than gaining a sibling module. A deploy is a pull, three restarts and a
+verification, a dozen short-lived commands with no single process alive across
+them, so a pid-alive test would report the lock free while the pull was still
+running. Two internally consistent locks that do not exclude each other is the
+race, not the fix, which is the same argument `runlock`'s own docstring makes
+about the scan lock.
+
+The lease expires, twenty minutes by default against measured deploys of eight
+and fourteen seconds, so a session that dies mid-deploy cannot wedge production.
+**Nothing renews it in the background on the holder's behalf**, because a lease
+that renews itself while its owner is gone is exactly the wedge it exists to
+prevent; `extend` is deliberate and needs the token. `break --reason` takes it
+away and says on stderr who it was taken from, so it can never happen quietly.
+
+What the lock does not do is make the announcement pointless. The lock stops two
+deploys; the announcement is still how everyone else learns their slots are about
+to go away.
+
+**Arming is a property of each file, not of a deploy, so any single sentence
+about when a deploy arms is false.** Not "false when the deploy is mixed": almost
+every deploy here is mixed, so this is the general case. A changed file reached by
+a resident import arms on the restart; one reached only by a spawned process arms
+on the pull; and one deploy routinely carries both, which means neither the pull
+nor the restart is "the" moment.
+
+The session that carried `eb27ec8` told five sessions "#120 arms on the restart,
+because `watch.py` and `browser.py` are resident imports". True of #120 and false
+of the deploy it was describing:
+
+```
+scripts/watch.py          resident  -> arms on the RESTART   (#120)
+scripts/browser.py        resident  -> arms on the RESTART   (#120)
+scripts/answer_record.py  spawned   -> arms on the PULL      (#122)
+scripts/r2_sync.py        spawned   -> arms on the PULL      (#121)
+```
+
+So the window between that pull and the last restart ran the spawned halves of
+two PRs against the resident half of a third. It cost nothing, and the reason is
+narrower than "nothing was running": the commit in the gap was #122 touching
+`answer_record`, which nothing resident imports. Had the gap held a change to
+anything the daemons hold, three freshly started services would have been running
+one commit behind their own disk with nobody aware of it.
+
+Three reasons this earns a line rather than a war story. It is invisible by
+construction: both halves are correct code, nobody chose the configuration, and
+the only symptom appears when the two halves share a contract. An announcement
+naming a single arming event is worse than one naming none, because the next
+reader reasons from it. And the wrong single-sentence version is very easy to
+say: it went to five sessions in good faith and stood unchallenged for twenty
+minutes among people actively hunting deploy faults, then took three sessions
+converging from different directions to correct. Do not trust anyone, including
+yourself, to derive this per deploy. Enumerate per file.
+
+The earlier guidance "restart when something a service imports has changed" is
+necessary and not sufficient, for the same reason: it answers per change, and a
+deploy is not one change.
+
+Worth building later and deliberately not built here: `deploy_lock` could derive
+that table from the import closure of the two service entrypoints instead of
+asking a person to assert it. It is not built because a statically inferred
+arming map that is quietly wrong about a dynamic import or a `subprocess` call
+built from a string would be believed, and a confident wrong answer here is worse
+than the honest table above.
 
 **While the lock does not exist, verify the restart against the HEAD that
 actually held when the services came up, not against the SHA you meant to

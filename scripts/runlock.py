@@ -28,8 +28,9 @@ round, but the Apply gate itself is a separate defect and is not fixed here.
 import errno
 import json
 import os
+import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Lock names are file names. Keep them boring so a stray value cannot escape
@@ -44,6 +45,39 @@ class LockBusy(Exception):
 
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _stamp(seconds):
+    moment = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _expired(value):
+    """Is this lease stamp in the past? An unreadable stamp is not a licence.
+
+    A record carrying `expiresAt` is held by a clock rather than by a process,
+    so a stamp nobody can parse has to mean held, not free. The opposite
+    reading turns one corrupt byte into permission to restart production
+    underneath somebody.
+    """
+    try:
+        deadline = datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return False
+    return deadline.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc)
+
+
+def seconds_left(record):
+    """Whole seconds until this lease expires, or None if it is not a lease."""
+    if not isinstance(record, dict) or "expiresAt" not in record:
+        return None
+    try:
+        deadline = datetime.strptime(
+            str(record["expiresAt"]), "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    delta = deadline.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)
+    return max(0, int(delta.total_seconds()))
 
 
 def pid_alive(pid):
@@ -97,6 +131,17 @@ def holder(root, name):
         return None
     if data.get("parked") is True:
         return data
+    # A lease is held by a clock, not by a process, and that is the whole point
+    # of it. A deploy is a dozen short-lived commands over several minutes, so
+    # the pid that took the lock is gone long before the work is, and a
+    # pid-alive test would report the lock free while the pull was still
+    # running. Both readers of this directory have to agree about that, which
+    # is why it lives here rather than in a second lock beside it.
+    if "expiresAt" in data:
+        if _expired(data["expiresAt"]):
+            path.unlink(missing_ok=True)
+            return None
+        return data
     if pid_alive(pid):
         return data
     path.unlink(missing_ok=True)
@@ -134,11 +179,20 @@ def owned_by_this_process(root, name):
     return bool(held) and held.get("pid") == os.getpid()
 
 
-def acquire(root, name, note=""):
+def acquire(root, name, note="", lease_seconds=None, owner=""):
     """Claim the lock, or raise LockBusy. Never waits.
 
     O_EXCL rather than check-then-write: checking and then writing is two steps,
     and two sweeps starting together both saw it free.
+
+    With `lease_seconds` the record is held by a deadline instead of by a live
+    pid, and `release` then needs the returned token rather than the same
+    process. That is for work spanning many processes, where the taker exits
+    immediately: a deploy is a pull, three restarts and a verification, and no
+    one process is alive for all of it. Leases expire so a session that dies
+    mid-deploy cannot wedge production; nothing renews them on the holder's
+    behalf, because a lease that renews itself while its owner is gone is the
+    wedge it was meant to prevent.
     """
     directory = lock_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
@@ -157,19 +211,36 @@ def acquire(root, name, note=""):
         if exc.errno == errno.EEXIST:
             raise LockBusy(f"{name} was taken while we were claiming it") from None
         raise
+    record = {"pid": os.getpid(), "at": _now(), "note": note}
+    token = ""
+    if lease_seconds is not None:
+        token = secrets.token_urlsafe(12)
+        record.update({"expiresAt": _stamp(lease_seconds),
+                       "owner": str(owner or ""), "token": token})
     with os.fdopen(descriptor, "w") as handle:
-        json.dump({"pid": os.getpid(), "at": _now(), "note": note}, handle)
-    return True
+        json.dump(record, handle)
+    return token if lease_seconds is not None else True
 
 
-def release(root, name):
-    """Drop the lock, but only if this process is still the recorded holder."""
+def release(root, name, token=None):
+    """Drop the lock, but only if the caller can prove it is the holder.
+
+    A pid lock proves it by being the same process. A lease cannot, since the
+    process that took it has usually exited, so it proves it with the token
+    `acquire` returned. Passing no token to a leased lock fails rather than
+    falling back to the pid test, because the pid in a lease record is a record
+    of who took it and not a claim that they still hold it.
+    """
     path = lock_path(root, name)
     try:
         data = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return False
-    if data.get("pid") != os.getpid():
+    if "expiresAt" in data:
+        if not token or not secrets.compare_digest(
+                str(data.get("token") or ""), str(token)):
+            return False
+    elif data.get("pid") != os.getpid():
         return False
     path.unlink(missing_ok=True)
     return True

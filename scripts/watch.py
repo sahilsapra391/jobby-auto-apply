@@ -50,6 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent  # noqa: E402
 import browser  # noqa: E402
+import deploy_lock  # noqa: E402
 import document_job  # noqa: E402
 import provider_login  # noqa: E402
 import providers  # noqa: E402
@@ -2596,6 +2597,13 @@ def status():
     drift = chrome_drift()
     out["chrome"] = {**drift,
                      "warning": chrome_drift_message(drift["drifted"]) or None}
+    # The deploy lease, surfaced by the one command every session already runs
+    # before a deploy. A lock nobody reads is the artefact that exists and does
+    # nothing, and asking sessions to remember a second command is a rule that
+    # depends on the next person remembering. This is the consumer.
+    deploy = deploy_lock.current()
+    out["deploy"] = {"held": bool(deploy), "holder": deploy,
+                     "message": deploy_lock.describe(deploy)}
     out["blocked"] = blocked_message() or None
     try:
         out["providers"] = providers.public_status()
