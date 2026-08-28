@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import html
 import json
 import os
 import re
@@ -162,23 +163,37 @@ class ResultInvalid(WorkerError):
 
 
 class UnsupportedTerms(ResultInvalid):
-    """Internal ATS rejection carrying terms that must never leave the worker."""
+    """Internal ATS rejection carrying terms that never cross the transport."""
+
+    #: Terms named in the local log. The rest are counted.
+    LOGGED_TERMS = 8
 
     def __init__(self, terms: list[str]):
         self.terms = list(terms)
         super().__init__("the tailored resume contains unsupported terms")
 
     def reason(self) -> str:
-        """The count, never the terms.
+        """The terms, bounded, in the local log only.
 
-        The terms are job-description keywords rather than document text, but
-        this class exists to keep them inside the worker and that is not mine
-        to relax. The count alone still separates the two cases that matter:
-        a handful of stray words, or a posting whose core vocabulary the
-        candidate has no evidence for. The second is the gate working.
+        This used to be the count alone, and the count cost a day. Application
+        7923ca442c573811 failed this gate four times saying "1 unsupported
+        term(s)", and finding out which word it was meant rebuilding the whole
+        check offline against the real store. It was "aligned".
+
+        Naming them is safe by construction rather than by care. Every element
+        is drawn from `ats_match.keywords(jd_text)`, so each one is a word or
+        pair from the employer's public posting; none of it is the candidate's
+        document text, which is the thing this class exists to contain. The
+        line still goes only to the per-job log on this machine, and
+        `failure_reason` scrubs and truncates it. `NodeTransport.fail` sends a
+        member of FAILURE_CODES and nothing else, so this reaches no queue.
         """
+        shown = ", ".join(self.terms[: self.LOGGED_TERMS])
+        rest = len(self.terms) - self.LOGGED_TERMS
+        if rest > 0:
+            shown += f", and {rest} more"
         return failure_reason(
-            f"{len(self.terms)} unsupported term(s) the base resume cannot source")
+            f"{len(self.terms)} unsupported term(s) no source can support: {shown}")
 
 
 class TransportError(RuntimeError):
@@ -609,6 +624,23 @@ def _regular_output(output_root: Path, name: str, maximum: int) -> Path:
     return path
 
 
+def _base_content_prose(value: Any) -> str:
+    """Every string the base resume content holds, and none of its field names.
+
+    Tokenising the raw JSON would put `areasOfExpertise`, `lede` and `banner`
+    into the evidence set, which are schema, not anything the candidate wrote.
+    Entities are unescaped because the content stores `&amp;` and the rendered
+    page shows `&`, and the two have to tokenise alike.
+    """
+    if isinstance(value, str):
+        return html.unescape(value)
+    if isinstance(value, Mapping):
+        return " ".join(_base_content_prose(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_base_content_prose(item) for item in value)
+    return ""
+
+
 def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]:
     try:
         jd_text = Path(runtime["jobDescriptionPath"]).read_text(
@@ -619,17 +651,54 @@ def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]
         facts_text = Path(runtime["storyFactsPath"]).read_text(
             encoding="utf-8", errors="replace"
         )
+        # The wording the render starts from, which is the one piece of
+        # evidence this gate was missing. See the comment below.
+        content_text = _base_content_prose(_base_resume_content(runtime))
     except (OSError, RuntimeError, SystemExit) as exc:
         raise ResultInvalid("resume text could not be checked") from exc
 
     keywords = ats_match.keywords(jd_text, 60)
     tailored_tokens = ats_match.tokens(tailored_text)
-    allowed = set(ats_match.tokens(base_text)) | set(ats_match.tokens(facts_text))
+    # Three sources of evidence, all of them the candidate's own and none of
+    # them the model's. The base PDF is the resume he selected; the story facts
+    # are his verified record; the base content is the wording every tailored
+    # resume is built out of, held to it by `resume_build.assert_integrity`.
+    #
+    # The third was missing and that made the gate unsatisfiable. The render
+    # starts from the base content and the evidence came from the base PDF, so
+    # any word the two say differently was scored as unsourced even with every
+    # override stripped. Measured against the real store on 2026-08-28: 47
+    # tokens in the base-only render were absent from the PDF and the facts,
+    # and application 7923ca442c573811 (Robinhood) died on one of them, the
+    # base content's "aligned" against the base PDF's "align". A posting whose
+    # keywords land on one of those 47 could never be built, whatever the
+    # provider returned, because the retry falls back to exactly the wording
+    # being rejected.
+    #
+    # This does not widen what a model may claim. Overrides are model text and
+    # are not added here, so an invented term is still caught, and what the
+    # gate refuses is unchanged: a claim the candidate has no evidence for.
+    #
+    # Evidence stays in reading order, one stream per source, because a term is
+    # matched against the resume with `contains` and has to be sourced with the
+    # same function or the two disagree. A set has no adjacency, so a bigram
+    # could be found in the document and then be unsourceable by construction:
+    # "custom move" matched the render's "customers moved" and was refused
+    # because the evidence set held "moved" and not "move". One stream per
+    # source rather than one concatenated stream, so this check never reads a
+    # pair across a seam; the rule below it is what actually admits a pair
+    # whose two words come from different sources.
+    evidence = [
+        ats_match.tokens(base_text),
+        ats_match.tokens(facts_text),
+        ats_match.tokens(content_text),
+    ]
+    allowed = set().union(*(set(stream) for stream in evidence))
     allowed_joined = " ".join(sorted(allowed))
     matched = [term for term in keywords if ats_match.contains(tailored_tokens, term)]
     unsourced = []
     for term in matched:
-        if ats_match.contains(list(allowed), term):
+        if any(ats_match.contains(stream, term) for stream in evidence):
             continue
         if all(part in allowed for part in term.split()):
             continue
@@ -2477,7 +2546,9 @@ class DocumentWorker:
                     if corrected == generated:
                         raise
                     self.artifact_renderer(runtime, corrected)
-                    log.record("unsupported ATS overrides removed")
+                    log.record(
+                        "unsupported ATS overrides removed", reason=exc.reason()
+                    )
                     runtime["checks"] = self.artifact_validator(runtime)
                 packed = self.pack_result(runtime)
             except Exception as exc:
@@ -2498,7 +2569,12 @@ class DocumentWorker:
                 if detail_event:
                     log.record(detail_event)
                 if stage_event:
-                    log.record(stage_event)
+                    # The ATS stage is the only one here whose cause is a word
+                    # rather than a rule, and the word is the whole diagnosis.
+                    log.record(
+                        stage_event,
+                        reason=exc.reason() if isinstance(exc, UnsupportedTerms) else "",
+                    )
                 raise ResultInvalid("generated artifacts failed validation") from exc
             log.record("artifacts validated")
 
