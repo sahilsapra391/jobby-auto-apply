@@ -303,7 +303,7 @@ Every agent task pins an exact model:
 
 - OpenAI: `gpt-5.6-luna`
 - Anthropic: `claude-sonnet-5`
-- Gemini: `gemini-3.7-flash`
+- Gemini: `gemini-3.7-flash-medium`
 
 Gemini must report the requested served model through its bounded telemetry
 record. A remap or missing record fails closed.
@@ -1099,6 +1099,71 @@ restarts.
 The cost of this is a few kilobytes a run. The cost of not doing it, measured
 three times now, is that the one occurrence able to name the cause is the one
 occurrence guaranteed not to.
+
+### The vendor's own log is a diagnostic path, 2026-08-28
+
+**agy writes the reason for a failed run to a file and hands back nothing. So
+the fourth source in the failure chain is agy's log, joined by conversation id.**
+
+Five Gemini document jobs failed 10 to 13 seconds after provider start, exit 1,
+across two applications between 01:22Z and 03:59Z. The whole recorded account
+of each was:
+
+    provider exited 1: event : result , result : conversation id :
+    a3d7c777-5cb0-4202-8731-fd37d5ee00ba , status : ERROR , response : , error :
+
+Three sources were consulted and all three were empty. Stderr was empty. The
+terminal result carried `status: ERROR` with an empty response *and a genuinely
+empty error string*, not one the 140-character cap had cut. The weak
+last-line-naming-an-error fallback then quoted that same empty event back, and
+spent 36 of its 140 characters on a conversation id.
+
+The reason existed the whole time, in `~/.gemini/antigravity-cli/log/cli-*.log`:
+
+    pubsub: Publish killing slow subscriber "...": subscriber fell behind
+    updates, stalled for 5s
+    Print mode: conversation update stream failed: subscriber fell behind
+    updates, stalled for 5s
+
+**What it is.** An internal race in agy 1.1.22, not a fault of ours. The killed
+subscriber is agy's own idle-watcher: goroutine dumps in all four logs show it
+created by `WaitForConversationFullyIdle` under `printmode.pollResponse`, while
+`processModelStream` blocks publishing the first step to it. The publisher gives
+up after 5s, which fails the conversation update stream, which makes print mode
+emit that empty ERROR result and exit 1. Our stdout reader is not involved: the
+stall begins ~0.4s after the user message is forwarded and before the model has
+returned anything to write.
+
+**What it is not, each ruled out by measurement rather than by argument.** Not
+size or an agy streaming limit: the identical 634,903-byte stdin line, one
+NDJSON line built by the real `build_run_invocation`, succeeded 6 of 6 on
+2026-08-28 after the window. Not the bundle: the same Robinhood bundle succeeded
+at 01:18:53Z and failed at 03:59Z. Not quota or auth: the logs show
+`authenticated via keyring`, no quota error, and the successes bracket the
+failures. Not contention between agy processes: across all 142 agy runs of
+2026-08-27 the overlap count is zero, every run. Not machine load from form
+runs: only 1 of the 4 failures overlapped a live apply slot.
+
+**It did not reproduce and that is reported rather than smoothed over.** 6 of 6
+succeeded against the real prompt after the window closed, versus 4 of 5 real
+document runs failing inside it. Likeliest cause is a timing-sensitive race
+whose trigger has not been identified, not a condition anyone has cleared. If
+Gemini document jobs start failing this way again, read the CLI log first.
+
+The failure chain is now four sources, strongest first: stderr, then the first
+stream event carrying a *non-empty* error (earliest wins, because the terminal
+result's is empty), then agy's log, then the weak line match. UUIDs are stripped
+from a reason so the cap buys information.
+
+Two guards on that log read, both load-bearing and both tested by disabling
+them. The match is an allowlist of `printmode.go` and `pubsub.go` at severity E,
+never a search for "error", and any line containing `@` is refused: the same
+file records the signed-in Google account, and with both guards removed the
+recovered "reason" is `applyAuthResult: email=...@gmail.com`. And the join is by
+conversation id, never by taking the newest file, because runs overlap and a
+neighbour's fault attributed to this job is worse than no reason at all. The
+scan is bounded by age rather than by count; a count of twelve missed a real
+failure log sitting at rank fourteen.
 
 ## Checking a peer's number is not the slow path
 
