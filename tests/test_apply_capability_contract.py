@@ -17,6 +17,7 @@ render tests are.
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -26,6 +27,43 @@ import browser  # noqa: E402
 import browser_mcp_proxy  # noqa: E402
 import mcp_preflight  # noqa: E402
 import providers  # noqa: E402
+
+
+_HOME = None
+_REDIRECTS = ()
+
+
+def setUpModule():
+    """Nothing in this file may write the real ~/.job-application.
+
+    The slot names are the point of these tests, so the state moves rather than
+    the slot. `build_run_invocation` reaches `browser.config_path`, which
+    re-renders `browser-mcp-<slot>.json` for whatever slot it is handed, and
+    `activity_path` reaches the artifact tree the same way. Measured on
+    2026-08-28 before this existed: a suite run left the production config for
+    apply-1 naming a fixture application id, two upload paths under a tempdir
+    that had already been cleaned up, and a `browser_mcp_proxy.py` inside
+    whichever worktree happened to run the tests.
+
+    PROFILE and ARTIFACTS are computed from STATE at import, so redirecting
+    STATE alone leaves both of them pointing at the real home.
+    """
+    global _HOME, _REDIRECTS
+    _HOME = tempfile.TemporaryDirectory()
+    state = pathlib.Path(_HOME.name) / ".job-application"
+    _REDIRECTS = (
+        mock.patch.object(browser, "STATE", state),
+        mock.patch.object(browser, "PROFILE", state / "browser-profile"),
+        mock.patch.object(browser, "ARTIFACTS", state / "browser-artifacts"),
+    )
+    for redirect in _REDIRECTS:
+        redirect.start()
+
+
+def tearDownModule():
+    for redirect in reversed(_REDIRECTS):
+        redirect.stop()
+    _HOME.cleanup()
 
 
 class FenceSurfaceContractTests(unittest.TestCase):
@@ -83,7 +121,6 @@ class ProviderCarriesTheBrowserTests(unittest.TestCase):
         }
 
     def test_each_apply_provider_receives_both_servers(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as name:
             root = pathlib.Path(name).resolve()
             context = self.context(root)
@@ -142,7 +179,6 @@ class AbsentEvidenceIsNotEvidenceTests(unittest.TestCase):
         self.assertNotEqual(activity.get("totalCalls"), 0)
 
     def test_an_unreadable_record_reads_the_same_way(self):
-        import tempfile
         import run_apply
         with tempfile.TemporaryDirectory() as name:
             broken = pathlib.Path(name) / "activity.json"
