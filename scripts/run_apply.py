@@ -384,6 +384,26 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    overlap as authority, and never invent a required answer. IDENTITY FOR THIS REGION and
    the answer tool are the only sources for form answers.
 
+   **`match: none` is not "the user has not answered this". It is "this wording did
+   not resolve", and those are different claims.** The store is keyed by question
+   wording, so the same fact lives under whatever phrasing was recorded first: the
+   user's gender is under "What is your gender?" and the form asks "What is your
+   gender identity?". Sensitive answers never fuzzy-match, by design, so the ones
+   the EEO block asks about are exactly the ones that come back empty.
+
+   So before treating any question as unanswered: take the `candidates` on that
+   result, decide by meaning which of them is the same question, and make a second
+   `jobby.resolve_answers` call using that candidate's own `question` text to get
+   its value. A candidate carries a stored question and never a value; the second
+   call is how you read it. Only after that, and only when no candidate means the
+   same thing, is the question missing.
+
+   Do not park a question you have not put through that second call. Parking sends
+   the user a question they have already answered, which is worse than useless: it
+   asks them to do the one job they set this up to avoid. On 2026-08-28 the
+   Robinhood application parked on seven questions and the store held an answer for
+   every one of them.
+
 4. Fill supported fields in one batch per page, then verify the full batch once. Attach the
    exact RESUME PDF and COVER LETTER PDF with `browser_attach_file`, one call per field.
    Do not click an Attach or Upload button first: on most application forms the real input

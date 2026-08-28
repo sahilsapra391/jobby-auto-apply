@@ -919,5 +919,88 @@ class BankEditBoundaryTests(unittest.TestCase):
         self.assertIsNone(store.topic_answer(
             {"new-noncompete": opened["new-noncompete"]}, "Do you have a non-compete?"))
 
+EEO = {
+    "gender": {"question": "What is your gender?", "value": "Male",
+               "state": "sensitive", "tags": ["gender-identity"]},
+    "ethnicity": {"question": "What is your ethnicity?",
+                  "value": "Asian (South Asian / Indian); not Hispanic or Latino",
+                  "state": "sensitive", "tags": ["race-ethnicity"]},
+    "veteran": {"question": "Are you a veteran?", "value": "No",
+                "state": "sensitive", "tags": ["military-status"]},
+    "have-disability": {"question": "Do you have a disability?", "value": "No",
+                        "state": "confirmed", "tags": ["disability-status"]},
+}
+
+
+class EeoTopicTests(unittest.TestCase):
+    """The block every US application ends with, which nothing else reaches.
+
+    Overlap scoring cannot: "military status" and "veteran" share no words at
+    all, and "disability-status" against "have-disability" scores 0.33, below
+    the 0.4 needed even to be offered as a candidate. And a sensitive answer is
+    barred from fuzzy matching by design, which closes the remaining path for
+    three of these four. On 2026-08-28 a real application parked on gender,
+    race, military and disability with all four answered nine days earlier.
+    """
+
+    def test_the_wordings_a_form_actually_uses_resolve(self):
+        for question, expected in (
+            ("What is your gender identity?", "Male"),
+            ("Please select your gender identity from the list below", "Male"),
+            ("What is your race or ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
+            ("What is your race/ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
+            ("What is your military status?", "No"),
+            ("Are you a protected veteran?", "No"),
+            ("Veteran status (select one)", "No"),
+            ("What is your disability status?", "No"),
+            ("Do you have a disability? (Form CC-305)", "No"),
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(store.find_answer(EEO, question).get("value"), expected)
+
+    def test_a_sensitive_answer_reaches_these_only_by_topic(self):
+        """Not an implementation detail: it is why the markers are needed.
+
+        `find_answer` refuses to fuzzy-match a sensitive entry, so without a
+        marker these questions have no route to an answer at all.
+        """
+        untagged = {"gender": {**EEO["gender"], "tags": []}}
+        self.assertIsNone(
+            store.find_answer(untagged, "What is your gender identity?").get("value"))
+        tagged = {"gender": {**EEO["gender"], "tags": ["gender-identity"]}}
+        self.assertEqual(
+            store.find_answer(tagged, "What is your gender identity?")["value"], "Male")
+
+    def test_the_near_misses_these_markers_must_not_take(self):
+        """Each of these was a real hit during measurement, or a documented trap.
+
+        The first two are different questions with different answers, not other
+        wordings of one question, and both were caught against the real corpus.
+        The last two are the substring failures CLAUDE.md records.
+        """
+        for question in (
+            # Conduct, not status. Real Axon question.
+            "Have you ever been discharged from the Armed Forces under dishonorable conditions?",
+            # Wants Yes or No; the stored value is a descriptive string. Real
+            # Versant question.
+            "Are you Hispanic or Latino?",
+            # Asks for something rather than stating a fact.
+            "Do you require a reasonable accommodation for a disability during the interview?",
+            "How do you embrace ambiguity?",
+            "What is your average deal size?",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(store.find_answer(EEO, question).get("value"))
+
+    def test_an_opened_eeo_question_never_answers_itself(self):
+        opened = dict(EEO)
+        opened["gender-identity"] = {"question": "What is your gender identity?*",
+                                     "value": None, "state": "sensitive",
+                                     "tags": ["unanswered", "gender-identity"]}
+        # The tracking entry is skipped and the real one still answers.
+        self.assertEqual(
+            store.find_answer(opened, "What is your gender identity?*")["value"], "Male")
+
+
 if __name__ == "__main__":
     unittest.main()
