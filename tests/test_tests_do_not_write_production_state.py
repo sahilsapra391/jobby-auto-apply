@@ -65,12 +65,15 @@ WRITERS = {
     "write_config": {"STATE"},
     "config_path": {"STATE"},
     "write_gemini_settings": {"STATE"},
+    # server_config mkdirs the profile directory before the artifact root,
+    # measured 2026-08-28 when test_apply_end_to_end still created
+    # browser-profile/ in the home with only ARTIFACTS redirected.
     "artifact_root_for": {"ARTIFACTS"},
     "activity_path": {"ARTIFACTS"},
     "stage_application_uploads": {"ARTIFACTS"},
-    "server_config": {"ARTIFACTS"},
-    "server_configs": {"ARTIFACTS"},
-    "mcp_servers": {"ARTIFACTS"},
+    "server_config": {"ARTIFACTS", "PROFILE"},
+    "server_configs": {"ARTIFACTS", "PROFILE"},
+    "mcp_servers": {"ARTIFACTS", "PROFILE"},
     # serve mkdirs the chrome log under STATE/logs as well as the artifact root.
     "serve": {"STATE", "ARTIFACTS"},
     "clear_slot": {"ARTIFACTS"},

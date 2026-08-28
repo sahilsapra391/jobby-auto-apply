@@ -24,47 +24,24 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browser  # noqa: E402
 import browser_mcp_proxy  # noqa: E402
 import mcp_preflight  # noqa: E402
 import providers  # noqa: E402
-
-
-_HOME = None
-_REDIRECTS = ()
+import store_isolation  # noqa: E402
 
 
 def setUpModule():
-    """Nothing in this file may write the real ~/.job-application.
-
-    The slot names are the point of these tests, so the state moves rather than
-    the slot. `build_run_invocation` reaches `browser.config_path`, which
-    re-renders `browser-mcp-<slot>.json` for whatever slot it is handed, and
-    `activity_path` reaches the artifact tree the same way. Measured on
-    2026-08-28 before this existed: a suite run left the production config for
-    apply-1 naming a fixture application id, two upload paths under a tempdir
-    that had already been cleaned up, and a `browser_mcp_proxy.py` inside
-    whichever worktree happened to run the tests.
-
-    PROFILE and ARTIFACTS are computed from STATE at import, so redirecting
-    STATE alone leaves both of them pointing at the real home.
-    """
-    global _HOME, _REDIRECTS
-    _HOME = tempfile.TemporaryDirectory()
-    state = pathlib.Path(_HOME.name) / ".job-application"
-    _REDIRECTS = (
-        mock.patch.object(browser, "STATE", state),
-        mock.patch.object(browser, "PROFILE", state / "browser-profile"),
-        mock.patch.object(browser, "ARTIFACTS", state / "browser-artifacts"),
-    )
-    for redirect in _REDIRECTS:
-        redirect.start()
+    # Building a real invocation writes the slot's firewall config. Unisolated,
+    # asking for apply-1 rewrote ~/.job-application/browser-mcp-apply-1.json,
+    # the file a live Chrome slot's fence is configured from, and created a
+    # browser-profile for a browser this module never opens.
+    store_isolation.begin()
 
 
 def tearDownModule():
-    for redirect in reversed(_REDIRECTS):
-        redirect.stop()
-    _HOME.cleanup()
+    store_isolation.end()
 
 
 class FenceSurfaceContractTests(unittest.TestCase):
