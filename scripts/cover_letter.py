@@ -34,6 +34,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from itertools import combinations
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
@@ -44,6 +45,7 @@ DEFAULT_TEMPLATE = REPO / "templates" / "cover-letter.html"
 
 sys.path.insert(0, str(SCRIPT_DIR))
 import resume_pdf  # noqa: E402
+import resume_build  # noqa: E402  (doubled_word: one duplication rule for both documents)
 
 
 CONTENT_KEYS = {
@@ -133,6 +135,42 @@ def clean_paragraph(value, field):
     return clean_line(value, field, minimum=20, maximum=900)
 
 
+# The template writes the greeting and the sign-off itself, so provider
+# content must arrive carrying neither. It often does anyway: measured
+# 2026-08-28 over the 39 rendered cover letters on this machine, 16 read
+# "Dear Dear ..." because the model put "Dear" inside the salutation field
+# the template already prefixes, and 5 ended the closing paragraph with
+# "Sincerely, <name>" above the template's own signature block. Real
+# employers received these, Justworks and Robinhood among them.
+LEADING_DEAR = re.compile(r"^(?:dear\b[\s,]*)+", re.I)
+# Longer forms first, so "Sincerely yours" is not half-matched by
+# "sincerely" and left standing. Sign-off words never legitimately end a
+# closing paragraph; ordinary gratitude ("Thank you for your consideration
+# followed by more prose") is deliberately not in this list.
+# The sign-off words are case-insensitive via a scoped flag; the signature
+# name stays strictly capitalised so "give my regards to the whole team."
+# is prose and "Regards, Sahil Sapra" is a signature. A blanket re.I would
+# let the name group swallow lowercase prose after a sign-off word.
+# The left boundary deliberately excludes sentence-ending punctuation, so
+# stripping "... contribute. Sincerely, Name" leaves the prose its period.
+TRAILING_SIGN_OFF = re.compile(
+    r"[\s,;:-]*\b(?i:sincerely yours|yours sincerely|yours truly|"
+    r"yours faithfully|best regards|kind regards|warm regards|best wishes|"
+    r"sincerely|respectfully|warmly|cordially|regards)\b"
+    r"[\s,]*(?:[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){0,3})?[\s,.!]*$")
+
+
+def strip_sign_off(paragraph):
+    """The paragraph without any trailing sign-off and signature name."""
+    current = paragraph
+    for _ in range(3):
+        stripped = TRAILING_SIGN_OFF.sub("", current).strip()
+        if stripped == current:
+            break
+        current = stripped
+    return current
+
+
 def validate_content(raw):
     """Return the only content shape the fixed template accepts."""
     if not isinstance(raw, dict):
@@ -158,6 +196,55 @@ def validate_content(raw):
                      for index, item in enumerate(evidence)],
         "closing": clean_paragraph(raw["closing"], "closing"),
     }
+    # The template prefixes "Dear " and appends the signature block, so a
+    # salutation that already says Dear and a closing that already signs off
+    # would both render twice. Normalised here, at the one intake every
+    # consumer shares, so render_html and expected_text stay in agreement
+    # and verify_pdf never rejects its own render.
+    salutation = LEADING_DEAR.sub("", cleaned["salutation"]).strip(" ,")
+    cleaned["salutation"] = salutation or "Hiring Team"
+    closing = strip_sign_off(cleaned["closing"])
+    if len(closing) < 20:
+        raise CoverLetterError(
+            "the closing paragraph is only a sign-off; the template writes "
+            "the sign-off itself, so the closing must carry real content"
+        )
+    cleaned["closing"] = closing
+
+    # After normalisation, three duplication gates, all provider-blind
+    # because they sit behind every model's output. A word typed twice in a
+    # row is a generation artifact ("Dear Dear" shipped sixteen times); a
+    # paragraph must not open with a greeting the template already writes;
+    # and two paragraphs sharing most of their words are one paragraph
+    # written twice. The 0.60 ceiling is measured, not guessed: across all
+    # 39 real letters the most similar pair of genuine paragraphs shares
+    # 18% of its words.
+    authored = [("salutation", cleaned["salutation"]),
+                ("opening", cleaned["opening"]),
+                *[(f"evidence[{index + 1}]", item)
+                  for index, item in enumerate(cleaned["evidence"])],
+                ("closing", cleaned["closing"])]
+    for field, text in authored:
+        word = resume_build.doubled_word(text)
+        if word:
+            raise CoverLetterError(f"{field} repeats the word {word!r} back to back")
+    paragraphs = authored[1:]
+    for field, text in paragraphs:
+        if text.casefold().lstrip().startswith("dear "):
+            raise CoverLetterError(
+                f"{field} opens with a greeting; the template writes the greeting")
+    for (field_a, text_a), (field_b, text_b) in combinations(paragraphs, 2):
+        tokens_a = set(WHITESPACE.sub(" ", text_a).casefold().split())
+        tokens_b = set(WHITESPACE.sub(" ", text_b).casefold().split())
+        union = tokens_a | tokens_b
+        if not union:
+            continue
+        shared = len(tokens_a & tokens_b) / len(union)
+        if shared >= 0.60:
+            raise CoverLetterError(
+                f"{field_b} repeats {field_a}: they share "
+                f"{int(shared * 100)}% of their words"
+            )
     raw_date = raw.get("date")
     if raw_date is None:
         chosen_date = date.today()
@@ -274,6 +361,17 @@ def render_html(template, content, candidate):
             )
         )
 
+    # validate_content normalises both of these; refusing here as well means
+    # a future caller that skips validation cannot render "Dear Dear" or a
+    # doubled signature. The guard and the normaliser are one contract.
+    if LEADING_DEAR.match(content["salutation"]):
+        raise CoverLetterError(
+            "salutation still begins with Dear; the template writes the greeting"
+        )
+    if TRAILING_SIGN_OFF.search(content["closing"]):
+        raise CoverLetterError(
+            "closing still ends with a sign-off; the template writes the signature"
+        )
     paragraphs = [content["opening"], *content["evidence"], content["closing"]]
     body = "\n".join("<p>%s</p>" % html.escape(item) for item in paragraphs)
     salutation = content["salutation"].strip().rstrip(",")

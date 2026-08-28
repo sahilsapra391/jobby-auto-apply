@@ -422,6 +422,35 @@ the same fallback the product did; four had no `storeRoot` at all and were
 reading the developer's own `~/.job-application`. A test that supplies an input
 the real caller does not supply is testing a configuration nobody ships.
 
+## A document greets once, signs once, and never stutters, whoever wrote it
+
+**These gates live in trusted Python (`cover_letter.validate_content`,
+`resume_build.assert_integrity`), behind every provider, and must never be
+"moved" into a prompt.** A prompt is advice to one model; the pipeline is the
+contract for all of them, and the user's instruction is explicit: the
+guardrail holds regardless of which AI generated the content.
+
+Measured 2026-08-28 over all 79 rendered documents: 16 letters read "Dear
+Dear" (the model put a greeting in the salutation field the template already
+prefixes), 5 ended the closing with "Sincerely, <name>" above the template's
+own signature block, and real employers received them. So `validate_content`
+strips leading Dears and trailing sign-offs at the one intake every consumer
+shares (render and PDF-verify must see the same text or verification rejects
+its own render), and `render_html` refuses unvalidated duplicates outright.
+
+Three duplication rules, each calibrated against the corpus rather than
+guessed: an adjacent doubled word is refused for alphabetic words only,
+because "Dear Dear" was the only alpha double any provider ever produced
+while digits legitimately repeat 264 times; paragraphs sharing 60% or more
+of their words are one paragraph written twice, against a measured 18%
+ceiling between genuine paragraphs; and no body paragraph may open with a
+greeting (one real letter, Contentsquare, did). `resume_build.doubled_word`
+is the single definition both documents import, and
+`tests/test_resume_integrity_duplicates.py` covers the resume half in CI,
+which excludes `test_resume_build`. Rendered PDFs from before these gates
+are not healed by them; regeneration for still-open applications is its own
+task.
+
 ## Artifacts live in R2, and the board links to them by filename
 
 Generated resumes and cover letters (PDF and HTML), cached job descriptions and

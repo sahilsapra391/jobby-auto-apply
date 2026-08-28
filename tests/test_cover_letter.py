@@ -82,6 +82,142 @@ PROFILE = {
 }
 
 
+class GreetingAndSignOffOnceTests(unittest.TestCase):
+    """The template writes the greeting and the signature exactly once.
+
+    Measured 2026-08-28 over the 39 rendered cover letters on this machine:
+    16 read "Dear Dear ..." and 5 carried "Sincerely, <name>" twice, because
+    the model put the greeting inside the salutation field and the sign-off
+    inside the closing paragraph, and the fixed template adds both itself.
+    Real employers received these letters.
+    """
+
+    def content(self, **overrides):
+        merged = {**CONTENT, **overrides}
+        return cover_letter.validate_content(merged)
+
+    def test_a_salutation_that_already_says_dear_loses_it(self):
+        got = self.content(salutation="Dear Justworks Hiring Team")
+        self.assertEqual(got["salutation"], "Justworks Hiring Team")
+
+    def test_even_a_double_dear_from_the_model_collapses(self):
+        got = self.content(salutation="Dear Dear Hiring Team,")
+        self.assertEqual(got["salutation"], "Hiring Team")
+
+    def test_a_salutation_that_is_only_dear_falls_back_to_hiring_team(self):
+        got = self.content(salutation="Dear,")
+        self.assertEqual(got["salutation"], "Hiring Team")
+
+    def test_a_closing_that_signs_off_keeps_its_prose_and_loses_the_signature(self):
+        got = self.content(closing=(
+            "Thank you for your consideration - I look forward to discussing "
+            "how I can contribute. Sincerely, Sahil Sapra"
+        ))
+        self.assertTrue(got["closing"].endswith("how I can contribute."))
+        self.assertNotIn("Sincerely", got["closing"])
+
+    def test_sincerely_yours_and_a_bare_regards_also_strip(self):
+        got = self.content(closing=(
+            "I would welcome the chance to help the team ship faster. "
+            "Sincerely yours, Test Candidate"
+        ))
+        self.assertTrue(got["closing"].endswith("ship faster."))
+        got = self.content(closing=(
+            "I would welcome the chance to help the team ship faster. Regards,"
+        ))
+        self.assertTrue(got["closing"].endswith("ship faster."))
+
+    def test_ordinary_gratitude_is_not_a_sign_off(self):
+        kept = "I appreciate the team's time and consideration. Thank you."
+        got = self.content(closing=kept)
+        self.assertEqual(got["closing"], kept)
+
+    def test_a_closing_that_is_only_a_sign_off_is_refused_by_name(self):
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(closing="Sincerely yours, Sahil Sapra")
+        self.assertIn("sign-off", str(caught.exception).lower())
+
+    def test_render_refuses_unvalidated_duplicates_even_without_validate(self):
+        # The belt behind the normaliser: feed render_html raw content the
+        # way no current caller does, and it must refuse rather than render
+        # "Dear Dear". This is the test that fails if the guard is removed.
+        template = "<x>{{candidateName}}{{contactLine}}{{profileLinks}}{{documentTitle}}{{date}}{{employer}}{{role}}{{salutation}}{{body}}</x>"
+        good = cover_letter.validate_content(dict(CONTENT))
+        candidate = cover_letter.identity_for_region(PROFILE, "US")
+        raw = dict(good)
+        raw["salutation"] = "Dear Hiring Team"
+        with self.assertRaises(cover_letter.CoverLetterError):
+            cover_letter.render_html(template, raw, candidate)
+        raw = dict(good)
+        raw["closing"] = good["closing"] + " Sincerely, Test Candidate"
+        with self.assertRaises(cover_letter.CoverLetterError):
+            cover_letter.render_html(template, raw, candidate)
+        rendered = cover_letter.render_html(template, good, candidate)
+        self.assertNotIn("Dear Dear", rendered)
+
+
+class DuplicationGateTests(unittest.TestCase):
+    """No doubled words, no repeated paragraphs, no greeting in the body.
+
+    All three gates sit in validate_content, behind every provider, because
+    the duplication that shipped ("Dear Dear", a doubled signature) came out
+    of whichever model happened to write the letter and the fix must not
+    care which one that was. The thresholds are measured, not guessed:
+    across all 79 rendered documents the only adjacent duplicated alphabetic
+    word ever produced was "Dear", and the most similar genuine paragraph
+    pair shares 18% of its words against the 60% ceiling here.
+    """
+
+    def content(self, **overrides):
+        return cover_letter.validate_content({**CONTENT, **overrides})
+
+    def test_a_word_typed_twice_in_a_row_is_refused_by_name(self):
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(opening=(
+                "I am writing to to apply for this role because the team's "
+                "work matches my background."
+            ))
+        self.assertIn("'to'", str(caught.exception))
+        self.assertIn("opening", str(caught.exception))
+
+    def test_repeated_digits_are_figures_not_artifacts(self):
+        got = self.content(opening=(
+            "I moved capacity from 3 3-person squads to a single team of "
+            "twelve without slipping a release date."
+        ))
+        self.assertIn("3 3-person", got["opening"])
+
+    def test_a_paragraph_written_twice_is_refused(self):
+        paragraph = (
+            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "enterprise customers and landed it with zero downtime."
+        )
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(evidence=[paragraph, paragraph])
+        self.assertIn("repeats", str(caught.exception))
+
+    def test_a_lightly_reworded_copy_is_still_a_repeat(self):
+        paragraph = (
+            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "enterprise customers and landed it with zero downtime."
+        )
+        tweaked = paragraph.replace("landed", "delivered")
+        with self.assertRaises(cover_letter.CoverLetterError):
+            self.content(evidence=[paragraph, tweaked])
+
+    def test_distinct_paragraphs_pass(self):
+        got = self.content()
+        self.assertEqual(len(got["evidence"]), len(CONTENT["evidence"]))
+
+    def test_a_body_paragraph_may_not_open_with_a_greeting(self):
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(opening=(
+                "Dear Hiring Team, I am writing to apply for this role with "
+                "genuine enthusiasm for the mission."
+            ))
+        self.assertIn("greeting", str(caught.exception))
+
+
 class ValidationTests(unittest.TestCase):
     def test_content_has_a_deliberately_small_schema(self):
         value = dict(CONTENT, model="some-model")
