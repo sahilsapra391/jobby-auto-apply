@@ -567,7 +567,54 @@ class ApplicationTools:
         if stray:
             raise ToolInputError("every unanswered question must also be in pending")
         detail = _text(args.get("detail"), "detail", maximum=1_000)
+        refused = self._blockers_the_store_answers(blockers)
+        if refused:
+            raise ToolInputError(
+                "refusing to park questions the store already answers: "
+                + "; ".join(refused[:5])
+                + ". Fill these via resolve_answers (source stored or profile), then "
+                "park only what remains. If a stored answer does not fit the field, "
+                "park a row naming the actual blocker instead of the question."
+            )
         return finish.park(self.context.application_id, blockers, detail, unanswered)
+
+    # A park row that is a question the store can answer is the one park that
+    # must never happen: it sends the user a question they already answered,
+    # which is the exact job this product exists to remove. The prompt has
+    # said so since the Robinhood run parked on seven stored answers
+    # (2026-08-28), and the TELUS run parked "Where did you hear about us?"
+    # hours later with the answer confirmed in the bank since 2026-08-19.
+    # Saying it is not a guard; this is the guard.
+    #
+    # Only question-shaped rows are gated. A blocker is usually an action
+    # ("solve the CAPTCHA", "attach the resume manually") and measured on
+    # 2026-08-27, 0 of 29 real blockers were question-shaped; resolving prose
+    # against the bank would refuse legitimate parks on fuzzy accidents.
+    QUESTION_SHAPED = re.compile(
+        r"\?|^\s*(are|do|does|did|have|has|what|when|where|which|who|why|how"
+        r"|is|was|will|would|can|could|may|should)\b", re.I)
+
+    def _blockers_the_store_answers(self, blockers: list[str]) -> list[str]:
+        root = store.root_dir(self.context.root)
+        answers = store.read_json(Path(store.paths(root)["answers"]), {})
+        profile = store.read_json(Path(store.paths(root)["profile"]), {})
+        refused = []
+        for question in blockers:
+            if not self.QUESTION_SHAPED.search(question):
+                continue
+            found = store.resolve_answer(answers, profile, question)
+            if not isinstance(found, dict) or found.get("match") == "none":
+                continue
+            value = found.get("value") or found.get("answer")
+            if not value:
+                continue
+            if found.get("state") == "sensitive" or found.get("sensitive") is True:
+                # The value stays out of an error string; the agent reads it
+                # back through resolve_answers like any other sensitive hit.
+                refused.append(f"{question[:80]!r} (answered; read it via resolve_answers)")
+            else:
+                refused.append(f"{question[:80]!r} -> {str(value)[:60]!r}")
+        return refused
 
     def _record_answers(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, {"fields"})
