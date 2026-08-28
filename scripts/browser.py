@@ -531,6 +531,22 @@ def running_launch(slot):
 
     Helpers are excluded by --type. They inherit much of the main's command line,
     and counting one as the main would answer about a renderer.
+
+    Deliberately not a launch record written beside the slot at serve() time.
+    That was proposed and it inverts what this is for: a file we wrote is our
+    claim about a process, while ps is the process. The two can disagree, and
+    the case that started this is exactly where they would have. pid 54233 was
+    launched by code that predated both the flag and any such record, so it
+    would have had no entry, and a check keyed on records has to read a missing
+    one as either "stale" or "unknown". ps answered it with neither guess. The
+    benefit offered, that a record outlives the process, is not one: a browser
+    that has exited raises no dialog and needs no recycling.
+
+    Truncation was the fragility worth checking and it is not one here. macOS ps
+    returned complete argv at every length probed on 2026-08-28, up to 8,211
+    bytes with the final argument intact; the slot's own line is 238. A guard
+    against a limit that was not reached would be machinery for a fault nobody
+    has seen, so there is none. Re-measure before assuming it holds elsewhere.
     """
     if slot not in SLOTS:
         raise ValueError("unknown browser slot")
