@@ -1,4 +1,7 @@
-"""No test writes the real ~/.job-application.
+"""No test reaches browser state directly without redirecting it first.
+
+Read the title precisely, because a wider one would be false. This proves a
+property about *direct* calls, and the limit is measured below.
 
 `browser.config_path` re-renders `browser-mcp-<slot>.json` for whatever slot it
 is handed, and it does not care that its caller is a test. Measured on
@@ -19,6 +22,25 @@ This reads source rather than behaviour because the property is "the module
 redirects its state before any test runs", which has no runtime an assertion
 could sit in: by the time a test body executes, the writes have already gone
 wherever they were going to go.
+
+**What this cannot see, measured rather than supposed.** A static reader finds
+`browser.clear_slot()` in a test and nothing else. On 2026-08-28,
+test_browser_slot_affinity created browser-artifacts/ in the home under a
+redirected HOME while passing this guard, because it reaches the tree through
+watch.reconcile_browser_slots -> watch.release_browser_slot -> browser.clear_slot,
+and only the last of those three is a name this file knows. Adding the two
+watch names would close that one path and leave the next one, since the
+transitive closure of "reaches a writer eventually" is not something a call-name
+list converges on.
+
+So this is the cheap half of the property and not the whole of it. The other
+half is tests/store_isolation.py (PR #116), which rebinds the constants at
+runtime and therefore does not care how many frames deep the writer sits.
+`redirected()` recognises it, so a module that hands its isolation to
+store_isolation.begin() satisfies this file without also doing the work twice.
+Neither mechanism subsumes the other: theirs covers indirect reach and every
+constant including ones nobody has added yet, and this one fails a pull request
+in CI rather than a sweep somebody has to remember to run.
 """
 
 import ast
@@ -49,7 +71,8 @@ WRITERS = {
     "server_config": {"ARTIFACTS"},
     "server_configs": {"ARTIFACTS"},
     "mcp_servers": {"ARTIFACTS"},
-    "serve": {"ARTIFACTS"},
+    # serve mkdirs the chrome log under STATE/logs as well as the artifact root.
+    "serve": {"STATE", "ARTIFACTS"},
     "clear_slot": {"ARTIFACTS"},
     "profile_for": {"PROFILE"},
     # providers.build_run_invocation calls config_path and server_configs on
@@ -59,12 +82,39 @@ WRITERS = {
 
 # A test that must reach the real home, with the reason it must. Widening this
 # is a decision someone makes on purpose; forgetting the redirect is not.
-REDIRECT_NOT_REQUIRED = {
-    "test_apply_end_to_end.py":
-        "drives a real Chrome on a real slot on purpose, and takes its "
-        "candidates from watch.free_apply_slots() so it cannot collide with a "
-        "live application. Excluded from CI beside the resume render tests.",
-}
+#
+# Empty, and it was not always. test_apply_end_to_end.py sat here on the
+# argument that driving a real Chrome needs the real everything. It does not:
+# it needs the slot's CDP port, which port_for derives from the slot name, and
+# nothing else in the artifact tree. While it was exempt it was writing
+# uploads/endtoend/activity.json under a live slot's artifact root, and because
+# it tears down through a clean stdin close it was the one caller reaching
+# _write_activity at all. So the exempted test was depositing real-shaped
+# records into the tree people measure real runs from, during the whole period
+# real runs wrote nothing. An exemption is a claim that the real path is
+# needed, and that claim is worth re-testing before it is granted.
+REDIRECT_NOT_REQUIRED: dict[str, str] = {}
+
+
+def _uses_store_isolation(tree):
+    """Does this module hand its isolation to store_isolation.begin()?
+
+    Both halves are required. The import alone is someone reading live_store();
+    the call alone would match any unrelated begin().
+    """
+    imported = any(
+        isinstance(node, ast.Import)
+        and any(alias.name == "store_isolation" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    if not imported:
+        return False
+    return any(
+        isinstance(node, ast.Call)
+        and ast.unparse(node.func) in
+        ("store_isolation.begin", "store_isolation.isolate_store")
+        for node in ast.walk(tree)
+    )
 
 
 def _receiver_is_the_browser_module(attribute):
@@ -102,8 +152,22 @@ def redirected(path):
     idioms in the suite are covered: patch.object, and assignment onto a module
     the fixture holds (`self.browser.STATE = root`).
     """
+    tree = ast.parse(path.read_text())
+    if _uses_store_isolation(tree):
+        # tests/store_isolation.py (PR #116) walks the module graph and rebinds
+        # every scripts/ constant naming a path inside the real store, so it
+        # covers all three of browser's at once and generalises to constants
+        # nobody has added yet. Measured against this branch's browser.py on
+        # 2026-08-28: after begin(), STATE, PROFILE and ARTIFACTS all resolve
+        # under a jobby-store- tempdir, and end() puts all three back.
+        #
+        # Recognised here so the two mechanisms are not a merge hazard. Without
+        # it, swapping a module's explicit patches for a begin() would make this
+        # guard fail a module that had just become better isolated, which is a
+        # guard punishing the fix.
+        return set(CONSTANTS)
     moved = set()
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             if not ast.unparse(node.func).endswith("patch.object"):
                 continue
@@ -123,7 +187,7 @@ def redirected(path):
     return moved
 
 
-class NoTestWritesTheRealJobApplicationDirectory(unittest.TestCase):
+class NoTestReachesBrowserStateWithoutRedirectingIt(unittest.TestCase):
     def test_every_test_reaching_browser_state_redirects_it_first(self):
         offenders = []
         inspected = 0
@@ -169,10 +233,51 @@ class NoTestWritesTheRealJobApplicationDirectory(unittest.TestCase):
         ]
         self.assertEqual(missing, [], f"renamed or gone from browser.py: {missing}")
 
-    def test_the_exemptions_still_name_files_that_exist(self):
+    def test_the_shared_isolation_helper_counts_as_a_redirect(self):
+        """Either mechanism satisfies the rule, so the merge order is free.
+
+        PR #116 replaces a module's hand-written patches with a three-line
+        setUpModule. Checked against synthetic sources rather than against
+        tests/store_isolation.py, because that file is not on this branch yet
+        and a guard that only works once the other branch lands is the coupling
+        this is here to remove.
+        """
+        import tempfile
+        cases = {
+            "import store_isolation\ndef setUpModule():\n"
+            "    store_isolation.begin()\n": set(CONSTANTS),
+            "import store_isolation\ndef f(self):\n"
+            "    store_isolation.isolate_store(self)\n": set(CONSTANTS),
+            # Import with no call, and call with no import, are each not enough.
+            "import store_isolation\nx = store_isolation.live_store()\n": set(),
+            "def setUpModule():\n    begin()\n": set(),
+        }
+        with tempfile.TemporaryDirectory() as name:
+            for source, expected in cases.items():
+                probe = pathlib.Path(name) / "probe.py"
+                probe.write_text(source)
+                with self.subTest(source=source.replace("\n", " ")[:48]):
+                    self.assertEqual(redirected(probe), expected)
+
+    def test_no_exemption_outlives_the_need_for_it(self):
+        """An exemption that is no longer load-bearing hides coverage silently.
+
+        Two ways it goes dead: the file is gone, or the file has since started
+        redirecting everything it touches. In the second case the guard is
+        skipping a module that would now pass on its own merits, so it would
+        stop noticing if the redirect were later removed, which is this
+        module's whole subject one level up.
+        """
         for name in REDIRECT_NOT_REQUIRED:
             with self.subTest(name=name):
-                self.assertTrue((TESTS / name).exists(), f"{name} is gone; drop its entry")
+                path = TESTS / name
+                self.assertTrue(path.exists(), f"{name} is gone; drop its entry")
+                needed = set().union(*(needs for _, _, needs in reaches_state(path)))
+                self.assertTrue(
+                    needed - redirected(path),
+                    f"{name} now redirects everything it touches; "
+                    "drop its exemption so the guard covers it",
+                )
 
     def test_redirecting_state_alone_would_not_be_enough(self):
         """PROFILE and ARTIFACTS are bound from STATE at import, not derived.

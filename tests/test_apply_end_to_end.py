@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -141,6 +142,24 @@ class RealBrowserUploadTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self.temp.name).resolve()
+        # The slot stays real; the artifact tree under it does not have to.
+        # Playwright's --output-dir and the firewall's --activity path both hang
+        # off browser.ARTIFACTS, and the only thing here that must be real is the
+        # slot's CDP port, which port_for derives from the slot name alone. Left
+        # pointing at the real tree, this filed an application called "endtoend"
+        # and a heap of console logs under a live slot's artifact root. That was
+        # harmless only because _write_activity sits after StdioProxy.run() and
+        # no real run reaches it. PR #112 adds the signal handlers that make it
+        # reachable, and from then on a row called endtoend sits among real
+        # applications for anyone measuring which runs reached the browser.
+        #
+        # server_configs below is what tells the firewall child where to write,
+        # and the read-back at the end of the upload test resolves through
+        # browser.activity_path, so both ends move together and neither
+        # assertion changes.
+        artifacts = mock.patch.object(browser, "ARTIFACTS", root / "artifacts")
+        artifacts.start()
+        self.addCleanup(artifacts.stop)
         self.resume = root / "resume.pdf"
         self.cover = root / "cover-letter.pdf"
         self.resume.write_bytes(b"%PDF-1.4\n" + b"r" * 2048)
