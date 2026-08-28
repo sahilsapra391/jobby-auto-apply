@@ -548,6 +548,27 @@ it appears, so it clears itself when a slot frees. It is not the "Automation is
 stopped" banner: capacity gone and automation stopped are different facts and
 merging them costs the distinction.
 
+**A remembered click must expire, and between a drop and an apply the newest
+click wins.** The board remembers Apply and Drop clicks in localStorage and
+re-sends them on load, bridging the seconds before the watcher reflects a
+click. The Apply memory was already stamped and expired after ten minutes; the
+Drop memory was a bare, immortal id list. While the fleet above sat parked on
+2026-08-27, the user pressed Stop on queued cards and then Retry, and every
+later page load replayed those drops for as long as the served page still drew
+the card. The tick acts on drops before applies and discarded the apply for a
+just-dropped id, so each replayed drop killed that tick's Retry: drop requests
+for the same four applications arrived from 21:10Z to 22:58Z, every one paired
+with a fresh apply click it erased, until all four sat in the archive nobody
+had put them in. Three rules now hold. Both memories live in
+`dashboard.CLICK_MEMORY`, stamped, expiring, and run directly by node in
+`tests/test_click_memory_script.py`; a pre-stamp drop entry is discarded
+rather than migrated, because its POST already went out and replaying it can
+only kill a later click. An Apply or Retry click erases the remembered drop
+for its application. And the tick resolves a claimed drop against the pending
+apply queue by the entries' own stamps (`split_superseded_drops`, logged as
+`dropSuperseded`): the newer request is the user's decision, and a missing
+stamp keeps the old rule, the drop wins.
+
 **Known gap, and which guard covers it.** The preflight proves the server
 answers, not that Chrome behind it is reachable. Playwright MCP connects to the
 browser lazily, on the first tool call, so a dead Chrome still advertises all
