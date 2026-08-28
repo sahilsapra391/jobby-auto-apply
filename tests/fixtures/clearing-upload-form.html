@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Clearing Upload Fixture — fields that empty themselves on accept</title>
+<!--
+  The SmartRecruiters shape, measured on the live Versant posting
+  (jobs.smartrecruiters.com/Versant3/744000144453089) on 2026-08-28.
+
+  Three details are load-bearing and all three were observed there:
+
+  * The input lives inside an open shadow root, so `document.querySelector`
+    finds nothing and Playwright's CSS engine finds two.
+  * Both inputs carry id=file-input. That is legal, because each id is unique
+    inside its own shadow root, and it is why the id cannot say which of the
+    two a call touched.
+  * The component takes the file off the input, sends it, and sets
+    `input.value = ''` so that choosing the same file again still fires change.
+    `node.files` is therefore empty after a *successful* attach, which is the
+    false negative this fixture exists to catch.
+
+  The second dropzone rejects and names the rejected file in an alert. That is
+  the other direction: `node.files` is empty there too, so a tool that treated
+  an empty read-back as success, or a filename appearing anywhere as
+  confirmation, would call a rejection an upload and let an agent walk toward
+  submit believing a resume is attached.
+-->
+<!-- The heading is deliberately not the other fixture's. Both pages say
+     "Cover letter", so a wait keyed on that text cannot tell which of them
+     the browser is actually showing, and the first version of these tests
+     drove upload-form.html and passed. -->
+<h1>Apply with clearing fields</h1>
+<form id="apply">
+  <div class="field" data-test="resume-field">
+    <h3>Resume</h3>
+    <clearing-dropzone data-test="resume-upload"></clearing-dropzone>
+  </div>
+  <div class="field" data-test="cover-field">
+    <h3>Cover letter</h3>
+    <clearing-dropzone data-test="cover-letter-upload" reject></clearing-dropzone>
+  </div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  class ClearingDropzone extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      var root = this.attachShadow({ mode: 'open' });
+      root.innerHTML =
+        '<div class="wrapper">' +
+        '<label for="file-input">Choose a file or drop it here</label>' +
+        '<input type="file" id="file-input" accept=".pdf,.doc,.docx">' +
+        '</div>' +
+        '<ul class="file-list"></ul>' +
+        '<p class="notice" role="alert"></p>';
+      var input = root.querySelector('#file-input');
+      var self = this;
+      input.addEventListener('change', function () {
+        var file = input.files[0];
+        // The measured behaviour: the file is consumed and the input cleared,
+        // whether the component went on to accept it or not.
+        input.value = '';
+        if (!file) return;
+        if (self.hasAttribute('reject')) {
+          root.querySelector('.notice').textContent =
+            file.name + ' was rejected: this field takes a cover letter.';
+          return;
+        }
+        var item = document.createElement('li');
+        item.textContent = file.name;
+        root.querySelector('.file-list').appendChild(item);
+      });
+    }
+  }
+  customElements.define('clearing-dropzone', ClearingDropzone);
+  document.getElementById('apply').addEventListener('submit', function (event) {
+    event.preventDefault();
+  });
+</script>

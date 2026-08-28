@@ -518,6 +518,67 @@ before the attach, not after: a React form swaps the field out the moment it
 accepts a file, which made a working upload report a 30-second timeout on the
 live Justworks posting, and an agent told its upload failed retries it.
 
+## The file input cannot say whether the attach worked, 2026-08-28
+
+**`setInputFiles` resolving proves Playwright wrote files onto the DOM element.
+Everything that decides the outcome happens afterwards, in the page's own
+change handler, and `node.files` reports the same emptiness for all of it.**
+
+Three shapes, measured: SmartRecruiters takes the file off the input, sends it,
+and sets `input.value = ''` so re-choosing the same file still fires change,
+which empties `node.files` on **success**. Greenhouse swaps the field out for
+its own "file.pdf / Remove" view, which detaches the node the read would ask.
+And a form that rejects on type or size empties it on **failure**. So a tool
+reading only the input has to be wrong somewhere, and this one was wrong in
+both directions at once: across every `browser_attach_file` call ever recorded,
+the `node.files` confirmation branch fired zero times, five calls threw on a
+SmartRecruiters attach that had landed, and the two successes it ever reported
+both came out of the detached-node catch, from an `error` the code never read.
+
+Versant `6c3824319c68c547` is the proof of the first direction. Both targeted
+calls answered "the input reported no file after the attachment"; that
+application's own park note says the resume is attached; and the snapshot it
+took immediately after the last failed call has `resume.pdf` rendered beside
+the field. SWIGGY `40c1f32b247a885a` produced the identical error the same
+night, so this is SmartRecruiters and not Easy Apply.
+
+**The second observable is the page's own rendering of the filename, and it is
+scoped rather than searched for.** Both bound filenames are generic, so a
+document-wide `text.includes(name)` would confirm a resume from help text or
+from the cover letter beside it. The scopes are the input's own ancestors,
+innermost first, crossing shadow boundaries, and they are captured as a live
+handle **before** the attach, because the container that ends up showing the
+name is frequently the one the page rewrote. A match must be a text node's own
+text, must be a change against a baseline taken before the attach, and must not
+sit inside an alert: a form that rejects a file names that file in its error.
+
+**Do not flip the unconfirmed case into an attached-but-unconfirmed success.**
+It is the same observation as a rejection, so flipping it converts a false
+negative into a false positive, and the costs are not symmetric. A false
+negative parks a run and a person looks at it. A false positive walks an agent
+toward submit believing a resume is attached, under a real name, and cannot be
+recalled. What did change is the wording: unconfirmed rather than failed,
+carrying the page's own complaint when there is one, and telling the agent to
+read the field rather than attach again, which is the retry loop the Justworks
+case already warned about. The detached-node catch is held to the same
+standard, and reports the error it used to discard.
+
+**Both SmartRecruiters file inputs carry `id=file-input`, legally**, because
+each sits in its own `spl-dropzone` open shadow root where the id is unique.
+Playwright's CSS engine pierces those roots and finds two; `document.querySelector`
+finds none. So the id named neither, every error on that form read identically,
+and two sessions concluded from those logs that `nth=0` and `nth=1` had
+resolved to the same element, on evidence that could not support it. `describe()`
+now prints the way out of the element, which does tell them apart:
+`spl-dropzone[data-test=apply-with-resume-container]` is the autocomplete
+helper and `spl-dropzone[data-test=resume-upload]` is the resume field. Do not
+scope anything here on the id.
+
+`tests/fixtures/clearing-upload-form.html` reproduces both directions in one
+page, with the input inside an open shadow root and the ids duplicated the way
+the real form has them. It needs a live browser slot like the rest of
+`test_apply_end_to_end.py`, so it skips in CI.
+
 **A parked application may retry into its own slot, and only its own.**
 `candidate_apply_slots` returns the affinity slot when it is parked under the
 same application id, and `choose_apply_head` lets such an application pass the
