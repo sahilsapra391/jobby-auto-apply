@@ -1868,6 +1868,33 @@ def clear_document_failure(aid):
     return True
 
 
+def document_candidate_order(preferred, work_order, existing_document, is_retry):
+    """Connection order for the head's document work, with failures demoted.
+
+    The registry's health probe proves login and model invocation, not
+    document generation, so a provider can probe healthy forever while
+    failing every document job it is handed. On 2026-08-28 gemini did exactly
+    that three times for one application, and each Retry re-picked it while
+    two accounts that could do the work sat idle, because the walk only
+    skipped providers whose probes failed. A retry of a failed document job
+    now tries every other connection first. Demoted, not banned: when the
+    failed provider is the only connection it still runs, and a fresh job
+    keeps the saved preference untouched.
+    """
+    ordered = []
+    for candidate in [preferred] + list(work_order):
+        if candidate and candidate not in ordered:
+            ordered.append(candidate)
+    if not is_retry or not isinstance(existing_document, dict):
+        return ordered
+    if existing_document.get("state") != "failed":
+        return ordered
+    failed = existing_document.get("provider")
+    if failed in ordered and len(ordered) > 1:
+        ordered = [c for c in ordered if c != failed] + [failed]
+    return ordered
+
+
 def prepare_document_head(item, provider_id):
     """Submit or poll the head document job without claiming the Apply click."""
     if not isinstance(item, dict) or not item.get("applicationId"):
@@ -2100,9 +2127,10 @@ def tick(force_publish=False):
             local_why = ""
             remote_why = ""
             considered = []
-            for candidate in [selected_provider] + providers.work_order():
-                if candidate in considered:
-                    continue
+            candidates = document_candidate_order(
+                selected_provider, providers.work_order(), existing_document,
+                apply_head.get("retry") is True)
+            for candidate in candidates:
                 considered.append(candidate)
                 ready, why = agent.authenticated(
                     force=not bool(existing_document), provider=candidate
