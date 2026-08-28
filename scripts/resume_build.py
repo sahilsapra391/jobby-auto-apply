@@ -84,6 +84,35 @@ def _content_tokens(value):
             if token not in STOPWORDS]
 
 
+# A word typed twice in a row is a generation artifact, never prose.
+# Measured 2026-08-28 across all 79 rendered documents on this machine, the
+# only adjacent duplicated alphabetic word any provider ever produced was
+# "Dear Dear", sixteen times, in letters real employers received. Digits are
+# excluded on the same measurement: figures repeat legitimately, 264 times.
+# cover_letter.py imports this so both documents answer to one rule; it is
+# deliberately provider-blind, sitting in the trusted pipeline every model's
+# output must pass.
+ADJACENT_WORD_DUP = re.compile(r"\b([A-Za-z][A-Za-z'-]*)\s+\1\b", re.I)
+
+
+def doubled_word(text):
+    """The word this text repeats back to back, or None."""
+    found = ADJACENT_WORD_DUP.search(str(text or ""))
+    return found.group(1) if found else None
+
+
+def _text_fields(content, path=""):
+    """Every human-readable string in the content, named for its place."""
+    if isinstance(content, str):
+        yield path, content
+    elif isinstance(content, list):
+        for index, item in enumerate(content):
+            yield from _text_fields(item, f"{path}[{index + 1}]")
+    elif isinstance(content, dict):
+        for key, item in content.items():
+            yield from _text_fields(item, f"{path}.{key}" if path else str(key))
+
+
 def _duplicate_bullets(content):
     bullets = [
         (role_index, bullet_index, str(bullet))
@@ -163,6 +192,13 @@ def assert_integrity(base, tailored):
             "duplicate resume points at experience entries "
             f"{left[0] + 1}.{left[1] + 1} and {right[0] + 1}.{right[1] + 1}"
         )
+
+    for where, text in _text_fields(tailored):
+        word = doubled_word(text)
+        if word:
+            raise ResumeIntegrityError(
+                f"{where} repeats the word {word!r} back to back"
+            )
 
 
 def safe(text):

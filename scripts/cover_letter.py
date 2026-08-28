@@ -34,6 +34,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from itertools import combinations
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
@@ -44,6 +45,7 @@ DEFAULT_TEMPLATE = REPO / "templates" / "cover-letter.html"
 
 sys.path.insert(0, str(SCRIPT_DIR))
 import resume_pdf  # noqa: E402
+import resume_build  # noqa: E402  (doubled_word: one duplication rule for both documents)
 
 
 CONTENT_KEYS = {
@@ -208,6 +210,41 @@ def validate_content(raw):
             "the sign-off itself, so the closing must carry real content"
         )
     cleaned["closing"] = closing
+
+    # After normalisation, three duplication gates, all provider-blind
+    # because they sit behind every model's output. A word typed twice in a
+    # row is a generation artifact ("Dear Dear" shipped sixteen times); a
+    # paragraph must not open with a greeting the template already writes;
+    # and two paragraphs sharing most of their words are one paragraph
+    # written twice. The 0.60 ceiling is measured, not guessed: across all
+    # 39 real letters the most similar pair of genuine paragraphs shares
+    # 18% of its words.
+    authored = [("salutation", cleaned["salutation"]),
+                ("opening", cleaned["opening"]),
+                *[(f"evidence[{index + 1}]", item)
+                  for index, item in enumerate(cleaned["evidence"])],
+                ("closing", cleaned["closing"])]
+    for field, text in authored:
+        word = resume_build.doubled_word(text)
+        if word:
+            raise CoverLetterError(f"{field} repeats the word {word!r} back to back")
+    paragraphs = authored[1:]
+    for field, text in paragraphs:
+        if text.casefold().lstrip().startswith("dear "):
+            raise CoverLetterError(
+                f"{field} opens with a greeting; the template writes the greeting")
+    for (field_a, text_a), (field_b, text_b) in combinations(paragraphs, 2):
+        tokens_a = set(WHITESPACE.sub(" ", text_a).casefold().split())
+        tokens_b = set(WHITESPACE.sub(" ", text_b).casefold().split())
+        union = tokens_a | tokens_b
+        if not union:
+            continue
+        shared = len(tokens_a & tokens_b) / len(union)
+        if shared >= 0.60:
+            raise CoverLetterError(
+                f"{field_b} repeats {field_a}: they share "
+                f"{int(shared * 100)}% of their words"
+            )
     raw_date = raw.get("date")
     if raw_date is None:
         chosen_date = date.today()

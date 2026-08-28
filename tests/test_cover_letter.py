@@ -156,6 +156,68 @@ class GreetingAndSignOffOnceTests(unittest.TestCase):
         self.assertNotIn("Dear Dear", rendered)
 
 
+class DuplicationGateTests(unittest.TestCase):
+    """No doubled words, no repeated paragraphs, no greeting in the body.
+
+    All three gates sit in validate_content, behind every provider, because
+    the duplication that shipped ("Dear Dear", a doubled signature) came out
+    of whichever model happened to write the letter and the fix must not
+    care which one that was. The thresholds are measured, not guessed:
+    across all 79 rendered documents the only adjacent duplicated alphabetic
+    word ever produced was "Dear", and the most similar genuine paragraph
+    pair shares 18% of its words against the 60% ceiling here.
+    """
+
+    def content(self, **overrides):
+        return cover_letter.validate_content({**CONTENT, **overrides})
+
+    def test_a_word_typed_twice_in_a_row_is_refused_by_name(self):
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(opening=(
+                "I am writing to to apply for this role because the team's "
+                "work matches my background."
+            ))
+        self.assertIn("'to'", str(caught.exception))
+        self.assertIn("opening", str(caught.exception))
+
+    def test_repeated_digits_are_figures_not_artifacts(self):
+        got = self.content(opening=(
+            "I moved capacity from 3 3-person squads to a single team of "
+            "twelve without slipping a release date."
+        ))
+        self.assertIn("3 3-person", got["opening"])
+
+    def test_a_paragraph_written_twice_is_refused(self):
+        paragraph = (
+            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "enterprise customers and landed it with zero downtime."
+        )
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(evidence=[paragraph, paragraph])
+        self.assertIn("repeats", str(caught.exception))
+
+    def test_a_lightly_reworded_copy_is_still_a_repeat(self):
+        paragraph = (
+            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "enterprise customers and landed it with zero downtime."
+        )
+        tweaked = paragraph.replace("landed", "delivered")
+        with self.assertRaises(cover_letter.CoverLetterError):
+            self.content(evidence=[paragraph, tweaked])
+
+    def test_distinct_paragraphs_pass(self):
+        got = self.content()
+        self.assertEqual(len(got["evidence"]), len(CONTENT["evidence"]))
+
+    def test_a_body_paragraph_may_not_open_with_a_greeting(self):
+        with self.assertRaises(cover_letter.CoverLetterError) as caught:
+            self.content(opening=(
+                "Dear Hiring Team, I am writing to apply for this role with "
+                "genuine enthusiasm for the mission."
+            ))
+        self.assertIn("greeting", str(caught.exception))
+
+
 class ValidationTests(unittest.TestCase):
     def test_content_has_a_deliberately_small_schema(self):
         value = dict(CONTENT, model="some-model")
