@@ -1065,5 +1065,110 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
         self.assertEqual(fell_through.get("topic"), "relationships-conflicts")
 
 
+PROFILE = {
+    "links": {"linkedin": "https://www.linkedin.com/in/sahil-sapra/",
+              "github": "https://github.com/sahilsapra391",
+              "website": "https://sahilsapra.com/"},
+    "certifications": ["AWS Certified Cloud Practitioner", "ICAgile Certified Professional"],
+    "education": [{"degree": "BS Quantitative Economics", "end": "2023-05"}],
+    "preferences": {
+        "relocationNote": "answers yes to all relocation questions; when asked WHERE, "
+                          "Austin and Seattle are his stated preferences",
+        "relocationTargets": ["Austin, TX", "Seattle, WA"],
+        "standingConsents": {
+            "futureOpportunityContact": "always yes",
+            "recruitmentPrivacyNotice": "confirm on every application (acknowledgment "
+                                        "of a document, not a truth attestation)",
+        },
+    },
+}
+
+
+class ProfileAnswerTests(unittest.TestCase):
+    """Facts the Profile page states outright can answer a form question.
+
+    Measured 2026-08-28: the TELUS run parked the recruiting-privacy consent
+    into Needs you while the profile's standingConsents said "confirm on
+    every application". The boundary matters as much as the coverage, so the
+    refusal cases here are the point: a stale profile must fail toward
+    asking, and an authorisation is never a standing acknowledgment.
+    """
+
+    def answer(self, question, profile=PROFILE):
+        return store.profile_answer(profile, question)
+
+    def test_linkedin_github_and_portfolio_resolve_from_links(self):
+        self.assertIn("linkedin.com", self.answer("LinkedIn profile URL")["value"])
+        self.assertIn("github.com", self.answer("GitHub")["value"])
+        self.assertIn("sahilsapra.com", self.answer("Portfolio link (optional)")["value"])
+        self.assertIn("sahilsapra.com", self.answer("Website")["value"])
+
+    def test_where_did_you_hear_about_us_is_not_a_website_question(self):
+        # "Company website" is an answer about the employer's site; handing
+        # out the user's own URL here would fill the wrong fact entirely.
+        self.assertIsNone(self.answer("Where did you hear about us?"))
+
+    def test_relocation_says_yes_and_where_names_the_targets(self):
+        self.assertEqual(self.answer("Are you willing to relocate?")["value"], "Yes")
+        where = self.answer("If open to relocating, where would you prefer to work?")
+        self.assertIn("Austin, TX", where["value"])
+
+    def test_a_relocation_note_that_does_not_say_yes_answers_nothing(self):
+        profile = {**PROFILE, "preferences": {
+            **PROFILE["preferences"], "relocationNote": "prefers not to relocate"}}
+        self.assertIsNone(store.profile_answer(profile, "Are you willing to relocate?"))
+
+    def test_the_privacy_notice_acknowledgment_is_standing(self):
+        got = self.answer("I have read and agree to the TELUS Digital Recruiting "
+                          "Privacy Policy")
+        self.assertEqual(got["value"], "Yes")
+        self.assertIn("recruitmentPrivacyNotice", got["profileKey"])
+
+    def test_an_authorisation_is_never_answered_even_with_privacy_wording(self):
+        self.assertIsNone(self.answer(
+            "I authorize the background check described in the privacy notice"))
+
+    def test_a_truth_attestation_is_not_a_privacy_acknowledgment(self):
+        self.assertIsNone(self.answer(
+            "I certify that the information provided is true and accurate"))
+
+    def test_future_opportunity_contact_is_standing_yes(self):
+        got = self.answer("May we contact you about future opportunities at Acme?")
+        self.assertEqual(got["value"], "Yes")
+
+    def test_certifications_resolve_only_as_a_bare_label(self):
+        self.assertIn("AWS", self.answer("Certifications")["value"])
+        self.assertIsNone(self.answer(
+            "Do you hold the certifications required for this clearance?"))
+
+    def test_education_is_never_derived_because_the_profile_is_stale(self):
+        # Measured 2026-08-28: the profile's education list lacked the user's
+        # current graduate program, so deriving graduation from it would have
+        # answered "2023" against a true answer of Dec 2027.
+        self.assertIsNone(self.answer("When is your anticipated graduation date?"))
+        self.assertIsNone(self.answer(
+            "Are you currently enrolled in a degree program?"))
+
+
+class ResolveAnswerTests(unittest.TestCase):
+    """One resolution for every consumer: the bank first, then the profile."""
+
+    def test_the_bank_wins_over_the_profile(self):
+        answers = {"linkedin-profile-url": {
+            "question": "LinkedIn profile URL", "value": "https://linkedin.com/in/other"}}
+        got = store.resolve_answer(answers, PROFILE, "LinkedIn profile URL")
+        self.assertIn("in/other", got["value"])
+
+    def test_the_profile_fills_what_the_bank_lacks(self):
+        got = store.resolve_answer({}, PROFILE, "Are you willing to relocate?")
+        self.assertEqual(got.get("match"), "profile")
+        self.assertEqual(got["value"], "Yes")
+
+    def test_a_miss_keeps_the_candidates_shape(self):
+        got = store.resolve_answer({}, PROFILE, "What is your favourite colour?")
+        self.assertEqual(got.get("match"), "none")
+        self.assertIn("candidates", got)
+
+
 if __name__ == "__main__":
     unittest.main()

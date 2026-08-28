@@ -257,6 +257,101 @@ class ApplicationMcpTests(unittest.TestCase):
                          application_mcp.TOOL_NAMES)
 
 
+class ParkGateTests(unittest.TestCase):
+    """A park may not carry a question the store already answers.
+
+    The prompt has forbidden it since the Robinhood run parked on seven
+    stored answers (2026-08-28), and the TELUS run parked "Where did you
+    hear about us?" hours later with the answer confirmed since 2026-08-19.
+    Saying it is not a guard; the tool refusing is. Disable the gate and
+    the first test here fails, which is the point of it.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.temp.name)
+        self.store_root = root / "state"
+        self.store_root.mkdir()
+        (self.store_root / "answers.json").write_text(json.dumps({
+            "how-did-hear-about-this-job": {
+                "question": "How did you hear about this job?",
+                "value": "Company website",
+                "tags": ["sourcing", "source-how-heard"],
+            },
+            "expected-compensation": {
+                "question": "What is your expected compensation?",
+                "value": "$150,000", "state": "sensitive",
+                "tags": ["compensation"],
+            },
+        }))
+        (self.store_root / "profile.json").write_text(json.dumps({
+            "preferences": {"standingConsents": {
+                "recruitmentPrivacyNotice": "confirm on every application",
+            }},
+        }))
+        for name in ("resume.pdf", "cover.pdf"):
+            (root / name).write_bytes(b"%PDF-1.4\nx")
+        (root / ".resume.html").write_text("<html><body></body></html>")
+        self.context = application_mcp.ApplicationContext.create(
+            "acme-pm", str(root / "resume.pdf"), str(root / "cover.pdf"),
+            str(root / ".resume.html"), str(self.store_root))
+        self.tools = application_mcp.ApplicationTools(self.context)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def park(self, pending):
+        with mock.patch.object(
+            application_mcp.finish, "park", return_value={"parked": True}
+        ) as parked:
+            result = self.tools.call("park_application", {
+                "pending": pending, "detail": "needs the user"})
+        return parked, result
+
+    def test_a_question_the_bank_answers_is_refused_with_its_value(self):
+        with mock.patch.object(application_mcp.finish, "park") as parked:
+            with self.assertRaises(application_mcp.ToolInputError) as caught:
+                self.tools.call("park_application", {
+                    "pending": ["Where did you hear about us?"],
+                    "detail": "needs the user"})
+        parked.assert_not_called()
+        self.assertIn("Company website", str(caught.exception))
+
+    def test_a_question_the_profile_answers_is_refused(self):
+        with mock.patch.object(application_mcp.finish, "park") as parked:
+            with self.assertRaises(application_mcp.ToolInputError):
+                self.tools.call("park_application", {
+                    "pending": ["Do you agree to the Recruiting Privacy Policy?"],
+                    "detail": "needs the user"})
+        parked.assert_not_called()
+
+    def test_a_sensitive_answer_is_refused_without_its_value(self):
+        with mock.patch.object(application_mcp.finish, "park"):
+            with self.assertRaises(application_mcp.ToolInputError) as caught:
+                self.tools.call("park_application", {
+                    "pending": ["What is your expected compensation?"],
+                    "detail": "needs the user"})
+        message = str(caught.exception)
+        self.assertNotIn("150,000", message)
+        self.assertIn("resolve_answers", message)
+
+    def test_actions_and_genuine_unknowns_still_park(self):
+        parked, _ = self.park([
+            "Solve the visible CAPTCHA",
+            "Attach the resume manually in the embedded frame",
+            "What is your favourite colour?",
+        ])
+        parked.assert_called_once()
+
+    def test_prose_blockers_are_not_resolved_against_the_bank(self):
+        # 0 of 29 real blockers were question-shaped (measured 2026-08-27);
+        # fuzzy-matching prose would refuse legitimate parks by accident.
+        parked, _ = self.park([
+            "Email verification code (8 characters) sent to the user",
+        ])
+        parked.assert_called_once()
+
+
 class RecordAnswersToolTests(unittest.TestCase):
     """The manifest tool: bounded, checked, and unable to store a secret."""
 

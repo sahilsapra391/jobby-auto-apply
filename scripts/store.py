@@ -1200,9 +1200,117 @@ def find_answer(answers, question):
     return out
 
 
+# Facts the Profile page states outright, recognised with word boundaries
+# because substring matching on a semantic category is a bug waiting for a
+# corpus (see CLAUDE.md). "Company website" under "where did you hear about
+# us" must never read as a request for the user's own website, which is why
+# the website label match is exact rather than a search.
+RELOCATION_QUESTION = re.compile(r"\brelocat|\bwilling to move\b", re.I)
+RELOCATION_WHERE = re.compile(
+    r"\bwhere\b|\bwhich (city|cities|location|locations|office|offices)\b", re.I)
+FUTURE_CONTACT_TOPIC = re.compile(
+    r"\bfuture\b[^.?]{0,60}\b(opportunit\w*|roles?|positions?|openings?)\b", re.I)
+FUTURE_CONTACT_VERB = re.compile(
+    r"\b(contact|consider|keep|notify|inform|reach)\b", re.I)
+PRIVACY_NOTICE = re.compile(
+    r"\bprivacy\b[^.?]{0,40}\b(policy|notice|statement)\b"
+    r"|\b(policy|notice|statement)\b[^.?]{0,40}\bprivacy\b", re.I)
+PRIVACY_ACT = re.compile(r"\b(agree|acknowledge|consent|read|reviewed|accept)\b", re.I)
+LINKEDIN_QUESTION = re.compile(r"\blinkedin\b", re.I)
+GITHUB_QUESTION = re.compile(r"\bgithub\b", re.I)
+PORTFOLIO_QUESTION = re.compile(r"\bportfolio\b", re.I)
+WEBSITE_LABELS = {"website", "personal-website", "website-url", "personal-site",
+                  "portfolio-url", "personal-website-url"}
+CERTIFICATION_LABELS = {"certifications", "certificates", "relevant-certifications",
+                        "licenses-and-certifications", "list-any-certifications"}
+
+
+def profile_answer(profile, question):
+    """An answer derived from a fact the profile states outright, or None.
+
+    The answer bank never held the whole account of the user: links,
+    relocation, standing consents and certifications live on the Profile
+    page, and nothing consulted it. Measured on 2026-08-28: the TELUS run
+    parked "I agree to the Recruiting Privacy Policy" into Needs you while
+    profile.preferences.standingConsents.recruitmentPrivacyNotice said
+    "confirm on every application".
+
+    Only facts the profile states directly are derived; nothing is inferred.
+    Education, enrollment and graduation are deliberately absent: measured
+    the same day, the profile's education list lacked the user's current
+    graduate program entirely, so deriving "anticipated graduation" from it
+    would have answered "already graduated 2023" against a true answer of
+    Dec 2027. A stale profile must fail toward asking, never toward a
+    confident wrong answer on a real form.
+
+    Consents follow the profile's own carve-out and the store's existing
+    fence: an acknowledgment of a document may be standing, an authorisation
+    or truth attestation never is (NOT_A_BARE_ACKNOWLEDGEMENT).
+    """
+    if not isinstance(profile, dict):
+        return None
+    text = question or ""
+    prefs = profile.get("preferences") or {}
+    links = profile.get("links") or {}
+    label = answer_key(text)
+
+    def hit(key, value):
+        return {"match": "profile", "profileKey": key, "value": str(value),
+                "state": "confirmed"}
+
+    if links.get("linkedin") and LINKEDIN_QUESTION.search(text):
+        return hit("links.linkedin", links["linkedin"])
+    if links.get("github") and GITHUB_QUESTION.search(text):
+        return hit("links.github", links["github"])
+    if links.get("website") and (PORTFOLIO_QUESTION.search(text)
+                                 or label in WEBSITE_LABELS):
+        return hit("links.website", links["website"])
+
+    note = str(prefs.get("relocationNote") or "")
+    if RELOCATION_QUESTION.search(text) and re.search(r"\byes\b", note, re.I):
+        targets = prefs.get("relocationTargets") or []
+        if targets and RELOCATION_WHERE.search(text):
+            return hit("preferences.relocationTargets",
+                       "Yes. Preferred: " + "; ".join(str(t) for t in targets))
+        return hit("preferences.relocationNote", "Yes")
+
+    consents = prefs.get("standingConsents") or {}
+    if (str(consents.get("futureOpportunityContact") or "").lower().startswith("always yes")
+            and FUTURE_CONTACT_TOPIC.search(text)
+            and FUTURE_CONTACT_VERB.search(text)):
+        return hit("preferences.standingConsents.futureOpportunityContact", "Yes")
+    if (str(consents.get("recruitmentPrivacyNotice") or "").lower().startswith("confirm")
+            and PRIVACY_NOTICE.search(text) and PRIVACY_ACT.search(text)
+            and not NOT_A_BARE_ACKNOWLEDGEMENT.search(text)):
+        return hit("preferences.standingConsents.recruitmentPrivacyNotice", "Yes")
+
+    certs = profile.get("certifications") or []
+    if certs and label in CERTIFICATION_LABELS:
+        return hit("certifications", ", ".join(str(c) for c in certs))
+    return None
+
+
+def resolve_answer(answers, profile, question):
+    """One resolution for every consumer: the bank first, then the profile.
+
+    The agent's fill path (resolve_answers), the park gate and the blocker
+    close loop must all see the same answer, or the gate refuses parks the
+    agent cannot satisfy and the loop closes rows the agent could not fill.
+    This is that one place.
+    """
+    found = find_answer(answers, question)
+    if isinstance(found, dict) and found.get("match") == "none":
+        derived = profile_answer(profile, question)
+        if derived is not None:
+            return derived
+    return found
+
+
 def cmd_answer_find(args):
-    answers = read_json(paths(root_dir(args.root))["answers"], {})
-    return find_answer(answers, args.question)
+    root = root_dir(args.root)
+    answers = read_json(paths(root)["answers"], {})
+    profile = read_json(paths(root)["profile"], {})
+    return resolve_answer(answers, profile, args.question)
 
 
 def cmd_answers_resolve(args):
@@ -1210,8 +1318,10 @@ def cmd_answers_resolve(args):
     questions = load_input(args.input)
     if not isinstance(questions, list) or not all(isinstance(q, str) for q in questions):
         raise StoreError("input must be a JSON list of question strings")
-    answers = read_json(paths(root_dir(args.root))["answers"], {})
-    return {q: find_answer(answers, q) for q in questions}
+    root = root_dir(args.root)
+    answers = read_json(paths(root)["answers"], {})
+    profile = read_json(paths(root)["profile"], {})
+    return {q: resolve_answer(answers, profile, q) for q in questions}
 
 
 def cmd_answer_list(args):

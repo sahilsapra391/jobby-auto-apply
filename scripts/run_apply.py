@@ -442,7 +442,11 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    user's Memory Bank so the next application that asks does not stop. Leave out anything
    that is an action rather than a question, and anything from the paragraph above: a
    CAPTCHA, an account, a password, a one-time code and an authorisation are never stored.
-   Once parked, stop.
+   `jobby.park_application` refuses any pending row that is a question the store or the
+   profile can already answer, and its refusal carries the answers: fill those fields,
+   then park only what remains. If a stored answer genuinely does not fit the field (the
+   dropdown lacks that option), park a row that names the actual mismatch rather than
+   re-asking the question. Once parked, stop.
 
 6. Once every field on the last step is filled and read back, call `jobby.record_answers`
    exactly once with the whole manifest.
