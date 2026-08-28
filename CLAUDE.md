@@ -1383,6 +1383,12 @@ derives from `Path.home()` in the test process. Chrome's own absolute
 where artifacts land. Measured: a redirected `discover` run put its
 `activity.json` in the throwaway home and left the real tree untouched.
 
+So the full instruction has two halves that answer different hazards: redirect
+the store with `HOME=$(mktemp -d)`, **and check `watch.py --status` before a
+full run** — not because the redirect leaks, but because that module reaches
+past it to a real browser. #109 stops it taking a slot the watcher holds; two
+concurrent test runs choosing the same free slot is still unguarded.
+
 **The attribution trap here is worth more than the rule.** Every run of that
 module uses `applicationId` "endtoend", so every run on a given slot writes the
 same `browser-artifacts/<slot>/uploads/endtoend/activity.json`. Neither the path
