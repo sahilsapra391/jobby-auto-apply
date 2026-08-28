@@ -1177,24 +1177,36 @@ def _report_backend_stderr(lines: "deque[str]", exit_code: int | None) -> None:
 
 
 def _write_activity(path: str, policy: "BrowserPolicy", errors: "deque[str]",
-                    exit_code: int | None) -> None:
+                    exit_code: int | None, ended: str = "closed") -> None:
     """Record what the agent reached for, for the runner that outlives it.
 
     A parked application looks identical whether the agent worked the form and
     hit a real blocker or never had a browser tool at all. The firewall is the
     only part of the run that sees every call, so it is what says which.
     Best-effort: a run must not fail because its own bookkeeping could not.
+
+    ``ended`` says how this proxy stopped, because the two answers are read
+    differently: ``closed`` saw the backend's own exit status, and a signal
+    path reports the status it had observed at the moment it was killed, which
+    is normally none at all.
     """
     if not path:
         return
     try:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
+        # The stderr drain is still appending on its own thread when a signal
+        # arrives, and iterating a deque under a concurrent append raises
+        # RuntimeError. A snapshot first, and RuntimeError caught below,
+        # because best-effort has to mean it on the path that is now the
+        # common one.
+        captured = list(errors)
         payload = json.dumps({
             "calls": dict(sorted(policy.calls.items())),
             "totalCalls": sum(policy.calls.values()),
             "backendExit": exit_code,
-            "backendStderr": [line for line in errors if line][-5:],
+            "backendStderr": [line for line in captured if line][-5:],
+            "ended": ended,
         }, separators=(",", ":"))
         descriptor = os.open(
             target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
@@ -1202,8 +1214,49 @@ def _write_activity(path: str, policy: "BrowserPolicy", errors: "deque[str]",
         )
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(payload + "\n")
-    except (OSError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         pass
+
+
+def _install_activity_signal_handlers(
+    path: str, policy: "BrowserPolicy", errors: "deque[str]",
+    process: subprocess.Popen[bytes],
+) -> None:
+    """Write the activity record when the client kills us, not only on EOF.
+
+    Every real run ends this way and none of them had a record. Measured on
+    2026-08-28 against the live CLIs: codex sends SIGTERM to its MCP child, and
+    Claude Code sends SIGTERM to the server it spawns for discovery and SIGINT
+    to the one running the session. Neither ever closes stdin. So the write at
+    the end of ``main`` had only ever run for a proxy whose backend died and
+    let it exit on its own, which is exactly the half of the record that says
+    *no* browser calls happened. The half that says the agent reached the form
+    had never fired on the production Mac.
+
+    The absent record still means "nothing known" and must: preflight kills
+    this process with SIGKILL, which cannot be caught, so a probe leaves no
+    record to be mistaken for a run that made zero calls.
+
+    ``process.returncode`` rather than ``poll()`` on purpose. ``poll`` takes
+    subprocess's non-reentrant waitpid lock, and a handler runs on the main
+    thread, which may be holding it. A deadlock inside the bookkeeping would
+    cost the run the very thing this is for.
+    """
+    def handle(number: int, _frame: Any) -> None:
+        _write_activity(
+            path, policy, errors, process.returncode,
+            ended=signal.Signals(number).name,
+        )
+        # Die of what we were sent. The client asked for this exit, and a proxy
+        # that reported 0 here would say it finished on its own.
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(number, handle)
+        except (OSError, ValueError):  # pragma: no cover - not the main thread
+            pass
 
 
 def main() -> int:
@@ -1242,6 +1295,7 @@ def main() -> int:
         target=_drain_backend_stderr, args=(process.stderr, backend_errors), daemon=True
     )
     drain.start()
+    _install_activity_signal_handlers(args.activity, policy, backend_errors, process)
     try:
         code = StdioProxy(policy, process, sys.stdin.buffer, sys.stdout.buffer).run()
     finally:
