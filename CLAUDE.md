@@ -632,37 +632,54 @@ the real Safe Storage key cannot be read under the mock one, so stored site
 logins reset once. LinkedIn and employer-site sessions live in those profiles
 and some email-verification flows depend on them. It should be once per profile
 rather than once per launch, because the mock key is fixed across launches and
-cookies written afterwards are encrypted under it. That has not been observed
-here yet: no slot profile has relaunched since #111 merged.
+cookies written afterwards are encrypted under it. That reasoning has not been
+confirmed against a profile yet. As of 2026-08-28 apply-2 has relaunched under
+the flag and apply-1 has not, so what the reset actually costs is observable now
+and nobody has looked. Replace this paragraph with the measurement rather than
+leaving the expectation standing as fact.
 
-**The second fault is that browsers outlive releases, and it is untidiness
-rather than an incident.** `serve()` starts a slot browser on demand and nothing
-stops it afterwards. Measured on 2026-08-28, five mains were running
-151.0.7922.174 with 151.0.7922.175 on disk, some of them up since 2026-08-25.
-Each was executing a bundle no longer at that path, so the release's fixes were
-not in effect in the browsers that fill forms on employer sites, and the helpers
-they spawned afterwards came from the replaced bundle while the main did not.
+**A merge does not relaunch a browser, and that is the fault #111 could not
+close by itself.** A running Chrome cannot be given a flag, and `serve()` starts
+one only when the slot has none, so a browser that predates #111 keeps its old
+command line until something stops it. Measured on the live fleet on 2026-08-28:
+apply-1 started at 00:38:14 and #111 was committed at 00:38:36, twenty-two
+seconds later. apply-1 was still running **without** `--use-mock-keychain` hours
+afterwards, on the primary `browser-profile`, on the current build. It could
+still raise the dialog, and it was invisible, because a version check has no
+opinion about how a process was started.
 
-The watcher compares `browser.installed_version()`, the bundle's
+**So drift is two questions.** Is it the binary we would launch now, and is it
+the configuration we would launch now. `watch.chrome_drift()` asks both once a
+minute. The binary comes from `browser.installed_version()`, the bundle's
 `CFBundleShortVersionString`, against `browser.running_version(slot)`, CDP's own
-`Browser` field, once a minute. Not the `User-Agent` beside it: that is rounded
-to `151.0.0.0` to blunt fingerprinting, so comparing it would report every slot
-as drifted forever. An unreadable version on either side counts as no drift, so
-a moved plist cannot empty the fleet.
+`Browser` field. Not the `User-Agent` beside it: that is rounded to `151.0.0.0`
+to blunt fingerprinting, so comparing it would report every slot as drifted
+forever. The configuration comes from `browser.running_launch(slot)`, which
+reads the slot's main out of the process table, matching port and profile
+together and excluding helpers by `--type`, and diffs it against `_launch_argv`
+so the expected flags are read from the launch site rather than restated.
+
+The version half fails open and the flag half does not need to. An unreadable
+version on either side counts as no drift, so a moved plist cannot empty the
+fleet.
 
 A drifted slot with no lock on it is stopped, and not restarted. `serve()` runs
-before every apply and again inside `run_apply`, so it comes back on the new
-binary when it is next needed, and eight windows do not appear on the user's
-screen for maintenance nobody asked for. **A slot holding a live run or a parked
+before every apply and again inside `run_apply`, so it comes back correct when
+it is next needed, and eight windows do not appear on the user's screen for
+maintenance nobody asked for. **A slot holding a live run or a parked
 application is never closed.** A form being filled and a form the user was told
-to come back to are each worth more than retiring a binary early. Those are named
-in `watch.py --status` and in the tick log, and
+to come back to are each worth more than retiring a browser early. Those are
+named in `watch.py --status` and in the tick log, and
 `browser.py --stop --slot apply-N` retires one by hand.
 
-**Do not attach an alarm to the drift.** With `--use-mock-keychain` in place a
-stale browser is untidy and no longer something the user can see, and a dead-man
-ping that fires for untidiness is how an alarm stops being believed.
-`tests/test_chrome_drift.py` pins the ping to the board and the parked slots.
+**The two halves do not earn the same response, and merging them costs the
+distinction.** A stale binary stays out of the dead-man ping: with #111 in place
+it is untidy rather than something the user can see, and a ping that fires for
+untidiness is how an alarm stops being believed. A missing flag on a browser
+nothing is allowed to close does ping, because that flag is the whole reason the
+browser stays off the keychain. `chrome_flag_warning()` is the flags half only,
+and `tests/test_chrome_drift.py` pins both the scope of the ping and the fact
+that the version half is absent from it.
 
 The two designs were weighed the other way round at the start, so it is worth
 recording why it flipped. Recycling on drift keeps real Safe Storage and every
