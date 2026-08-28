@@ -1314,24 +1314,41 @@ def parked_slot_warning():
 # source rather than managing it, by passing --use-mock-keychain at both of the
 # repo's Chrome launch sites, so no Jobby browser consults the keychain at all.
 #
-# So do not attach an alarm to this. With #111 in place a drifted browser is
-# untidy rather than something the user can see, and a dead-man ping that fires
-# for untidiness is how an alarm stops being believed. It belongs in --status
-# and in the tick log, which is where it is.
+# A merge does not relaunch a browser either, and that is the second axis. #111
+# added --use-mock-keychain to the launch, but a browser already running keeps
+# the command line it started with forever: serve() starts one only when the
+# slot has none, so nothing ever replaces it. Measured on 2026-08-28 against the
+# live fleet, apply-1 was started at 00:38:14 and #111 was committed at 00:38:36,
+# twenty-two seconds later. It was still running without the flag hours
+# afterwards, on the primary browser-profile, on the current build, and every
+# version check in this file called it healthy. That is the user's own invariant
+# failing quietly: an agent browser able to raise a keychain dialog nothing can
+# see.
 #
-# Checked once a minute, not once a tick. The probe is one HTTP call per slot
-# and a Chrome release is not a four-second event.
+# So drift is two questions, not one. Is it the binary we would launch now, and
+# is it the configuration we would launch now. A slot can fail either.
+#
+# The two do not earn the same response. A stale binary is untidy: with #111 in
+# place it is not something the user can see, and a dead-man ping for untidiness
+# is how an alarm stops being believed. A missing flag on a browser that cannot
+# be recycled is different in kind, because the flag is what keeps the browser
+# off the user's keychain, so that one does ping. Do not merge the two branches.
+#
+# Checked once a minute, not once a tick. The probe is one HTTP call plus one
+# process listing, and neither a Chrome release nor a merge is a four-second
+# event.
 CHROME_CHECK_SECONDS = 60
 _CHROME_CHECK = {"at": 0.0, "installed": "", "recycled": [], "held": []}
 
 
-def chrome_version_drift():
-    """Which slots are running a Chrome older than the one on disk.
+def chrome_drift():
+    """Slots not running the binary or the configuration we would launch now.
 
     Reports, decides nothing. A slot with no browser up cannot drift, and an
-    unreadable version on either side counts as no drift: acting on a version
-    nobody could read would take the fleet down the first time the plist moved
-    or a browser was slow to answer.
+    unreadable version on either side counts as no version drift: acting on a
+    version nobody could read would take the fleet down the first time the plist
+    moved or a browser was slow to answer. A missing flag has no such ambiguity,
+    because the flag list is read out of _launch_argv rather than guessed.
     """
     installed = browser.installed_version()
     versions = {}
@@ -1339,13 +1356,30 @@ def chrome_version_drift():
     for slot in APPLY_LOCKS:
         version = browser.running_version(slot)
         versions[slot] = version or None
-        if not installed or not version or version == installed:
+        if not version:
+            continue
+        reasons = []
+        if installed and version != installed:
+            reasons.append("version")
+        try:
+            missing = browser.missing_launch_flags(slot)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            # The process table is the only source for this, so say nothing
+            # rather than guessing. A browser wrongly called well-configured is
+            # the failure being fixed, and one wrongly called stale is a recycle
+            # of a slot that was fine.
+            missing = []
+        if missing:
+            reasons.append("flags")
+        if not reasons:
             continue
         held = lock_holder(slot)
         drifted.append({
             "slot": slot,
             "running": version,
             "installed": installed,
+            "reasons": reasons,
+            "missingFlags": missing,
             # None is an idle browser: nothing is in it, so it is free to go.
             "holder": ("parked" if (held or {}).get("parked") is True
                        else "live" if held else None),
@@ -1355,8 +1389,8 @@ def chrome_version_drift():
     return {"installed": installed, "running": versions, "drifted": drifted}
 
 
-def recycle_updated_browsers(now=None, force=False):
-    """Stop idle slot browsers left behind by a Chrome update.
+def recycle_stale_browsers(now=None, force=False):
+    """Stop idle slot browsers left behind by a Chrome update or a merge.
 
     Idle means no lock at all: no live runner and no parked application. Those
     two hold something worth far more than the tidiness, a form being filled and
@@ -1373,7 +1407,7 @@ def recycle_updated_browsers(now=None, force=False):
     now = time.time() if now is None else now
     if not force and now - _CHROME_CHECK["at"] < CHROME_CHECK_SECONDS:
         return _CHROME_CHECK
-    drift = chrome_version_drift()
+    drift = chrome_drift()
     recycled, held = [], []
     for entry in drift["drifted"]:
         if entry["holder"] is not None:
@@ -1390,8 +1424,23 @@ def recycle_updated_browsers(now=None, force=False):
     return _CHROME_CHECK
 
 
+def _where(entries):
+    return ", ".join(
+        f"{entry['slot']} ({entry.get('holder') or 'idle'}"
+        + (f", {entry['applicationId']}" if entry.get("applicationId") else "")
+        + ")"
+        for entry in entries
+    )
+
+
+HOW_TO_CLEAR = ("An idle one is recycled within the minute; a live slot clears "
+                "when its run ends; a parked one clears when you finish or drop "
+                "its application, or with "
+                "`python3 scripts/browser.py --stop --slot <slot>`.")
+
+
 def chrome_drift_message(entries):
-    """Say which browsers are on a Chrome that is no longer on disk.
+    """Say which browsers predate the current binary or the current launch.
 
     Ages stay out of it. The tick's log line is compared against the last one to
     decide whether to print, and a number that moves every minute would print
@@ -1400,22 +1449,55 @@ def chrome_drift_message(entries):
     entries = [entry for entry in entries if isinstance(entry, dict)]
     if not entries:
         return ""
-    installed = entries[0].get("installed") or "the installed build"
-    old = sorted({entry.get("running") or "?" for entry in entries})
-    where = ", ".join(
-        f"{entry['slot']} ({entry.get('holder') or 'idle'}"
-        + (f", {entry['applicationId']}" if entry.get("applicationId") else "")
-        + ")"
-        for entry in entries
-    )
-    return (f"Chrome updated to {installed} under {len(entries)} agent "
-            f"browser{'s' if len(entries) > 1 else ''} still running "
-            f"{'/'.join(old)}: {where}. They are executing a bundle that is no "
-            "longer on disk, so the release's fixes are not in effect in them. "
-            "An idle one is recycled within the minute; a live slot clears when "
-            "its run ends; a parked one clears when you finish or drop its "
-            "application, or with "
-            "`python3 scripts/browser.py --stop --slot <slot>`.")
+    said = []
+    # Deliberately not called the same thing as the dead-man ping's own local.
+    # tests/test_watch.py locates that composition by finding the first
+    # assignment of that name in this file, so reusing it here, in a function
+    # that sits earlier, silently points the test at the wrong block. Writing
+    # the name in a comment does it too, which is how this comment got reworded.
+    outdated = [e for e in entries if "version" in (e.get("reasons") or [])]
+    if outdated:
+        installed = outdated[0].get("installed") or "the installed build"
+        old = sorted({entry.get("running") or "?" for entry in outdated})
+        said.append(
+            f"Chrome updated to {installed} under {len(outdated)} agent "
+            f"browser{'s' if len(outdated) > 1 else ''} still running "
+            f"{'/'.join(old)}: {_where(outdated)}. They are executing a bundle "
+            "that is no longer on disk, so the release's fixes are not in "
+            "effect in them.")
+    misconfigured = [e for e in entries if e.get("missingFlags")]
+    if misconfigured:
+        flags = sorted({flag for entry in misconfigured
+                        for flag in entry["missingFlags"]})
+        said.append(
+            f"{len(misconfigured)} agent "
+            f"browser{'s were' if len(misconfigured) > 1 else ' was'} started "
+            f"without {' '.join(flags)}: {_where(misconfigured)}. A running "
+            "Chrome cannot be given a flag, so it keeps the launch it started "
+            "with until it is restarted.")
+    # An entry naming neither reason describes nothing, and appending the
+    # remedy to nothing produces a message that tells the reader to go fix an
+    # unnamed slot. Silence is the honest answer.
+    if not said:
+        return ""
+    return " ".join(said + [HOW_TO_CLEAR])
+
+
+def chrome_flag_warning():
+    """The dead-man ping for a browser that is missing a load-bearing flag.
+
+    Only the flags half, and only for slots that could not be recycled. A stale
+    binary is untidy and stays out of the alarm on purpose. A missing flag on a
+    browser nothing is allowed to close is the user's invariant failing: with
+    --use-mock-keychain absent, that process can raise a modal keychain dialog
+    no agent can see, which is the fault this whole seam exists for.
+
+    Read from the last check rather than probing again, because the ping line
+    runs every tick.
+    """
+    held = [entry for entry in (_CHROME_CHECK.get("held") or [])
+            if isinstance(entry, dict) and entry.get("missingFlags")]
+    return chrome_drift_message(held)
 
 
 def publishing_paused():
@@ -2081,14 +2163,16 @@ def tick(force_publish=False):
     # After the reconcile, so a slot released a moment ago counts as idle now
     # rather than waiting a tick, and before the apply head is chosen, so a
     # recycled slot is served fresh by the same tick that hands it out.
-    chrome = recycle_updated_browsers()
+    chrome = recycle_stale_browsers()
     if chrome["recycled"] or chrome["held"]:
-        changed["chromeUpdated"] = {
+        changed["chromeStale"] = {
             "installed": chrome["installed"],
             "recycled": [entry["slot"] for entry in chrome["recycled"]],
             # No ages: this line is compared against the last one to decide
             # whether to log, and a moving number logs forever.
             "held": [{"slot": entry["slot"], "holder": entry["holder"],
+                      "reasons": entry["reasons"],
+                      "missingFlags": entry["missingFlags"],
                       "applicationId": entry["applicationId"]}
                      for entry in chrome["held"]],
         }
@@ -2509,7 +2593,7 @@ def status():
     # asking is asking about now. Idle drift shows too: the watcher will recycle
     # it within the minute, and a status that hid it would read as "uniform"
     # over a fleet that is not.
-    drift = chrome_version_drift()
+    drift = chrome_drift()
     out["chrome"] = {**drift,
                      "warning": chrome_drift_message(drift["drifted"]) or None}
     out["blocked"] = blocked_message() or None
@@ -2762,7 +2846,9 @@ def main():
             last_line = line
             stale = "; ".join(
                 message for message in
-                (stale_board_warning(), parked_slot_warning()) if message
+                (stale_board_warning(), parked_slot_warning(),
+                 chrome_flag_warning())
+                if message
             )
             if stale:
                 # Fails the dead-man check rather than pinging healthy. A quiet

@@ -521,6 +521,46 @@ def running_version(slot=None):
     return name.split("/", 1)[1].strip()
 
 
+def running_launch(slot):
+    """The argv of the live browser main for this slot, or [] if none.
+
+    Read from the process table because nothing else knows. CDP reports the
+    build a browser is running and says nothing about how it was started, so a
+    browser launched before a flag was added to _launch_argv is invisible to
+    every other check here: same binary, same version, different configuration.
+
+    Helpers are excluded by --type. They inherit much of the main's command line,
+    and counting one as the main would answer about a renderer.
+    """
+    if slot not in SLOTS:
+        raise ValueError("unknown browser slot")
+    result = subprocess.run(["ps", "-Ao", "command="], capture_output=True,
+                            text=True, timeout=20)
+    port = f"--remote-debugging-port={port_for(slot)}"
+    profile = f"--user-data-dir={_profile_dir(slot)}"
+    for line in (result.stdout or "").splitlines():
+        argv = line.split()
+        if port in argv and profile in argv and not any(
+                item.startswith("--type=") for item in argv):
+            return argv
+    return []
+
+
+def missing_launch_flags(slot):
+    """Flags _launch_argv sets now that this slot's browser was not given.
+
+    A running Chrome cannot be told a new flag, so the only way to apply one is
+    to start the process again. That makes this the second half of drift: the
+    binary can be current while the configuration is two commits old.
+    """
+    argv = running_launch(slot)
+    if not argv:
+        return []
+    wanted = [item for item in _launch_argv(slot, _profile_dir(slot))
+              if item.startswith("--")]
+    return [flag for flag in wanted if flag not in argv]
+
+
 def _wait_until_down(slot, seconds):
     """Poll until the slot stops answering CDP. False if it never does."""
     deadline = time.monotonic() + seconds
