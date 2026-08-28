@@ -97,8 +97,8 @@ class RealBrowserUploadTests(unittest.TestCase):
         )["browser"]
         self.addCleanup(self.temp.cleanup)
 
-    def open_fixture(self):
-        """Open the fixture and wait until Chrome is actually showing it.
+    def open_fixture(self, name="upload-form.html"):
+        """Open a fixture and wait until Chrome is actually showing it.
 
         `_open_tab` returns when Chrome has created the tab, not when the page
         has parsed. Attaching immediately raced the load and lost about one run
@@ -106,7 +106,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         reads exactly like the tool being broken and is the test being wrong.
         Another session lost an afternoon to it believing it was their diff.
         """
-        url = f"http://127.0.0.1:{self.port}/upload-form.html"
+        url = f"http://127.0.0.1:{self.port}/{name}"
         opened = browser._open_tab(url, self.slot)
         target = (opened or {}).get("id") if isinstance(opened, dict) else None
         if target:
@@ -115,14 +115,14 @@ class RealBrowserUploadTests(unittest.TestCase):
         while time.monotonic() < deadline:
             here = next((t for t in browser.tabs(self.slot)
                          if t.get("id") == target), None)
-            if here and "upload-form.html" in (here.get("url") or ""):
+            if here and name in (here.get("url") or ""):
                 break
             time.sleep(0.1)
         else:
             self.fail("the fixture page never loaded in the slot")
         return target
 
-    def wait_for_form(self, connection):
+    def wait_for_form(self, connection, marker="Cover letter"):
         """And wait until the document has the inputs, not just the address.
 
         The URL is set before the body parses, so the tab reporting the fixture
@@ -131,9 +131,9 @@ class RealBrowserUploadTests(unittest.TestCase):
         """
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            found = connection.tool("browser_find", {"text": "Cover letter"})
+            found = connection.tool("browser_find", {"text": marker})
             text = found.get("result", {}).get("content", [{}])[0].get("text", "")
-            if "Cover letter" in text and "No matches" not in text:
+            if marker in text and "No matches" not in text:
                 return
             time.sleep(0.2)
         self.fail("the upload form never appeared on the page")
@@ -182,6 +182,15 @@ class RealBrowserUploadTests(unittest.TestCase):
         timeout for an upload that had worked. An agent told its upload failed
         retries it, which on a real form is the expensive kind of wrong. Seen on
         the live Justworks posting on 2026-08-27.
+
+        What this test asserts changed on 2026-08-28. It used to prove only
+        that the reply did not mention a timeout, and the code under it reached
+        that answer by assuming any read-back failure meant acceptance -- from
+        an `error` it never looked at, so a navigation, a destroyed context and
+        an expired timeout all became the same confident sentence. Now the
+        success has to be earned from the page: the container the field sat in
+        shows the filename afterwards. The suppressed error is reported beside
+        it rather than thrown away.
         """
         self.open_fixture()
         connection = self.client()
@@ -190,14 +199,99 @@ class RealBrowserUploadTests(unittest.TestCase):
             "paths": [str(self.resume)], "target": "#portfolio_file",
             "element": "portfolio upload",
         })["result"]["content"][0]["text"]
-        self.assertNotIn("Timeout", reply)
+        self.assertNotIn("Error", reply)
         self.assertIn("attached", reply)
         self.assertIn(self.resume.name, reply)
+        self.assertIn("shows " + self.resume.name, reply)
+        # The read-back fault is named rather than discarded. It is the value
+        # that says whether this branch was right, and it used to be unread.
+        self.assertIn("could not be read back", reply)
         # And the page really does hold it.
         found = connection.tool(
             "browser_find", {"text": self.resume.name}
         )["result"]["content"][0]["text"]
         self.assertIn(self.resume.name, found)
+
+    def test_a_field_that_clears_itself_on_accept_is_not_called_a_failure(self):
+        """The 2026-08-28 fault: a working attach reported as no file attached.
+
+        Two SmartRecruiters forms produced it the same night, Versant
+        6c3824319c68c547 and SWIGGY 40c1f32b247a885a. Versant proves the
+        direction on its own: both targeted calls returned "the input reported
+        no file after the attachment", and that application's own park note
+        says the resume is attached. The snapshot it took immediately after the
+        last failed call has the filename rendered beside the field.
+
+        The component takes the file off the input and clears `input.value` so
+        that re-choosing the same file still fires change, which empties
+        `node.files` on success. Measured on the live Versant posting on
+        2026-08-28, where both file inputs sit in their own `spl-dropzone`
+        shadow root and both carry id=file-input.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.wait_for_form(connection, "Cover letter")
+        reply = connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+            "target": "input[type=file] >> nth=0",
+            "element": "resume field",
+        })["result"]["content"][0]["text"]
+        self.assertNotIn("Error", reply)
+        self.assertIn("attached", reply)
+        # The evidence is named, not asserted. The input itself still says
+        # nothing, and saying so is the point: the success came from the page.
+        self.assertIn("reports no file", reply)
+        self.assertIn("shows " + self.resume.name, reply)
+        found = connection.tool(
+            "browser_find", {"text": self.resume.name}
+        )["result"]["content"][0]["text"]
+        self.assertIn(self.resume.name, found)
+
+    def test_a_field_that_rejects_the_file_is_not_called_a_success(self):
+        """The other direction, and the one with a submission behind it.
+
+        A field that rejects on type or size clears itself exactly as a field
+        that accepts does, so `node.files` cannot tell them apart. Nor can a
+        page-wide search for the filename: the rejection names the file. This
+        is why the confirmation is scoped to the field's own neighbourhood, why
+        it is a change against a baseline taken before the attach, and why a
+        match inside an alert does not count.
+
+        A false negative parks a run and a person looks at it. A false positive
+        walks an agent toward submit believing a resume is attached, under a
+        real name, and cannot be recalled.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.wait_for_form(connection, "Cover letter")
+        reply = connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+            "target": "input[type=file] >> nth=1",
+            "element": "cover letter field",
+        })["result"]["content"][0]["text"]
+        self.assertIn("unconfirmed", reply)
+        # And the page's own reason is carried out rather than dropped, which
+        # is the difference between "no file" and a fault someone can act on.
+        self.assertIn("was rejected", reply)
+
+    def test_two_inputs_sharing_one_id_are_still_told_apart(self):
+        """Both SmartRecruiters inputs carry id=file-input, legally.
+
+        Each is unique inside its own shadow root. So the id names neither, and
+        every error on that form read identically -- from which two sessions
+        concluded that nth=0 and nth=1 had resolved to the same element, on
+        evidence that could not support it. The way out of the element is what
+        distinguishes them.
+        """
+        self.open_fixture("clearing-upload-form.html")
+        connection = self.client()
+        self.wait_for_form(connection, "Cover letter")
+        reply = connection.tool("browser_attach_file", {
+            "paths": [str(self.resume)],
+        })["result"]["content"][0]["text"]
+        self.assertIn("2 file inputs", reply)
+        self.assertIn("resume-upload", reply)
+        self.assertIn("cover-letter-upload", reply)
 
     def test_the_run_is_recorded_as_having_reached_the_browser(self):
         """A park with zero calls is a capability failure; this is the other case."""

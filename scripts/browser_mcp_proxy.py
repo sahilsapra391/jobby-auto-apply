@@ -442,17 +442,112 @@ def _complete_result(
 # visible button rather than the input, so the input is looked for at the ref,
 # under it, and beside it before the search widens to the page. Order matters:
 # a page with several file inputs would otherwise take whichever came first.
+#
+# The input is not a sufficient observable and never was. `setInputFiles`
+# resolving proves only that Playwright wrote files onto the DOM element;
+# everything that decides the outcome happens afterwards in the page's own
+# change handler. Three shapes were measured on 2026-08-28, and the input
+# answers the same in all three: SmartRecruiters takes the file, sends it and
+# clears `input.value` so re-choosing the same file still fires change, which
+# empties `node.files` on success; Greenhouse swaps the field out for its own
+# "file.pdf / Remove" view, which detaches the node the read would ask; and a
+# page that rejects on type or size also leaves `node.files` empty. Reading
+# success or failure off the input alone therefore has to be wrong somewhere,
+# and across every recorded run it was wrong in both directions at once.
+#
+# So the page's own rendering of the filename is the second observable, and it
+# is scoped rather than searched for. Both bound filenames are generic, so a
+# document-wide `text.includes(name)` would confirm a resume from help text or
+# from the cover letter beside it. The scopes are the input's own ancestors,
+# innermost first, captured as a live handle *before* the attach because the
+# container that confirms the upload is often the one the page rewrites. A
+# match has to be a text node's own text, has to be a change against a baseline
+# taken before the attach, and must not sit inside an alert: a form that
+# rejects a file names that file in its error, and counting that as
+# confirmation is the one mistake with a submission behind it.
 ATTACH_FILE_CODE = """async (page) => {
   const paths = %(paths)s;
   const ref = %(ref)s;
+  const names = paths.map((path) => path.split('/').pop());
+  const brief = (error) =>
+    // fromCharCode rather than an escape: this string is a Python literal
+    // holding JavaScript, so a backslash here has two layers to survive.
+    String((error && error.message) || error)
+      .split(String.fromCharCode(10))[0].slice(0, 200);
+  // Both file inputs on a SmartRecruiters form carry id=file-input, one per web
+  // component shadow root, where the id really is unique. So the id cannot say
+  // which of the two a call touched, every error on that form read identically,
+  // and two sessions inferred from those logs that nth=0 and nth=1 had resolved
+  // to the same element. The way out of the element can tell them apart: three
+  // ancestors up, one is the apply-with-resume helper and the other the resume
+  // field. Measured on the live Versant posting on 2026-08-28.
   const describe = (node) => {
     const bits = ['input'];
-    for (const name of ['id', 'name', 'accept']) {
+    for (const name of ['id', 'name']) {
       const value = node.getAttribute(name);
       if (value) bits.push(name + '=' + value);
     }
+    const accept = node.getAttribute('accept');
+    if (accept) {
+      // SmartRecruiters accepts 60 extensions and printing all of them buried
+      // everything that identifies the field.
+      bits.push('accept=' + (accept.length > 80 ? accept.slice(0, 80) + '...' : accept));
+    }
     if (node.multiple) bits.push('multiple');
+    const where = [];
+    let at = node.parentNode;
+    while (at && at.nodeType !== 9 && where.length < 4) {
+      if (at.nodeType === 11) {
+        where.push('shadow of ' + (at.host ? at.host.tagName.toLowerCase() : '?'));
+      } else {
+        let step = at.tagName.toLowerCase();
+        for (const name of ['data-test', 'data-testid', 'id', 'name', 'aria-label']) {
+          const value = at.getAttribute(name);
+          if (value) { step += '[' + name + '=' + value.slice(0, 40) + ']'; break; }
+        }
+        where.push(step);
+      }
+      at = at.parentNode || at.host || null;
+    }
+    if (where.length) bits.push('in ' + where.join(' < '));
     return bits.join(' ');
+  };
+  // Serialized into the page on its own, so it closes over nothing and takes
+  // the filenames as an argument. Run once before the attach and once after,
+  // against the same held scopes, so what it reports is a change and not a
+  // standing string.
+  const scan = (scopes, wanted) => {
+    const alarming = (node) => {
+      const role = node.getAttribute('role');
+      if (role === 'alert' || role === 'alertdialog' || role === 'status') return true;
+      if (node.getAttribute('aria-live')) return true;
+      const named = typeof node.className === 'string' ? node.className : '';
+      return /(^|[^a-z])(error|invalid|warning|failed|reject)([^a-z]|$)/i.test(named);
+    };
+    return scopes.map((scope) => {
+      let seen = 0;
+      let shown = 0;
+      const complained = [];
+      const visit = (root, inAlert) => {
+        if (!root || seen > 4000) return;
+        for (const node of root.childNodes) {
+          if (++seen > 4000) return;
+          if (node.nodeType === 3) {
+            const text = node.data.trim();
+            if (text && text.length <= 200 && wanted.some((name) => text.includes(name))) {
+              if (inAlert) { if (complained.length < 3) complained.push(text.slice(0, 200)); }
+              else shown++;
+            }
+          } else if (node.nodeType === 1) {
+            const under = inAlert || alarming(node);
+            if (node.shadowRoot) visit(node.shadowRoot, under);
+            visit(node, under);
+          }
+        }
+      };
+      visit(scope, false);
+      return { shown: shown, complained: complained };
+    });
   };
   let inputs = [];
   if (ref) {
@@ -484,7 +579,7 @@ ATTACH_FILE_CODE = """async (page) => {
     if (total > 1) {
       const seen = [];
       for (let index = 0; index < total; index++) {
-        seen.push(await all.nth(index).evaluate(describe));
+        seen.push((index + 1) + ' of ' + total + ': ' + await all.nth(index).evaluate(describe));
       }
       throw new Error('the page has ' + total + ' file inputs; pass target to choose one: '
                       + seen.join(' ; '));
@@ -492,29 +587,83 @@ ATTACH_FILE_CODE = """async (page) => {
     inputs = [all.first()];
   }
   const input = inputs[0];
-  // Described before the attach, not after. A React form swaps the input out
-  // for its own "file.pdf / Remove file" view the moment it accepts a file, so
-  // the handle held here is detached by the time anything asks it a question.
-  // On a real Greenhouse form that made a working upload report a 30s timeout,
-  // which is worse than failing: the agent retries an attach that already
-  // landed.
+  // Described before the attach, not after. A form that accepts a file may
+  // replace the field with its own view of it in the same tick, and the handle
+  // held here is detached by the time anything asks it a question.
   const described = await input.evaluate(describe);
   const multiple = await input.evaluate((node) => Boolean(node.multiple));
   if (paths.length > 1 && !multiple) {
     throw new Error('this input takes one file; call once per input (' + described + ')');
   }
+  // Held before the attach for the same reason, and it matters more here: the
+  // scope that ends up showing the filename is frequently the one the page
+  // rewrote, so a chain walked afterwards would start from an orphan and see
+  // nothing. `document` is excluded deliberately; a page-wide scope is the
+  // false positive this is built to avoid.
+  const scopes = await input.evaluateHandle((node) => {
+    const out = [];
+    let at = node.parentNode;
+    while (at && at.nodeType !== 9 && out.length < 5) {
+      out.push(at);
+      at = at.parentNode || at.host || null;
+    }
+    return out;
+  });
+  const before = await scopes.evaluate(scan, names);
+
   await input.setInputFiles(paths);
-  const names = paths.map((path) => path.split('/').pop()).join(', ');
+
+  let landed = '';
+  let readFault = '';
   try {
-    const landed = await input.evaluate((node) =>
+    landed = await input.evaluate((node) =>
       Array.from(node.files || []).map((file) => file.name + ' (' + file.size + ' bytes)').join(', '),
       undefined, { timeout: 3000 });
-    if (landed) return 'attached to ' + described + ': ' + landed;
   } catch (error) {
-    return 'attached ' + names + ' to ' + described
-           + '; the page replaced the field, which is what it does when it takes the file';
+    // Kept, not swallowed. This branch used to return a sentence asserting the
+    // page had taken the file, inferred from an unread `error` that could
+    // equally have been a navigation, a destroyed context or this timeout
+    // simply expiring. Every success the tool had ever reported came out of
+    // here, and none of them was independently confirmed.
+    readFault = brief(error);
   }
-  throw new Error('the input reported no file after the attachment (' + described + ')');
+
+  let confirmed = -1;
+  let complaint = '';
+  let scanFault = '';
+  try {
+    const after = await scopes.evaluate(scan, names);
+    for (let index = 0; index < after.length; index++) {
+      if (confirmed < 0 && after[index].shown > before[index].shown) confirmed = index;
+      if (!complaint && after[index].complained.length > before[index].complained.length) {
+        complaint = after[index].complained[after[index].complained.length - 1];
+      }
+    }
+  } catch (error) {
+    scanFault = brief(error);
+  }
+
+  const beside = 'the page now shows ' + names.join(', ') + ' beside the field';
+  if (landed) {
+    return 'attached to ' + described + ': ' + landed + (confirmed >= 0 ? '; ' + beside : '');
+  }
+  if (confirmed >= 0) {
+    return 'attached ' + names.join(', ') + ' to ' + described + '; '
+           + (readFault ? 'the field could not be read back (' + readFault + ')'
+                        : 'the field itself reports no file')
+           + ', and ' + beside + ', which is what a form that takes the file and'
+           + ' clears the input looks like';
+  }
+  throw new Error(
+    'the attachment to ' + described + ' is unconfirmed, which is not the same as failed. '
+    + 'setInputFiles resolved, so the file may well be on the form: '
+    + (readFault ? 'the field could not be read back (' + readFault + ')'
+                 : 'the field reports no file, which a form that takes the file and'
+                   + ' clears the input also does')
+    + ', and nothing beside it shows ' + names.join(', ') + '. '
+    + (complaint ? 'The page says: "' + complaint + '". ' : '')
+    + (scanFault ? 'Reading the surroundings failed: ' + scanFault + '. ' : '')
+    + 'Read the field on the page before attaching again.');
 }"""
 
 
