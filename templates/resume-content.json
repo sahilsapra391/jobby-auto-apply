@@ -42,10 +42,6 @@
     {
       "label": "Cloud &amp; Infrastructure",
       "items": "AWS (ECS, Lambda, IAM, KMS, S3, VPC, API Gateway, CloudWatch, Systems Manager, Secrets Manager), Azure, Google Cloud Platform (GCP), CloudFormation, Docker, Terraform, Railway, Vercel"
-    },
-    {
-      "label": "Languages &amp; Frameworks",
-      "items": "TypeScript, Python, Java, Spring Boot, Angular, React, Next.js, NestJS, Node.js"
     }
   ],
   "roles": [
