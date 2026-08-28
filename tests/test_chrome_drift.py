@@ -364,6 +364,38 @@ class StopSlotTests(unittest.TestCase):
         self.addCleanup(setattr, browser, "running", original)
         self.assertTrue(browser.stop_slot("apply-1"))
 
+    def test_a_browser_still_shutting_down_is_waited_for(self):
+        """Measured against a real Chrome: SIGTERM does not return a dead port.
+
+        Reading `running` once after pkill answered False every time while the
+        browser was on its way out, which reports a retired slot as a refusal.
+        """
+        answers = [True, True, True, True, False]
+        originals = (browser.running, browser.tabs, browser.subprocess.run,
+                     browser.time.sleep)
+        browser.running = lambda slot=None: answers.pop(0) if answers else False
+        browser.tabs = lambda slot=None: []
+        browser.subprocess.run = lambda *a, **k: None
+        browser.time.sleep = lambda _seconds: None
+        self.addCleanup(setattr, browser, "running", originals[0])
+        self.addCleanup(setattr, browser, "tabs", originals[1])
+        self.addCleanup(setattr, browser.subprocess, "run", originals[2])
+        self.addCleanup(setattr, browser.time, "sleep", originals[3])
+        self.assertTrue(browser.stop_slot("apply-1"))
+
+    def test_a_browser_that_never_goes_down_is_reported_as_such(self):
+        originals = (browser.running, browser.tabs, browser.subprocess.run,
+                     browser.time.sleep)
+        browser.running = lambda slot=None: True
+        browser.tabs = lambda slot=None: []
+        browser.subprocess.run = lambda *a, **k: None
+        browser.time.sleep = lambda _seconds: None
+        self.addCleanup(setattr, browser, "running", originals[0])
+        self.addCleanup(setattr, browser, "tabs", originals[1])
+        self.addCleanup(setattr, browser.subprocess, "run", originals[2])
+        self.addCleanup(setattr, browser.time, "sleep", originals[3])
+        self.assertFalse(browser.stop_slot("apply-1", timeout=0.5))
+
     def test_stop_all_only_reports_the_browsers_it_took_down(self):
         seen = []
         originals = (browser.running, browser.stop_slot)

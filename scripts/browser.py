@@ -521,12 +521,30 @@ def running_version(slot=None):
     return name.split("/", 1)[1].strip()
 
 
-def stop_slot(slot):
+def _wait_until_down(slot, seconds):
+    """Poll until the slot stops answering CDP. False if it never does."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if not running(slot):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+def stop_slot(slot, timeout=10):
     """Shut one slot's browser down. False if one is still up afterwards.
 
     The answer is about the state the slot is left in, not about whether this
     call had to do anything, because that is what every caller acts on: a browser
     that had already exited is as stopped as one this took down.
+
+    Which is why both waits are polls rather than a fixed sleep. SIGTERM asks
+    Chrome to exit and Chrome takes its time about it, so reading the port the
+    instant after `pkill` returns catches a browser mid-shutdown and calls it a
+    refusal. Measured against a real Chrome on 2026-08-28: it reported False
+    every time while the browser was in fact going down. A recycler that trusts
+    that answer reports a slot it successfully retired as one it could not.
     """
     if slot not in SLOTS:
         raise ValueError("unknown browser slot")
@@ -536,11 +554,11 @@ def stop_slot(slot):
     # tabs and let it exit, then fall back to a signal.
     for t in tabs(slot):
         _cdp(f"/json/close/{t['id']}", slot)
-    time.sleep(1)
-    if running(slot):
-        subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
-                       capture_output=True)
-    return not running(slot)
+    if _wait_until_down(slot, min(2, timeout)):
+        return True
+    subprocess.run(["pkill", "-f", f"remote-debugging-port={port_for(slot)}"],
+                   capture_output=True)
+    return _wait_until_down(slot, timeout)
 
 
 def serve(slot=None):
