@@ -1436,6 +1436,21 @@ attribute one of these files between sessions.** The fix is the slot lock noted
 below, which would let a run declare what it is using; until then, if you need
 to know who wrote one, ask on the machine rather than infer.
 
+**Provenance is the one property you cannot check by reading the artifact**,
+because the artifact is identical either way, and it is where careful people
+went wrong three times on 2026-08-28. A shared `activity.json` said nothing
+about which of ten checkouts wrote it. A mechanism claim ("that file is imported
+by the watcher, so a pull without a restart delivers nothing") travelled two
+hops from the person who guessed it to a person taking a deploy, gathering
+confidence at each hop and never a measurement; it is spawned, and one `grep`
+settled it. And a session offered a memory note back to its own author as
+independent corroboration, which would have counted one write as three sources
+had the author not checked the mtime and found themselves.
+
+None of those was careless, and all three are the same thing: a claim about
+where something came from, which the thing itself cannot answer. Ask the source,
+`grep` the tree, read the mtime. Do not reason about it.
+
 **And verifying every claim in a list is not verifying the conclusion drawn from
 it.** A fourth session was handed three mechanisms behind that wrong rule --
 `browser.running` never reads `HOME`, Chrome is launched with an absolute
