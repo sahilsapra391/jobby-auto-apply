@@ -749,6 +749,40 @@ def _parked_by(slot, aid):
     return bool(held and held.get("parked") is True and held.get("note") == aid)
 
 
+def split_superseded_drops(claimed, apply_items):
+    """Claimed drop requests to execute, and the ones a newer click cancelled.
+
+    The board stamps every queue entry as it takes the click, so for genuine
+    clicks `at` is click order, and both stamps come from the same writer in
+    the same format. A drop that predates a pending Apply or Retry for the
+    same application is the user's old intent: executing it kills the click
+    they just made. Observed on 2026-08-27, when a page replaying a stale drop
+    memory on every load re-dropped four applications for two hours while the
+    user pressed Retry on each. The newer drop still executes, so stopping a
+    queued application keeps working, and a missing stamp on either side keeps
+    the old rule: the drop wins.
+    """
+    newest_apply = {}
+    for item in apply_items:
+        if not isinstance(item, dict):
+            continue
+        aid = item.get("applicationId")
+        at = item.get("at")
+        if aid and isinstance(at, str):
+            newest_apply[aid] = max(newest_apply.get(aid, ""), at)
+    execute, superseded = [], []
+    for item in claimed:
+        aid = item.get("applicationId") if isinstance(item, dict) else None
+        drop_at = item.get("at") if isinstance(item, dict) else None
+        apply_at = newest_apply.get(aid, "")
+        if aid and isinstance(drop_at, str) and apply_at > drop_at:
+            superseded.append({"applicationId": aid,
+                               "dropAt": drop_at, "applyAt": apply_at})
+        else:
+            execute.append(item)
+    return execute, superseded
+
+
 def queue_depth(q, name):
     return len(q.get(name) or [])
 
@@ -1897,6 +1931,9 @@ def tick(force_publish=False):
             [toolpath.node(), "queue.mjs", "claim", "drop/"], cwd=DEPLOY,
             capture_output=True, text=True, env=toolpath.queue_env(), timeout=60
         ).stdout or "[]")
+        claimed, superseded = split_superseded_drops(claimed, q.get("apply") or [])
+        if superseded:
+            changed["dropSuperseded"] = superseded
         dropped = []
         for item in claimed:
             aid = item.get("applicationId")
@@ -1986,11 +2023,13 @@ def tick(force_publish=False):
                         {"applicationId": aid, "slot": slot})
 
     apply_items = q.get("apply") or []
-    # A drop claimed this tick beats a stale apply for the same application,
-    # whatever order they were queued in. phase.py refuses the promotion anyway,
-    # which is the fix that holds for every caller; this stops the tick spending
-    # a slot and a document lane on work it is about to be refused, and stops
-    # the log reporting the same ids under `dropped` and `queued` in one line.
+    # A drop that executed this tick beats the applies left for the same
+    # application. split_superseded_drops already gave the win to any apply
+    # click stamped after the drop, so what reaches here is older intent.
+    # phase.py refuses the promotion anyway, which is the fix that holds for
+    # every caller; this stops the tick spending a slot and a document lane on
+    # work it is about to be refused, and stops the log reporting the same ids
+    # under `dropped` and `queued` in one line.
     just_dropped = set(changed.get("dropped") or [])
     if just_dropped:
         apply_items = [item for item in apply_items

@@ -483,6 +483,91 @@ def render_pending(fields):
     return "\n".join(out)
 
 
+# The board's local memory of Apply and Drop clicks, on its own so a JavaScript
+# engine can run it directly (tests/test_click_memory_script.py). Real braces
+# here; the page template interpolates it as a value.
+CLICK_MEMORY = """\
+  // Apply clicks are remembered locally, because the watcher takes up to a
+  // minute to mark the role in flight. Without this a reload in that window
+  // puts the row back under Watching, which reads as the click failing.
+  //
+  // The memory is stamped and expires. It used to be a bare list of ids, and
+  // the replay re-sent /api/apply for any id that still had an Apply OR Retry
+  // button on the page. A card parked in Needs you has a Retry button, so a
+  // parked application was re-queued on every single page load: the watcher
+  // claimed it, spawned a runner, the runner opened a browser, found the same
+  // blocker, parked again. That is the browser reopening over and over, and it
+  // never stopped on its own because nothing ever cleared the id.
+  //
+  // The gap this bridges is one watcher tick, seconds. Ten minutes is already
+  // far past the point where the server not reflecting a click means something
+  // else is wrong, and re-sending forever cannot fix that.
+  var APPLY_KEY = 'jobby.applying';
+  var APPLY_TTL_MS = 10 * 60 * 1000;
+  function readApplying() {
+    var raw;
+    try { raw = JSON.parse(localStorage.getItem(APPLY_KEY) || '[]'); } catch (e) { return []; }
+    if (!Array.isArray(raw)) return [];
+    var now = Date.now();
+    return raw
+      .map(function (x) { return typeof x === 'string' ? { id: x, at: now } : x; })
+      .filter(function (x) { return x && x.id && (now - (x.at || 0)) < APPLY_TTL_MS; });
+  }
+  function writeApplying(v) {
+    var now = Date.now();
+    var out = (v || []).map(function (x) {
+      return typeof x === 'string' ? { id: x, at: now } : x;
+    });
+    try { localStorage.setItem(APPLY_KEY, JSON.stringify(out)); } catch (e) {}
+  }
+  function rememberApplying(id) {
+    var entries = readApplying();
+    if (!entries.some(function (x) { return x.id === id; })) {
+      entries.push({ id: id, at: Date.now() });
+    }
+    writeApplying(entries);
+  }
+  function forgetApplying(id) {
+    writeApplying(readApplying().filter(function (x) { return x.id !== id; }));
+  }
+  // Drop clicks get the same stamped, expiring memory, for the same reason in
+  // the other direction. This one was a bare, immortal id list, and its replay
+  // re-sent /api/drop for as long as the served page still drew the card. The
+  // watcher acts on drops before applies, so on 2026-08-27 four applications
+  // the user was actively pressing Retry on were re-dropped on every page load
+  // for two hours: each replayed drop killed that tick's apply click, and all
+  // four ended up in the archive nobody had put there on purpose.
+  //
+  // Entries with no stamp are discarded rather than migrated. An un-stamped
+  // entry predates this code, its POST already went out when it was written,
+  // and the only thing replaying it can do is kill a click the user makes
+  // later.
+  var DROP_KEY = 'jobby.dropping';
+  function readDropping() {
+    var raw;
+    try { raw = JSON.parse(localStorage.getItem(DROP_KEY) || '[]'); } catch (e) { return []; }
+    if (!Array.isArray(raw)) return [];
+    var now = Date.now();
+    return raw.filter(function (x) {
+      return x && typeof x === 'object' && x.id && (now - (x.at || 0)) < APPLY_TTL_MS;
+    });
+  }
+  function writeDropping(entries) {
+    try { localStorage.setItem(DROP_KEY, JSON.stringify(entries || [])); } catch (e) {}
+  }
+  function rememberDropping(id) {
+    var entries = readDropping();
+    if (!entries.some(function (x) { return x.id === id; })) {
+      entries.push({ id: id, at: Date.now() });
+    }
+    writeDropping(entries);
+  }
+  function forgetDropping(id) {
+    writeDropping(readDropping().filter(function (x) { return x.id !== id; }));
+  }
+"""
+
+
 def build(state, generated):
     sessions = state["sessions"]
     history = state["history"]
@@ -2024,42 +2109,7 @@ def build(state, generated):
     }});
   }});
 
-  // Apply clicks are remembered locally, because the watcher takes up to a
-  // minute to mark the role in flight. Without this a reload in that window
-  // puts the row back under Watching, which reads as the click failing.
-  //
-  // The memory is stamped and expires. It used to be a bare list of ids, and
-  // the replay re-sent /api/apply for any id that still had an Apply OR Retry
-  // button on the page. A card parked in Needs you has a Retry button, so a
-  // parked application was re-queued on every single page load: the watcher
-  // claimed it, spawned a runner, the runner opened a browser, found the same
-  // blocker, parked again. That is the browser reopening over and over, and it
-  // never stopped on its own because nothing ever cleared the id.
-  //
-  // The gap this bridges is one watcher tick, seconds. Ten minutes is already
-  // far past the point where the server not reflecting a click means something
-  // else is wrong, and re-sending forever cannot fix that.
-  var APPLY_KEY = 'jobby.applying';
-  var APPLY_TTL_MS = 10 * 60 * 1000;
-  function readApplying() {{
-    var raw;
-    try {{ raw = JSON.parse(localStorage.getItem(APPLY_KEY) || '[]'); }} catch (e) {{ return []; }}
-    if (!Array.isArray(raw)) return [];
-    var now = Date.now();
-    return raw
-      .map(function (x) {{ return typeof x === 'string' ? {{ id: x, at: now }} : x; }})
-      .filter(function (x) {{ return x && x.id && (now - (x.at || 0)) < APPLY_TTL_MS; }});
-  }}
-  function writeApplying(v) {{
-    var now = Date.now();
-    var out = (v || []).map(function (x) {{
-      return typeof x === 'string' ? {{ id: x, at: now }} : x;
-    }});
-    try {{ localStorage.setItem(APPLY_KEY, JSON.stringify(out)); }} catch (e) {{}}
-  }}
-  function forgetApplying(id) {{
-    writeApplying(readApplying().filter(function (x) {{ return x.id !== id; }}));
-  }}
+{CLICK_MEMORY}
   // A queued card is drawn here, client side, before the watcher has marked
   // anything. It used to carry no controls at all: the phase said "Queued,
   // waiting for the runner to pick it up" and there was no way to take it back.
@@ -2097,9 +2147,7 @@ def build(state, generated):
         // Forget the queued apply first. Dropping without this leaves the
         // board's own memory asking for it again on the next reload.
         forgetApplying(id);
-        var ids = readIds(DROP_KEY);
-        if (ids.indexOf(id) === -1) ids.push(id);
-        writeIds(DROP_KEY, ids);
+        rememberDropping(id);
         post('/api/drop', id).catch(function () {{}});
         art.remove();
         tabCount('flight', -1);
@@ -2174,6 +2222,9 @@ def build(state, generated):
       b.disabled = true;
       var was = b.textContent;
       b.textContent = 'Queueing...';
+      // The user asking for a run is the user un-deciding any drop this board
+      // still remembers. Left in place, its replay would kill this click.
+      forgetDropping(b.dataset.id);
       fetch('/api/apply', {{
         method: 'POST',
         headers: {{ 'content-type': 'application/json', 'x-jobby-request': '1' }},
@@ -2182,11 +2233,7 @@ def build(state, generated):
         .then(function (r) {{ return r.json().then(function (x) {{ return {{ s: r.status, b: x }}; }}); }})
         .then(function (res) {{
           if (res.b && res.b.ok) {{
-            var ids = readApplying();
-            if (!ids.some(function (x) {{ return x.id === b.dataset.id; }})) {{
-              ids.push({{ id: b.dataset.id, at: Date.now() }});
-            }}
-            writeApplying(ids);
+            rememberApplying(b.dataset.id);
             var row = b.closest('tr');
             var roleCell = row ? row.querySelector('.muted') : null;
             if (row) leaveWatching(row, b.dataset.company || '',
@@ -2208,13 +2255,6 @@ def build(state, generated):
   // so the board can only ever ask; it changes the row optimistically and
   // remembers the ask, because the round trip takes a few seconds and a reload
   // inside that window used to make the click look like it had failed.
-  var DROP_KEY = 'jobby.dropping';
-  function readIds(k) {{
-    try {{ return JSON.parse(localStorage.getItem(k) || '[]'); }} catch (e) {{ return []; }}
-  }}
-  function writeIds(k, v) {{
-    try {{ localStorage.setItem(k, JSON.stringify(v)); }} catch (e) {{}}
-  }}
   function post(path, id) {{
     return fetch(path, {{
       method: 'POST',
@@ -2300,9 +2340,7 @@ def build(state, generated):
       var id = b.dataset.id;
       if (!id) return;
       b.disabled = true;
-      var ids = readIds(DROP_KEY);
-      if (ids.indexOf(id) === -1) ids.push(id);
-      writeIds(DROP_KEY, ids);
+      rememberDropping(id);
       // Cancel any apply this board is still remembering for it. Without
       // this, Stop moved the card to Dropped and the next reload put the same
       // application straight back on the queue.
@@ -2346,10 +2384,11 @@ def build(state, generated):
       b.disabled = true;
       b.textContent = 'Queued...';
       // Retry is the apply queue: the runner reuses the documents already built
-      // and picks up from whatever the user has just unblocked.
-      var ids = readApplying();
-      if (ids.indexOf(id) === -1) ids.push(id);
-      writeApplying(ids);
+      // and picks up from whatever the user has just unblocked. It also erases
+      // any drop this board still remembers for the application: the newest
+      // click is the decision, and a replayed drop would kill this one.
+      forgetDropping(id);
+      rememberApplying(id);
       post('/api/retry', id).then(function (res) {{
         if (res && res.ok) {{
           removeItem(b);
@@ -2373,29 +2412,34 @@ def build(state, generated):
       if (row) row.classList.add('dropping');
       post('/api/restore', id).catch(function () {{}});
       // Forget the local memory, or the replay below would immediately re-drop it.
-      writeIds(DROP_KEY, readIds(DROP_KEY).filter(function (x) {{ return x !== id; }}));
+      forgetDropping(id);
     }});
   }});
 
   // On load, hide anything dropped that the store has not caught up with, and
-  // re-send the request. /api/drop is idempotent per application id.
+  // re-send the request. /api/drop is idempotent per application id, and the
+  // memory expires, so a drop the server never catches up on stops being
+  // repeated rather than replaying forever.
   (function replayDropping() {{
-    var ids = readIds(DROP_KEY);
-    if (!ids.length) return;
+    var entries = readDropping();
+    // Written back even when nothing replays, so expired and pre-stamp
+    // entries leave the browser instead of sitting in storage as live junk.
+    writeDropping(entries);
+    if (!entries.length) return;
     var still = [];
-    ids.forEach(function (id) {{
-      var el = document.querySelector('.drop[data-id="' + id.replace(/"/g, '') + '"]');
+    entries.forEach(function (entry) {{
+      var el = document.querySelector('.drop[data-id="' + entry.id.replace(/"/g, '') + '"]');
       if (!el) return;                       // the server already moved it
-      still.push(id);
+      still.push(entry);
       var facts = dropFacts(el);
       var node = el.closest('tr') || el.closest('.card');
       var link = node ? node.querySelector('a.go, a[href^="http"]') : null;
       removeItem(el);
       tabCount('dropped', 1);
       placeholderDropped(facts, link ? link.href : '');
-      post('/api/drop', id).catch(function () {{}});
+      post('/api/drop', entry.id).catch(function () {{}});
     }});
-    writeIds(DROP_KEY, still);
+    writeDropping(still);
   }})();
 
   // Search and filter, per panel. Rows and cards carry a data-hay haystack and
