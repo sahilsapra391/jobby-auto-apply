@@ -207,12 +207,35 @@ class TheDatabaseEnforcesItToo(pgtest.SchemaCase):
         self.assertTrue(flags.enabled(got["g@example.com"], "postgres_reads"))
         self.assertFalse(flags.enabled(got["h@example.com"], "postgres_reads"))
 
-    def test_email_is_unique_case_insensitively(self):
-        """citext, so `A@example.com` and `a@example.com` are one account.
-        Two accounts for one mailbox is a support ticket nobody can resolve."""
+    def test_two_accounts_cannot_share_one_mailbox(self):
+        """Two accounts for one mailbox is a support ticket nobody can resolve.
+
+        §3 asks for `citext`. This uses `text` with a lower-case constraint
+        instead, because an extension's type lives in one schema and `create
+        extension if not exists` is satisfied database-wide, so a migration
+        depending on citext succeeds or fails according to where a previous
+        deployment happened to install it. The guarantee is the same and the
+        refusal is louder: a mixed-case address is rejected on the way in
+        rather than silently folded, so the caller has to normalise.
+        """
         self.insert("i@example.com", {})
         with self.assertRaises(Exception):
-            self.insert("I@Example.com", {})
+            self.insert("i@example.com", {})          # exact duplicate
+        with self.assertRaises(Exception) as caught:
+            self.insert("I@Example.com", {})          # same mailbox, cased
+        self.assertIn("accounts_email_is_lowercase", str(caught.exception))
+
+    def test_the_schema_needs_no_extensions(self):
+        """`gen_random_uuid()` is core since PostgreSQL 13, and nothing else
+        here needs one. A migration that installs an extension behaves
+        differently depending on which schema it landed in last time."""
+        with self.conn.cursor() as cur:
+            cur.execute("select count(*) from pg_extension "
+                        "where extname in ('citext', 'pgcrypto')")
+            self.assertEqual(cur.fetchone()[0], 0)
+            cur.execute("insert into accounts (email) values ('u@example.com') "
+                        "returning id")
+            self.assertIsNotNone(cur.fetchone()[0])
 
     def test_for_account_reads_the_stored_flags(self):
         self.insert("j@example.com", {"postgres_reads": True})
@@ -230,6 +253,70 @@ class TheDatabaseEnforcesItToo(pgtest.SchemaCase):
         import uuid as _uuid
         with self.assertRaises(flags.NoSuchAccount):
             flags.for_account(self.conn, _uuid.uuid4())
+
+
+class FlippingAFlag(pgtest.SchemaCase):
+    """A flag that cannot be flipped is not a switch, it is a constant.
+
+    Every cutover in the rebuild is meant to be turned on for one account
+    before all of them, so `set_flag` is half the deliverable and the refusals
+    below are what keep the other half honest: the same registry and the same
+    boolean rule as the reader, enforced on the way in rather than discovered
+    on the way out.
+    """
+
+    prefix = "flagset_test"
+
+    def setUp(self):
+        super().setUp()
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        with self.conn.cursor() as cur:
+            cur.execute("insert into accounts (email) values ('k@example.com') "
+                        "returning id")
+            self.account = cur.fetchone()[0]
+
+    def test_a_flag_turns_on_and_off_again(self):
+        flags.set_flag(self.conn, self.account, "live_board", True)
+        self.assertTrue(flags.enabled(
+            flags.for_account(self.conn, self.account), "live_board"))
+        flags.set_flag(self.conn, self.account, "live_board", False)
+        self.assertFalse(flags.enabled(
+            flags.for_account(self.conn, self.account), "live_board"))
+
+    def test_setting_one_flag_leaves_the_others_alone(self):
+        """`jsonb_set`, not an overwrite. Turning on a Phase 2 flag must not
+        silently turn off a Phase 1 one that is mid-cutover."""
+        flags.set_flag(self.conn, self.account, "postgres_reads", True)
+        flags.set_flag(self.conn, self.account, "live_board", True)
+        stored = flags.for_account(self.conn, self.account)
+        self.assertTrue(flags.enabled(stored, "postgres_reads"))
+        self.assertTrue(flags.enabled(stored, "live_board"))
+
+    def test_an_unregistered_name_is_refused(self):
+        with self.assertRaises(flags.UnknownFlag):
+            flags.set_flag(self.conn, self.account, "postgres_read", True)
+
+    def test_a_non_boolean_is_refused_before_it_reaches_the_column(self):
+        """The column would refuse it too. Refusing here as well means the
+        error names the flag rather than the constraint."""
+        for value in ("true", "false", 1, 0, None, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaises(flags.BadFlagValue):
+                    flags.set_flag(self.conn, self.account, "live_board", value)
+
+    def test_a_missing_account_is_refused_rather_than_silently_doing_nothing(self):
+        """An UPDATE matching no rows succeeds and changes nothing. Somebody
+        flipping a flag for the wrong account id would be told it worked."""
+        import uuid as _uuid
+        with self.assertRaises(flags.NoSuchAccount):
+            flags.set_flag(self.conn, _uuid.uuid4(), "live_board", True)
+
+    def test_a_refused_set_leaves_the_stored_flags_untouched(self):
+        flags.set_flag(self.conn, self.account, "live_board", True)
+        with self.assertRaises(flags.BadFlagValue):
+            flags.set_flag(self.conn, self.account, "live_board", "false")
+        self.assertTrue(flags.enabled(
+            flags.for_account(self.conn, self.account), "live_board"))
 
 
 if __name__ == "__main__":

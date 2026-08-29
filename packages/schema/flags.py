@@ -111,6 +111,37 @@ def for_account(conn, account_id):
     return row[0] or {}
 
 
+def set_flag(conn, account_id, name, value):
+    """Turn one flag on or off for one account.
+
+    Validates the name against the registry and the value as a real boolean
+    before the statement runs, so the error names the flag rather than the
+    column constraint, and so a rejected write cannot have partially happened.
+
+    `jsonb_set` rather than replacing the object: turning on a Phase 2 flag
+    must not silently turn off a Phase 1 one that is mid-cutover.
+
+    Raises when the account does not exist. An UPDATE matching no rows is a
+    success that changed nothing, which would tell somebody flipping a flag for
+    the wrong id that it worked.
+    """
+    if name not in REGISTRY:
+        raise UnknownFlag(
+            f"{name!r} is not a registered flag. "
+            f"Known: {', '.join(sorted(REGISTRY))}.")
+    if value is not True and value is not False:
+        raise BadFlagValue(
+            f"flag {name!r} may only be set to True or False, not {value!r}.")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "update accounts set flags = jsonb_set(flags, %s, %s::jsonb, true) "
+            "where id = %s returning id",
+            ([name], "true" if value else "false", str(account_id)))
+        if cur.fetchone() is None:
+            raise NoSuchAccount(f"no account {account_id}")
+
+
 def describe():
     """The registry as text, for `--help` and for docs/adr."""
     lines = []

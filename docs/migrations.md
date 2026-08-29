@@ -121,6 +121,42 @@ the live Neon database holding 15,400 real jobs. Neon's pooler refuses the
 `options=-c search_path=...` form outright, and its error names the fix: use an
 unpooled connection.
 
+## Avoid `create extension`, and know why before you reach for one
+
+An extension installs its objects into **one** schema, and `create extension if
+not exists` is satisfied **database-wide**. Those two facts together make a
+migration that installs an extension behave differently depending on where a
+previous deployment happened to put it.
+
+Measured on 2026-08-29. Migration `0001` opened with `create extension if not
+exists citext`. Applied to Neon, where the connection's search_path is `public`,
+citext landed in `public` and the migration succeeded. The next run of the test
+suite, which works inside a scratch schema, failed on the next line:
+
+    psycopg.errors.UndefinedObject: type "citext" does not exist
+    LINE 54:   email      citext      not null unique,
+
+Nothing was wrong with the second run. `if not exists` saw citext already
+present and did nothing, and the type was in a schema that was not on the path.
+The same failure waits for a restore into a new schema, a schema-per-tenant
+layout, or any database where somebody installed the extension elsewhere first.
+
+So `0001` uses none. `gen_random_uuid()` has been in core since PostgreSQL 13,
+verified answering on this database with no extension installed, so `pgcrypto`
+bought nothing. `citext` was replaced by `text` plus a constraint that the
+stored address is already lower-cased, which makes a plain unique index
+case-insensitive uniqueness and moves normalisation to the caller, where it had
+to happen anyway.
+
+A function is not the same hazard and is fine to define per schema: a CHECK
+constraint binds its function by OID, so it keeps resolving whatever the
+search_path later becomes. It is name resolution at *use* time that breaks, not
+definition.
+
+If a future migration genuinely needs an extension, install it explicitly into a
+named schema and qualify every reference to its types. Do not rely on the
+search_path.
+
 ## The unmanaged tables
 
 Seven tables in the Neon database predate this runner: `answers`, `companies`,

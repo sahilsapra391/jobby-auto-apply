@@ -10,9 +10,33 @@
 --
 -- Nothing in here references those tables, which is what makes it safe to run
 -- against both the populated Neon database and an empty one.
-
-create extension if not exists citext;
-create extension if not exists pgcrypto;
+--
+--
+-- No extensions, which is a deviation from §3 and is deliberate.
+--
+-- §3 writes `email citext unique` and a `uuid primary key default
+-- gen_random_uuid()`. The property each of those buys is kept; the dependency
+-- is not, for two measured reasons.
+--
+-- `gen_random_uuid()` has been in core since PostgreSQL 13 and lives in
+-- pg_catalog. Verified on this database (18.6): it answers with no extension
+-- installed. `create extension pgcrypto` bought nothing.
+--
+-- `citext` is worse than unnecessary, it is environment-dependent. An extension
+-- installs its type into one schema, and `if not exists` is satisfied
+-- database-wide, so once citext exists in `public` this migration fails with
+-- `type "citext" does not exist` anywhere `public` is not on the search_path.
+-- That is not hypothetical: applying this to Neon put citext in `public`, and
+-- the next run of the test suite, which works inside its own schema, failed on
+-- exactly that line. A migration whose success depends on where a previous
+-- deployment happened to put an extension is a migration that works until a
+-- restore, a second schema, or a schema-per-tenant layout.
+--
+-- The replacement keeps the guarantee and drops the dependency: emails are
+-- stored lower-cased, enforced by a constraint, so a plain unique index is
+-- case-insensitive uniqueness. The caller normalises, which it has to do
+-- anyway; the difference from citext is that the database says so rather than
+-- silently accepting `A@x.com` as a second account.
 
 -- A flags value is an object whose every value is a real JSON boolean.
 --
@@ -24,7 +48,11 @@ create extension if not exists pgcrypto;
 -- get wrong.
 --
 -- A function because CHECK cannot contain a subquery and `jsonb_each` is a
--- set-returning function. Two details are load-bearing:
+-- set-returning function. Unlike the extension types above, this is safe to
+-- define per schema: a CHECK constraint binds the function by OID, so it keeps
+-- resolving whatever the search_path later becomes.
+--
+-- Two details are load-bearing:
 --
 --   · It is total. `jsonb_each` *raises* on a non-object rather than returning
 --     nothing, and an exception thrown inside a CHECK surfaces as "cannot call
@@ -51,14 +79,22 @@ $$;
 
 create table if not exists accounts (
   id         uuid        primary key default gen_random_uuid(),
-  email      citext      not null unique,
+  email      text        not null unique,
   plan       text        not null default 'free',
   created_at timestamptz not null default now(),
+
+  -- Case-insensitive uniqueness, by making the stored form canonical rather
+  -- than by making comparison clever. `unique` above then does the work, and
+  -- every lookup is a plain equality against a lower-cased argument instead of
+  -- a function call somebody will forget.
+  constraint accounts_email_is_lowercase check (email = lower(email)),
+  constraint accounts_email_looks_like_one check (email like '%_@_%'),
 
   -- Per-account cutover switches. Phase 1 flips reads to Postgres for one
   -- account before all; Phase 2 does the same for the live board. A flag that
   -- is absent reads as off, which is the only default that makes an
-  -- unfinished cutover safe -- see packages/schema/flags.py.
+  -- unfinished cutover safe, including for accounts created before the flag
+  -- existed. See packages/schema/flags.py.
   --
   -- jsonb rather than a flags table because these are read on every request
   -- alongside the account row and written by hand a few times a release. A
