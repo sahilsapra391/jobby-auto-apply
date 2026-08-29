@@ -302,7 +302,29 @@ called, or displayed by the active product.
 
 ## 5. Data model
 
-Everything lives in `~/.job-application/`, mode 700.
+**The store is moving to Postgres, and both copies exist right now.** As of
+2026-08-29 the pool and the decision store have been migrated to Neon and
+verified (16,987 rows, every table's count matching and 300 job records plus
+all 88 sessions compared byte-for-byte), but **nothing in the running system
+reads them yet**. Every reader still uses the files below. Treat this section
+as describing the authoritative copy, and `scripts/jobs_db.py` as describing
+where it is going.
+
+The tables mirror the files: `jobs`, `sessions`, `history`, `roles`,
+`companies`, `answers`, `passed`. Each keeps its whole record in a `jsonb`
+column with the filterable fields lifted into real columns beside it, so a
+record gaining a field needs no migration. `LIFTED` and `SCHEMA` live in one
+file so a test compares them rather than a person remembering.
+
+Two properties of that module are load-bearing and easy to undo. Every function
+is bulk, and there is deliberately no `get_job(id)`: Neon answers a round trip
+from this Mac in about 60 ms, which is nothing for one query returning ten
+thousand rows and ruinous for ten thousand returning one. And company
+normalisation delegates to `identity.norm_company` rather than defining its
+own, because `jobs.norm_company` is the staleness sweep's join key and a second
+normaliser disagreed with the first on 56 of 894 companies.
+
+Everything below lives in `~/.job-application/`, mode 700.
 
 | Path | Shape | Purpose |
 |---|---|---|
@@ -709,7 +731,10 @@ application").
 |---|---|---|
 | Board hosting | **Vercel** serverless function, `framework: other` | Stable password-gated URL |
 | Board rendering | **Vercel Python function** | UI code is atomic with the Git deployment |
-| Board state | **Cloudflare Workers KV** | Data updates without a Vercel deployment |
+| Board state | **Cloudflare Workers KV** | Data updates without a Vercel deployment. Being retired, see `docs/plans/live-board.md` |
+| Pool and decisions | **Postgres on Neon** | Migrated 2026-08-29, not yet read. A file meant every process loaded all of it |
+| Artifacts | **Cloudflare R2** | 666 objects, 31 MB. Documents live here and nowhere else |
+| Intelligence | **The user's own machine** | The provider CLI runs under the user's own account, and its key never leaves the device |
 | Generated documents, JD snapshots, answer records | **Cloudflare R2**, private, proxied by the API | Class 1 artifacts, off the device, served after the same password check |
 | Control queue | **Cloudflare Workers KV**, one application key plus a local provider lane | See below |
 | Encrypted document transport | **Cloudflare Workers KV**, AES-256-GCM per request and result | Crash-safe serial leases; KV sees ciphertext and fixed status |
@@ -756,6 +781,33 @@ Data changes require no deployment, and UI changes require no separate KV HTML
 publication.
 
 ---
+
+### The disk was 84% something nothing reads
+
+Measured 2026-08-29: `~/.job-application` was 38 GB, and 32 GB of it was
+`OptGuideOnDeviceModel`, Chrome's own local AI model, downloaded separately
+into each of the eight apply profiles for a feature nothing in Jobby calls.
+The pool everyone was worried about was 97 MB of that.
+
+Both Chrome launch sites now disable it, pinned by a test, and the profiles
+were deleted: 38 GB to 5.8 GB. Nothing announced this. Nothing failed, nothing
+warned, and a browser profile is not somewhere anyone looks. It surfaced only
+because the whole directory was measured to answer a different question, which
+is the argument for measuring the thing rather than the change.
+
+### The board is a snapshot, and that is why it feels slow
+
+A click is acted on in seconds. Nothing appears until the next publish rebuilds
+the whole state, at most every fifteen minutes (`PUBLISH_FLOOR_SECONDS = 900`;
+observed publishes sixteen minutes apart). The `localStorage` click memory
+exists to paper over exactly this gap, and the superseded-drop bug came out of
+it.
+
+This is not a consequence of the store being local, and moving the store does
+not fix it. `docs/plans/live-board.md` has the design: user decisions written
+straight to Postgres by the API, the page reading live, and the snapshot
+machinery retired along with the ceiling, the embed cap and the staleness alarm
+that exist to manage it.
 
 ## 13. Failure modes already fixed
 

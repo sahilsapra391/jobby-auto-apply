@@ -21,6 +21,24 @@ OpenAI Codex, Anthropic Claude Code, and Gemini CLI use the same bounded task co
 It does not invent anything. Every claim on a generated resume has to trace back to a resume you
 wrote, an answer you gave, or a story you told it. Where it cannot answer honestly, it stops.
 
+## Where things live
+
+The goal is that only the intelligence stays on your machine. Everything else is in the cloud.
+
+| | Where | Why there |
+|---|---|---|
+| Job pool, decisions, history | **Postgres (Neon)** | 15,400 jobs at 5.8 KB each. A file meant every process loaded all of it: 342 MB resident today, about 4.4 GB at the 200,000 cap. A query costs 38 MB and does not grow with the pool. |
+| Resumes, cover letters, answer records | **Cloudflare R2** | 666 objects, 31 MB. A staged copy exists only for the seconds a form is open, then is deleted, on a signal too. |
+| The board's published state | **Cloudflare KV** | A slice the renderer reads. Being retired in favour of live reads, see `docs/plans/live-board.md`. |
+| The renderer | **Vercel** | Deploys from the git commit being served. |
+| Provider CLIs and their keys | **Your Mac** | The intelligence. Your OpenAI, Anthropic or Gemini account, never ours. |
+| Chrome profiles and form filling | **Your Mac** | A file chooser needs a real filesystem, and employer sites treat a home connection better than a datacenter one. |
+
+The two on your Mac are physics rather than preference. Everything above them has moved or is moving.
+
+Slot browsers run headless. One opens with a window only when you press **Open and finish** on
+something in Needs you, because that is the only moment you want to watch.
+
 ## The board
 
 Five workflow lanes show the path from Found through Submitted. Dropped roles sit in a separate
@@ -147,7 +165,21 @@ Machine-local settings go in `~/.job-application/config.env`, which nothing over
 ```
 HEALTHCHECKS_URL=https://hc-ping.com/<uuid>
 JOBBY_WORKER_KEY=<local document queue 32-byte base64 key>
+JOBBY_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
 ```
+
+Set the last one through a private prompt rather than by editing the file, so the password never
+reaches a command line, where `ps` shows it to every process on the machine:
+
+```bash
+python3 scripts/worker_key.py set-database   # prompts, echoes nothing, reports the host only
+python3 scripts/migrate_to_postgres.py       # dry run: what would move
+python3 scripts/migrate_to_postgres.py --apply
+```
+
+The migration writes nothing back to the files and deletes nothing. It verifies by sampling 300
+records byte-for-byte against the store they came from, because comparing row counts compares a
+read against itself and cannot fail.
 
 Use `python3 scripts/worker_key.py set-healthchecks https://hc-ping.com/<uuid>`
 to replace the ping URL atomically without printing it or changing the worker
@@ -212,6 +244,11 @@ Runs are spawned detached and tracked by a pid lock file. One application at a t
 forty-five minute run never freezes the board. A dead pid releases the lock on its own, so a
 runner killed mid-flight cannot wedge the pipeline.
 
+The board is a published snapshot, and that is the next thing to change. A click is acted on in
+seconds, but nothing appears until the next publish rebuilds the whole state, at most every fifteen
+minutes. `docs/plans/live-board.md` has the measurements and the design: decisions written straight
+to Postgres by the API, the page reading live, and the snapshot machinery retired.
+
 `scripts/publish.py` writes a gzip-compressed `jobby:board-state` envelope. The Vercel Python
 function in `deploy/api/page.py` reads that state and renders it through `deploy/renderer/`, which
 is a deterministic deployment copy of the renderer modules and required brand SVGs. After changing
@@ -233,9 +270,29 @@ The watcher reports to [healthchecks.io](https://healthchecks.io), failures incl
 heartbeat is every 55 minutes, which fits a one-hour check with ten minutes of grace. If the local
 service dies, the pings stop.
 
+## What reaches the board
+
+Every real posting inside thirty days, and the reader filters. Three gates used to decide before
+you ever saw a job; two are gone.
+
+The **keyword gate** is removed. It held four terms belonging to one person's search and did most
+of the filtering: on the sweep before it went, 8,485 of 23,104 postings were rejected for matching
+none of them, against 361 kept.
+
+The **score floor** is 0. The match percentage still sorts the board; it no longer decides what
+reaches it. A floor filters invisibly, and the postings it drops are the ones nobody sees to
+disagree with.
+
+The **date window** is thirty days, not sixty. Windows offered are 6 hours, 24 hours, 7 days,
+14 days and 30 days. A posting older than a month is usually a requisition nobody is working, and
+it crowds out the fresh ones.
+
+The pool cap is 200,000. Past roughly 50,000 the binding constraint stops being disk and becomes
+memory, which is why the pool moved to Postgres.
+
 ## Job discovery and ATS coverage
 
-The Found lane is fed by twenty-six Tier-1 channels. Fifteen are direct ATS
+The Found lane is fed by twenty-seven Tier-1 channels. Fifteen are direct ATS
 board connectors: Greenhouse, Lever, Ashby, SmartRecruiters, Workable,
 Recruitee, Personio, Breezy, Rippling, Workday CXS, Pinpoint, Teamtailor,
 JazzHR, Oracle Recruiting Cloud and Gem. The rest are public feeds and keyed
