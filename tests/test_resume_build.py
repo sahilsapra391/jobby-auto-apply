@@ -192,13 +192,44 @@ class IntegrityGuardTests(unittest.TestCase):
             rb.assert_integrity(self.base, tailored)
 
 
+def profile_has_a_name():
+    """Whether this machine can supply the identity block the render needs.
+
+    The name and the contact line are not in the template -- keeping a home
+    address and a phone number in a tracked file is how they end up in every
+    clone -- so `render` fetches them from the store at render time. The
+    template is tracked and always present; the profile is on the user's own
+    machine and is not. Guarding on the template and asserting on the profile
+    is what made this the one test in the suite that could not run in CI.
+    """
+    try:
+        name, _contact = rb.identity_block()
+    except Exception:
+        return False
+    return bool(name.strip())
+
+
 class ShippedTemplateTests(unittest.TestCase):
     def test_the_shipped_template_and_base_render_together(self):
         if not (TEMPLATE.exists() and BASE.exists()):
             self.skipTest("template not present")
+        if not profile_has_a_name():
+            self.skipTest("no profile on this machine to render an identity from")
         out = rb.render(TEMPLATE.read_text(), json.loads(BASE.read_text()))
         self.assertIn("SAHIL SAPRA", out)
         self.assertNotIn("{{", out)
+
+    def test_the_template_leaves_no_placeholder_unfilled(self):
+        """The half of the case above that needs no profile, so it runs
+        everywhere. `{{name}}` and `{{contact}}` are substituted from the
+        store, so they are the two the skip above is really about; every other
+        placeholder comes from the base content and must always resolve."""
+        if not (TEMPLATE.exists() and BASE.exists()):
+            self.skipTest("template not present")
+        out = rb.render(TEMPLATE.read_text(), json.loads(BASE.read_text()))
+        import re
+        left = set(re.findall(r"\{\{(\w+)\}\}", out))
+        self.assertEqual(left - {"name", "contact"}, set())
 
     def test_the_shipped_base_fits_the_shipped_template(self):
         if not (TEMPLATE.exists() and BASE.exists()):
