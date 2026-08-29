@@ -580,15 +580,22 @@ class SearchConfigTests(TempStore):
                          search_config.MAX_AGE_DAYS)
 
     def test_the_longer_windows_exist(self):
-        # A dated posting older than two months is not worth bringing in; an
+        # A dated posting older than thirty days is not worth bringing in; an
         # undated one still is, which is what includeUnknowns.postedAt governs.
-        # 90d was the old ceiling and is no longer offered; a config that still
-        # carries it is read as 60d rather than rejected.
-        self.assertEqual(search_config.posted_within_days({"postedWithin": "60d"}), 60)
-        self.assertEqual(
-            search_config.validate(dict(search_config.DEFAULTS,
-                                        postedWithin="90d"))["postedWithin"], "60d")
-        self.assertEqual(search_config.posted_within_days({"postedWithin": "60d"}), 60)
+        # 90d and 60d were both ceilings once and neither is offered now; a
+        # config still carrying either is narrowed rather than rejected.
+        self.assertEqual(search_config.posted_within_days({"postedWithin": "30d"}), 30)
+        for retired in ("60d", "90d"):
+            with self.subTest(window=retired):
+                self.assertEqual(
+                    search_config.validate(dict(search_config.DEFAULTS,
+                                                postedWithin=retired))["postedWithin"],
+                    "30d")
+                # And through the raw path too, which does not run validate.
+                # Missing the table here means the seven-day default, which is
+                # a board quietly showing a quarter of the saved window.
+                self.assertEqual(
+                    search_config.posted_within_days({"postedWithin": retired}), 30)
 
     def test_the_stored_cap_can_be_turned_off_but_not_set_absurdly_low(self):
         self.assertIsNone(search_config.validate({"storedCap": None})["storedCap"])
