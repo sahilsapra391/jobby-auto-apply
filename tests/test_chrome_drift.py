@@ -386,12 +386,14 @@ class RunningLaunchTests(unittest.TestCase):
 
         browser.subprocess.run = lambda *a, **k: Result()
 
-    def main_line(self, extra=""):
+    def main_line(self, *extra):
+        """A slot browser's command line, with whatever flags are passed."""
         profile = browser._profile_dir("apply-1")
         port = browser.port_for("apply-1")
         return (f"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
                 f"--remote-debugging-port={port} --user-data-dir={profile} "
-                f"--no-first-run --no-default-browser-check {extra} about:blank")
+                f"--no-first-run --no-default-browser-check "
+                f"{' '.join(extra)} about:blank")
 
     def test_the_main_is_found(self):
         self.ps([self.main_line("--use-mock-keychain")])
@@ -420,15 +422,30 @@ class RunningLaunchTests(unittest.TestCase):
         self.assertEqual(browser.running_launch("apply-1"), [])
         self.assertEqual(browser.missing_launch_flags("apply-1"), [])
 
-    def test_a_main_started_before_the_flag_reports_it_missing(self):
-        """The live apply-1 case on 2026-08-28, reconstructed."""
+    # Every flag the launch site expects, so these fixtures do not have to be
+    # rewritten each time one is added -- and so a new flag is automatically
+    # covered by the drift check rather than needing a test somebody remembers.
+    EXPECTED = [flag for flag in browser._launch_argv("apply-1", "/tmp/p")
+                if flag.startswith("--use-mock-keychain")
+                or flag.startswith("--disable-features=")]
+
+    def test_a_main_started_before_the_flags_reports_them_missing(self):
+        """The live apply-1 case on 2026-08-28, reconstructed, and now also the
+        on-device model flag added on 2026-08-29."""
         self.ps([self.main_line()])
-        self.assertEqual(browser.missing_launch_flags("apply-1"),
-                         ["--use-mock-keychain"])
+        self.assertEqual(browser.missing_launch_flags("apply-1"), self.EXPECTED)
 
     def test_a_current_main_reports_nothing_missing(self):
-        self.ps([self.main_line("--use-mock-keychain")])
+        self.ps([self.main_line(*self.EXPECTED)])
         self.assertEqual(browser.missing_launch_flags("apply-1"), [])
+
+    def test_a_main_missing_only_the_model_flag_reports_only_that(self):
+        """The drift this run creates: browsers started before the flag are
+        otherwise current, and the ping should name what is actually absent."""
+        self.ps([self.main_line("--use-mock-keychain")])
+        missing = browser.missing_launch_flags("apply-1")
+        self.assertTrue(all("OptimizationGuide" in flag for flag in missing), missing)
+        self.assertNotIn("--use-mock-keychain", missing)
 
     def test_another_slots_browser_is_not_consulted(self):
         other = (f"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
