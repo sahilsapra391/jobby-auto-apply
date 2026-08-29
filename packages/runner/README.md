@@ -1,4 +1,4 @@
-# packages/runner — the device process (Phase 4)
+# packages/runner: the device process (Phase 4)
 
 Empty until Phase 4, which collapses `ai.jobby.watch`, `ai.jobby.documents` and
 `ai.jobby.providers` into one supervised async process with task groups, under a
@@ -6,7 +6,7 @@ single launchd plist with `KeepAlive`.
 
 Three services exist today for one reason: a slow provider probe delayed a
 Connect click, so the control lane was split out. §6 is explicit that the fix is
-an async task inside one process, not a second daemon — but the constraint that
+an async task inside one process, not a second daemon, but the constraint that
 created the split is real and the replacement has to honour it.
 
 ## What must not be lost in the collapse
@@ -25,4 +25,4 @@ side of the line, and none of it is refactoring surface:
 The new surfaces are the ones to write the negative tests for first: a lease
 signed with the wrong key, a lease for another account, an update arriving
 mid-submit, and a `SIGTERM` that must leave the staging directory empty **on
-disk** — the filesystem is the evidence, not a mocked handler.
+disk**. The filesystem is the evidence, not a mocked handler.

@@ -1,4 +1,4 @@
-# apps/worker — Cloudflare Workers and Durable Objects (Phase 2)
+# apps/worker: Cloudflare Workers and Durable Objects (Phase 2)
 
 Empty until Phase 2. What lands here:
 
@@ -9,7 +9,7 @@ Empty until Phase 2. What lands here:
 
 It is a second API host, and §2 says so plainly: "A single API host would be
 tidier. Two hosts is the price of DOs. Keep the seam narrow and documented."
-The seam is one direction only — Vercel writes to Postgres, then posts the
+The seam is one direction only. Vercel writes to Postgres, then posts the
 event here; nothing here writes to Postgres. Widening it is how the two hosts
 start disagreeing about what happened.
 

@@ -1,4 +1,4 @@
-# apps/scanner — the sourcing container (Phase 3)
+# apps/scanner: the sourcing container (Phase 3)
 
 Empty until Phase 3. The existing connector and ingest code moves here
 unchanged, with a new entrypoint: §2 rejected rewriting every connector in

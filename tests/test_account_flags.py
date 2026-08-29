@@ -225,6 +225,27 @@ class TheDatabaseEnforcesItToo(pgtest.SchemaCase):
             self.insert("I@Example.com", {})          # same mailbox, cased
         self.assertIn("accounts_email_is_lowercase", str(caught.exception))
 
+    def test_an_address_with_no_mailbox_or_no_host_is_refused(self):
+        """Deliberately the weakest useful check: something before the @ and
+        something after it. Email validation by pattern is a famous way to
+        reject real addresses, so this rejects only what cannot be one.
+
+        It is here because an untested constraint is not a constraint, and
+        this one was added without a test in the first draft."""
+        for bad in ("@example.com", "nobody@", "nobody", "@"):
+            with self.subTest(email=bad):
+                with self.assertRaises(Exception) as caught:
+                    self.insert(bad, {})
+                self.assertIn("accounts_email_looks_like_one",
+                              str(caught.exception))
+
+    def test_unusual_but_legal_addresses_are_accepted(self):
+        """The other half. A pattern that refuses these is worse than none."""
+        for good in ("a+tag@example.co.uk", "x@y.z", "first.last@sub.example.io",
+                     "user_name-1@example-host.com"):
+            with self.subTest(email=good):
+                self.insert(good, {})
+
     def test_the_schema_needs_no_extensions(self):
         """`gen_random_uuid()` is core since PostgreSQL 13, and nothing else
         here needs one. A migration that installs an extension behaves

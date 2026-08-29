@@ -26,7 +26,7 @@ not understand.
 
 The migration is the only surface with no rollback. Vercel promotes a previous
 deployment, `wrangler rollback` and `flyctl releases rollback` exist, the device
-runner takes a manifest pointing at the previous version — and a dropped column
+runner takes a manifest pointing at the previous version, and a dropped column
 is gone. That asymmetry is the whole argument for expand-then-contract, and it
 is why the runner refuses the destructive half by default rather than trusting
 the policy to be remembered.
@@ -54,7 +54,7 @@ The scanner strips comments, string literals and dollar-quoted bodies before
 matching, and matches on word boundaries. `dropped_at` is a column name and
 `-- we drop this in N+2` is a note. Both directions are tested in
 `tests/test_migration_guards.py`, and the tests were verified by disabling each
-guard and confirming they fail — one of them survived the first two attempts
+guard and confirming they fail. One of them survived the first two attempts
 and was rewritten twice before it bound.
 
 ## Writing the contract half
@@ -71,7 +71,7 @@ alter table jobs drop column legacy_blob;
 Both halves are required. The declaration is what a reviewer sees in the diff;
 the flag is what stops a contract migration riding along unnoticed inside an
 ordinary deploy. A declaration with no reason is refused, because the reason is
-where you say which release stopped reading it — and that is the fact the next
+where you say which release stopped reading it, and that is the fact the next
 person needs in order to check the expand half actually shipped.
 
 A declaration inside a string literal does not count. Only a real comment does.
@@ -93,7 +93,7 @@ reproduce.
 
 **Nothing half-applies.** The DDL and the ledger row share one transaction, so a
 failure leaves neither the change nor a record claiming it succeeded. Postgres
-gives this away because its DDL is transactional — but only to a runner that
+gives this away because its DDL is transactional, but only to a runner that
 does not commit the change and then record it.
 
 **One runner at a time.** A session-level advisory lock, released in a `finally`

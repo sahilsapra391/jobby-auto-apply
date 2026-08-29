@@ -1,4 +1,4 @@
-# apps/web — the board (Phase 2)
+# apps/web: the board (Phase 2)
 
 Next.js on Vercel, git-deployed. Empty until Phase 2 rewrites the board's data
 layer onto keyset pagination and the tenant channel.
