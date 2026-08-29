@@ -1,0 +1,1046 @@
+{
+  "note": "Employer questions captured from the live answer store on 2026-08-29, frozen, carrying question, tags and state and never a value: an answer can be a salary figure or a demographic response and this file is committed. The invariant is that everything under `categorised` still lands in a category. Whether the live corpus has outgrown the categoriser is scripts/lint_answer_categories.py, which warns.",
+  "capturedOn": "2026-08-29",
+  "categorised": [
+    {
+      "question": "Any past or present association with Deloitte, PwC, EY, or KPMG?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you Hispanic/Latino?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you a U.S. person as defined under the EAR and ITAR (citizen, lawful permanent resident, asylee or refugee)?",
+      "tags": [
+        "us-person-status",
+        "legal-declaration",
+        "immigration"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you a spouse or domestic partner to a veteran?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you a veteran?",
+      "tags": [
+        "military-status"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you able to commit to the travel this role requires?",
+      "tags": [
+        "travel-willingness",
+        "logistics"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you able to provide documentation of the employment and education history listed on your resume if requested?",
+      "tags": [
+        "resume-history-documentation",
+        "legal-declaration"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you able to relocate for this position?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you at least 18 years of age?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you authorized to work in India without sponsorship?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you authorized to work in the United States without sponsorship?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you bound by any restrictive covenants from a previous employer?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you currently enrolled in a degree program at a registered college or university?*",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you currently, or have you ever been, excluded from, debarred or otherwise ineligible to participate in state or federally funded programs or federal healthcare programs as defined in 42 USC 1320a-7b(f)?",
+      "tags": [
+        "legal-declaration",
+        "policy",
+        "exclusion-debarment"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you legally authorized to work in the United States?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Are you legally authorized to work in this country without sponsorship?",
+      "tags": [
+        "work-authorisation-any-country"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you open to relocation?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you or a close relative a current or former government official?",
+      "tags": [
+        "government-official"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you related to a government official?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you related to any employee of this company?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you related to or a close associate of an officer or director of a client?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you related to, by birth, adoption or marriage, or a close associate of a current or former director, officer or senior employee of a client who has authority to award or materially influence any decision to award business?",
+      "tags": [
+        "legal-declaration",
+        "policy",
+        "relationships-conflicts"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you subject to a non-compete agreement?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you subject to any employment agreements and/or post-employment restrictions with your current employer or a past employer?",
+      "tags": [
+        "legal-declaration",
+        "post-employment-obligations",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you subject to any non-solicitation agreement?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to complete a background check and drug screening if offered the role?",
+      "tags": [
+        "legal-declaration",
+        "background-check-willingness"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to relocate to this location?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to relocate?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to submit a background check during the hiring process?",
+      "tags": [
+        "legal-declaration",
+        "policy",
+        "background-check-willingness"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to undergo a background check?",
+      "tags": [
+        "legal-declaration",
+        "background-check-willingness"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Are you willing to work onsite at the job location?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "At Remote, we are committed to transparency, innovation, and care for our employees and candidates. To support this and ensure we are able to focus on you, not on taking notes, we use brighthire.ai to record and auto-transcript our interviews. If we decide you are good potential fit for the role, do you consent to us using this tool during the interviewing process? Declining recording will not affect your candidacy.",
+      "tags": [
+        "consent",
+        "interview-recording"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Axon Prohibited Possessor Questionnaire: 8 firearms-eligibility questions plus the Acknowledge checkbox and the truthfulness acknowledgment",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Based on the below information, would you meet the requirements for a deemed export license in order to access EAR - controlled technology?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "By checking this box, I consent to Prove collecting, storing, and processing my responses to the demographic data surveys above.*",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "By submitting my application, I certify that the information provided (including in my resume/CV) is true and correct. (required)",
+      "tags": [
+        "attestation",
+        "policy",
+        "accuracy-attestation"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Current Compensation breakup (Fixed, Variable and ESOPS)",
+      "tags": [
+        "compensation",
+        "compensation-breakup-india"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Date of Birth",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Degree",
+      "tags": [
+        "education",
+        "education-degree",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Describe yourself in a short phrase",
+      "tags": [
+        "free-text",
+        "story-self-description"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Discipline",
+      "tags": [
+        "education",
+        "education-discipline"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you acknowledge and agree that this range aligns with your compensation expectations?",
+      "tags": [
+        "compensation",
+        "salary-range-acknowledgement"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you confirm you have read the employer's recruitment privacy notice?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you consent to Remote using brighthire.ai to record and auto-transcribe your interviews?",
+      "tags": [
+        "consent",
+        "interview-recording"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you consent to us using brighthire.ai to record and auto-transcript our interviews?",
+      "tags": [
+        "consent",
+        "policy",
+        "interview-recording"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you consent to your interview being recorded and transcribed?",
+      "tags": [
+        "consent",
+        "interview-recording"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you consider yourself a member of the lesbian, gay, bisexual and/or transgender (LGBTQ+) community?",
+      "tags": [
+        "diversity",
+        "lgbtq-self-identification"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you currently have an active immigration case (ex H-1B extension, green card)?",
+      "tags": [
+        "immigration",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have a close personal relationship with anyone who could influence business awarded to us?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have a disability?",
+      "tags": [
+        "disability-status"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have a non-compete in place with your previous or current employer that prevents you from working for us?",
+      "tags": [
+        "legal-declaration",
+        "post-employment-obligations"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have a personal project or side experiment in AI?",
+      "tags": [
+        "free-text",
+        "story-side-project"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have any conflicts of interest to disclose?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have any contractual obligations, agreements, relationships, or commitments to another person or entity that would impact, impede or interfere with your ability to join Axon?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have any personal/professional experience in trading? If so, please describe. *",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have any post-employment obligations to any current or former employer (i.e., non-compete, non-solicitation, etc.) that may prohibit or restrict your employment for a position?",
+      "tags": [
+        "legal-declaration",
+        "policy",
+        "post-employment-obligations"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have any post-employment obligations?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you have conflicts of interest with any company?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you identify as transgender?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Do you know anyone currently working at this company?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you now or will you in the future require sponsorship for employment visa status in any country?",
+      "tags": [
+        "sponsorship-any-country"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Do you now or will you in the future require sponsorship for employment visa status?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Do you require visa sponsorship?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Does the office attendance requirement in this posting work for you, for example a flexwork policy requiring at least two days per week in the office?",
+      "tags": [
+        "in-office-acknowledgement",
+        "location"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Ethnicity and race | Race is a social construct and no group is a monolith. How would you describe yourself?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "GitHub URL",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you contributed to a political candidate, party or PAC?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you ever been debarred or suspended from federal contracting?",
+      "tags": [
+        "legal-declaration",
+        "exclusion-debarment"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you ever interviewed at this company before?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you made a political contribution in the last two years?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you made a political contribution(s) to any political official, candidate, party, or organization (e.g. Political Action Committee) within the last 2 years?",
+      "tags": [
+        "legal-declaration",
+        "policy",
+        "political-contributions"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you made any political contributions?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you or a member of your household made a political contribution?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Have you previously worked at or consulted for this company?",
+      "tags": [
+        "prior-employment-with-this-employer",
+        "employment-history"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "How did you hear about this job?",
+      "tags": [
+        "sourcing",
+        "source-how-heard"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "How did you hear about us?",
+      "tags": [
+        "sourcing",
+        "policy",
+        "source-how-heard"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "How do you identify your sexual orientation?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "How has AI changed the way you approach your work?",
+      "tags": [
+        "free-text",
+        "story-ai-in-work"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "How should applications requiring email OTP, email verification links, or ATS account creation be handled?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "How would you describe your sexual orientation?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "I HAVE READ THE CERTIFICATION ABOVE AND UNDERSTAND AND AGREE TO ITS TERMS. Please type your name and the date.",
+      "tags": [
+        "signature",
+        "policy",
+        "signature-name"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "I acknowledge that I have opened, read, and understood the Arbitration Agreement. I understand that by submitting my application, I am agreeing to be bound by the terms of the Arbitration Agreement.",
+      "tags": [
+        "legal",
+        "arbitration",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "I certify that the information provided is true and correct.",
+      "tags": [
+        "attestation",
+        "accuracy-attestation"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "I hereby certify that, to the best of my knowledge, the provided information is true and accurate.",
+      "tags": [
+        "attestation",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "If requested, would you be able to provide documentation reflecting the education and employment history listed on your resume?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "If this role offers the option to work from a remote location, do you plan to work remotely?*",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Is there any agreement that would limit your ability to perform this role?",
+      "tags": [
+        "legal-declaration",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "LinkedIn",
+      "tags": [
+        "links",
+        "linkedin-profile-url",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "May the employer retain your information and contact you about future job opportunities?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Our base salary range for this role is $70,000 - $90,000. Do you acknowledge and agree that this range aligns with your compensation expectations?",
+      "tags": [
+        "compensation",
+        "policy",
+        "salary-range-acknowledgement"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Please identify your race",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Please type your full name to serve as your electronic signature.",
+      "tags": [
+        "signature",
+        "signature-name"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Rate yourself on Excel? 1 to 10-Highest",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Rate yourself on SQL? 1 to 10-Highest",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Robinhood government-official question: do you hold or have you held such a position, been referred by one, or have a close relationship with one?*",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "School",
+      "tags": [
+        "education",
+        "education-school"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Total years of professional experience",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Voluntary self-identification of disability | Please select",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "What are you looking for in your next role, and what do you want to avoid?",
+      "tags": [
+        "free-text",
+        "story-next-role"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is the highest level of education you have completed?",
+      "tags": [
+        "education",
+        "education-degree"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is the maximum years-of-experience requirement acceptable on a role?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your LinkedIn profile URL?",
+      "tags": [
+        "links",
+        "linkedin-profile-url"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your age range?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your country of citizenship?",
+      "tags": [
+        "citizenship-country",
+        "immigration"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your current base salary?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your current location?",
+      "tags": [
+        "location",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your current work authorization in the hiring country?",
+      "tags": [
+        "work-authorization",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your disability status?*",
+      "tags": [
+        "alias",
+        "disability-status"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your ethnicity?",
+      "tags": [
+        "race-ethnicity"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your expected CTC for India roles?",
+      "tags": [
+        "compensation",
+        "expected-compensation-india"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your expected compensation when the posting states a salary band?",
+      "tags": [
+        "compensation",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your expected salary for US roles?",
+      "tags": [
+        "compensation",
+        "expected-compensation"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your full street address for a United States application?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your full street address for an India application?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your gender identity?*",
+      "tags": [
+        "alias",
+        "gender-identity"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your gender?",
+      "tags": [
+        "gender-identity"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your notice period?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your phone number?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "What is your race or ethnicity?*",
+      "tags": [
+        "alias",
+        "race-ethnicity"
+      ],
+      "state": "sensitive"
+    },
+    {
+      "question": "What is your sexual orientation?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "What motivates you?",
+      "tags": [
+        "free-text",
+        "story-motivation"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What was your field of study?",
+      "tags": [
+        "education",
+        "education-discipline",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "What work setup do you prefer (on-site, hybrid, remote)?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "When can you start a new role / what is your earliest start date?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "When is your anticipated graduation date?*",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Where are you currently based?",
+      "tags": [
+        "location",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Which of the following communities do you belong to?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Which school or university did you attend?",
+      "tags": [
+        "education",
+        "education-school",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Why are you looking for a new role / why did you leave your last role?",
+      "tags": [
+        "free-text",
+        "story-why-looking"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Why do you think you will be successful in this role?",
+      "tags": [
+        "free-text",
+        "story-why-this-role",
+        "policy"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Will you need the company to sponsor an employment visa now or in the future?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Will you now or in the future require visa sponsorship to work in the United States?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Will you require sponsorship in order to be employed?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Work Authorization",
+      "tags": [
+        "work-authorization",
+        "work-authorisation-label",
+        "alias"
+      ],
+      "state": "confirmed"
+    },
+    {
+      "question": "Would you be willing to relocate for this role?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Would you describe yourself as transgender?",
+      "tags": [],
+      "state": "sensitive"
+    },
+    {
+      "question": "Would you require visa sponsorship in other countries?",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Years of experience as a software developer",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Years of experience building AI products",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Years of experience in product management",
+      "tags": [],
+      "state": "confirmed"
+    },
+    {
+      "question": "Years of experience managing people",
+      "tags": [],
+      "state": "confirmed"
+    }
+  ],
+  "knownGaps": {
+    "why": "Recorded rather than deleted with the test that found them, so each stays a task. Two different problems, and the smaller one is the one that looks bigger.",
+    "englishQuestionsWithNoCategory": [
+      {
+        "question": "Are you crypto-native?",
+        "tags": [],
+        "state": "confirmed"
+      },
+      {
+        "question": "Are you willing to work from the office(s) listed on the job description?*",
+        "tags": [
+          "alias"
+        ],
+        "state": "confirmed"
+      },
+      {
+        "question": "Do you have: any Personal/Familial Relationships, Outside Business Activities, qualifying investments, or Intellectual Property Ownership?*",
+        "tags": [],
+        "state": "confirmed"
+      },
+      {
+        "question": "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?*",
+        "tags": [],
+        "state": "confirmed"
+      },
+      {
+        "question": "Document Policy*",
+        "tags": [],
+        "state": "confirmed"
+      },
+      {
+        "question": "Have you ever worked for Robinhood as an employee, intern or contractor? Note that providing false or misleading information may result in disqualification from the hiring process.",
+        "tags": [
+          "alias",
+          "employment-history"
+        ],
+        "state": "confirmed"
+      },
+      {
+        "question": "Please indicate if you are a Hong Kong Citizen, Permanent Resident, or if you require a work pass to work and reside in Hong Kong. For work pass holders, kindly also specify which pass you are currently holding, if applicable.",
+        "tags": [],
+        "state": "confirmed"
+      },
+      {
+        "question": "What is your military status?*",
+        "tags": [
+          "alias",
+          "military-status"
+        ],
+        "state": "sensitive"
+      },
+      {
+        "question": "What language(s) are you fluent in? *",
+        "tags": [],
+        "state": "confirmed"
+      }
+    ],
+    "nonLatinScript": [
+      {
+        "question": "1. 공직자윤리법 제17조 등에 따라 퇴직일로부터 3년간 취업심사대상기관에의 취업이 제한되는 취업심사대상자에 해당합니까?*",
+        "tags": [],
+        "state": "dismissed"
+      },
+      {
+        "question": "1. 국적이 어떻게 되십니까? *",
+        "tags": [],
+        "state": "dismissed"
+      },
+      {
+        "question": "2. 대한민국에서 합법적으로 근무를 하기 위한 비자가 필요합니까?*",
+        "tags": [],
+        "state": "dismissed"
+      },
+      {
+        "question": "「국가유공자 등 예우 및 지원에 관한 법률」 등에 따른 취업지원 대상자(보훈)에 해당하십니까?*",
+        "tags": [],
+        "state": "dismissed"
+      },
+      {
+        "question": "채용 지원 또는 법령상 의무를 준수하기 위해 최소한의 개인정보를 수집합니다.*",
+        "tags": [],
+        "state": "dismissed"
+      }
+    ],
+    "nonLatinNote": "The categoriser matches English keywords, and these came from a real application to a Korean employer. Matching them needs translated markers or a language-aware matcher; a wrong category on a demographic or legal question is worse than none."
+  }
+}
