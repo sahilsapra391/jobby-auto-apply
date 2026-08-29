@@ -98,7 +98,11 @@ DEFAULTS = {
     "directOnly": True,
     "includeUnknowns": {key: True for key in UNKNOWN_KEYS},
     "sponsorsVisaOnly": False,
-    "minScoreToKeep": 40,
+    # No score floor. The board is meant to hold every real posting inside the
+    # date window, and let the reader filter; a floor here decides for them,
+    # invisibly, before the posting ever reaches the page. The score is still
+    # computed and still sorts the board -- it just no longer gates.
+    "minScoreToKeep": 0,
     # Six sweeps a day, Sahil's call: hourly was more polite traffic than the
     # boards change, and a four-hour gap still puts a morning posting on the
     # board the same morning.
