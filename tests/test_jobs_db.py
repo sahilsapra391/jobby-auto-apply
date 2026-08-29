@@ -15,8 +15,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import jobs_db  # noqa: E402
+import pgtest  # noqa: E402
 import jobs_store  # noqa: E402
 
 
@@ -139,8 +141,8 @@ class ConnectionConfigTests(unittest.TestCase):
         self.assertIn(jobs_db.URL_NAME, str(caught.exception))
 
 
-class LiveDatabaseTests(unittest.TestCase):
-    """Runs only on an explicit opt-in, never merely because credentials exist.
+class LiveDatabaseTests(pgtest.SchemaCase):
+    """Runs only on an explicit opt-in, and only inside its own schema.
 
     The first version skipped when JOBBY_DATABASE_URL was absent, which is
     backwards: it skipped exactly when the database was safe to touch and ran
@@ -149,24 +151,28 @@ class LiveDatabaseTests(unittest.TestCase):
     command uses no HOME redirect. The result was CREATE TABLE against the
     user's production Neon on every full suite run, and CI runs this module.
 
-    Idempotent DDL is not the point. The guarantee has to hold for the next
-    test somebody adds here, which may not be.
+    Requiring JOBBY_TEST_DATABASE_URL fixed the accident and left the hazard:
+    it moved the guarantee into an instruction, "point this at a throwaway
+    database", which is the kind of rule this repository has watched fail
+    every time it has relied on one. It failed again on 2026-08-29. The agent
+    adding the Phase 0 migration tooling set that variable to the Neon URL, ran
+    the full suite, and executed this module's CREATE TABLE against the
+    database holding 15,400 real jobs. Nothing was lost, because the DDL is
+    idempotent, which is precisely what the note below it said was not the
+    point.
+
+    So the isolation is structural now. `pgtest.SchemaCase` gives each test its
+    own schema on a direct (never pooled) session and drops it afterwards, so
+    where the variable points stops deciding whether the run is safe. On a
+    machine with one database, that is the only version of this guarantee that
+    is worth anything.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        if os.environ.get("JOBBY_TEST_DATABASE_URL") is None:
-            raise unittest.SkipTest(
-                "set JOBBY_TEST_DATABASE_URL to a throwaway database to run these")
-        try:
-            cls.conn = jobs_db.connect(os.environ["JOBBY_TEST_DATABASE_URL"])
-        except jobs_db.DatabaseError as exc:
-            raise unittest.SkipTest(str(exc))
+    prefix = "jobsdb_test"
 
-    @classmethod
-    def tearDownClass(cls):
-        if getattr(cls, "conn", None):
-            cls.conn.close()
+    def test_the_scratch_schema_holds_the_work(self):
+        """First, because every assertion below is conditional on it."""
+        self.assert_isolated()
 
     def test_the_schema_applies_and_is_idempotent(self):
         jobs_db.ensure_schema(self.conn)
@@ -175,10 +181,24 @@ class LiveDatabaseTests(unittest.TestCase):
 
     def test_the_board_slice_is_one_query(self):
         """The property the migration exists for: answering a question about
-        part of the pool must not load the pool."""
+        part of the pool must not load the pool.
+
+        The assertion used to be `>= 0`, which is true of every integer this
+        query can return, and it ran against whatever `jobs` the connection
+        happened to see. On this machine that was the real table with 15,400
+        rows, so it read production to prove nothing. Now the schema is the
+        test's own, and the count is checked against rows the test put there.
+        """
+        jobs_db.ensure_schema(self.conn)
+        jobs_db.replace_jobs(self.conn, {
+            "a": {"company": "Acme", "title": "PM", "state": "new"},
+            "b": {"company": "Acme", "title": "PM 2", "state": "dropped"},
+        })
         with self.conn.cursor() as cur:
             cur.execute("select count(*) from jobs where state = 'new'")
-            self.assertGreaterEqual(cur.fetchone()[0], 0)
+            self.assertEqual(cur.fetchone()[0], 1)
+            cur.execute("select count(*) from jobs")
+            self.assertEqual(cur.fetchone()[0], 2)
 
 
 if __name__ == "__main__":
