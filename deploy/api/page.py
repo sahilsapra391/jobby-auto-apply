@@ -1,4 +1,12 @@
-"""Render the deployed dashboard code against sanitized state from KV."""
+"""Render the deployed dashboard code against sanitized state from KV.
+
+This is the board today. `docs/plans/jobby-v2-rebuild-plan.md` replaces it
+in Phase 2 with a Next.js app under `apps/web`, which is a rewrite rather
+than a port: §2 chooses "Next.js on Vercel" and justifies it with "already
+works", but what already works is Vercel and git-deploy, not Next.js. See
+docs/adr/0004-the-web-app-stays-on-vercel.md. Whatever replaces this file
+inherits the check that keeps `deploy/renderer/` in step with `scripts/`.
+"""
 
 from __future__ import annotations
 
