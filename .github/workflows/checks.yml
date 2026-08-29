@@ -11,6 +11,16 @@
 #
 # Both are the same shape: the working tree is not the thing that ships. These
 # checks run against what ships.
+#
+# The suite is run by `unittest discover`, with no exclusion list. It used to
+# name two modules to skip, test_resume_pdf and test_resume_build, on the
+# grounds that they need the user's own documents and a local Chrome. Measured
+# 2026-08-29: of the 36 tests in those two modules, 34 passed on a clean
+# machine, 1 skipped itself, and exactly 1 failed -- and that one failed
+# because its guard checked for the tracked template while its assertion needed
+# the untracked profile. Guarding the assertion is a two-line fix; the
+# exclusion list cost CI every future test written in either file. See
+# tests/test_ci_covers_everything.py, which fails if a filter comes back.
 
 name: checks
 
@@ -30,6 +40,38 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
+
+    services:
+      # A real Postgres, so the migration runner is tested against the thing it
+      # will run against rather than a mock. It is a throwaway container, not
+      # Neon: CI needs no secret to run these, every branch gets its own, and
+      # nothing a test does can reach the database holding real applications.
+      #
+      # Not pooled, which matters. packages/schema/migrate.py refuses a pooled
+      # URL because pg_advisory_lock is session-scoped and a pooler hands each
+      # transaction whatever backend is free -- the lock would appear to work
+      # and would exclude nobody.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: jobby
+          POSTGRES_PASSWORD: jobby
+          POSTGRES_DB: jobby_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobby"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      JOBBY_TEST_DATABASE_URL: postgresql://jobby:jobby@localhost:5432/jobby_test
+      # Read by tests/test_ci_covers_everything.py: in CI a database test that
+      # skips for want of a database is a hole, not a skip. GitHub sets this
+      # already; naming it here is what makes the rule legible.
+      CI: "true"
+
     steps:
       - uses: actions/checkout@v5
 
@@ -42,6 +84,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+
+      - name: Python dependencies
+        run: python3 -m pip install --quiet 'psycopg[binary]==3.3.4'
 
       - name: The deployed renderer matches scripts/
         run: |
@@ -59,22 +104,16 @@ jobs:
           fi
 
       - name: Python tests
-        run: |
-          # Everything except the two modules that render the real base resume
-          # out of ~/.job-application. Those need the user's own documents and
-          # a local Chrome, so they stay on the laptop. Listing the exclusions
-          # rather than the inclusions means a new test file is picked up here
-          # the moment it is added.
-          suite=$(ls tests/test_*.py \
-            | sed 's|tests/||; s|\.py$||' \
-            | grep -vE '^(test_resume_pdf|test_resume_build)$' \
-            | sed 's|^|tests.|')
-          python3 -m unittest $suite
+        # The same command CLAUDE.md's Verification section tells a person to
+        # run. One command in both places means CI and the laptop cannot drift
+        # into testing different sets, which a hand-maintained module list did.
+        run: python3 -m unittest discover -s tests -t tests -v
 
       - name: Node tests
         run: node --test tests/*.test.mjs
 
       - name: Syntax
         run: |
-          python3 -m py_compile scripts/*.py deploy/api/page.py
+          python3 -m py_compile scripts/*.py deploy/api/page.py \
+            packages/schema/*.py
           bash -n deploy/oci/setup.sh

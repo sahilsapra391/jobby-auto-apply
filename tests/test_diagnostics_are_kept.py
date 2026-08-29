@@ -24,6 +24,20 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+# Every directory holding product Python, not just the one that held it when
+# this was written. `packages/` arrived with the v2 rebuild and `packages/runner`
+# is where Phase 4 puts the process that launches Chrome and the provider CLIs,
+# which is exactly the code this rule exists for. A guard scoped to the
+# directory that happened to exist on the day it was written is a guard that
+# stops applying the moment the tree grows, silently and while still passing.
+AUDITED = (SCRIPTS, ROOT / "packages")
+
+
+def audited_modules():
+    for root in AUDITED:
+        if root.is_dir():
+            yield from sorted(root.rglob("*.py"))
+
 LAUNCHERS = {"run", "Popen", "check_output", "call", "check_call"}
 
 # Six inherit stderr, which reaches the service log and is therefore readable.
@@ -53,10 +67,10 @@ def launches(path):
 
 
 class NoChildStderrIsThrownAway(unittest.TestCase):
-    def test_no_subprocess_in_scripts_discards_its_stderr(self):
+    def test_no_subprocess_in_product_code_discards_its_stderr(self):
         discarded = [
             f"{path.name}:{line}"
-            for path in sorted(SCRIPTS.glob("*.py"))
+            for path in audited_modules()
             for line, is_discarded in launches(path)
             if is_discarded and f"{path.name}:{line}" not in DISCARD_ALLOWED
         ]
@@ -68,10 +82,22 @@ class NoChildStderrIsThrownAway(unittest.TestCase):
 
     def test_the_audit_actually_found_the_launches_it_claims_to_check(self):
         """A checker that matches nothing passes for the wrong reason."""
-        total = sum(
-            1 for path in SCRIPTS.glob("*.py") for _ in launches(path)
-        )
+        total = sum(1 for path in audited_modules() for _ in launches(path))
         self.assertGreater(total, 50, f"only {total} subprocess launches found")
+
+    def test_every_audited_directory_that_exists_is_actually_walked(self):
+        """The floor above is met by scripts/ alone, so a `packages/` that
+        silently stopped being walked would not move it. This is the half that
+        notices."""
+        walked = {p.parent for p in audited_modules()}
+        for root in AUDITED:
+            if not root.is_dir():
+                continue
+            has_python = any(root.rglob("*.py"))
+            if has_python:
+                self.assertTrue(
+                    any(str(d).startswith(str(root)) for d in walked),
+                    f"{root} holds Python and is not being audited")
 
     def test_it_would_catch_a_discarded_stderr(self):
         """The negative control, since the rule is the whole point."""
