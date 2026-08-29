@@ -108,8 +108,8 @@ MATCH_WEIGHTS = dict(match_score.WEIGHTS)
 # the client fell back to seven days — a board quietly showing a tenth of what
 # the saved search asked for, with nothing on screen saying so.
 #
-# "Any time" is gone rather than relabelled. Nothing older than two months is
-# ingested or kept, so "all" and "60d" name the same window, and two chips for
+# "Any time" is gone rather than relabelled. Nothing older than thirty days is
+# ingested or kept, so "all" and "30d" name the same window, and two chips for
 # one window is a choice the user cannot get right.
 SCOPE_OPTIONS = [("title", "Title only"),
                  ("title+description", "Title and description")]
@@ -117,7 +117,7 @@ SCOPE_OPTIONS = [("title", "Title only"),
 SORT_OPTIONS = [("new", "Newest"), ("score", "Match %")]
 
 DATE_WINDOWS = [("6h", "6 hours"), ("24h", "24 hours"), ("7d", "7 days"),
-                ("14d", "14 days"), ("30d", "30 days"), ("60d", "2 months")]
+                ("14d", "14 days"), ("30d", "30 days")]
 WORKPLACES = [("remote", "Remote"), ("hybrid", "Hybrid"), ("onsite", "Onsite")]
 EXPERIENCE_OPTIONS = [("", "Open to all"), ("0", "No experience"), ("1", "Up to 1 year"),
                       ("2", "Up to 2 years"), ("3", "Up to 3 years"),
@@ -1354,14 +1354,14 @@ SCRIPT = r"""
     MIDDLE_EAST: ['AE','SA','QA','KW','BH','OM','JO','EG'],
     SEA: ['SG','MY','PH','ID','TH','VN']
   };
-  // The widest chip is 60 days, not null. Null meant "skip the date check",
+  // The widest chip is 30 days, not null. Null meant "skip the date check",
   // which was only ever safe because the payload is already inside the
-  // ceiling, and a chip that says two months while applying no limit lies.
-  // 'all' is kept for a search saved before the ceiling existed; it names the
-  // same window as '60d' now. Null would mean "skip the date check", and a
-  // chip that says two months while applying no limit lies.
+  // ceiling, and a chip claiming a window while applying no limit lies.
+  // 'all' and '60d' are kept for searches saved before this ceiling; both name
+  // the same window as '30d' now, so an old saved search narrows rather than
+  // silently showing records the store no longer keeps.
   var DAYS = { '6h': 0.25, '24h': 1, '7d': 7, '14d': 14, '30d': 30,
-               '60d': 60, all: 60 };
+               '60d': 30, all: 30 };
   // The sorts that have a branch below. Kept beside them on purpose: an
   // option with no arm is the bug this list exists to make impossible.
   var SORTS = ['new', 'score'];

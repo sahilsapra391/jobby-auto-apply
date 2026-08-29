@@ -586,11 +586,12 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
         self.assertEqual(hide["ids"], ["b"])
 
     def test_sorting_by_newest_reorders(self):
-        # Both inside the two-month ceiling: this is about the sort, and a
-        # fixture that the date filter drops would pass for the wrong reason.
-        # The sort is named on both runs rather than leaned on as a default,
-        # because the shipped default has moved once already.
-        jobs = [self.job("old", pa="2026-07-01", sc=95),
+        # Both inside the thirty-day ceiling: this is about the sort, and a
+        # fixture the date filter drops would pass for the wrong reason. The
+        # sort is named on both runs rather than leaned on as a default,
+        # because the shipped default has moved once already, and the dates
+        # moved when the ceiling came in from two months to thirty days.
+        jobs = [self.job("old", pa="2026-08-05", sc=95),
                 self.job("new", pa="2026-08-18", sc=10)]
         self.assertEqual(self.run_script(jobs, {"jb-sort": "score"})["ids"],
                          ["old", "new"])
@@ -598,8 +599,10 @@ class FilterBehaviourTests(ScriptHarness, unittest.TestCase):
                          ["new", "old"])
 
     def test_newest_never_substitutes_discovery_time_for_posted_date(self):
+        # Inside the ceiling, so what is being tested is the sort's refusal to
+        # read discovery time as a posting date, not the date filter.
         jobs = [self.job("unknown", pa="", fs="2026-08-20"),
-                self.job("dated", pa="2026-07-01", fs="2026-07-01")]
+                self.job("dated", pa="2026-08-05", fs="2026-08-05")]
         out = self.run_script(jobs, {"jb-sort": "new"})
         self.assertEqual(out["ids"], ["dated", "unknown"])
         self.assertIn("Posted date unknown", out["text"])
@@ -915,7 +918,7 @@ class DateVocabularyTests(ScriptHarness, unittest.TestCase):
         offered = dict(found_lane.DATE_WINDOWS)
         for name in search_config.POSTED_WITHIN:
             if name == "all":
-                continue      # a pre-ceiling save; it names the same window as 60d
+                continue      # a pre-ceiling save; it names the same window as 30d
             with self.subTest(window=name):
                 self.assertIn(name, offered)
 
@@ -929,7 +932,7 @@ class DateVocabularyTests(ScriptHarness, unittest.TestCase):
         # Never to nothing: an unchecked set reads to the client as seven days.
         bar = found_lane.filter_bar([], {"postedWithin": "all"})
         self.assertEqual(len(re.findall(r'value="\w+" checked', bar)), 1)
-        self.assertIn('value="60d" checked', bar)
+        self.assertIn('value="30d" checked', bar)
 
     def test_the_client_knows_every_chip_value(self):
         script = found_lane.SCRIPT
@@ -1160,7 +1163,7 @@ class ViewPersistenceTests(ScriptHarness, unittest.TestCase):
         # Not to a hardcoded week. The marker Clear looks for was silently never
         # emitted, so nothing was checked afterwards and the client fell back to
         # seven days — a two-month search quietly narrowed by pressing Clear.
-        for window in ("60d", "30d", "24h"):
+        for window in ("30d", "14d", "24h"):
             with self.subTest(window=window):
                 bar = found_lane.filter_bar([], {"postedWithin": window})
                 self.assertIn(f'value="{window}" checked data-shipped', bar)

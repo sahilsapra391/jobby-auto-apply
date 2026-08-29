@@ -439,13 +439,26 @@ class PruneTests(unittest.TestCase):
     def test_the_agreed_volume_knobs_are_what_ships(self):
         """Both numbers are Sahil's calls, not defaults anyone may drift.
 
-        STORED_CAP moved from 3000 to 50000 on 2026-08-25, after the store was
-        found sitting exactly on the old cap with 316 companies represented
-        against 546 known: a ring buffer at its ceiling, evicting on every
-        sweep. NEW_MAX_AGE_DAYS is unchanged and is a different clock, how long
-        an unacted-on job survives after it stops being seen.
+        STORED_CAP went 3000 to 50000 on 2026-08-25, after the store was found
+        sitting exactly on the old cap with 316 companies represented against
+        546 known: a ring buffer at its ceiling, evicting on every sweep. It
+        went to 200000 on 2026-08-29 with the keyword and score gates removed,
+        so the board holds every posting inside the window rather than a slice
+        of them.
+
+        NEW_MAX_AGE_DAYS is a different clock and is unchanged: how long an
+        unacted-on job survives after it stops being seen, not how old a
+        posting may be when it arrives.
+
+        **The cap is no longer the binding constraint and the test says so
+        here, because this is where someone will come to raise it again.**
+        Measured on the real store at 15,400 records: 5,773 bytes each, so
+        200,000 is about 1.1 GB of jobs.json and roughly 4.7 GB resident to
+        parse, against 16 GB on the machine that runs it, with several
+        processes loading the whole file. Raising this further is not a config
+        change, it is `docs/plans/multi-tenant-architecture.md` or SQLite.
         """
-        self.assertEqual(jobs_store.STORED_CAP, 50000)
+        self.assertEqual(jobs_store.STORED_CAP, 200_000)
         self.assertEqual(jobs_store.NEW_MAX_AGE_DAYS, 30)
 
 
@@ -508,8 +521,12 @@ class SearchConfigTests(TempStore):
         self.assertEqual(search_config.DEFAULTS["roleCategories"], [])
         self.assertIsNone(search_config.DEFAULTS["maxExperienceYears"])
 
-    def test_the_agreed_volume_knob_is_the_default(self):
-        self.assertEqual(search_config.DEFAULTS["minScoreToKeep"], 40)
+    def test_no_score_floor_ships_by_default(self):
+        """0, not 40. The score still sorts the board; it no longer decides
+        what reaches it. A floor filters invisibly, before the reader ever sees
+        the posting, and the point of the platform is to hold everything inside
+        the date window and let them filter."""
+        self.assertEqual(search_config.DEFAULTS["minScoreToKeep"], 0)
 
     def test_no_saved_config_reads_as_none_not_as_defaults(self):
         # The hourly scheduler arms only once a search exists. Returning the
@@ -580,15 +597,22 @@ class SearchConfigTests(TempStore):
                          search_config.MAX_AGE_DAYS)
 
     def test_the_longer_windows_exist(self):
-        # A dated posting older than two months is not worth bringing in; an
+        # A dated posting older than thirty days is not worth bringing in; an
         # undated one still is, which is what includeUnknowns.postedAt governs.
-        # 90d was the old ceiling and is no longer offered; a config that still
-        # carries it is read as 60d rather than rejected.
-        self.assertEqual(search_config.posted_within_days({"postedWithin": "60d"}), 60)
-        self.assertEqual(
-            search_config.validate(dict(search_config.DEFAULTS,
-                                        postedWithin="90d"))["postedWithin"], "60d")
-        self.assertEqual(search_config.posted_within_days({"postedWithin": "60d"}), 60)
+        # 90d and 60d were both ceilings once and neither is offered now; a
+        # config still carrying either is narrowed rather than rejected.
+        self.assertEqual(search_config.posted_within_days({"postedWithin": "30d"}), 30)
+        for retired in ("60d", "90d"):
+            with self.subTest(window=retired):
+                self.assertEqual(
+                    search_config.validate(dict(search_config.DEFAULTS,
+                                                postedWithin=retired))["postedWithin"],
+                    "30d")
+                # And through the raw path too, which does not run validate.
+                # Missing the table here means the seven-day default, which is
+                # a board quietly showing a quarter of the saved window.
+                self.assertEqual(
+                    search_config.posted_within_days({"postedWithin": retired}), 30)
 
     def test_the_stored_cap_can_be_turned_off_but_not_set_absurdly_low(self):
         self.assertIsNone(search_config.validate({"storedCap": None})["storedCap"])

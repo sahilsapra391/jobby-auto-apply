@@ -643,15 +643,18 @@ class TwoMonthCeilingTests(unittest.TestCase):
                     search_config.posted_within_days({"postedWithin": name}),
                     search_config.MAX_AGE_DAYS)
 
-    def test_ninety_days_is_no_longer_on_offer(self):
-        self.assertNotIn("90d", search_config.POSTED_WITHIN)
+    def test_the_retired_windows_are_no_longer_on_offer(self):
+        for retired in ("90d", "60d"):
+            self.assertNotIn(retired, search_config.POSTED_WITHIN)
 
     def test_a_config_saved_before_the_ceiling_still_loads(self):
-        # There is a 90d config on disk in the live store. Raising on it would
-        # break the board rather than narrowing it.
-        out = search_config.validate(dict(search_config.DEFAULTS,
-                                          postedWithin="90d"))
-        self.assertEqual(out["postedWithin"], "60d")
+        # Configs carrying a retired window exist on disk in the live store.
+        # Raising on one would break the board rather than narrowing it.
+        for retired in ("90d", "60d"):
+            with self.subTest(window=retired):
+                out = search_config.validate(dict(search_config.DEFAULTS,
+                                                  postedWithin=retired))
+                self.assertEqual(out["postedWithin"], "30d")
 
     def test_a_posting_past_the_ceiling_is_gated_out_even_on_all(self):
         config = dict(search_config.DEFAULTS, postedWithin="all")

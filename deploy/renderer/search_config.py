@@ -43,11 +43,16 @@ REGION_PACKS = {
 # usually filled or abandoned, and applying to it wastes a slot. `all` means
 # "everything the board holds", which is already inside the ceiling because
 # nothing older is ever ingested or kept.
-MAX_AGE_DAYS = 60
+# Thirty days, because a posting older than that is usually a requisition
+# nobody is working: still listed, often already filled, and it crowds out the
+# fresh ones. The windows offered are the ones worth asking for.
+MAX_AGE_DAYS = 30
 POSTED_WITHIN = {"6h": 0.25, "24h": 1, "7d": 7, "14d": 14, "30d": 30,
-                 "60d": 60, "all": None}
+                 "all": None}
 # Configs saved before the ceiling existed. Read, never offered.
-LEGACY_POSTED_WITHIN = {"90d": "60d"}
+# A saved search naming a window that no longer exists is migrated rather than
+# refused. Both of these now mean the widest window there is.
+LEGACY_POSTED_WITHIN = {"90d": "30d", "60d": "30d"}
 SEARCH_SCOPES = ("title", "title+description")
 # How the board is ordered and whether it hides aggregator copies. These are
 # view state rather than anything ingest reads, but they are still "the search
@@ -93,7 +98,11 @@ DEFAULTS = {
     "directOnly": True,
     "includeUnknowns": {key: True for key in UNKNOWN_KEYS},
     "sponsorsVisaOnly": False,
-    "minScoreToKeep": 40,
+    # No score floor. The board is meant to hold every real posting inside the
+    # date window, and let the reader filter; a floor here decides for them,
+    # invisibly, before the posting ever reaches the page. The score is still
+    # computed and still sorts the board -- it just no longer gates.
+    "minScoreToKeep": 0,
     # Six sweeps a day, Sahil's call: hourly was more polite traffic than the
     # boards change, and a four-hour gap still puts a morning posting on the
     # board the same morning.
@@ -242,13 +251,23 @@ def expand_locations(config):
 
 
 def posted_within_days(config):
-    """The date window in days. Never wider than the two-month ceiling.
+    """The date window in days. Never wider than the ceiling.
 
     There is no "no limit" answer any more. `all` used to return None and every
     caller read that as "keep everything", which is how a nine-month-old
     posting reached the board.
+
+    Retired window names migrate here as well as in `validate`, because this
+    reads a raw config and not everything that reaches it has been validated.
+    Without that, a search saved as "60d" missed the table and took the
+    seven-day default: a board showing a quarter of what the saved search
+    asked for, with nothing on screen saying so. That is the same silent
+    narrowing the chip list was fixed for once already, arriving through a
+    different door.
     """
-    days = POSTED_WITHIN.get(config.get("postedWithin"), 7)
+    window = LEGACY_POSTED_WITHIN.get(config.get("postedWithin"),
+                                      config.get("postedWithin"))
+    days = POSTED_WITHIN.get(window, 7)
     return MAX_AGE_DAYS if days is None else min(days, MAX_AGE_DAYS)
 
 

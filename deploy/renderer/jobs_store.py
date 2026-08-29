@@ -54,7 +54,18 @@ import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 # The board does not carry this. dashboard.publishable_jobs publishes the
 # EMBED_CAP slice plus the true totals, because KV tops out long before this
 # number does.
-STORED_CAP = 50000
+# 200,000, because the goal is every posting inside the thirty-day window
+# rather than a curated slice. Measured on the real store at 15,400 records:
+# 5,773 bytes each on disk, so 200,000 is about 1.1 GB of jobs.json, and
+# `load_jobs` needs roughly 4.7 GB resident to parse it.
+#
+# That memory figure is the real ceiling, not the disk one, and it is not a
+# number this constant can fix: ingest, publish, dashboard and sync_board each
+# load the whole file. Somewhere well before this cap the store has to stop
+# being one JSON document -- SQLite, or the relational store in
+# docs/plans/multi-tenant-architecture.md. Raising this further without doing
+# that trades a bounded board for an unbootable daemon.
+STORED_CAP = 200_000
 # A `new` job nobody has acted on is stale well before it is dead, and the
 # posting behind it usually is too.
 NEW_MAX_AGE_DAYS = 30

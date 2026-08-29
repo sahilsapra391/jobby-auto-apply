@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -396,7 +396,12 @@ class ApplyOutcomeTests(ApplyFixtureMixin, unittest.TestCase):
 
 
 class ScanRunnerTests(unittest.TestCase):
-    SCAN_DATE = "2026-08-23"
+    # Today, not a date typed once. The pipeline drops a candidate whose
+    # liveness verification has aged out, so a hardcoded scan date is a test
+    # that passes until the calendar walks past it and is red every run after.
+    # This one had already started: "2026-08-23" went stale on its own and the
+    # failure looks like a pipeline fault rather than a fixture that expired.
+    SCAN_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def candidate(self, **changes):
         value = {
@@ -406,7 +411,8 @@ class ScanRunnerTests(unittest.TestCase):
             "ats": "greenhouse",
             "region": "US",
             "source": "company careers",
-            "postedDate": "2026-08-22",
+            "postedDate": (datetime.now(timezone.utc)
+                           - timedelta(days=1)).strftime("%Y-%m-%d"),
             "postedAgo": "1 day ago",
             "extraction": {
                 "location": "New York, NY",
