@@ -775,6 +775,20 @@ class TickHarnessMixin:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
         self.run_calls = []
+        # `do_not_start` refuses every application while no slot browser holds a
+        # Google session, which is the point of that gate and is true of any
+        # machine running the suite under a redirected HOME: there are no Chrome
+        # profiles there to be signed in. Neutralised once, here, so a tick test
+        # written next year inherits it instead of failing with seven mystery
+        # assertion errors about claim_one.
+        #
+        # The gate's own behaviour is tested in
+        # tests/test_browsers_stay_signed_in.py, against real profile
+        # directories, which is where it belongs.
+        signed_in = mock.patch.object(
+            watch.browser_identity, "any_signed_in", return_value=True)
+        signed_in.start()
+        self.addCleanup(signed_in.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
