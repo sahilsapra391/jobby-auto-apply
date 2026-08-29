@@ -213,6 +213,27 @@ _STAGED = []
 DOCUMENT_SUFFIXES = frozenset((".pdf", ".html", ".htm", ".docx", ".txt"))
 
 
+def is_headed(slot):
+    """Is this slot's browser showing a window? Read from the process, not
+    remembered, for the same reason the drift check reads the command line:
+    what a process was started with is the only thing that is true about it."""
+    return "--headless=new" not in (running_launch(slot) or [])
+
+
+def show(slot):
+    """Relaunch a slot with a window, for open-and-fill. Returns what happened.
+
+    A no-op when it is already headed, so pressing the button twice does not
+    take the browser away from the form the user is looking at.
+    """
+    if running(slot) and is_headed(slot):
+        return {"slot": slot, "headed": True, "restarted": False}
+    stop_slot(slot)
+    result = serve(slot, headed=True)
+    result["restarted"] = True
+    return result
+
+
 def discard_staged():
     """Remove every set of PDFs this process staged. Returns what it removed."""
     out = []
@@ -539,7 +560,7 @@ def running(slot=None):
     return _cdp("/json/version", slot) is not None
 
 
-def _launch_argv(slot, profile):
+def _launch_argv(slot, profile, headed=False):
     """The slot browser's launch command.
 
     --use-mock-keychain is load-bearing and permanent. Without it Chrome asks
@@ -552,11 +573,24 @@ def _launch_argv(slot, profile):
     or any other user's. tests/test_chrome_never_touches_the_keychain.py pins
     the flag here and on the PDF renderer, the repo's only two launch sites.
     """
+    # Headless unless somebody asked to watch. Orchestration does not need a
+    # window: eight visible Chromes are eight windows on the user's screen for
+    # work nobody is looking at, and the same profile, the same CDP port and
+    # the same file uploads all behave the same either way.
+    #
+    # `--headless=new` rather than the old mode, which was a different browser
+    # with different behaviour around uploads and rendering. The new mode is
+    # the same Chrome with no window.
+    #
+    # Headed stays reachable because there is one moment it is the point: an
+    # application lands in Needs you, the user presses open-and-fill, and then
+    # they want to see the form. That path relaunches the slot with headed=True.
     return [CHROME,
             f"--remote-debugging-port={port_for(slot)}",
             f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check",
             "--use-mock-keychain",
+            *([] if headed else ["--headless=new"]),
             # No on-device AI model, in any of these profiles.
             #
             # Chrome downloads its own local model per profile, into
@@ -654,6 +688,14 @@ def running_launch(slot):
     return []
 
 
+# Flags that are a deliberate choice per launch rather than configuration the
+# slot should carry. A browser opened headed for open-and-fill is doing exactly
+# what was asked of it, and reporting it as drifted would fire the flags ping
+# every time the user looked at a form -- an alarm that cries wolf on the
+# feature it is meant to protect.
+PER_LAUNCH_FLAGS = frozenset(("--headless=new",))
+
+
 def missing_launch_flags(slot):
     """Flags _launch_argv sets now that this slot's browser was not given.
 
@@ -665,7 +707,7 @@ def missing_launch_flags(slot):
     if not argv:
         return []
     wanted = [item for item in _launch_argv(slot, _profile_dir(slot))
-              if item.startswith("--")]
+              if item.startswith("--") and item not in PER_LAUNCH_FLAGS]
     return [flag for flag in wanted if flag not in argv]
 
 
@@ -709,8 +751,14 @@ def stop_slot(slot, timeout=10):
     return _wait_until_down(slot, timeout)
 
 
-def serve(slot=None):
+def serve(slot=None, headed=False):
     """Start a slot's browser if it is not already up.
+
+    `headed` is for the one moment a window is the point: the user pressing
+    open-and-fill on something parked in Needs you. Everything else runs
+    headless. A slot already up in the wrong mode is reported rather than
+    silently reused, because "it was already running" is how somebody ends up
+    watching an empty screen.
 
     Detached and in its own session, so it survives the run that started it and
     is not killed along with a runner's process group when an application is
@@ -719,7 +767,8 @@ def serve(slot=None):
     """
     slot = slot or SLOTS[0]
     if running(slot):
-        return {"started": False, "alreadyRunning": True, "slot": slot, "cdp": cdp_for(slot)}
+        return {"started": False, "alreadyRunning": True, "slot": slot,
+                "cdp": cdp_for(slot), "headed": is_headed(slot)}
     ok, why = available()
     if not ok:
         return {"started": False, "error": why}
@@ -736,14 +785,15 @@ def serve(slot=None):
     handle = open(log, "wb")
     try:
         subprocess.Popen(
-            _launch_argv(slot, profile),
+            _launch_argv(slot, profile, headed=headed),
             stdout=handle, stderr=subprocess.STDOUT,
             start_new_session=True, env=toolpath.enriched_env())
     finally:
         handle.close()
     for _ in range(READY_TIMEOUT * 4):
         if running(slot):
-            return {"started": True, "slot": slot, "cdp": cdp_for(slot)}
+            return {"started": True, "slot": slot, "cdp": cdp_for(slot),
+                    "headed": headed}
         time.sleep(0.25)
     return {"started": False, "slot": slot,
             "error": f"Chrome did not open a CDP port within {READY_TIMEOUT}s"}

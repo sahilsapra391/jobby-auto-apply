@@ -15,6 +15,7 @@ and a third launch site must too.
 """
 
 import importlib.util
+import inspect
 import pathlib
 import sys
 import unittest
@@ -100,6 +101,45 @@ class NoOnDeviceModelTests(unittest.TestCase):
             text = (root / name).read_text()
             with self.subTest(module=name):
                 self.assertIn("OptimizationGuideOnDeviceModel", text)
+
+
+
+class HeadlessByDefaultTests(unittest.TestCase):
+    """Orchestration runs without a window; a window is for being watched.
+
+    Eight visible Chromes are eight windows on the user's screen for work
+    nobody is looking at. The one moment a window is the point is open-and-fill
+    on something parked in Needs you, and that path asks for it.
+    """
+
+    def test_a_slot_is_headless_unless_asked(self):
+        argv = browser._launch_argv("apply-1", "/tmp/profile")
+        self.assertIn("--headless=new", argv)
+
+    def test_the_new_headless_mode_not_the_old_one(self):
+        """The old mode was a different browser with different behaviour around
+        uploads and rendering. The new one is the same Chrome with no window,
+        which is what makes it safe for a path that attaches real files."""
+        argv = browser._launch_argv("apply-1", "/tmp/profile")
+        self.assertNotIn("--headless", argv)
+        self.assertIn("--headless=new", argv)
+
+    def test_headed_drops_the_flag_entirely(self):
+        argv = browser._launch_argv("apply-1", "/tmp/profile", headed=True)
+        self.assertFalse([a for a in argv if a.startswith("--headless")])
+
+    def test_the_mode_is_read_from_the_process_not_remembered(self):
+        """Same reason the drift check reads the command line: what a process
+        was started with is the only thing that is true about it."""
+        source = inspect.getsource(browser.is_headed)
+        self.assertIn("running_launch", source)
+
+    def test_showing_a_slot_already_headed_does_not_restart_it(self):
+        """Pressing open-and-fill twice must not take the browser away from the
+        form the user is looking at."""
+        source = inspect.getsource(browser.show)
+        self.assertIn("is_headed", source)
+        self.assertLess(source.index("is_headed"), source.index("stop_slot"))
 
 
 if __name__ == "__main__":

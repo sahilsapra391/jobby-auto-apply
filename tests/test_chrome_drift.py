@@ -425,9 +425,18 @@ class RunningLaunchTests(unittest.TestCase):
     # Every flag the launch site expects, so these fixtures do not have to be
     # rewritten each time one is added -- and so a new flag is automatically
     # covered by the drift check rather than needing a test somebody remembers.
+    # What a browser started before today would be missing: everything the
+    # launch site sets now, minus what the baseline fixture already carries and
+    # minus the per-launch choices. Derived rather than typed, so a flag added
+    # to the launch site is covered here without anyone widening a list.
     EXPECTED = [flag for flag in browser._launch_argv("apply-1", "/tmp/p")
-                if flag.startswith("--use-mock-keychain")
-                or flag.startswith("--disable-features=")]
+                if flag.startswith("--")
+                and flag not in browser.PER_LAUNCH_FLAGS
+                # Inline rather than a sibling attribute: a comprehension in a
+                # class body cannot see the class's other names.
+                and not flag.startswith(("--remote-debugging-port",
+                                         "--user-data-dir", "--no-first-run",
+                                         "--no-default-browser-check"))]
 
     def test_a_main_started_before_the_flags_reports_them_missing(self):
         """The live apply-1 case on 2026-08-28, reconstructed, and now also the
