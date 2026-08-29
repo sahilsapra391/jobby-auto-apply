@@ -2,11 +2,11 @@
 
 These need a database, named by `JOBBY_TEST_DATABASE_URL`. CI supplies one as a
 service container, so the skip below never fires there -- and
-`tests/test_ci_workflow.py` asserts that, because a suite that reports "ok"
+`tests/test_ci_covers_everything.py` asserts that, because a suite that reports "ok"
 while every database test skipped is the failure this repo keeps rediscovering.
 
-Every test runs inside its own `mig_test_<hex>` schema, created in setUp and
-dropped in tearDown. Nothing here can reach `public`, which matters because the
+Every test runs inside its own scratch schema, created in setUp and dropped
+afterwards by pgtest.SchemaCase. Nothing here can reach `public`, which matters because the
 one database available on the developer's machine is the live Neon one holding
 15,400 real jobs.
 
@@ -283,6 +283,73 @@ class LiveMigrationTests(pgtest.SchemaCase):
         self.assertEqual(row["name"], "0001_a.sql")
         self.assertTrue(row["checksum"])
         self.assertIsNotNone(row["applied_at"])
+
+
+class StatusIsHonestAboutDisagreement(pgtest.SchemaCase):
+    """`status` is the command a deploy pipeline gates on, so its answer has
+    to be in the exit code and not only in the text it printed.
+
+    The first version printed `CHANGED SINCE APPLIED` and returned 0. It was
+    found by checking the exit status rather than reading the output, which is
+    the same shape as every other guard here: the message was right and the
+    thing a machine reads was wrong.
+
+    `status_rows` rather than `main()` because the CLI connects with the
+    default search_path, and on the one database available here that is
+    `public` on the live store.
+    """
+
+    prefix = "mig_status"
+
+    def setUp(self):
+        import shutil, tempfile                          # noqa: E401
+        super().setUp()
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def write(self, name, sql):
+        (self.dir / name).write_text(sql, encoding="utf-8")
+
+    def test_a_pending_migration_is_not_a_disagreement(self):
+        self.write("0001_a.sql", "create table a (id int);")
+        rows, agrees = migrate.status_rows(self.conn, self.dir)
+        self.assertTrue(agrees, "pending is normal and must exit 0")
+        self.assertEqual(rows[0][2], "pending")
+
+    def test_an_applied_migration_reports_when_it_ran(self):
+        self.write("0001_a.sql", "create table a (id int);")
+        migrate.run(self.conn, self.dir)
+        rows, agrees = migrate.status_rows(self.conn, self.dir)
+        self.assertTrue(agrees)
+        self.assertNotIn(rows[0][2], ("pending", "CHANGED SINCE APPLIED"))
+
+    def test_drift_is_a_disagreement(self):
+        self.write("0001_a.sql", "create table a (id int);")
+        migrate.run(self.conn, self.dir)
+        self.write("0001_a.sql", "create table a (id bigint);")
+        rows, agrees = migrate.status_rows(self.conn, self.dir)
+        self.assertFalse(agrees, "an edited applied migration must exit non-zero")
+        self.assertEqual(rows[0][2], "CHANGED SINCE APPLIED")
+
+    def test_a_missing_file_is_a_disagreement(self):
+        self.write("0001_a.sql", "create table a (id int);")
+        migrate.run(self.conn, self.dir)
+        (self.dir / "0001_a.sql").unlink()
+        self.write("0002_b.sql", "create table b (id int);")
+        rows, agrees = migrate.status_rows(self.conn, self.dir)
+        self.assertFalse(agrees)
+        self.assertIn("MISSING FROM DISK", [r[2] for r in rows])
+
+    def test_rows_come_back_in_version_order_including_the_missing_one(self):
+        """A missing migration appended after the present ones reads as the
+        newest, which is the opposite of what it is."""
+        self.write("0001_a.sql", "create table a (id int);")
+        self.write("0002_b.sql", "create table b (id int);")
+        migrate.run(self.conn, self.dir)
+        (self.dir / "0001_a.sql").unlink()
+        rows, _ = migrate.status_rows(self.conn, self.dir)
+        self.assertEqual([r[0] for r in rows], sorted(r[0] for r in rows))
+        self.assertEqual(rows[0][2], "MISSING FROM DISK")
 
 
 class ShippedMigrationsApplyToAnEmptyDatabase(pgtest.SchemaCase):

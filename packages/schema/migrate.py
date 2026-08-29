@@ -487,6 +487,42 @@ def _reconcile(known, have):
                 f"produces a schema no fresh database will reproduce.")
 
 
+def status_rows(conn, directory=None):
+    """(version, name, state) per migration, and whether the two agree.
+
+    States: `pending`, an ISO timestamp, `CHANGED SINCE APPLIED`,
+    `MISSING FROM DISK`. `agrees` is false for either of the last two.
+
+    Separate from `main` so the exit code can be tested without running the
+    CLI, which connects with the default search_path and would do its work in
+    `public` on the developer's live database. A `status` that printed
+    `CHANGED SINCE APPLIED` and exited 0 shipped in the first version of this
+    file, and was found by checking the exit code rather than the output: a
+    pipeline gated on `status` would have called a divergent schema healthy.
+    """
+    known = applied(conn)
+    have = discover(directory)
+    rows, agrees = [], True
+
+    for migration in have:
+        record = known.get(migration.version)
+        if record is None:
+            state = "pending"
+        elif record["checksum"] != migration.checksum:
+            state = "CHANGED SINCE APPLIED"
+            agrees = False
+        else:
+            state = record["applied_at"].isoformat(timespec="seconds")
+        rows.append((migration.version, migration.name, state))
+
+    for version in sorted(set(known) - {m.version for m in have}):
+        rows.append((version, known[version]["name"], "MISSING FROM DISK"))
+        agrees = False
+
+    rows.sort(key=lambda r: r[0])
+    return rows, agrees
+
+
 def plan(conn, directory=None, allow_contract=False):
     """What `run` would apply, without applying it. Same refusals."""
     have = discover(directory)
@@ -558,22 +594,12 @@ def main(argv=None):
 
     try:
         if args.command == "status":
-            known = applied(conn)
-            have = discover(directory)
-            for migration in have:
-                record = known.get(migration.version)
-                if record is None:
-                    mark = "pending"
-                elif record["checksum"] != migration.checksum:
-                    mark = "CHANGED SINCE APPLIED"
-                else:
-                    mark = record["applied_at"].isoformat(timespec="seconds")
-                print(f"{migration.version:04d}  {migration.name:<44} {mark}")
-            missing = sorted(set(known) - {m.version for m in have})
-            for version in missing:
-                print(f"{version:04d}  {known[version]['name']:<44} "
-                      f"MISSING FROM DISK")
-            return 1 if missing else 0
+            rows, agrees = status_rows(conn, directory)
+            for version, name, state in rows:
+                print(f"{version:04d}  {name:<44} {state}")
+            # Pending is normal and exits 0. Drift and a missing file are the
+            # database and the repository disagreeing, which is never normal.
+            return 0 if agrees else 1
 
         if args.command == "plan":
             pending = plan(conn, directory, args.allow_contract)
