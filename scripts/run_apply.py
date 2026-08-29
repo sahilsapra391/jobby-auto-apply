@@ -525,7 +525,7 @@ def _refuse_duplicate(application_id, summary):
     raise ApplyRefusal("the duplicate guard did not return a safe verdict")
 
 
-def main():
+def _run(argv=None):
     ap = argparse.ArgumentParser(description="Fill one application with prepared documents.")
     ap.add_argument(
         "--id",
@@ -539,7 +539,7 @@ def main():
     )
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the exact prompt only")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.check:
         pending = queue("list")
@@ -998,6 +998,33 @@ def main():
         "log": str(log),
     }, indent=2))
     return result_code
+
+
+def main(argv=None):
+    """Run the apply, and never leave the staged PDFs behind.
+
+    The copies exist because a file chooser needs a path on a filesystem; R2
+    cannot be the source at the moment of submission. They do not need to
+    outlive the run, and until now they did -- 151 documents were sitting in
+    the tree with R2 already holding every one of them.
+
+    In a `finally` rather than at the end of the happy path, because `_run`
+    returns from a dozen places and the runs whose documents matter most are
+    the ones that took an early one.
+    """
+    try:
+        return _run(argv)
+    finally:
+        discarded = browser.discard_staged()
+        removed = [f for d in discarded for f in d.get("removed", [])]
+        kept = [f for d in discarded for f in d.get("kept", [])]
+        if removed or kept:
+            print(json.dumps({"event": "staged_documents_discarded",
+                              "removed": len(removed),
+                              "bytes": sum(f.get("bytes", 0) for f in removed),
+                              # Loud, because a copy that will not go away is
+                              # the whole failure this is here to prevent.
+                              "kept": kept}, sort_keys=True), file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -202,6 +202,81 @@ def _copy_verified_pdf(source_value, destination, expected_size, expected_digest
     }
 
 
+# Every staging this process has done, so the discard does not depend on a
+# caller remembering what it staged. run_apply.main has a dozen early returns
+# and the runs whose documents matter most are the ones that took one.
+_STAGED = []
+
+# What a staged document is. Deliberately a small allowlist rather than
+# "everything that is not activity.json": the next file written into this
+# directory should have to be named here before anything deletes it.
+DOCUMENT_SUFFIXES = frozenset((".pdf", ".html", ".htm", ".docx", ".txt"))
+
+
+def discard_staged():
+    """Remove every set of PDFs this process staged. Returns what it removed."""
+    out = []
+    while _STAGED:
+        slot, application_id = _STAGED.pop()
+        out.append(discard_application_uploads(slot, application_id))
+    return out
+
+
+def discard_application_uploads(slot, application_id):
+    """Remove the staged PDFs for one application. Returns what it deleted.
+
+    A file chooser hands the browser a path on a filesystem, so the two PDFs
+    have to exist locally at the moment of submission -- R2 cannot be the source
+    there. What does not have to happen is them staying afterwards, and until
+    now they did: 151 documents were sitting in the tree with R2 already holding
+    every one of them.
+
+    So the copy is a copy for the length of a run and no longer. This is called
+    from a `finally`, because the runs whose documents matter most are the ones
+    that ended badly, and a cleanup that only happens on the happy path is a
+    cleanup that misses exactly those.
+
+    It never raises. Losing a staged duplicate is not worth failing a run over,
+    and R2 is the record; what it does do is report, so a directory that will
+    not go away is visible rather than silently accumulating again.
+    """
+    result = {"applicationId": application_id, "removed": [], "kept": []}
+    try:
+        target = artifact_root_for(slot) / "uploads" / str(application_id)
+        if target.is_symlink() or not target.is_dir():
+            return result
+        for path in sorted(target.glob("*")):
+            # Documents only. `activity.json` lives here too, written by the
+            # firewall, and it is what tells a capability failure apart from a
+            # real park -- deleting it would trade a duplicate PDF for the
+            # ability to say why a run stopped.
+            if path.suffix.lower() not in DOCUMENT_SUFFIXES:
+                continue
+            try:
+                if path.is_file() and not path.is_symlink():
+                    size = path.stat().st_size
+                    path.unlink()
+                    result["removed"].append({"name": path.name, "bytes": size})
+                else:
+                    result["kept"].append({"name": path.name, "why": "not a plain file"})
+            except OSError as exc:
+                result["kept"].append({"name": path.name, "why": str(exc)[:120]})
+        try:
+            target.rmdir()
+        except OSError:
+            # Something else is in there -- activity.json, most likely, which
+            # the firewall writes and which is not a document.
+            pass
+        # The guarantee is checked rather than assumed: a delete that silently
+        # did nothing is the failure this exists to prevent.
+        left = [p.name for p in target.glob("*.pdf")] if target.is_dir() else []
+        if left:
+            result["kept"].extend({"name": n, "why": "still present after delete"} for n in left)
+    except OSError as exc:                        # noqa: BLE001 - reported
+        result["error"] = str(exc)[:160]
+    return result
+
+
 def stage_application_uploads(slot, application_id, artifacts):
     """Copy only the two verified PDFs into Playwright's permitted root."""
     if (
@@ -242,6 +317,9 @@ def stage_application_uploads(slot, application_id, artifacts):
                 source.get("size"),
                 source.get("sha256"),
             )
+        # Registered only once the copies are actually there, so a failed
+        # staging does not schedule a delete of somebody else's directory.
+        _STAGED.append((slot, str(application_id)))
         return staged
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
