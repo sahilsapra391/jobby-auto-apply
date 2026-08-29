@@ -27,6 +27,7 @@ import agent  # noqa: E402
 import browser  # noqa: E402
 import provider_login  # noqa: E402
 import provider_process  # noqa: E402
+import browser_identity  # noqa: E402
 import mcp_preflight  # noqa: E402
 import provider_usage  # noqa: E402
 import providers  # noqa: E402
@@ -661,6 +662,31 @@ def _run(argv=None):
         "uploadResume": upload_artifacts["resume"]["path"],
         "uploadCover": upload_artifacts["coverLetter"]["path"],
     }
+    # A Google posting in a signed-out browser cannot be filled, and finding
+    # that out after the agent has worked the form costs a park addressed to
+    # somebody who can only fix it by signing in. Checked here, next to the
+    # other capability fence, because this is the last moment before a provider
+    # is handed the slot.
+    #
+    # Narrow on purpose: `needs_google` asks whether the form is served by
+    # Google, not whether it might offer a Google button. Measured over the 88
+    # real applications in the store on 2026-08-28, it fires on 1. The other
+    # three that genuinely needed the session were verification codes mailed to
+    # the user's Gmail, which no URL predicts; those are caught after the park
+    # instead, further down.
+    if browser_identity.needs_google(posting_url) and not browser_identity.signed_in_slot(args.slot):
+        blocked = (f"{args.slot} is not signed in to Google and this posting is "
+                   f"served by Google, so nothing could be filled")
+        store(["meta-set", "--key", "blocked", "--value",
+               blocked + ". Sign in once: python3 scripts/browser.py --login "
+               "https://accounts.google.com/signin"])
+        tag_session(application_id, "parkClass", "capability")
+        _set_phase(application_id, "--restore", "--phase", "Failed", "--detail",
+                   "the slot browser has no Google session; nothing was filled")
+        print(json.dumps({"blocked": blocked, "applicationId": application_id,
+                          "slot": args.slot, "signedIn": False}, indent=2))
+        return 2
+
     try:
         advertised = mcp_preflight.check(
             browser.server_configs(args.slot, application_context)
@@ -943,6 +969,43 @@ def _run(argv=None):
                     providers.mark_unhealthy(candidate, "unavailable")
                 )
                 break
+
+            # The other direction, and the one the URL cannot predict. The agent
+            # worked the form, got as far as "we mailed you a code", and the
+            # mailbox it went to is one this browser could have opened if it
+            # were signed in. That is Jobby's fault, not a task for the user,
+            # and it reads identically to an ordinary park unless it is named.
+            #
+            # Measured over the 88 real applications on 2026-08-28: three parked
+            # exactly this way, Rekise Marine, Chainguard and JPMorganChase, all
+            # on ordinary ATS hosts. Both halves are required, so a code mailed
+            # to an address Jobby cannot read stays the user's to clear.
+            if outcome.get("terminal") == "parked" and activity.get("totalCalls"):
+                # From the session, not from `outcome`. `verify_terminal_outcome`
+                # returns ok/terminal/why/safeToRestore and has never carried
+                # pendingFields, so reading it there would have found an empty
+                # list every time and this gate would have passed its tests
+                # while never once firing.
+                parked_session = _current_session(application_id) or {}
+                blockers = " || ".join(
+                    str(f.get("question") or "")
+                    for f in (parked_session.get("pendingFields") or [])
+                    if isinstance(f, dict))
+                if (browser_identity.verification_wall(blockers)
+                        and not browser_identity.signed_in_slot(args.slot)):
+                    handle.write(
+                        f"=== {candidate} parked on a code mailed to a Google "
+                        f"mailbox while {args.slot} is signed out; recording a "
+                        f"capability failure ===\n")
+                    handle.flush()
+                    tag_session(application_id, "parkClass", "capability")
+                    store([
+                        "meta-set", "--key", "blocked", "--value",
+                        f"the form mailed a code to your Google account and "
+                        f"{args.slot} is not signed in, so the agent could not "
+                        f"read it; sign in once with: python3 scripts/browser.py "
+                        f"--login https://accounts.google.com/signin",
+                    ])
 
             if outcome.get("terminal"):
                 # Parked, submitted, cancelled or abandoned. Whatever happened,

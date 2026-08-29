@@ -52,6 +52,7 @@ import agent  # noqa: E402
 import browser  # noqa: E402
 import deploy_lock  # noqa: E402
 import document_job  # noqa: E402
+import browser_identity
 import provider_login  # noqa: E402
 import providers  # noqa: E402
 import toolpath  # noqa: E402
@@ -2029,6 +2030,22 @@ def do_not_start(aid):
     confirmation nobody has recorded yet. Starting again in that last case is
     how a form gets filled a second time under the user's name.
     """
+
+    # **The slot browsers must be signed in, and this is where that stops being
+    # negotiable.** A fresh install has signed in to nothing, so a form that
+    # wants an account gets an anonymous browser: the run reaches the wall,
+    # parks, and asks the user to go and do something setup should have asked
+    # for once. Refusing here costs a message. The alternative costs a real
+    # application filled wrong under a real name, and this is the one function
+    # every start already passes through.
+    #
+    # `any_signed_in` rather than "every slot", because clone_logins turns one
+    # into all and a fleet with one signed-in profile is one command from done.
+    if not browser_identity.any_signed_in():
+        return ("no slot browser is signed in to Google, so an application that "
+                "needs an account cannot be filled. Sign in once with: "
+                "python3 scripts/browser.py --login "
+                "https://accounts.google.com/signin")
     loaded = store(["session-load", "--id", aid])
     if loaded.returncode == 0 and (loaded.stdout or "").strip():
         try:
@@ -2687,6 +2704,14 @@ def status():
     deploy = deploy_lock.current()
     out["deploy"] = {"held": bool(deploy), "holder": deploy,
                      "message": deploy_lock.describe(deploy)}
+    # The standing rule, reported by the gate command everyone already runs.
+    # A signed-out fleet is an outage that looks like nothing at all until a
+    # form asks for an account, which is exactly how it went unnoticed for the
+    # nine days after --use-mock-keychain dropped every pre-existing cookie.
+    out["googleSignIn"] = {
+        "anySignedIn": browser_identity.any_signed_in(),
+        "signedOut": browser_identity.signed_out_slots(),
+    }
     out["blocked"] = blocked_message() or None
     try:
         out["providers"] = providers.public_status()
@@ -2826,7 +2851,36 @@ def install(interval=DEFAULT_INTERVAL, python_executable=None):
             ).strip()[:200]
             or None
         ),
+        "googleSignIn": {
+            "anySignedIn": browser_identity.any_signed_in(),
+            "signedOut": browser_identity.signed_out_slots(),
+        },
     }, indent=2))
+
+    # **Setup is where a new install is asked to sign in, once.** Everything
+    # else here installs machinery; this is the one step that needs a person,
+    # and it is the step that has no other moment to happen in. Without it the
+    # first application to want an account reaches the wall and parks, asking
+    # the user for something setup could have asked for while they were already
+    # sitting here.
+    #
+    # It prints rather than prompts: `--install` runs unattended often enough
+    # (a reinstall after changing the interpreter, a re-run after a plist edit)
+    # that blocking on stdin would hang a service restart. The refusal that
+    # actually holds the rule is in `do_not_start`, which no application gets
+    # past, so nothing runs half-configured whether or not anyone read this.
+    if not browser_identity.any_signed_in():
+        print(
+            "\nOne step left, and applications will not start without it.\n\n"
+            "  No slot browser is signed in to Google. Jobby fills forms in\n"
+            "  these browsers, so a form that wants an account gets an\n"
+            "  anonymous one and stops. Sign in once, in the window this\n"
+            "  opens, and every slot inherits it:\n\n"
+            "    python3 scripts/browser.py --login "
+            "https://accounts.google.com/signin\n"
+            "    python3 scripts/browser.py --stop\n"
+            "    python3 scripts/browser.py --clone-logins\n",
+            file=sys.stderr)
     return 0 if ok else 1
 
 
