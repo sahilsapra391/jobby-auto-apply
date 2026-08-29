@@ -27,11 +27,11 @@ ones the board filters and sorts on.
 
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import identity  # noqa: E402
 import jobs_store  # noqa: E402
 
 CONFIG = Path("~/.job-application/config.env").expanduser()
@@ -179,16 +179,40 @@ LIFTED = (
     ("closed_at",        lambda j: jobs_store.parse_stamp(j.get("closedAt"))),
 )
 
-_WORD = re.compile(r"[^a-z0-9]+")
+def _norm_company(name, alias_map=None):
+    """identity's normaliser, not a third one.
 
+    This was a private regex, and it disagreed with `identity.norm_company` on
+    56 of 894 registry companies: 'Adecco' became 'adecco' here and
+    'adecco careers' there, and non-ASCII was destroyed ('Zurich' with an
+    umlaut lost the letter, because [^a-z0-9]+ eats what isalnum() keeps).
 
-def _norm_company(name):
-    return _WORD.sub(" ", (name or "").casefold()).strip() or None
+    That matters because this value populates `jobs.norm_company`, and the
+    `jobs_board` index over it is the staleness sweep's key.
+    `jobs_store.close_missing` states the rule outright: "The company half of
+    the key has to be normalised the same way the sweep normalised it, or
+    nothing matches and this closes nothing forever." Two normalisers is one
+    too many.
+    """
+    return identity.norm_company(name, alias_map) or None
 
 
 def _score_of(job):
+    """The score as an integer, or None. Never raises on junk.
+
+    `jobs_store.parse_stamp` makes the same promise for the same reason: one
+    malformed record must not take a migration down. It could -- Python's JSON
+    decoder accepts NaN, and int(float('nan')) raises ValueError, which would
+    abort the batch and roll back every good record with it. `bool` is
+    excluded because it is an `int` subclass and True would otherwise store 1.
+    """
     total = (job.get("score") or {}).get("total")
-    return int(total) if isinstance(total, (int, float)) else None
+    if isinstance(total, bool) or not isinstance(total, (int, float)):
+        return None
+    try:
+        return int(total)
+    except (ValueError, OverflowError):
+        return None
 
 
 def ensure_schema(conn):
@@ -198,7 +222,17 @@ def ensure_schema(conn):
 
 
 def _row(job_id, job):
-    return [str(job_id)] + [fn(job) for _name, fn in LIFTED] + [json.dumps(job)]
+    """One row. A field that cannot be lifted becomes NULL rather than an
+    exception: the record itself still travels whole in `record`, and losing
+    an index value on one job is not worth losing the other 15,399. The
+    traceback from the first version named the lambda, not the job."""
+    values = []
+    for _name, fn in LIFTED:
+        try:
+            values.append(fn(job))
+        except Exception:                        # noqa: BLE001 - see docstring
+            values.append(None)
+    return [str(job_id)] + values + [json.dumps(job)]
 
 
 def replace_jobs(conn, jobs, batch=2000):

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import signal
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -1012,19 +1013,56 @@ def main(argv=None):
     returns from a dozen places and the runs whose documents matter most are
     the ones that took an early one.
     """
+    _install_discard_signal_handlers()
     try:
         return _run(argv)
     finally:
-        discarded = browser.discard_staged()
-        removed = [f for d in discarded for f in d.get("removed", [])]
-        kept = [f for d in discarded for f in d.get("kept", [])]
-        if removed or kept:
-            print(json.dumps({"event": "staged_documents_discarded",
-                              "removed": len(removed),
-                              "bytes": sum(f.get("bytes", 0) for f in removed),
-                              # Loud, because a copy that will not go away is
-                              # the whole failure this is here to prevent.
-                              "kept": kept}, sort_keys=True), file=sys.stderr)
+        _report_discard(browser.discard_staged())
+
+
+def _report_discard(discarded):
+    removed = [f for d in discarded for f in d.get("removed", [])]
+    kept = [f for d in discarded for f in d.get("kept", [])]
+    if removed or kept:
+        print(json.dumps({"event": "staged_documents_discarded",
+                          "removed": len(removed),
+                          "bytes": sum(f.get("bytes", 0) for f in removed),
+                          # Loud, because a copy that will not go away is the
+                          # whole failure this is here to prevent.
+                          "kept": kept}, sort_keys=True), file=sys.stderr)
+
+
+def _install_discard_signal_handlers():
+    """Discard on a signal too, then die of what we were sent.
+
+    A `finally` does not run when the process is terminated by a signal, and a
+    signal is exactly how a mid-flight run ends: drop.py sends SIGTERM to the
+    runner's process group. So the version that only used `finally` cleaned up
+    after every run except the ones a person actually cancelled.
+
+    This is the same fault as the firewall's activity.json counter, which sat
+    at the end of main() for two months and never once ran, and this is the
+    same remedy `browser_mcp_proxy._install_activity_signal_handlers` uses:
+    handle it, do the work, restore the default disposition and re-raise, so
+    the exit status still reports the signal.
+    """
+    def handler(number, _frame):
+        try:
+            _report_discard(browser.discard_staged())
+        finally:
+            signal.signal(number, signal.SIG_DFL)
+            os.kill(os.getpid(), number)
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(number, handler)
+        except (ValueError, OSError):
+            # Not the main thread, or a platform without it. Best effort: the
+            # `finally` still covers every ordinary exit.
+            pass
+
+
+
 
 
 if __name__ == "__main__":

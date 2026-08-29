@@ -332,6 +332,9 @@ def set_healthchecks_url(value, config_path=None):
 
 
 DATABASE_NAME = "JOBBY_DATABASE_URL"
+# RFC 3986 unreserved + reserved + percent. Deliberately excludes every control
+# character, not only the line separators someone thought to name.
+_URL_SAFE = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
 
 
 def _validated_database_url(value):
@@ -348,7 +351,20 @@ def _validated_database_url(value):
     value = (value or "").strip()
     if not value:
         raise WorkerKeyError("empty_database_url")
-    if "\n" in value or "\r" in value:
+    # An allowlist, not a blocklist of the two separators anyone thinks of.
+    #
+    # The first version rejected \n and \r. `str.splitlines()` -- which every
+    # reader of config.env uses -- splits on nine more: \v \f \x1c \x1d \x1e
+    # \x85 \u2028 \u2029. A URL carrying \x0b passed validation and wrote a
+    # second and third assignment into the file, and because `_read_env_file`
+    # takes the last occurrence, a crafted value silently replaced the real
+    # HEALTHCHECKS_URL and added a DASHBOARD_PASSWORD, both of which
+    # `toolpath.queue_env()` then hands to every spawned child.
+    #
+    # So this asks what a connection URL may contain rather than what it may
+    # not. The set is RFC 3986's unreserved and reserved characters plus the
+    # percent sign; no control character of any kind survives it.
+    if not _URL_SAFE.fullmatch(value):
         raise WorkerKeyError("invalid_database_url")
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme not in ("postgres", "postgresql"):

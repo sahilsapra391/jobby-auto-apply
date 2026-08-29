@@ -7,6 +7,7 @@ browser slot.
 """
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -81,12 +82,23 @@ class RowMappingTests(unittest.TestCase):
         self.assertIsNone(self.columns(job(score={"total": "high"}))["score"])
         self.assertIsNone(self.columns(job(score=None))["score"])
 
-    def test_the_lifted_set_matches_the_schema(self):
-        """Two lists that must agree. They are in the same file precisely so
-        this test can compare them rather than a person remembering."""
+    def test_the_lifted_set_matches_the_jobs_table(self):
+        """Two lists that must agree, compared against the `jobs` block only.
+
+        Matching the column name anywhere in SCHEMA passed for `company`,
+        `role`, `url` and `name`, which are also declared on sessions and
+        roles: deleting `company` from the jobs DDL left this green while
+        replace_jobs failed at runtime.
+        """
+        block = jobs_db.SCHEMA.split("create table if not exists jobs (", 1)[1]
+        block = block.split(");", 1)[0]
+        declared = {line.strip().split()[0]
+                    for line in block.splitlines() if line.strip()}
         for name, _fn in jobs_db.LIFTED:
             with self.subTest(column=name):
-                self.assertIn(f"    {name} ", jobs_db.SCHEMA.replace("\t", " "))
+                self.assertIn(name, declared)
+        self.assertIn("record", declared)
+        self.assertIn("id", declared)
 
 
 class ConnectionConfigTests(unittest.TestCase):
@@ -128,14 +140,26 @@ class ConnectionConfigTests(unittest.TestCase):
 
 
 class LiveDatabaseTests(unittest.TestCase):
-    """Skipped without credentials, like the tests that need a browser slot."""
+    """Runs only on an explicit opt-in, never merely because credentials exist.
+
+    The first version skipped when JOBBY_DATABASE_URL was absent, which is
+    backwards: it skipped exactly when the database was safe to touch and ran
+    when it was not. `jobs_db.CONFIG` is bound at import from the real home, so
+    JOB_APPLICATION_DIR cannot redirect it, and the repo's own verification
+    command uses no HOME redirect. The result was CREATE TABLE against the
+    user's production Neon on every full suite run, and CI runs this module.
+
+    Idempotent DDL is not the point. The guarantee has to hold for the next
+    test somebody adds here, which may not be.
+    """
 
     @classmethod
     def setUpClass(cls):
-        if not jobs_db.database_url():
-            raise unittest.SkipTest("no JOBBY_DATABASE_URL on this machine")
+        if os.environ.get("JOBBY_TEST_DATABASE_URL") is None:
+            raise unittest.SkipTest(
+                "set JOBBY_TEST_DATABASE_URL to a throwaway database to run these")
         try:
-            cls.conn = jobs_db.connect()
+            cls.conn = jobs_db.connect(os.environ["JOBBY_TEST_DATABASE_URL"])
         except jobs_db.DatabaseError as exc:
             raise unittest.SkipTest(str(exc))
 

@@ -71,6 +71,13 @@ WRITERS = {
     "artifact_root_for": {"ARTIFACTS"},
     "activity_path": {"ARTIFACTS"},
     "stage_application_uploads": {"ARTIFACTS"},
+    # The deleting twins. These reach artifact_root_for and unlink files, so a
+    # test that calls them without redirecting ARTIFACTS removes documents from
+    # a live apply slot. Registered here because the map's own comment says it
+    # is read off browser.py rather than remembered, and a delete is the one
+    # kind of writer that cannot be noticed by a stray fixture appearing.
+    "discard_application_uploads": {"ARTIFACTS"},
+    "discard_staged": {"ARTIFACTS"},
     "server_config": {"ARTIFACTS", "PROFILE"},
     "server_configs": {"ARTIFACTS", "PROFILE"},
     "mcp_servers": {"ARTIFACTS", "PROFILE"},
