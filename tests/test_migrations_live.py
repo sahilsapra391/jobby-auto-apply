@@ -74,9 +74,14 @@ class LiveMigrationTests(pgtest.SchemaCase):
         """The first statement is valid and the second is not. Neither the
         table nor the ledger row may survive.
 
-        Postgres makes this free because DDL is transactional, but only if the
-        runner keeps the migration and its own bookkeeping in one transaction.
-        A runner that commits the DDL and then records it has a window."""
+        This one is nearly free, and it is worth being honest about why rather
+        than claiming it as evidence for the runner's transaction. Postgres
+        wraps a multi-statement simple query in an *implicit* transaction, so
+        these two statements roll back together whatever the runner does. A
+        mutation run replacing `conn.transaction()` with a null context left
+        this test passing. What the explicit transaction actually protects is
+        the test below.
+        """
         self.write("0001_half.sql",
                    "create table half_applied (id int);\n"
                    "create table half_applied (id int);\n")
@@ -84,6 +89,41 @@ class LiveMigrationTests(pgtest.SchemaCase):
             migrate.run(self.conn, self.dir)
         self.assertNotIn("half_applied", self.tables())
         self.assertEqual(self.recorded(), [])
+
+    def test_the_ddl_and_its_ledger_row_commit_together_or_not_at_all(self):
+        """The property the runner's own transaction exists for.
+
+        The window is between a migration's SQL succeeding and its ledger row
+        being written. A runner that commits the schema change and then records
+        it leaves, on a crash or an error in between, a migration that is
+        applied and unrecorded. The next deploy sees an unknown version, runs
+        it again, and dies on "relation already exists" partway through
+        somebody's release.
+
+        Forcing that window open needs a migration whose own last act makes the
+        runner's insert fail, which is contrived on purpose: the natural
+        failures all happen inside the migration and are covered by Postgres's
+        implicit transaction. Here the migration takes version 1 in the ledger
+        for itself, so the runner's insert hits the primary key.
+
+        With the transaction, `keep_out` never exists. Without it, the
+        migration's own statements commit first and it does.
+        """
+        self.write("0001_steals_the_row.sql",
+                   "create table keep_out (id int);\n"
+                   "insert into schema_migrations (version, name, checksum)\n"
+                   "  values (1, 'not_the_runners_row', 'deadbeef');\n")
+        # The ledger has to exist before the migration can insert into it,
+        # which is what `applied` does on any first call.
+        self.assertEqual(migrate.applied(self.conn), {})
+
+        with self.assertRaises(Exception):
+            migrate.run(self.conn, self.dir)
+
+        self.assertNotIn("keep_out", self.tables(),
+                         "the DDL committed before its ledger row did")
+        self.assertEqual(self.recorded(), [],
+                         "a half-applied migration left a row behind")
 
     def test_a_failed_migration_does_not_block_a_fixed_one(self):
         self.write("0001_half.sql", "create table t1 (id int);\nbogus sql;\n")
