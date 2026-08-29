@@ -479,6 +479,20 @@ def _launch_argv(slot, profile):
             f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check",
             "--use-mock-keychain",
+            # No on-device AI model, in any of these profiles.
+            #
+            # Chrome downloads its own local model per profile, into
+            # OptGuideOnDeviceModel. Measured 2026-08-29: 4.0 GB in each of the
+            # eight apply profiles, 32 GB in total, which was 84% of everything
+            # in ~/.job-application. Nothing in Jobby calls it: the intelligence
+            # is the provider CLIs, and these browsers only fill forms.
+            #
+            # The disk was never the visible symptom, which is why it sat there.
+            # Nothing failed, nothing warned, and the profiles are not somewhere
+            # anyone looks -- it surfaced only when the whole store was measured
+            # for a different reason.
+            "--disable-features=OptimizationGuideOnDeviceModel,"
+            "OptimizationGuideModelDownloading,TextSafetyClassifier",
             # Keep it alive with a window even when the agent closes its last tab.
             "about:blank"]
 

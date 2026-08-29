@@ -217,7 +217,14 @@ def chrome_command(chrome, out, source_uri, *, profile_dir=None):
     and did on 2026-08-28. A print-to-PDF process needs nothing the keychain
     holds.
     """
-    command = [chrome, "--headless", "--disable-gpu", "--use-mock-keychain"]
+    command = [chrome, "--headless", "--disable-gpu", "--use-mock-keychain",
+               # Same reason as the slot browsers: no on-device model in a
+               # process that only prints a PDF. This one is short-lived and was
+               # not accumulating, so the flag is insurance rather than a fix --
+               # but it is the second of the repo's two Chrome launch sites, and
+               # the pair is meant to stay in step.
+               "--disable-features=OptimizationGuideOnDeviceModel,"
+               "OptimizationGuideModelDownloading,TextSafetyClassifier"]
     if os.environ.get("JOBBY_CHROMIUM_LOW_MEMORY") == "1":
         if profile_dir is None:
             raise ToolError("low-memory Chromium requires a private profile directory")

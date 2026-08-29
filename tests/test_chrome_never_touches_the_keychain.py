@@ -60,5 +60,47 @@ class MockKeychainTests(unittest.TestCase):
         self.assertIn("--use-mock-keychain", command)
 
 
+
+class NoOnDeviceModelTests(unittest.TestCase):
+    """Neither Chrome downloads its own AI model.
+
+    Measured 2026-08-29: OptGuideOnDeviceModel was 4.0 GB in each of the eight
+    apply profiles, 32 GB in total, and 84% of everything in the store. Nothing
+    in Jobby calls it -- the intelligence is the provider CLIs, and these
+    browsers only fill forms and print PDFs.
+
+    Pinned at both launch sites for the same reason the keychain flag is: this
+    repo has exactly two, they have drifted apart before, and nothing about a
+    profile quietly growing by four gigabytes announces itself.
+    """
+
+    FEATURES = ("OptimizationGuideOnDeviceModel",
+                "OptimizationGuideModelDownloading",
+                "TextSafetyClassifier")
+
+    def test_the_slot_browser_disables_it(self):
+        argv = browser._launch_argv("apply-1", "/tmp/profile")
+        flags = " ".join(argv)
+        for feature in self.FEATURES:
+            self.assertIn(feature, flags)
+        self.assertIn("--disable-features=", flags)
+
+    def test_the_pdf_renderer_disables_it(self):
+        source = pathlib.Path(
+            pathlib.Path(__file__).resolve().parents[1] / "scripts" / "resume_pdf.py"
+        ).read_text()
+        for feature in self.FEATURES:
+            self.assertIn(feature, source)
+
+    def test_both_launch_sites_name_the_same_features(self):
+        """A flag on one and not the other is how 32 GB accumulated in the
+        profiles while the renderer stayed clean and nobody noticed either."""
+        root = pathlib.Path(__file__).resolve().parents[1] / "scripts"
+        for name in ("browser.py", "resume_pdf.py"):
+            text = (root / name).read_text()
+            with self.subTest(module=name):
+                self.assertIn("OptimizationGuideOnDeviceModel", text)
+
+
 if __name__ == "__main__":
     unittest.main()
