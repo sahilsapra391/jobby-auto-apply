@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import signal
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -525,7 +526,7 @@ def _refuse_duplicate(application_id, summary):
     raise ApplyRefusal("the duplicate guard did not return a safe verdict")
 
 
-def main():
+def _run(argv=None):
     ap = argparse.ArgumentParser(description="Fill one application with prepared documents.")
     ap.add_argument(
         "--id",
@@ -539,7 +540,7 @@ def main():
     )
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the exact prompt only")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.check:
         pending = queue("list")
@@ -998,6 +999,70 @@ def main():
         "log": str(log),
     }, indent=2))
     return result_code
+
+
+def main(argv=None):
+    """Run the apply, and never leave the staged PDFs behind.
+
+    The copies exist because a file chooser needs a path on a filesystem; R2
+    cannot be the source at the moment of submission. They do not need to
+    outlive the run, and until now they did -- 151 documents were sitting in
+    the tree with R2 already holding every one of them.
+
+    In a `finally` rather than at the end of the happy path, because `_run`
+    returns from a dozen places and the runs whose documents matter most are
+    the ones that took an early one.
+    """
+    _install_discard_signal_handlers()
+    try:
+        return _run(argv)
+    finally:
+        _report_discard(browser.discard_staged())
+
+
+def _report_discard(discarded):
+    removed = [f for d in discarded for f in d.get("removed", [])]
+    kept = [f for d in discarded for f in d.get("kept", [])]
+    if removed or kept:
+        print(json.dumps({"event": "staged_documents_discarded",
+                          "removed": len(removed),
+                          "bytes": sum(f.get("bytes", 0) for f in removed),
+                          # Loud, because a copy that will not go away is the
+                          # whole failure this is here to prevent.
+                          "kept": kept}, sort_keys=True), file=sys.stderr)
+
+
+def _install_discard_signal_handlers():
+    """Discard on a signal too, then die of what we were sent.
+
+    A `finally` does not run when the process is terminated by a signal, and a
+    signal is exactly how a mid-flight run ends: drop.py sends SIGTERM to the
+    runner's process group. So the version that only used `finally` cleaned up
+    after every run except the ones a person actually cancelled.
+
+    This is the same fault as the firewall's activity.json counter, which sat
+    at the end of main() for two months and never once ran, and this is the
+    same remedy `browser_mcp_proxy._install_activity_signal_handlers` uses:
+    handle it, do the work, restore the default disposition and re-raise, so
+    the exit status still reports the signal.
+    """
+    def handler(number, _frame):
+        try:
+            _report_discard(browser.discard_staged())
+        finally:
+            signal.signal(number, signal.SIG_DFL)
+            os.kill(os.getpid(), number)
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(number, handler)
+        except (ValueError, OSError):
+            # Not the main thread, or a platform without it. Best effort: the
+            # `finally` still covers every ordinary exit.
+            pass
+
+
+
 
 
 if __name__ == "__main__":

@@ -202,6 +202,167 @@ def _copy_verified_pdf(source_value, destination, expected_size, expected_digest
     }
 
 
+# Every staging this process has done, so the discard does not depend on a
+# caller remembering what it staged. run_apply.main has a dozen early returns
+# and the runs whose documents matter most are the ones that took one.
+#
+# **Resolved paths, not (slot, id) pairs.** The first version stored the pair
+# and re-resolved it against `ARTIFACTS` at discard time, which meant a
+# staging done under a redirected ARTIFACTS could be deleted against the real
+# home later in the same interpreter. That is not hypothetical: one test
+# module stages for real under a patch, drops the patch in tearDown without
+# clearing this list, and a later module's `run_apply.main()` ran the discard
+# against `~/.job-application` and removed a genuine staged document while the
+# suite reported OK. A path captured at staging time cannot travel like that.
+_STAGED = []
+
+# What a staged document is. Deliberately a small allowlist rather than
+# "everything that is not activity.json": the next file written into this
+# directory should have to be named here before anything deletes it.
+DOCUMENT_SUFFIXES = frozenset((".pdf", ".html", ".htm", ".docx", ".txt"))
+
+
+def is_headed(slot):
+    """True, False, or None when the process cannot be read.
+
+    Read from the process rather than remembered, for the same reason the
+    drift check reads the command line: what a process was started with is the
+    only thing that is true about it.
+
+    Three states rather than two, because `running_launch` returns [] for any
+    non-match -- a ps timeout, a renamed profile, a truncated line -- and the
+    two-state version answered "headed" to that. `show()` then took its no-op
+    branch and the user pressed open-and-fill to no effect, with the return
+    value claiming a window was already up. Unknown and headed being the same
+    answer is the shape CLAUDE.md calls indistinguishable from success.
+    """
+    argv = running_launch(slot)
+    if not argv:
+        return None
+    return "--headless=new" not in argv
+
+
+def show(slot):
+    """Relaunch a slot with a window, for open-and-fill. Returns what happened.
+
+    A no-op when it is already headed, so pressing the button twice does not
+    take the browser away from the form the user is looking at.
+    """
+    # Only a definite True short-circuits. Unknown relaunches, because
+    # relaunching an already-headed browser costs a second and the alternative
+    # is a button that silently does nothing.
+    if running(slot) and is_headed(slot) is True:
+        return {"slot": slot, "headed": True, "restarted": False}
+    stopped = stop_slot(slot)
+    result = serve(slot, headed=True)
+    # Reported, not assumed: a Chrome that ignored the close leaves serve()
+    # returning alreadyRunning for the headless process still holding the port,
+    # and stamping restarted:True over that told the caller both that it had
+    # been restarted and that it was headless.
+    result["restarted"] = bool(result.get("started"))
+    result["previousStopped"] = bool(stopped)
+    return result
+
+
+def discard_staged():
+    """Remove every set of PDFs this process staged. Returns what it removed.
+
+    Never raises. It runs from a `finally`, so an exception here would discard
+    the run's own result and abandon the rest of the list -- and the first
+    version could raise, because `artifact_root_for` throws ValueError for an
+    unknown slot while `discard_application_uploads` catches only OSError.
+    """
+    out = []
+    while _STAGED:
+        target = _STAGED.pop()
+        try:
+            out.append(_discard_directory(target))
+        except Exception as exc:                  # noqa: BLE001 - reported
+            out.append({"directory": str(target), "removed": [],
+                        "kept": [{"name": "*", "why": f"{type(exc).__name__}: {exc}"[:120]}]})
+    return out
+
+
+def _discard_directory(target):
+    """Delete the staged documents in one directory. The path is already
+    resolved, so nothing here re-derives it from mutable module state."""
+    result = {"directory": str(target), "removed": [], "kept": []}
+    target = Path(target)
+    if target.is_symlink() or not target.is_dir():
+        return result
+    for path in sorted(target.iterdir()):
+        # Documents only. `activity.json` lives here too, written by the
+        # firewall, and it is what tells a capability failure apart from a real
+        # park -- deleting it would trade a duplicate PDF for the ability to
+        # say why a run stopped.
+        if path.suffix.lower() not in DOCUMENT_SUFFIXES:
+            continue
+        try:
+            if path.is_file() and not path.is_symlink():
+                size = path.stat().st_size
+                path.unlink()
+                result["removed"].append({"name": path.name, "bytes": size})
+            else:
+                result["kept"].append({"name": path.name, "why": "not a plain file"})
+        except OSError as exc:
+            result["kept"].append({"name": path.name, "why": str(exc)[:120]})
+    try:
+        target.rmdir()
+    except OSError:
+        pass
+    # Checked rather than assumed, across every suffix the loop deletes. The
+    # first version globbed "*.pdf" and so could not see four of the five.
+    if target.is_dir():
+        left = [p.name for p in target.iterdir()
+                if p.suffix.lower() in DOCUMENT_SUFFIXES]
+        result["kept"].extend({"name": n, "why": "still present after delete"}
+                              for n in left)
+    return result
+
+
+def _safe_application_id(application_id):
+    """The same shape stage_application_uploads demands of an id.
+
+    Shared rather than duplicated, because the asymmetry was the bug: the
+    function that *writes* validated its id and the function that *deletes*
+    did not, so `discard_application_uploads("apply-1", "../..")` resolved
+    outside the uploads tree and unlinked a file two levels up. A deleting
+    twin must be at least as strict as the writing one.
+    """
+    return (isinstance(application_id, str)
+            and application_id
+            and len(application_id) <= 128
+            and ".." not in application_id
+            and all(c.isalnum() or c in "-_." for c in application_id))
+
+
+def discard_application_uploads(slot, application_id):
+    """Remove the staged PDFs for one application. Returns what it deleted.
+
+    A file chooser hands the browser a path on a filesystem, so the two PDFs
+    have to exist locally at the moment of submission; R2 cannot be the source
+    there. What does not have to happen is them staying afterwards, and until
+    now they did: 151 documents were sitting in the tree with R2 already
+    holding every one of them.
+
+    It never raises. Losing a staged duplicate is not worth failing a run
+    over, and R2 is the record; what it does do is report, so a directory that
+    will not go away is visible rather than silently accumulating again.
+    """
+    if not _safe_application_id(application_id):
+        return {"applicationId": application_id, "removed": [],
+                "kept": [{"name": str(application_id)[:60],
+                          "why": "unsafe application id"}]}
+    try:
+        target = artifact_root_for(slot) / "uploads" / application_id
+    except (ValueError, OSError) as exc:
+        return {"applicationId": application_id, "removed": [],
+                "kept": [{"name": str(slot)[:40], "why": str(exc)[:120]}]}
+    result = _discard_directory(target)
+    result["applicationId"] = application_id
+    return result
+
+
 def stage_application_uploads(slot, application_id, artifacts):
     """Copy only the two verified PDFs into Playwright's permitted root."""
     if (
@@ -242,6 +403,11 @@ def stage_application_uploads(slot, application_id, artifacts):
                 source.get("size"),
                 source.get("sha256"),
             )
+        # Registered only once the copies are actually there, so a failed
+        # staging does not schedule a delete of somebody else's directory, and
+        # as the resolved path rather than (slot, id) so it cannot be
+        # re-resolved against a different ARTIFACTS later in the process.
+        _STAGED.append(target)
         return staged
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
@@ -461,7 +627,7 @@ def running(slot=None):
     return _cdp("/json/version", slot) is not None
 
 
-def _launch_argv(slot, profile):
+def _launch_argv(slot, profile, headed=False):
     """The slot browser's launch command.
 
     --use-mock-keychain is load-bearing and permanent. Without it Chrome asks
@@ -474,11 +640,38 @@ def _launch_argv(slot, profile):
     or any other user's. tests/test_chrome_never_touches_the_keychain.py pins
     the flag here and on the PDF renderer, the repo's only two launch sites.
     """
+    # Headless unless somebody asked to watch. Orchestration does not need a
+    # window: eight visible Chromes are eight windows on the user's screen for
+    # work nobody is looking at, and the same profile, the same CDP port and
+    # the same file uploads all behave the same either way.
+    #
+    # `--headless=new` rather than the old mode, which was a different browser
+    # with different behaviour around uploads and rendering. The new mode is
+    # the same Chrome with no window.
+    #
+    # Headed stays reachable because there is one moment it is the point: an
+    # application lands in Needs you, the user presses open-and-fill, and then
+    # they want to see the form. That path relaunches the slot with headed=True.
     return [CHROME,
             f"--remote-debugging-port={port_for(slot)}",
             f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check",
             "--use-mock-keychain",
+            *([] if headed else ["--headless=new"]),
+            # No on-device AI model, in any of these profiles.
+            #
+            # Chrome downloads its own local model per profile, into
+            # OptGuideOnDeviceModel. Measured 2026-08-29: 4.0 GB in each of the
+            # eight apply profiles, 32 GB in total, which was 84% of everything
+            # in ~/.job-application. Nothing in Jobby calls it: the intelligence
+            # is the provider CLIs, and these browsers only fill forms.
+            #
+            # The disk was never the visible symptom, which is why it sat there.
+            # Nothing failed, nothing warned, and the profiles are not somewhere
+            # anyone looks -- it surfaced only when the whole store was measured
+            # for a different reason.
+            "--disable-features=OptimizationGuideOnDeviceModel,"
+            "OptimizationGuideModelDownloading,TextSafetyClassifier",
             # Keep it alive with a window even when the agent closes its last tab.
             "about:blank"]
 
@@ -562,6 +755,31 @@ def running_launch(slot):
     return []
 
 
+# Flags that are a deliberate choice per launch rather than configuration the
+# slot should carry. A browser opened headed for open-and-fill is doing exactly
+# what was asked of it, and reporting it as drifted would fire the flags ping
+# every time the user looked at a form -- an alarm that cries wolf on the
+# feature it is meant to protect.
+PER_LAUNCH_FLAGS = frozenset(("--headless=new",))
+
+# Flags whose absence is untidiness rather than a fault the user can see.
+# The dead-man ping exists for --use-mock-keychain, whose absence raises a
+# modal dialog no agent can dismiss. A browser missing only the on-device
+# model flag has already spent the disk; a slot holding a parked application
+# is never closed, so it would fire that alarm permanently over 4 GB that is
+# already gone. CLAUDE.md's own argument for keeping the stale-binary half out
+# of the ping applies unchanged: "a ping that fires for untidiness is how an
+# alarm stops being believed."
+NON_URGENT_FLAGS = frozenset(
+    ("--disable-features=OptimizationGuideOnDeviceModel,"
+     "OptimizationGuideModelDownloading,TextSafetyClassifier",))
+
+
+def urgent_missing_launch_flags(slot):
+    """The missing flags worth waking somebody for. Used by the ping."""
+    return [f for f in missing_launch_flags(slot) if f not in NON_URGENT_FLAGS]
+
+
 def missing_launch_flags(slot):
     """Flags _launch_argv sets now that this slot's browser was not given.
 
@@ -573,7 +791,7 @@ def missing_launch_flags(slot):
     if not argv:
         return []
     wanted = [item for item in _launch_argv(slot, _profile_dir(slot))
-              if item.startswith("--")]
+              if item.startswith("--") and item not in PER_LAUNCH_FLAGS]
     return [flag for flag in wanted if flag not in argv]
 
 
@@ -617,8 +835,14 @@ def stop_slot(slot, timeout=10):
     return _wait_until_down(slot, timeout)
 
 
-def serve(slot=None):
+def serve(slot=None, headed=False):
     """Start a slot's browser if it is not already up.
+
+    `headed` is for the one moment a window is the point: the user pressing
+    open-and-fill on something parked in Needs you. Everything else runs
+    headless. A slot already up in the wrong mode is reported rather than
+    silently reused, because "it was already running" is how somebody ends up
+    watching an empty screen.
 
     Detached and in its own session, so it survives the run that started it and
     is not killed along with a runner's process group when an application is
@@ -627,7 +851,8 @@ def serve(slot=None):
     """
     slot = slot or SLOTS[0]
     if running(slot):
-        return {"started": False, "alreadyRunning": True, "slot": slot, "cdp": cdp_for(slot)}
+        return {"started": False, "alreadyRunning": True, "slot": slot,
+                "cdp": cdp_for(slot), "headed": is_headed(slot)}
     ok, why = available()
     if not ok:
         return {"started": False, "error": why}
@@ -644,14 +869,15 @@ def serve(slot=None):
     handle = open(log, "wb")
     try:
         subprocess.Popen(
-            _launch_argv(slot, profile),
+            _launch_argv(slot, profile, headed=headed),
             stdout=handle, stderr=subprocess.STDOUT,
             start_new_session=True, env=toolpath.enriched_env())
     finally:
         handle.close()
     for _ in range(READY_TIMEOUT * 4):
         if running(slot):
-            return {"started": True, "slot": slot, "cdp": cdp_for(slot)}
+            return {"started": True, "slot": slot, "cdp": cdp_for(slot),
+                    "headed": headed}
         time.sleep(0.25)
     return {"started": False, "slot": slot,
             "error": f"Chrome did not open a CDP port within {READY_TIMEOUT}s"}
@@ -1017,7 +1243,13 @@ def main():
     # theirs from then on. A sign-in done in the first slot is carried to the
     # others by --clone-logins, so it is done once rather than once per slot.
     slot = args.slot or SLOTS[0]
-    started = serve(slot)
+    # show(), not serve(): --login's whole purpose is a window to sign in
+    # through, and serve() is headless now. The help text says "open this
+    # profile in a visible window" and the success line says "Sign in in the
+    # window that came up", so a headless launch here makes the command lie
+    # twice and leaves the only documented path for getting a LinkedIn or ATS
+    # session into an agent profile silently doing nothing.
+    started = show(slot)
     if started.get("error"):
         print(json.dumps(started, indent=2))
         return 1

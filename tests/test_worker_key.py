@@ -4,6 +4,7 @@ import base64
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import stat
@@ -235,6 +236,66 @@ class StageWorkerEnvTests(unittest.TestCase):
         self.assertIn('"action": "stage"', printed)
         for value in self.settings.values():
             self.assertNotIn(value, printed)
+
+
+
+class DatabaseUrlTests(unittest.TestCase):
+    """The Postgres URL goes in beside the other private settings.
+
+    Same treatment as the Healthchecks URL and the R2 keys: collected from a
+    private prompt rather than argv, written atomically at 0600, and never
+    echoed. A connection string carries a password, and a command line is
+    visible in `ps` to every process on the machine.
+    """
+
+    GOOD = ("postgresql://neondb_owner:secret@"
+            "ep-cool-lab-12345-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = pathlib.Path(self.tmp.name) / "config.env"
+        self.cfg.write_text("HEALTHCHECKS_URL=https://hc-ping.com/abc\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_it_writes_the_url_and_keeps_the_other_settings(self):
+        worker_key.set_database_url(self.GOOD, config_path=str(self.cfg))
+        text = self.cfg.read_text()
+        self.assertIn("JOBBY_DATABASE_URL=", text)
+        self.assertIn("HEALTHCHECKS_URL=", text)
+        self.assertEqual(oct(self.cfg.stat().st_mode)[-3:], "600")
+
+    def test_it_reports_the_host_and_never_the_url(self):
+        """Enough to confirm the right project; not enough to leak the
+        password into a terminal that scrolls back."""
+        out = worker_key.set_database_url(self.GOOD, config_path=str(self.cfg))
+        self.assertNotIn("secret", json.dumps(out))
+        self.assertIn("neon.tech", out["host"])
+        self.assertTrue(out["pooled"])
+
+    def test_a_direct_url_is_accepted_but_flagged_as_unpooled(self):
+        """Refusing it would block migrations, which want the direct URL. The
+        flag is there because the failure an unpooled daemon causes is
+        connection exhaustion under load, not an error at setup time."""
+        direct = self.GOOD.replace("-pooler", "")
+        self.assertFalse(
+            worker_key.set_database_url(direct, config_path=str(self.cfg))["pooled"])
+
+    def test_it_refuses_what_is_not_a_usable_connection_string(self):
+        for bad in ("", "   ", "http://example.com/db",
+                    "postgresql://ep-x.neon.tech/db",
+                    "postgresql://u:p@ep-x.neon.tech/",
+                    "postgresql://u:p@ep-x.neon.tech/db\nEVIL=1"):
+            with self.subTest(value=bad):
+                with self.assertRaises(worker_key.WorkerKeyError):
+                    worker_key.set_database_url(bad, config_path=str(self.cfg))
+
+    def test_a_second_write_replaces_rather_than_appends(self):
+        worker_key.set_database_url(self.GOOD, config_path=str(self.cfg))
+        worker_key.set_database_url(self.GOOD.replace("neondb", "other"),
+                                    config_path=str(self.cfg))
+        self.assertEqual(self.cfg.read_text().count("JOBBY_DATABASE_URL="), 1)
 
 
 if __name__ == "__main__":

@@ -331,6 +331,86 @@ def set_healthchecks_url(value, config_path=None):
     }
 
 
+DATABASE_NAME = "JOBBY_DATABASE_URL"
+# RFC 3986 unreserved + reserved + percent. Deliberately excludes every control
+# character, not only the line separators someone thought to name.
+_URL_SAFE = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
+
+
+def _validated_database_url(value):
+    """A Postgres URL, checked for shape without ever being echoed.
+
+    Neon hands out two URLs and the difference matters: the pooled one routes
+    through their pgbouncer and is what a daemon opening and closing
+    connections all day should use. The direct one is for migrations. Both are
+    accepted here -- refusing the direct one would block the migration path --
+    but a host with no `-pooler` is worth saying out loud once, because the
+    failure it causes is connection exhaustion under load rather than an error
+    at configuration time.
+    """
+    value = (value or "").strip()
+    if not value:
+        raise WorkerKeyError("empty_database_url")
+    # An allowlist, not a blocklist of the two separators anyone thinks of.
+    #
+    # The first version rejected \n and \r. `str.splitlines()` -- which every
+    # reader of config.env uses -- splits on nine more: \v \f \x1c \x1d \x1e
+    # \x85 \u2028 \u2029. A URL carrying \x0b passed validation and wrote a
+    # second and third assignment into the file, and because `_read_env_file`
+    # takes the last occurrence, a crafted value silently replaced the real
+    # HEALTHCHECKS_URL and added a DASHBOARD_PASSWORD, both of which
+    # `toolpath.queue_env()` then hands to every spawned child.
+    #
+    # So this asks what a connection URL may contain rather than what it may
+    # not. The set is RFC 3986's unreserved and reserved characters plus the
+    # percent sign; no control character of any kind survives it.
+    if not _URL_SAFE.fullmatch(value):
+        raise WorkerKeyError("invalid_database_url")
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme not in ("postgres", "postgresql"):
+        raise WorkerKeyError("invalid_database_url")
+    if not parsed.hostname or not parsed.username:
+        raise WorkerKeyError("invalid_database_url")
+    if not (parsed.path or "").strip("/"):
+        raise WorkerKeyError("database_url_names_no_database")
+    return value
+
+
+def set_database_url(value, config_path=None):
+    """Atomically write the Postgres URL. Never prints or logs it."""
+    url = _validated_database_url(value)
+    path = Path(config_path) if config_path is not None else toolpath.LOCAL_CONFIG
+    if not path.is_absolute():
+        raise WorkerKeyError("config_path_not_absolute")
+    _secure_directory(path.parent)
+
+    with _config_lock(path):
+        if path.is_symlink():
+            raise WorkerKeyError("unsafe_file_target")
+        content = _read_config(path)
+        rendered, state = _render_assignment(content, DATABASE_NAME, url)
+        if rendered != content or not path.exists():
+            _atomic_write(path, rendered)
+        else:
+            try:
+                os.chmod(path, 0o600, follow_symlinks=False)
+            except OSError as exc:
+                raise WorkerKeyError("config_permissions_failed") from exc
+
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return {
+        "ok": True,
+        "action": "set-database",
+        "path": str(path),
+        "mode": "0600",
+        "state": state,
+        # The host, not the URL: enough to confirm the right project without
+        # putting the password in a terminal that scrolls back.
+        "host": host,
+        "pooled": "-pooler" in host,
+    }
+
+
 R2_NAMES = ("R2_ACCOUNT_ID", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
 
 # An R2 access key id is a 32-character hex string and the secret is a
@@ -457,6 +537,10 @@ def main(argv=None):
         "set-healthchecks", help="set the private Healthchecks ping URL"
     )
     healthchecks.add_argument("url", help="https://hc-ping.com/<uuid>")
+    commands.add_parser(
+        "set-database",
+        help="set the Postgres connection URL from a private prompt"
+    )
     r2cmd = commands.add_parser(
         "set-r2", help="set the R2 artifact bucket credentials from a private prompt"
     )
@@ -469,6 +553,13 @@ def main(argv=None):
             result = ensure_worker_key()
         elif args.command == "stage":
             result = stage_worker_env(args.output)
+        elif args.command == "set-database":
+            import getpass
+            # Never on argv: a command line is visible in `ps` to every process
+            # on the machine, and lands in shell history besides.
+            print("Paste the Neon connection URL. It is not echoed or printed back.",
+                  file=sys.stderr)
+            result = set_database_url(getpass.getpass("Postgres URL: ").strip())
         elif args.command == "set-r2":
             import getpass
             account = args.account or toolpath.settings().get("CF_ACCOUNT_ID", "")

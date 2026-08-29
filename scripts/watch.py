@@ -1363,7 +1363,10 @@ def chrome_drift():
         if installed and version != installed:
             reasons.append("version")
         try:
-            missing = browser.missing_launch_flags(slot)
+            # The urgent half only. A browser missing the on-device model flag
+            # is untidy, not dangerous, and a parked slot is never closed, so
+            # pinging on it would ring forever over disk already spent.
+            missing = browser.urgent_missing_launch_flags(slot)
         except (OSError, ValueError, subprocess.SubprocessError):
             # The process table is the only source for this, so say nothing
             # rather than guessing. A browser wrongly called well-configured is
@@ -2285,7 +2288,12 @@ def tick(force_publish=False):
                 changed["focus"] = {"applicationId": aid, "error": "no posting url on record"}
                 continue
             slot = browser_slot_for_application(aid)
-            browser.serve(slot)
+            # A window, because this is the board's "Open & finish" button on a
+            # parked application: the user pressed it in order to look at the
+            # form. serve() is headless now, and focus() answers
+            # {"focused": true} against a headless target, so the board would
+            # set its label to "Check your browser" with nothing to check.
+            browser.show(slot)
             changed["focus"] = {
                 "applicationId": aid,
                 **browser.focus(url, slot=slot),
