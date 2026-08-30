@@ -103,6 +103,31 @@ def write_private(path, payload):
     # makes the resulting drift visible. See docs/write-paths.md for why this
     # ordering is the opposite of the pool's.
     _mirror_class_b(path, payload)
+    _observe_write_path()
+
+
+def _observe_write_path():
+    """Tick the write paths that led here, for the parity gate's checklist.
+
+    Under the same never-affect-the-caller contract as the mirror above, and
+    for a stronger reason: that one at least mirrors real data, while this is
+    only bookkeeping. A coverage counter that could fail a real application
+    would be a worse bug than the gap it exists to close.
+
+    The hook is here rather than at each write path because `write_private` is
+    the only function that puts bytes in the store, and `jobs_store._persist_
+    pool` reaches disk through it -- so the pool is observed without being
+    modified, which matters because `_persist_pool` is a parity gate path and
+    changing one restarts the clock.
+    """
+    try:
+        import write_path_coverage
+        write_path_coverage.observe()
+    except Exception:
+        # Deliberately silent here and loud inside `observe`, which writes its
+        # own reason to stderr. An ImportError on a machine without the sidecar
+        # is not worth a line on every write in the system.
+        pass
 
 
 def _mirror_class_b(path, payload):
