@@ -63,6 +63,35 @@ URL_NAME = "JOBBY_DATABASE_URL"
 # derived from something a caller passes in.
 LOCK_NAMESPACE = "jobby.schema.migrations"
 
+# The PostgreSQL major version this schema is written for, and the one CI must
+# test against. Neon reported 18.6 on 2026-08-29.
+#
+# One constant rather than a comparison between the two servers, because CI
+# cannot reach Neon and must not: giving a runner the production URL to check a
+# version number would put the database holding real applications one typo away
+# from every branch. So the pin is the contract, and each side is checked
+# against it where it is reachable. `tests/test_postgres_version_is_pinned.py`
+# holds all three legs, including the workflow's own image tag, which is the
+# one that needs no database at all.
+#
+# Raising this is a deliberate act: Phase 1's schema uses a generated stored
+# column and partial indexes, and later phases will use more. A container one
+# major behind the endpoint accepts DDL that production rejects, and the first
+# anyone hears of it is a failed migrate step in a deploy.
+POSTGRES_MAJOR = 18
+
+
+def server_major(conn):
+    """The connected server's major version, from `server_version_num`.
+
+    Not `show server_version`, which is a display string: Neon appends a build
+    hash ("18.6 (c5250a2)") and parsing it is a second thing to get wrong.
+    `server_version_num` is an integer, 180006 for 18.6, major = n // 10000.
+    """
+    with conn.cursor() as cur:
+        cur.execute("show server_version_num")
+        return int(cur.fetchone()[0]) // 10000
+
 NAME_RE = re.compile(r"^(\d{4})_[A-Za-z0-9][A-Za-z0-9_]*\.sql$")
 CONTRACT_RE = re.compile(r"jobby:contract\b(?P<reason>.*)")
 
