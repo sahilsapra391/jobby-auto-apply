@@ -144,15 +144,64 @@ def _mirror_history(conn, account_id, payload):
              payload.get("at")))
 
 
-def _mirror_answers(conn, account_id, payload):
+ANSWER_DELETE_CEILING = 0.25
+
+
+def _mirror_answers(conn, account_id, payload, force=False):
     """`answers.json` is written whole, so the mirror is a whole replacement.
 
     An answer deleted from the file must not survive here, which an upsert
-    alone would leave behind.
+    alone would leave behind. But a whole replacement is a delete statement
+    wearing a sync's clothes, and until 2026-08-30 this one had neither a floor
+    nor a ceiling while `dual_write.resync` next door had both.
+
+    Measured that day, four ways, against four seeded answers in an isolated
+    scratch schema:
+
+        _mirror_answers(conn, account, {})                 -> ALL 4 DELETED
+        _mirror_answers(conn, account, None)               -> ALL 4 DELETED
+        _mirror_answers(conn, account, {"gender": "oops"}) -> ALL 4 DELETED
+        _mirror_answers(conn, account, {"gender": {...}})  -> 1 left, correct
+
+    On the real store that is 190 standing answers -- relocation, visa, work
+    authorisation, the ones an employer's form asks and the agent answers from
+    memory -- removed by a payload that arrives empty for any reason at all.
+
+    **The floor: an empty payload refuses the whole mirror and deletes
+    nothing.** An empty `answers.json` is a read failure or a first run far
+    more often than it is an instruction to empty the bank, which is the same
+    sentence `resync` already makes about an empty pool.
+
+    **The keep set is every key the file names, not every key that parsed.**
+    That is what makes the third case above the worst of the four: the payload
+    looked valid enough to proceed, one unreadable entry produced an empty
+    `rows`, and the emptiness was then read as "the file lists no answers".
+    A malformed entry is a reason not to update that one answer. It is never a
+    reason to delete it, and never a reason to delete its neighbours.
+
+    **The ceiling: `ANSWER_DELETE_CEILING`, the same 0.25 class A uses.**
+    Deleting most of the bank is the shape of a bad read rather than a person
+    clearing their answers, and `force=True` is how a caller says it meant it.
+
+    Class B has exactly one delete and this is it; `_mirror_roles`,
+    `_mirror_profile`, `_mirror_session` and `_mirror_history` all upsert. So
+    the asymmetry with class A was confined to this function, and closing it
+    here closes it everywhere.
     """
-    rows = []
-    for key, entry in (payload or {}).items():
+    if not payload:
+        raise ClassBError(
+            "refusing to mirror an empty answers payload: that would delete "
+            "every stored answer, and an empty answers.json is a read failure "
+            "or a first run far more often than it is the truth")
+    if not isinstance(payload, dict):
+        raise ClassBError(
+            f"answers payload must be a mapping, got {type(payload).__name__}")
+
+    rows, unreadable = [], []
+    for key, entry in payload.items():
         if not isinstance(entry, dict):
+            # Skipped for the upsert, kept for the keep set below.
+            unreadable.append(key)
             continue
         rows.append((
             account_id, key,
@@ -160,7 +209,28 @@ def _mirror_answers(conn, account_id, payload):
             list(entry.get("tags") or []),
             bool(entry.get("sensitive")),
         ))
+
+    keep = set(payload)
+
     with conn.cursor() as cur:
+        cur.execute("select key from answer_bank where account_id = %s",
+                    (account_id,))
+        held = {row[0] for row in cur.fetchall()}
+        doomed = sorted(held - keep)
+
+        # Checked before any write, so a refusal costs nothing and cannot
+        # leave half an update behind.
+        if held and doomed and not force:
+            share = len(doomed) / len(held)
+            if share > ANSWER_DELETE_CEILING:
+                raise ClassBError(
+                    f"refusing to delete {len(doomed)} of {len(held)} stored "
+                    f"answers ({share:.0%}), over the "
+                    f"{ANSWER_DELETE_CEILING:.0%} ceiling. That is the shape of "
+                    f"a truncated answers.json rather than a person clearing "
+                    f"their answers. Pass force=True if it really did shrink "
+                    f"that far.")
+
         for chunk in _chunks(rows, 500):
             values = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,now())"] * len(chunk))
             cur.execute(
@@ -175,9 +245,21 @@ def _mirror_answers(conn, account_id, payload):
                           sensitive = excluded.sensitive,
                           updated_at = now()""",
                 [field for row in chunk for field in row])
-        cur.execute(
-            "delete from answer_bank where account_id = %s and not (key = any(%s))",
-            (account_id, [row[1] for row in rows] or [""]))
+
+        if doomed:
+            cur.execute(
+                "delete from answer_bank where account_id = %s and key = any(%s)",
+                (account_id, doomed))
+
+    if unreadable:
+        # Never discarded. An entry that could not be read is the reason a
+        # later parity divergence exists, and it is the only place that fact
+        # is ever produced.
+        sys.stderr.write(
+            f"class_b: {len(unreadable)} answers entr"
+            f"{'y was' if len(unreadable) == 1 else 'ies were'} not a mapping "
+            f"and {'was' if len(unreadable) == 1 else 'were'} left unchanged "
+            f"rather than deleted: {', '.join(sorted(unreadable)[:5])}\n")
 
 
 # Profile keys that do not travel. `resumes` and `writingSamples` belong to

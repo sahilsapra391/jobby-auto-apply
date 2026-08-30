@@ -50,6 +50,47 @@ class DualWriteError(Exception):
 _LOOK_IT_UP = object()
 
 
+def resolved_url():
+    """**The one resolver**, and it answers "which database does this device
+    mirror to". `enabled()` and `connect()` both come here and cannot disagree.
+
+    They used to answer different questions from different places: `enabled()`
+    asked `jobs_db.database_url()`, which reads config.env under the store root,
+    and `connect()` asked `migrate.database_url()`, which prefers
+    `JOBBY_TEST_DATABASE_URL`. A caller could be told the device had a database
+    and then be handed a different one. That split is the root cause of all
+    three of 2026-08-30's incidents rather than a fourth: `HOME=$(mktemp -d)`
+    hid it by emptying both sides at once, resolving credentials through the
+    store root removed the accident, and pointing `JOBBY_TEST_DATABASE_URL` at
+    production was the same hole wearing a third name.
+
+    **`JOBBY_TEST_DATABASE_URL` is deliberately not consulted here**, and that
+    is not a second resolver sneaking back. It is a different question.
+    `migrate.database_url` answers "which database is the schema tool pointed
+    at", and a test database is exactly the right answer for `pgtest`, for the
+    migration runner and for a CLI told where to go. This answers "where does
+    this device's store mirror to", and a throwaway container is never that.
+
+    Consulting it here turned dual-write on for every store-writing test in CI,
+    which has that variable set for `pgtest`. Measured: 57 errors across
+    test_ingest and test_found_script. Migrating CI's `public` so the mirror
+    had somewhere to go fixed 44 of them and left 13 that pass alone and fail
+    in a suite -- tests seeing each other's rows through one shared schema. A
+    clear failure traded for flakiness is a bad trade, and the mirror tests do
+    not need it anyway: every one of them takes a `pgtest` scratch schema
+    rather than calling `connect()`.
+    """
+    import migrate
+    url = migrate._device_url()
+    if not url:
+        return None
+    # The test-runner guard still applies: a test process may not mirror to the
+    # device's own database however it got hold of the URL.
+    if migrate.device_url_refusal():
+        return None
+    return url
+
+
 def enabled(url=_LOOK_IT_UP):
     """Whether Postgres is configured at all.
 
@@ -65,8 +106,7 @@ def enabled(url=_LOOK_IT_UP):
     A run that mirrored nothing can then never also claim the stores agree.
     """
     if url is _LOOK_IT_UP:
-        import jobs_db
-        url = jobs_db.database_url()
+        url = resolved_url()
     return bool((url or "").strip())
 
 
@@ -76,9 +116,13 @@ def connect():
     Migrations need a session for their advisory lock and this needs one for
     its transaction, and Neon's configured URL is the pooled endpoint. See
     packages/schema/migrate.py, which owns the rewrite.
+
+    The URL is passed explicitly rather than letting `migrate.connect` look it
+    up again, so that what `enabled()` reported and what this opens are one
+    value read once.
     """
     import migrate
-    return migrate.connect(announce=False)
+    return migrate.connect(url=resolved_url(), announce=False)
 
 
 _ACCOUNT_CACHE = {}

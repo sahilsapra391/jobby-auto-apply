@@ -42,14 +42,51 @@ that stopped an hour ago if nobody looks at the timestamp.
 import argparse
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-REQUIRED_DAYS = 7
+# Three, not seven, since 2026-08-30. Seven was buying coverage of write paths
+# that fire rarely rather than duration for its own sake, so the coverage is
+# bought directly instead: the gate is three consecutive green days AND every
+# write path in docs/write-paths.md observed firing at least once during the
+# clock. Duration alone never proved the rare paths ran; a counter does.
+REQUIRED_DAYS = 3
+
+# The four paths whose modification restarts the clock, per the rule the gate
+# is written under. A change to any of them changes what parity is measuring,
+# so the green runs before it were measuring something else.
+#
+# File granularity, and `jobs_store.py` is the loose one: the rule names
+# `_persist_pool` rather than the whole module, so an unrelated edit there
+# restarts the clock when it need not. That is the safe direction and the
+# alternative is parsing a diff for one function, which would be wrong quietly.
+GATE_PATHS = (
+    "scripts/verify_parity.py",
+    "scripts/class_b.py",
+    "scripts/dual_write.py",
+    "scripts/jobs_store.py",
+)
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
 INTERVAL = timedelta(seconds=1800)
 STALE_AFTER = INTERVAL * 4
+
+#: How long a gap between two green runs can be and still count as covered.
+#: Two intervals, so one missed tick is tolerated and a sleeping laptop is not.
+#:
+#: **Time the checker did not run is not time the stores agreed.** Until
+#: 2026-08-30 this counted elapsed wall-clock between the first green run and
+#: now, and reported "2 green runs, no reset" across a window in which parity
+#: was actually red -- found by hand, because the scheduled check did not fire
+#: inside it. Absence of red read as green, which is the seventh instance in
+#: CLAUDE.md of a check reporting success while measuring nothing.
+#:
+#: So the clock counts *covered* time rather than elapsed time. A gap larger
+#: than this is inconclusive: it does not reset the streak, because nothing
+#: went wrong that anyone saw, and it does not count toward it either, because
+#: nothing went right that anyone saw.
+MAX_COVERED_GAP = INTERVAL * 2
 
 
 def log_path():
@@ -64,6 +101,40 @@ def log_path():
     """
     root = Path(os.environ.get("JOB_APPLICATION_DIR", "~/.job-application"))
     return root.expanduser() / "logs" / "parity.jsonl"
+
+
+def gate_path_touched(repo=None):
+    """When a gate path last changed in this checkout, or None.
+
+    **The clock resets on a divergence and on a change to what it measures, and
+    only the first leaves a trace in the log.** Without this the counter reads
+    green runs since the last divergence and silently over-reports whenever
+    somebody edits the mirror, which is precisely when the previous runs stop
+    being evidence.
+
+    Read from git rather than from anyone's memory. It is the checkout's own
+    history, so the reset arms when the change reaches the checkout the timer
+    runs from -- the deploy, which is the same arming rule CLAUDE.md gives for
+    everything else here.
+
+    Fails open on any git error: a clock that stops reporting because git is
+    unavailable is worse than one that reports the divergence half alone, and
+    the divergence half is the one that catches real drift.
+    """
+    repo = Path(repo) if repo else Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%cI", "--"]
+            + list(GATE_PATHS),
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return datetime.fromisoformat(result.stdout.strip()).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def read(path=None):
@@ -109,7 +180,11 @@ def diverged(entry):
     return bool(entry.get("divergences")) or entry.get("ok") is False
 
 
-def assess(entries, now=None):
+def assess(entries, now=None, gate_change=None):
+    """`gate_change` is when a gate path last moved; the clock starts after
+    whichever reset is later, a divergence or a change to the code under
+    measurement. Passed in rather than read here so the tests can drive both
+    halves without a git repository."""
     now = now or datetime.now(timezone.utc)
     stamped = [e for e in entries if _when(e)]
     if not stamped:
@@ -121,45 +196,71 @@ def assess(entries, now=None):
         if diverged(entry):
             last_bad = entry
 
-    after = [e for e in stamped
-             if last_bad is None or _when(e) > _when(last_bad)]
+    cutoff = _when(last_bad) if last_bad else None
+    if gate_change and (cutoff is None or gate_change > cutoff):
+        cutoff = gate_change
+    after = [e for e in stamped if cutoff is None or _when(e) > cutoff]
     green = [e for e in after if e.get("ok") is True]
 
     if not green:
         return {"state": "reset", "day": 0, "required": REQUIRED_DAYS,
-                "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
-                           if last_bad else None,
+                "resetAt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None,
+                "resetBy": ("a gate path changing"
+                            if gate_change and gate_change == cutoff
+                            else "a divergence"),
                 "runs": len(stamped)}
 
     start = _when(green[0])
     newest = _when(stamped[-1])
-    elapsed = now - start
-    gate = start + timedelta(days=REQUIRED_DAYS)
+    gate_seconds = REQUIRED_DAYS * 86400
 
+    # Covered time: the sum of the gaps between consecutive green runs, each
+    # capped at MAX_COVERED_GAP. A longer gap contributes its cap and the rest
+    # is counted as inconclusive rather than as agreement.
+    covered = 0.0
+    inconclusive = 0.0
     gaps = []
     for a, b in zip(green, green[1:]):
-        gaps.append((_when(b) - _when(a), _when(a), _when(b)))
-    widest = max(gaps, default=(timedelta(0), start, start))
+        span = (_when(b) - _when(a)).total_seconds()
+        gaps.append((span, _when(a), _when(b)))
+        covered += min(span, MAX_COVERED_GAP.total_seconds())
+        if span > MAX_COVERED_GAP.total_seconds():
+            inconclusive += span - MAX_COVERED_GAP.total_seconds()
+    # And the tail, from the newest green run to now, on the same terms.
+    tail = (now - _when(green[-1])).total_seconds()
+    covered += min(tail, MAX_COVERED_GAP.total_seconds())
+    if tail > MAX_COVERED_GAP.total_seconds():
+        inconclusive += tail - MAX_COVERED_GAP.total_seconds()
+
+    widest = max(gaps, default=(0.0, start, start))
+    elapsed = (now - start).total_seconds()
+    projected = start + timedelta(seconds=gate_seconds + inconclusive)
 
     return {
-        "state": "running" if now < gate else "gate open",
-        "day": elapsed.days,
+        "state": "running" if covered < gate_seconds else "gate open",
+        "day": int(covered // 86400),
         "required": REQUIRED_DAYS,
-        "elapsedDays": round(elapsed.total_seconds() / 86400, 2),
+        "coveredDays": round(covered / 86400, 2),
+        "elapsedDays": round(elapsed / 86400, 2),
+        "inconclusiveHours": round(inconclusive / 3600, 2),
         "startedAt": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "gateAt": gate.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # No fixed gate date: it moves out by every hour nobody watched.
+        "gateNotBefore": projected.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "greenRuns": len(green),
-        "inconclusive": sum(1 for e in after if e.get("inconclusive")),
+        "redRuns": sum(1 for e in after if diverged(e)),
+        "inconclusiveRuns": sum(1 for e in after if e.get("inconclusive")),
         "unparseable": sum(1 for e in entries if e.get("unparseable")),
-        "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
-                   if last_bad else None,
-        "widestGapHours": round(widest[0].total_seconds() / 3600, 2),
+        "resetAt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None,
+        "resetBy": ("a gate path changing" if gate_change and gate_change == cutoff
+                    else "a divergence" if cutoff else None),
+        "gatePathTouched": (gate_change.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if gate_change else None),
+        "widestGapHours": round(widest[0] / 3600, 2),
         "widestGapFrom": widest[1].strftime("%Y-%m-%dT%H:%M:%SZ"),
         "newestRunAt": newest.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        # The half that rots quietly: a stale log keeps producing a rising day
-        # count for as long as nobody reads the timestamp beside it.
         "stale": (now - newest) > STALE_AFTER,
         "sinceNewestHours": round((now - newest).total_seconds() / 3600, 2),
+        "complete": covered >= gate_seconds,
     }
 
 
@@ -169,7 +270,7 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, default=None)
     args = parser.parse_args(argv)
 
-    result = assess(read(args.log))
+    result = assess(read(args.log), gate_change=gate_path_touched())
     if args.json:
         print(json.dumps(result, indent=2))
         return 0
@@ -178,13 +279,18 @@ def main(argv=None):
     print(f"day {day} of {result['required']}   ({result['state']})")
     if result.get("startedAt"):
         print(f"  started      {result['startedAt']}")
-        print(f"  gate opens   {result['gateAt']}")
-        print(f"  green runs   {result['greenRuns']}")
+        print(f"  covered      {result['coveredDays']} days of "
+              f"{result['elapsedDays']} elapsed")
+        if result.get("inconclusiveHours"):
+            print(f"  UNWATCHED    {result['inconclusiveHours']}h the checker "
+                  f"did not run. Not red, not green: it does not count.")
+        print(f"  not before   {result['gateNotBefore']}")
+        print(f"  runs         {result['greenRuns']} green, "
+              f"{result.get('redRuns', 0)} red, "
+              f"{result.get('inconclusiveRuns', 0)} inconclusive")
         if result.get("resetAt"):
-            print(f"  last reset   {result['resetAt']}")
-        if result.get("inconclusive"):
-            print(f"  inconclusive {result['inconclusive']} "
-                  f"(ran, could not conclude; coverage missing, not a failure)")
+            print(f"  last reset   {result['resetAt']}"
+                  f"  ({result.get('resetBy') or 'unknown'})")
         if result.get("unparseable"):
             print(f"  UNPARSEABLE  {result['unparseable']} line(s)")
         print(f"  widest gap   {result['widestGapHours']}h "

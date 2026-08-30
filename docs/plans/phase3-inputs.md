@@ -5,6 +5,44 @@ down now because all of it is far cheaper to know before §5's connectors exist
 than after, and because two of the three findings contradict what a reasonable
 person would assume.
 
+## 0. Where these numbers may be re-measured, and where they may not
+
+**Every timing figure in this document was measured against Neon. None of them
+may be re-measured on the local `postgres:18` container.**
+
+That container arrived on 2026-08-30 and it is the right place for correctness
+work: the database suites run 233 tests in 5.3 seconds against it versus 261
+against Neon, so the keyset walks and lane comparisons that used to be
+sampled can now be run exhaustively. Do that.
+
+But it is not the machine the product runs on, and the differences are exactly
+the ones every number below depends on:
+
+| | Neon | the container |
+|---|---|---|
+| network | a round trip per statement, measured at ~60 ms | a unix-domain hop |
+| pooler | the configured endpoint is pooled | none |
+| storage | separated compute and storage | local disk |
+| cold start | compute suspends and resumes | always warm |
+
+So the split is by what is being asked, not by convenience:
+
+    correctness  -- does the query return the right rows, in the right order,
+                    without repeating or skipping        -> the container
+    timing       -- how long does it take, how does it scale with payload,
+                    what is the p95                      -> Neon, always
+
+Everything in sections 1 and 2 below is the second kind. The 0.83 s per MB
+payload curve, the 6.0 ms per changed row, the 15% narrow-update figure, the
+GIN and tsvector shares: re-measuring any of those on the container produces a
+faster number that is true about the container and false about the product, and
+a faster number is exactly the kind nobody questions.
+
+The Phase 2 gate is the same category. **"p95 click-to-visible under 250 ms, on
+a real device over a real network, recorded"** is not satisfiable by a local
+benchmark, and it says so in its own wording. A local number that clears it
+proves nothing at all.
+
 ## 1. Most of the mirror's work is a timestamp, and that is the big one
 
 The tier-1 sweep of 2026-08-30T03:49:15Z, the first with dual-write live, put

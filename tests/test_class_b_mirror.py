@@ -222,15 +222,28 @@ class ItMirrorsIntoTheRightTables(pgtest.SchemaCase):
 
     def test_a_removed_answer_is_removed_from_postgres(self):
         """`answers.json` is written whole. An answer deleted from it must not
-        survive in the mirror."""
-        class_b.mirror(self.conn, self.account, "answers", {
-            "a": {"key": "a", "question": "A?", "value": "1"},
-            "b": {"key": "b", "question": "B?", "value": "2"}})
-        class_b.mirror(self.conn, self.account, "answers", {
-            "a": {"key": "a", "question": "A?", "value": "1"}})
+        survive in the mirror.
+
+        Eight answers rather than the two this used to seed, and the count is
+        load-bearing now. `_mirror_answers` gained `ANSWER_DELETE_CEILING` on
+        2026-08-30 after it was found emptying the whole bank on an empty
+        payload, and a proportional guard bites hardest on the smallest table:
+        on two rows, removing one is 50% and every legitimate single deletion
+        trips it. Eight rows makes one removal 12.5%, which is what a person
+        deleting one of their 190 real answers actually looks like.
+
+        Do not shrink this back to two. The behaviour under test is unchanged
+        and still asserted; only the fixture became representative. A bank
+        genuinely small enough for one deletion to cross the ceiling needs
+        `force=True`, which is the caller saying it meant it."""
+        seeded = {f"k{i}": {"key": f"k{i}", "question": f"{i}?", "value": str(i)}
+                  for i in range(8)}
+        class_b.mirror(self.conn, self.account, "answers", seeded)
+        kept = {k: v for k, v in seeded.items() if k != "k7"}
+        class_b.mirror(self.conn, self.account, "answers", kept)
         with self.conn.cursor() as cur:
-            cur.execute("select key from answer_bank")
-            self.assertEqual([r[0] for r in cur.fetchall()], ["a"])
+            cur.execute("select key from answer_bank order by key")
+            self.assertEqual([r[0] for r in cur.fetchall()], sorted(kept))
 
     def test_a_sensitive_answer_keeps_its_flag(self):
         """CLAUDE.md: the flag stays on the record because it is what a

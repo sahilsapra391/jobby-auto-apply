@@ -152,11 +152,19 @@ class WhenAGoogleSessionIsRequired(unittest.TestCase):
             self.assertFalse(browser_identity.needs_google(url))
 
     def test_a_code_mailed_to_the_users_gmail_is_a_wall(self):
-        """The three real ones, verbatim from the store on 2026-08-28."""
+        """The three real ones from the store on 2026-08-28, with the address
+        replaced.
+
+        The wording is verbatim because that is what the detector has to cope
+        with; the mailbox is `someone@gmail.com` because the real one is the
+        user's own and `test_no_pii` rightly fails a tracked file carrying it.
+        The domain is load-bearing and the local part is not: `_MAILBOX`
+        matches `@gmail.com`, which is the half of `verification_wall` that
+        says the browser could have opened this mailbox itself."""
         for text in (
-            "Email confirmation code (6-digit OTP) sent to sahilsapra391@gmail.com",
-            "Email verification code (8 characters) sent to sahilsapra391@gmail.com",
-            "Email verification code from JPMorganChase (sent to sahilsapra391@gmail.com)",
+            "Email confirmation code (6-digit OTP) sent to someone@gmail.com",
+            "Email verification code (8 characters) sent to someone@gmail.com",
+            "Email verification code from JPMorganChase (sent to someone@gmail.com)",
         ):
             self.assertTrue(browser_identity.verification_wall(text), text)
 
