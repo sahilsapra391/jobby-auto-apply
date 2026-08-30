@@ -45,7 +45,12 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-REQUIRED_DAYS = 7
+# Three, not seven, since 2026-08-30. Seven was buying coverage of write paths
+# that fire rarely rather than duration for its own sake, so the coverage is
+# bought directly instead: the gate is three consecutive green days AND every
+# write path in docs/write-paths.md observed firing at least once during the
+# clock. Duration alone never proved the rare paths ran; a counter does.
+REQUIRED_DAYS = 3
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
 INTERVAL = timedelta(seconds=1800)

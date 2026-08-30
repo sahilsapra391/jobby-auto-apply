@@ -33,6 +33,11 @@ NOW = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
 
 
 class TheClockCounts(unittest.TestCase):
+    def test_the_required_span_is_three_days(self):
+        """Named here rather than left implicit in a gate arithmetic test, so a
+        change to the span fails as a decision rather than as a date."""
+        self.assertEqual(parity_clock.REQUIRED_DAYS, 3)
+
     def test_it_starts_at_the_first_green_run_not_the_newest(self):
         """The bug this file exists for. Both readings produce a plausible
         timestamp and a plausible day count, and only one of them is the
@@ -42,7 +47,7 @@ class TheClockCounts(unittest.TestCase):
                    green("2026-09-01T04:14:20Z")]
         r = parity_clock.assess(entries, now=NOW)
         self.assertEqual(r["startedAt"], "2026-08-30T01:34:42Z")
-        self.assertEqual(r["gateAt"], "2026-09-06T01:34:42Z")
+        self.assertEqual(r["gateAt"], "2026-09-02T01:34:42Z")
         self.assertEqual(r["day"], 3)
 
     def test_a_divergence_restarts_the_clock_at_zero(self):
