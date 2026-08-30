@@ -456,5 +456,57 @@ class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
         self.assertEqual({d["id"] for d in dropped}, {"9c9cf0baa815c1eb"})
 
 
+class TheScheduledTimerCanActuallyRun(unittest.TestCase):
+    """launchd would not execute the shell version, and said so where nobody
+    was looking.
+
+        /bin/sh: .../scripts/parity_cron.sh: Operation not permitted
+
+    exit 126, twice, while `parity.jsonl` stayed empty. An empty parity log and
+    a timer that has not fired yet are the same observation, so the failure
+    looked like waiting. The cause is the macOS Privacy control CLAUDE.md
+    already records for the launchd installer: a LaunchAgent may not exec a file
+    under ~/Documents. The three existing services run the interpreter with the
+    script as an argument, so the binary executed is one that holds the grant.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "scripts"))
+        import install_parity_timer
+        self.installer = install_parity_timer
+
+    def test_the_plist_runs_an_interpreter_not_the_script(self):
+        body = self.installer.plist_body("/opt/anaconda3/bin/python3")
+        argv = body["ProgramArguments"]
+        self.assertEqual(argv[0], "/opt/anaconda3/bin/python3")
+        self.assertTrue(argv[1].endswith(".py"),
+                        f"launchd is asked to exec {argv[1]}, which it may not "
+                        f"do for a file under ~/Documents")
+
+    def test_it_does_not_point_at_a_shell_script(self):
+        body = self.installer.plist_body("/usr/bin/python3")
+        for entry in body["ProgramArguments"]:
+            with self.subTest(entry=entry):
+                self.assertFalse(entry.endswith(".sh"))
+
+    def test_the_shell_version_is_gone_rather_than_left_beside_it(self):
+        """A script that cannot run on the only machine it targets is a trap
+        for whoever finds it next."""
+        self.assertFalse((REPO / "scripts" / "parity_cron.sh").exists())
+
+    def test_the_entrypoint_it_names_exists(self):
+        body = self.installer.plist_body(sys.executable)
+        self.assertTrue(Path(body["ProgramArguments"][1]).exists())
+
+    def test_a_crash_still_writes_a_line(self):
+        """Silence is the failure mode here: an empty log and a timer that has
+        not fired look identical."""
+        sys.path.insert(0, str(REPO / "scripts"))
+        import parity_log
+        line = parity_log.summarise("RuntimeError: exploded", 1)
+        self.assertFalse(line["ok"])
+        self.assertIn("exploded", line["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()
