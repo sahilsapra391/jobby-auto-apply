@@ -87,9 +87,41 @@ none of them writes. They mutate the in-memory pool and their caller persists
 it through the choke point, so they are covered by construction rather than by
 being remembered. That is the reason for hooking the primitive.
 
-## Class B: applications, answers and profile, dual-written in Phase 1
+## Class B: applications, answers and profile, inventoried and NOT yet mirrored
 
-These reach `applications`, `application_events`, `answers` and `profiles`.
+These have tables waiting for them in `applications`, `application_events`,
+`answers` and `profiles`, and nothing writes to those tables yet. Class A is
+mirrored; class B is not. Saying otherwise would be the more dangerous kind of
+wrong, because it reads as coverage.
+
+**The reason to leave it that way is the submit path.** Measured 2026-08-30
+against an unreachable database:
+
+    session-save (status completed)   SUCCEEDS, file written
+    history-append                    SUCCEEDS
+    answer-put                        SUCCEEDS
+    a pool write                      FAILS in 0.1s, file unchanged
+
+`finish.py` records a completion by shelling out to `store.py session-save` and
+`store.py history-append`. If those were mirrored under class A's ordering,
+Postgres first and fail the operation, then a Neon blip in the seconds after an
+agent clicks submit would fail the completion record for an application that
+has already been sent to a real employer under a real name. The run would
+strand with the submission made and nothing recorded, and the duplicate guard
+reads that history: the next attempt would not know it had already applied.
+
+A failed pool write costs a sweep, is loud, and is recoverable by re-running.
+A failed completion record costs an application nobody can un-send.
+
+So class B needs the **opposite** ordering: file first, then mirror, with the
+mirror failing loudly and separately without taking the operation down. That is
+a different design with a different argument, and it belongs in its own change
+rather than being smuggled in under this one. `tests/test_submit_path_has_no_database_dependency.py`
+holds the line meanwhile: it fails if the submit path acquires a database
+dependency, so this stays a decision instead of drifting back into an accident.
+
+| Module | Function | Primitive | What it means |
+|---|---|---|---|
 
 | Module | Function | Primitive | What it means |
 |---|---|---|---|
