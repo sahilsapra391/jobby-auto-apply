@@ -41,10 +41,10 @@ that stopped an hour ago if nobody looks at the timestamp.
 
 import argparse
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-LOG = Path("~/.job-application/logs/parity.jsonl").expanduser()
 REQUIRED_DAYS = 7
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
@@ -52,7 +52,29 @@ INTERVAL = timedelta(seconds=1800)
 STALE_AFTER = INTERVAL * 4
 
 
-def read(path=LOG):
+def log_path():
+    """Resolved on every call, never frozen into a default argument.
+
+    Two rules this obeys, and both are in CLAUDE.md because both were paid for.
+    `JOB_APPLICATION_DIR` is honoured the way `store.root_dir` honours it, so a
+    redirected store redirects this too. And the path is not a module constant
+    computed at import: a `Path.home()` evaluated when the module loads is a
+    path no environment variable can reach afterwards, which is how half of the
+    store-isolation leak survived a redirect that looked complete.
+    """
+    root = Path(os.environ.get("JOB_APPLICATION_DIR", "~/.job-application"))
+    return root.expanduser() / "logs" / "parity.jsonl"
+
+
+def read(path=None):
+    """`path=None`, not `path=LOG`.
+
+    Python evaluates a default once, when the `def` runs, so a store path in a
+    signature keeps naming whatever the module held at import however the
+    constant is set later. `NoStorePathIsAFrozenDefaultTests` walks scripts/
+    for exactly this and caught the first version of this file.
+    """
+    path = path or log_path()
     if not path.exists():
         return []
     out = []
@@ -144,7 +166,7 @@ def assess(entries, now=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--log", type=Path, default=LOG)
+    parser.add_argument("--log", type=Path, default=None)
     args = parser.parse_args(argv)
 
     result = assess(read(args.log))

@@ -126,7 +126,24 @@ jobs:
           fi
 
       - name: Node tests
-        run: node --test tests/*.test.mjs
+        # Two globs because the tests live in two places, and
+        # tests/test_ci_covers_everything.py asserts that every *.test.mjs on
+        # disk is reached by one of them. The root suite covers the Python
+        # board's embedded scripts; apps/web covers the /v2 design system.
+        run: node --test tests/*.test.mjs apps/web/test/*.test.mjs
+
+      - name: The /v2 board builds and deploys the shape it was tested in
+        # The Next.js half of the renderer-sync check above, and it exists for
+        # the same two reasons. `npm ci` rather than `npm install`, so the tree
+        # CI tests is the tree the lockfile pins and a drifted lockfile fails
+        # here rather than at deploy time. Then the deployed-shape check builds,
+        # strips the source tree away, and serves the traced bundle: an asset
+        # URL that forgets the basePath or a file the server reads that the
+        # tracer never carried fails the PR instead of the board.
+        working-directory: apps/web
+        run: |
+          npm ci
+          node tools/check_deployed_shape.mjs
 
       - name: Syntax
         run: |
