@@ -460,12 +460,105 @@ class AgainstARealDatabase(pgtest.SchemaCase):
                 self.assertNotEqual(backfill.norm_company(name),
                                     backfill.UNKNOWN_EMPLOYER)
 
+    def test_the_sentinel_is_excluded_from_employer_counts(self):
+        """Counting a filing location as a company makes every total one too
+        many, and the number is the kind a person quotes."""
+        records = self.records()
+        records["id1"]["company"] = ""
+        backfill.run(self.conn, self.account, records)
+        with self.conn.cursor() as cur:
+            cur.execute("select count(*) from employers")
+            raw = cur.fetchone()[0]
+        self.assertEqual(backfill.real_employer_count(self.conn), raw - 1)
+
+    def test_the_sentinel_is_excluded_from_board_grouping(self):
+        """A lane headed "Unknown employer (3)" reads as a company with three
+        openings."""
+        records = self.records()
+        records["id1"]["company"] = ""
+        backfill.run(self.conn, self.account, records)
+        names = [n for _id, n in backfill.groupable_employers(self.conn)]
+        self.assertNotIn(backfill.UNKNOWN_EMPLOYER_NAME, names)
+        self.assertNotIn(backfill.UNKNOWN_EMPLOYER, names)
+
+    def test_a_merged_employer_is_excluded_from_board_grouping(self):
+        """Showing both halves of a known duplicate as separate groups is
+        precisely what the merge recorded."""
+        backfill.run(self.conn, self.account, self.sharegate())
+        groups = backfill.groupable_employers(self.conn)
+        self.assertEqual(
+            len([n for _i, n in groups if n.lower().startswith("sharegate")]), 1)
+
+    def test_the_sentinel_never_acquires_a_domain_on_a_later_run(self):
+        """The first run may see no website for it and the second may. The
+        exclusion cannot depend on which."""
+        records = self.records()
+        records["id1"]["company"] = ""
+        backfill.run(self.conn, self.account, records)
+        records["id1"]["companyWebsite"] = "https://someone-else.com"
+        records["id1"]["logoUrl"] = "https://someone-else.com/logo.png"
+        backfill.run(self.conn, self.account, records)
+        with self.conn.cursor() as cur:
+            cur.execute("select domain, logo_url from employers "
+                        "where norm_name = %s", (backfill.UNKNOWN_EMPLOYER,))
+            self.assertEqual(cur.fetchone(), (None, None))
+
     def test_the_placeholder_is_not_created_when_nothing_needs_it(self):
         """Every fresh database would otherwise get a stray employer row."""
         backfill.run(self.conn, self.account, self.records())
         with self.conn.cursor() as cur:
             cur.execute("select count(*) from employers where norm_name = %s",
                         (backfill.UNKNOWN_EMPLOYER,))
+            self.assertEqual(cur.fetchone()[0], 0)
+
+    def sharegate(self):
+        records = self.records()
+        records["id1"]["company"] = "Sharegate"
+        records["id1"]["companyWebsite"] = "https://sharegate.com"
+        records["id3"]["company"] = "Sharegate Migrate At Workleap"
+        records["id3"]["companyWebsite"] = "https://www.sharegate.com"
+        return records
+
+    def test_the_loser_records_where_its_domain_went(self):
+        """Without it the loser has a null domain and no trace of why, so
+        nothing matches it to the winner again and the next sweep re-creates
+        the split."""
+        backfill.run(self.conn, self.account, self.sharegate())
+        with self.conn.cursor() as cur:
+            cur.execute("""select loser.norm_name, winner.norm_name
+                           from employers loser
+                           join employers winner on winner.id = loser.merged_into""")
+            rows = cur.fetchall()
+        self.assertEqual(len(rows), 1)
+        loser, winner = rows[0]
+        self.assertNotEqual(loser, winner)
+        self.assertEqual(winner, backfill.norm_company("Sharegate"))
+
+    def test_the_winner_is_not_merged_into_anything(self):
+        backfill.run(self.conn, self.account, self.sharegate())
+        with self.conn.cursor() as cur:
+            cur.execute("select merged_into from employers where domain = %s",
+                        ("sharegate.com",))
+            self.assertIsNone(cur.fetchone()[0])
+
+    def test_an_employer_is_never_merged_into_itself(self):
+        """A cycle of length one, which any resolver walking the pointer
+        would loop on. The schema refuses it."""
+        backfill.run(self.conn, self.account, self.records())
+        with self.conn.cursor() as cur:
+            cur.execute("select id from employers limit 1")
+            employer = cur.fetchone()[0]
+            with self.assertRaises(Exception) as caught:
+                cur.execute("update employers set merged_into = id "
+                            "where id = %s", (employer,))
+        self.assertIn("employers_merge_is_not_self", str(caught.exception))
+
+    def test_an_uncontested_employer_has_no_merge_pointer(self):
+        """Null means "no known duplicate", not "checked"."""
+        backfill.run(self.conn, self.account, self.records())
+        with self.conn.cursor() as cur:
+            cur.execute("select count(*) from employers "
+                        "where merged_into is not null")
             self.assertEqual(cur.fetchone()[0], 0)
 
     def test_two_employers_cannot_claim_one_domain(self):
@@ -517,16 +610,63 @@ class AgainstARealDatabase(pgtest.SchemaCase):
         self.assertEqual(self.domain_of(backfill.norm_company("Acme Inc")),
                          "acme.com")
 
-    def test_two_records_sharing_a_board_key_are_merged_and_reported(self):
-        """Measured on the real pool: one pair, two Braze rows for one
-        Greenhouse posting. The batch must not abort, and the loser must be
-        named rather than silently dropped."""
+    def collide(self, first, second):
+        """Two records that derive one board key, given in the order stated."""
         records = self.records()
-        records["id5"] = dict(records["id1"], id="id5",
-                              canonicalUrl="https://job-boards.greenhouse.io/acme/jobs/1")
+        records.pop("id2"); records.pop("id3")
+        records[first] = dict(records["id1"], id=first,
+                              canonicalUrl="https://boards.greenhouse.io/acme/jobs/1")
+        records[second] = dict(records["id1"], id=second,
+                               canonicalUrl="https://job-boards.greenhouse.io/acme/jobs/1")
+        records.pop("id1", None)
+        return records
+
+    def test_the_surviving_record_is_decided_by_a_rule_not_by_order(self):
+        """Phase 3 will hit dozens of these per sweep, so which one survives
+        cannot be whichever the iteration reached first.
+
+        The rule is the lexicographically smallest legacy id. It carries no
+        meaning beyond being stable, and stable is the requirement: a winner
+        that moves between runs changes the posting's uuid, and every decision
+        pointing at it has to be rewritten."""
+        report = backfill.run(self.conn, self.account,
+                              self.collide("aaa111", "zzz999"))
+        self.assertEqual(report["merged"], ["zzz999"])
+        with self.conn.cursor() as cur:
+            cur.execute("select legacy_id from postings")
+            self.assertEqual([r[0] for r in cur.fetchall()], ["aaa111"])
+
+    def test_the_same_pair_in_the_other_order_gives_the_same_winner(self):
+        """The order the records arrive in must not decide anything."""
+        report = backfill.run(self.conn, self.account,
+                              self.collide("zzz999", "aaa111"))
+        self.assertEqual(report["merged"], ["zzz999"])
+        with self.conn.cursor() as cur:
+            cur.execute("select legacy_id from postings")
+            self.assertEqual([r[0] for r in cur.fetchall()], ["aaa111"])
+
+    def test_a_re_run_does_not_move_the_winner(self):
+        records = self.collide("aaa111", "zzz999")
+        backfill.run(self.conn, self.account, records)
+        backfill.run(self.conn, self.account, records)
+        with self.conn.cursor() as cur:
+            cur.execute("select legacy_id from postings")
+            self.assertEqual([r[0] for r in cur.fetchall()], ["aaa111"])
+
+    def test_three_records_on_one_key_report_two_losers(self):
+        """A pair is the case the pool has today. A sweep will bring more."""
+        records = self.collide("aaa111", "zzz999")
+        records["mmm555"] = dict(records["aaa111"], id="mmm555",
+                                 canonicalUrl="https://boards.greenhouse.io/acme/jobs/1?x=1")
         report = backfill.run(self.conn, self.account, records)
-        self.assertEqual(report["merged"], ["id5"])
-        self.assertEqual(self.counts()["postings"], 3)
+        self.assertEqual(sorted(report["merged"]), ["mmm555", "zzz999"])
+        self.assertEqual(self.counts()["postings"], 1)
+
+    def test_the_loser_is_reported_rather_than_dropped_quietly(self):
+        report = backfill.run(self.conn, self.account,
+                              self.collide("aaa111", "zzz999"))
+        self.assertTrue(report["merged"],
+                        "a record vanished with nothing said about it")
 
     def test_an_unknown_legacy_state_stops_the_run(self):
         records = self.records()

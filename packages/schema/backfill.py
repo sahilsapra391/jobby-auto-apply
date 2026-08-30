@@ -70,6 +70,28 @@ UNKNOWN_EMPLOYER = "(unknown employer)"
 UNKNOWN_EMPLOYER_NAME = "Unknown employer"
 
 
+def BOARD_KEY_WINNER(record):
+    """The sort key deciding which record survives a board-key collision.
+
+    Two stored records can derive one `(source, board_slug, external_id)`, and
+    that is not a defect: it means two rows for one posting, which is what the
+    unique index exists to collapse. One pair in the pool on 2026-08-29, the
+    same Braze posting reached through `boards.` and `job-boards.`. Phase 3
+    will hit these by the dozen per sweep, because a connector fetching a board
+    sees every posting on it however many hostnames the legacy pool reached
+    them through.
+
+    So the winner is a **rule** rather than whichever row happened to be
+    iterated first: the lexicographically smallest legacy id. It has no meaning
+    beyond being stable, and stable is the whole requirement. A winner that
+    moves between runs makes parity flap, because the posting's uuid changes
+    and every decision pointing at it has to be rewritten.
+
+    The loser is reported by `run()`, never dropped quietly.
+    """
+    return record.get("id") or ""
+
+
 class BackfillError(Exception):
     pass
 
@@ -260,6 +282,7 @@ def upsert_employers(conn, records, batch=500):
         if domain in claimed:
             contested.append((norm, domain, claimed[domain]))
             best[norm]["domain"] = None
+            best[norm]["merged_into"] = claimed[domain]
         else:
             claimed[domain] = norm
 
@@ -279,7 +302,24 @@ def upsert_employers(conn, records, batch=500):
                                               excluded.logo_url)""",
                 [field for row in chunk for field in row])
         cur.execute("select norm_name, id from employers")
-        return dict(cur.fetchall()), contested
+        ids = dict(cur.fetchall())
+
+        # Record where a contested employer's domain went, so the loser is not
+        # left with a null domain and no trace of why. Nothing follows this
+        # pointer yet; see docs/employer-identity.md.
+        links = [(ids[winner], ids[norm]) for norm, entry in best.items()
+                 if entry.get("merged_into")
+                 for winner in [entry["merged_into"]]
+                 if winner in ids and norm in ids]
+        for chunk in _chunks(links, batch):
+            values = ", ".join(["(%s::uuid, %s::uuid)"] * len(chunk))
+            cur.execute(
+                f"""update employers set merged_into = v.winner
+                    from (values {values}) as v(winner, loser)
+                    where employers.id = v.loser
+                      and employers.merged_into is distinct from v.winner""",
+                [field for row in chunk for field in row])
+        return ids, contested
 
 
 def upsert_postings(conn, records, employers, batch=500):
@@ -301,7 +341,7 @@ def upsert_postings(conn, records, employers, batch=500):
     columns = _columns()
 
     prepared, seen, merged = [], {}, []
-    for record in sorted(records, key=lambda r: r.get("id") or ""):
+    for record in sorted(records, key=BOARD_KEY_WINNER):
         row = posting_row(record)
         norm = norm_company(record.get("company")) or UNKNOWN_EMPLOYER
         employer_id = employers.get(norm)
@@ -313,7 +353,7 @@ def upsert_postings(conn, records, employers, batch=500):
         if key in seen:
             merged.append(row["legacy_id"])
             continue
-        seen[key] = row["legacy_id"]
+        seen[key] = row["legacy_id"]      # see BOARD_KEY_WINNER
         prepared.append([employer_id] + [row[c] for c in columns])
 
     assignments = ", ".join(f"{c} = excluded.{c}" for c in columns
@@ -410,6 +450,34 @@ def run(conn, account_id, records):
         "contested_domains": contested,
         "decisions": decisions,
     }
+
+
+def real_employer_count(conn):
+    """Employers a person would call employers.
+
+    Excludes the `(unknown employer)` sentinel, which is a filing location for
+    postings whose feed named no company. Counting it makes every total one too
+    many, and worse, a board lane headed "Unknown employer (3)" invites
+    somebody to read it as a company with three openings.
+    """
+    with conn.cursor() as cur:
+        cur.execute("select count(*) from employers where norm_name <> %s",
+                    (UNKNOWN_EMPLOYER,))
+        return cur.fetchone()[0]
+
+
+def groupable_employers(conn):
+    """(id, canonical_name) for every employer a board may group under.
+
+    The sentinel is absent for the reason above. So is any employer merged into
+    another, because showing both halves of a known duplicate as separate
+    groups is exactly what the merge recorded.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""select id, canonical_name from employers
+                       where norm_name <> %s and merged_into is null
+                       order by canonical_name""", (UNKNOWN_EMPLOYER,))
+        return cur.fetchall()
 
 
 def main(argv=None):
