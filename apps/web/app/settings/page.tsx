@@ -9,10 +9,10 @@ export default function Settings() {
       <header className="jb-appbar">
         <div className="jb-logo">Jobby</div>
         <nav className="jb-nav">
-          <a className="jb-pill" href="/v2">
+          <a className="jb-pill" href="/">
             Home
           </a>
-          <a className="jb-pill" href="/v2/settings" aria-current="page">
+          <a className="jb-pill" href="/settings" aria-current="page">
             Settings
           </a>
         </nav>

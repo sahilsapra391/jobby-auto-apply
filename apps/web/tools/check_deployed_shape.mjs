@@ -37,10 +37,27 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WEB = dirname(dirname(fileURLToPath(import.meta.url)));
-const BASE_PATH = "/v2";
+/**
+ * The board sits at the root of its own domain, so there is no path prefix to
+ * carry. The constant stays because the check is about what the deployment
+ * emits rather than about one routing choice: set it and every absolute asset
+ * URL is required to carry it again.
+ */
+const BASE_PATH = "";
 /** Every route the app serves. A page absent from here is a page unchecked. */
-const ROUTES = ["/v2", "/v2/settings"];
+const ROUTES = ["/", "/settings"];
 const PORT = 3199;
+/**
+ * The gate is on in this check, not bypassed for it.
+ *
+ * middleware.ts refuses every request without Basic auth and answers 503 when
+ * DASHBOARD_PASSWORD is unset. Running the shape crawl with no password would
+ * have meant crawling 503s and asserting happily that they carry no bad asset
+ * URLs, which is the shape of a check that passes while testing nothing. So
+ * the check supplies a password, and asserts the gate first.
+ */
+const PASSWORD = "check-deployed-shape";
+const CREDENTIALS = "Basic " + Buffer.from(":" + PASSWORD).toString("base64");
 
 const problems = [];
 const notes = [];
@@ -79,40 +96,113 @@ if (existsSync(join(WEB, "public"))) {
 
 // ---------------------------------------------------------------- serve
 
-const server = spawn(process.execPath, [join(isolated, "server.js")], {
-  cwd: isolated,
-  env: { ...process.env, PORT: String(PORT), HOSTNAME: "127.0.0.1",
-         NODE_ENV: "production" },
-  stdio: ["ignore", "pipe", "pipe"],
-});
-// Never DEVNULL. The failure that matters here explains itself once, in the
-// server's own stderr, at the moment it dies.
-let serverLog = "";
-server.stdout.on("data", (d) => { serverLog += d; });
-server.stderr.on("data", (d) => { serverLog += d; });
+const running = [];
 
-async function ready(deadlineMs = 30000) {
-  const until = Date.now() + deadlineMs;
+/** Boot the traced server on `port`, optionally with a password configured. */
+async function boot(port, password) {
+  const env = { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1",
+                NODE_ENV: "production" };
+  if (password === undefined) delete env.DASHBOARD_PASSWORD;
+  else env.DASHBOARD_PASSWORD = password;
+
+  const proc = spawn(process.execPath, [join(isolated, "server.js")],
+                     { cwd: isolated, env, stdio: ["ignore", "pipe", "pipe"] });
+  // Never DEVNULL. The failure that matters here explains itself once, in the
+  // server's own stderr, at the moment it dies.
+  const entry = { proc, log: "" };
+  proc.stdout.on("data", (d) => { entry.log += d; });
+  proc.stderr.on("data", (d) => { entry.log += d; });
+  running.push(entry);
+
+  const until = Date.now() + 30000;
   while (Date.now() < until) {
     try {
-      await fetch(`http://127.0.0.1:${PORT}${BASE_PATH}`, { redirect: "manual" });
-      return true;
+      await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      return entry;
     } catch {
       await new Promise((r) => setTimeout(r, 250));
     }
   }
-  return false;
+  entry.dead = true;
+  return entry;
 }
 
 function done(code) {
-  server.kill("SIGTERM");
+  for (const { proc } of running) proc.kill("SIGTERM");
   rmSync(isolated, { recursive: true, force: true });
   process.exit(code);
 }
 
-if (!(await ready())) {
-  console.error("the isolated server never answered. Its own output:\n" + serverLog);
+const server = await boot(PORT, PASSWORD);
+const serverLog = server.log;
+if (server.dead) {
+  console.error("the isolated server never answered. Its own output:\n" + server.log);
   done(1);
+}
+
+// ----------------------------------------------------------------- gate
+//
+// A custom domain is exempt from the team's SSO, so this middleware is the
+// only thing between v2.jobby.fyi and the internet. It is checked here, on the
+// traced bundle, because a gate that works in dev and is absent from the
+// deployment is the exact failure this whole tool exists for.
+
+for (const route of ROUTES) {
+  const url = `http://127.0.0.1:${PORT}${route}`;
+
+  const anon = await fetch(url);
+  if (anon.status !== 401) {
+    fail(`${route} answered ${anon.status} with no credentials. It must be 401.`);
+  }
+  if (!(anon.headers.get("www-authenticate") || "").startsWith("Basic ")) {
+    fail(`${route} refused anonymously without a WWW-Authenticate challenge, ` +
+         `so a browser has no way to offer credentials.`);
+  }
+
+  const wrong = await fetch(url, {
+    headers: { authorization: "Basic " + Buffer.from(":wrong").toString("base64") },
+  });
+  if (wrong.status !== 401) {
+    fail(`${route} answered ${wrong.status} to a wrong password. It must be 401.`);
+  }
+}
+
+// **The case this check could not see about itself.**
+//
+// Every assertion above runs against a server with a password configured, so
+// none of them can observe what happens when there is none -- and an unset
+// environment variable is the most likely way this board ends up serving the
+// world, because it looks like nothing at all. It happens on a fresh project,
+// on a renamed variable, on a preview environment nobody populated. So a second
+// server is booted with DASHBOARD_PASSWORD absent, and it must refuse.
+{
+  const bare = await boot(PORT + 1, undefined);
+  if (bare.dead) {
+    fail("the server with no DASHBOARD_PASSWORD never answered:\n" + bare.log);
+  } else {
+    const res = await fetch(`http://127.0.0.1:${PORT + 1}/`);
+    if (res.status !== 503) {
+      fail(`with DASHBOARD_PASSWORD unset the board answered ${res.status}, ` +
+           `not 503. An unconfigured board must refuse, never fall open: on a ` +
+           `custom domain there is no SSO behind it to catch this.`);
+    }
+    // And it must not be openable by guessing the empty password.
+    const empty = await fetch(`http://127.0.0.1:${PORT + 1}/`, {
+      headers: { authorization: "Basic " + Buffer.from(":").toString("base64") },
+    });
+    if (empty.status !== 503) {
+      fail(`with DASHBOARD_PASSWORD unset, an empty password got ` +
+           `${empty.status}. Absent config must not be satisfiable.`);
+    }
+  }
+}
+
+// Static chunks are the board's own code and are not exempt.
+const chunkProbe = await fetch(`http://127.0.0.1:${PORT}/_next/static/chunks/`);
+if (chunkProbe.status !== 401) {
+  fail(`/_next/static/ answered ${chunkProbe.status} unauthenticated. The ` +
+       `matcher exempts static assets, and a lane's shape is inferable from ` +
+       `the board's own chunks.`);
 }
 
 // ---------------------------------------------------------------- check
@@ -120,7 +210,8 @@ if (!(await ready())) {
 const seen = new Set();
 
 for (const route of ROUTES) {
-  const res = await fetch(`http://127.0.0.1:${PORT}${route}`);
+  const res = await fetch(`http://127.0.0.1:${PORT}${route}`,
+                          { headers: { authorization: CREDENTIALS } });
   if (!res.ok) {
     fail(`${route} answered ${res.status} from the traced bundle. ` +
          `A route that renders from the working tree and fails here is ` +
@@ -134,7 +225,7 @@ for (const route of ROUTES) {
   // the root and 404s behind any path-based routing.
   for (const m of html.matchAll(/(?:href|src)="(\/[^"]*)"/g)) {
     const url = m[1];
-    if (!url.startsWith(BASE_PATH + "/") && url !== BASE_PATH) {
+    if (BASE_PATH && !url.startsWith(BASE_PATH + "/") && url !== BASE_PATH) {
       fail(`${route} references ${url}, which does not carry ${BASE_PATH}. ` +
            `It resolves in dev and 404s deployed.`);
       continue;
@@ -145,7 +236,8 @@ for (const route of ROUTES) {
 
 // Every referenced asset actually answers, from the isolated tree.
 for (const url of [...seen].sort()) {
-  const res = await fetch(`http://127.0.0.1:${PORT}${url}`, { redirect: "follow" });
+  const res = await fetch(`http://127.0.0.1:${PORT}${url}`,
+                          { redirect: "follow", headers: { authorization: CREDENTIALS } });
   if (!res.ok) {
     fail(`${url} answered ${res.status} from the traced bundle`);
   }
@@ -170,7 +262,7 @@ try {
 
 // ---------------------------------------------------------------- report
 
-console.log(`\nchecked ${ROUTES.length} routes, ${seen.size} asset URLs, ` +
+console.log(`\nchecked ${ROUTES.length} routes gated and ${seen.size} asset URLs, ` +
             `served from a traced bundle with no source tree behind it`);
 for (const n of notes) console.log(`  note: ${n}`);
 
