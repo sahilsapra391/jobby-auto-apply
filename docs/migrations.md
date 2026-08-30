@@ -184,3 +184,35 @@ CI runs the migration tests against a throwaway `postgres:18` service container,
 so no secret is needed and every branch gets its own database. `apply` against
 Neon is the `migrate` job in the deploy pipeline (§7), ordered before the worker
 and scanner deploys and after the tests.
+
+## Running the database tests on this Mac
+
+```bash
+docker run -d --name jobby-pg18 \
+  -e POSTGRES_USER=jobby -e POSTGRES_PASSWORD=jobby -e POSTGRES_DB=jobby_test \
+  -p 55432:5432 postgres:18
+
+export JOBBY_TEST_DATABASE_URL=postgresql://jobby:jobby@localhost:55432/jobby_test
+```
+
+`postgres:18` to match Neon's major and CI's container;
+`tests/test_postgres_version_is_pinned.py` fails the build on a mismatch.
+
+**Do not point `JOBBY_TEST_DATABASE_URL` at Neon.** `migrate.database_url`
+refuses a test URL naming the same (host, database) as the device's own, with
+`-pooler` stripped so the direct and pooled forms of one database are seen as
+one. That refusal exists because on 2026-08-30 the obvious way to run these
+tests -- the only Postgres on this machine being the live one -- defeated the
+test-runner guard within hours of it being written, wrote 39 applications and
+21 events into production and emptied the answer bank.
+
+The container is worth having for its own sake, not only for safety: measured
+2026-08-30, the database suites run **233 tests in 5.3 seconds** against it
+versus **261 seconds** against Neon, because every statement stops crossing a
+network.
+
+A live-corpus test that genuinely needs the device's database takes the
+documented exception and names the URL explicitly, the way
+`tests/test_verify_parity.py::_device_connection` does. Anything doing that
+owes two things: a reason a fixture cannot answer the question, and a
+guarantee that it only reads.
