@@ -145,3 +145,49 @@ says so rather than reporting the difference as a fault. An inconclusive run
 exits non-zero like any other failure, because a parity job that can quietly
 decline to answer is a parity job that reports green while checking nothing.
 The scheduled run retries; the exit code never lies about having checked.
+
+## What the mirror costs, measured under a real sweep
+
+Phase 3 moves sourcing to the cloud and §5's connector upsert writes through
+this path, so the question is not whether the mirror is fast enough today but
+where it stops being fast enough. Measured on the tier-1 sweep of
+2026-08-30T03:49:15Z, the first to run with dual-write live:
+
+```
+sweep duration        1,264s (21.1 min), 943 requests, 27 channels
+found -> kept         17,129 -> 640
+pool                  16,123 -> 16,282
+
+mirror                29.75s
+file write             0.57s
+mirror share of persist  98.1%
+mirror share of INGEST    2.35%
+delta                 223 added, 4,673 changed, 64 removed = 4,960 rows
+per changed row       6.0 ms
+```
+
+**Two numbers, and the smaller one is the reassuring one.** The mirror is 98%
+of the time spent persisting, which sounds alarming and is not: persisting is
+30 seconds of a 21-minute sweep. Against the whole ingest it is 2.35%, and the
+sweep is dominated by HTTP to 943 boards. Nothing about today's cadence is
+threatened by this.
+
+**The scaling is the part to plan around, and it is linear in the delta rather
+than in the pool.** `mirror_pool` touches only what changed, so a sweep that
+changes 30% of a 16,282-row pool costs 30 seconds. The same 30% churn against
+§11's 500,000-row target is roughly 152,000 rows, and at 6.0 ms each that is
+about 15 minutes of mirroring per sweep, against a 4-hour cadence.
+
+That is survivable and it is not comfortable, and the cost is very unlikely to
+be round trips: at batch 500 the whole write is about 30 statements, roughly 2
+seconds of latency at Neon's measured 60 ms. The remaining 28 seconds are
+per-row work on the server, and the prime suspect is `postings.search_tsv`,
+a generated stored column, plus its GIN index: every inserted or updated row
+computes a tsvector and updates the index, which is exactly linear in the delta
+and exactly what an ordinary upsert does not pay.
+
+**So the number Phase 3 needs is 6.0 ms per changed row, and the lever is the
+generated column rather than the batching.** Anybody tempted to tune this by
+raising the batch size should measure first: the round trips are already 7% of
+it. Re-measure this on a materially larger pool before trusting the projection,
+which is arithmetic on one observation rather than a second measurement.
