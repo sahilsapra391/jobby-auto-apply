@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dual_write
 import runlock
 import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 
@@ -177,6 +178,59 @@ def load_jobs(root):
 POOL_LOCK = "scan"
 
 
+def _persist_pool(root, jobs, note, before=None):
+    """The one place the pool reaches disk, and the one place it is mirrored.
+
+    Postgres first, inside its transaction, then the file. A Postgres failure
+    raises here and the file is never touched, so the two stores stay equal
+    because neither moved. A file failure after the commit leaves Postgres
+    ahead, which is the recoverable direction, and it is logged loudly and
+    re-raised rather than swallowed. docs/write-paths.md carries the argument.
+
+    Hooking here rather than at each of the sixteen callers is what makes the
+    coverage claim checkable, and it is also what covers `prune`, `reopen` and
+    `close_missing`: none of those writes, they mutate the pool in memory and
+    their caller persists it through this function.
+
+    `before` is the digest map taken before the caller's mutations. `edit` has
+    one for free. `save_jobs` does not, so it reads the pool to build one,
+    which costs a read the callers of `save_jobs` (a sweep, a repair script)
+    can afford and a Watch click never pays.
+
+    Must be called with POOL_LOCK already held.
+    """
+    if not dual_write.enabled():
+        store.write_private(paths(root)["jobs"], jobs)
+        return jobs
+
+    if before is None:
+        try:
+            before = dual_write.digest_pool(load_jobs(root))
+        except Exception:                                # pragma: no cover
+            before = {}
+
+    conn = dual_write.connect()
+    try:
+        account = dual_write.account_id(conn)
+        dual_write.persist(conn, account, paths(root)["jobs"], before, jobs,
+                           on_file_failure=_report_file_failure)
+    finally:
+        conn.close()
+    return jobs
+
+
+def _report_file_failure(message):
+    """Loud, and to a path that survives. Never swallowed."""
+    sys.stderr.write(f"jobs_store: {message}\n")
+    try:
+        log = Path(root_dir(None)) / "logs" / "dual-write.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(f"{now_stamp()} {message}\n")
+    except OSError:
+        pass                       # stderr already carried it
+
+
 def save_jobs(root, jobs, note="save_jobs"):
     """Write the pool, under the lock, always.
 
@@ -185,7 +239,7 @@ def save_jobs(root, jobs, note="save_jobs"):
     self-deadlocking, and everything else is excluded while it does.
     """
     with runlock.held(root, POOL_LOCK, note=note):
-        store.write_private(paths(root)["jobs"], jobs)
+        _persist_pool(root, jobs, note)
     return jobs
 
 
@@ -208,10 +262,13 @@ def edit(root, note="edit"):
     """
     with runlock.held(root, POOL_LOCK, note=note):
         jobs = load_jobs(root)
+        # Taken before the caller mutates, which is the only moment it is
+        # available: the caller edits this same dict in place.
+        before = dual_write.digest_pool(jobs) if dual_write.enabled() else None
         state = {"write": True}
         yield jobs, state
         if state["write"]:
-            store.write_private(paths(root)["jobs"], jobs)
+            _persist_pool(root, jobs, note, before=before)
 
 
 def clear_untrusted_legacy_dates(jobs):
