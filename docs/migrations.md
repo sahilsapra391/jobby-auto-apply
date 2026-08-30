@@ -211,6 +211,13 @@ The container is worth having for its own sake, not only for safety: measured
 versus **261 seconds** against Neon, because every statement stops crossing a
 network.
 
+**Correctness here, timing on Neon.** The container is the same major version
+and a different machine: no pooler, no network, local disk, always warm. Any
+figure about how long something takes belongs on Neon, and
+`docs/plans/phase3-inputs.md` section 0 says which existing numbers that covers.
+A benchmark re-run here produces a faster number that is true about the
+container and false about the product.
+
 A live-corpus test that genuinely needs the device's database takes the
 documented exception and names the URL explicitly, the way
 `tests/test_verify_parity.py::_device_connection` does. Anything doing that
