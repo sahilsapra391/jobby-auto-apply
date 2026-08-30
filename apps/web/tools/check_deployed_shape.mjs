@@ -68,12 +68,18 @@ function note(msg) { notes.push(msg); }
 
 if (!process.argv.includes("--no-build")) {
   note("building");
-  execFileSync("npm", ["run", "build"], { cwd: WEB, stdio: "inherit" });
+  execFileSync("npm", ["run", "build"], {
+    cwd: WEB, stdio: "inherit",
+    // The flag that turns on the traced output this check reads.
+    env: { ...process.env, JOBBY_STANDALONE_BUILD: "1" },
+  });
 }
 
 const standalone = join(WEB, ".next", "standalone");
 if (!existsSync(standalone)) {
-  console.error("no standalone output; is `output: \"standalone\"` still set?");
+  console.error("no standalone output. This check builds with\n"
+    + "  JOBBY_STANDALONE_BUILD=1, which next.config.mjs turns into\n"
+    + "  output: \"standalone\". If that wiring changed, this cannot run.");
   process.exit(1);
 }
 

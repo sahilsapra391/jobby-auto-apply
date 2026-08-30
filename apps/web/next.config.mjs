@@ -18,15 +18,21 @@
  * docs/plans/phase2-live-board.md, which records the rejection.
  */
 const nextConfig = {
-  // Standalone output exists here for the deployed-shape check rather than for
-  // deployment: it runs the same @vercel/nft tracer Vercel runs, so a file the
-  // server reads at request time and that the tracer does not follow is absent
-  // from the standalone tree exactly as it is absent from the lambda. That is
+  // Standalone output is for the deployed-shape check, not for deployment,
+  // and it is opt-in so the build Vercel runs is a stock Next build. The check
+  // needs it because it runs the same @vercel/nft tracer Vercel runs, so a
+  // file the server reads at request time that the tracer does not follow is
+  // absent from the standalone tree exactly as it is absent from the lambda --
   // the local reproduction of the outage where the renderer read a favicon out
   // of deploy/public/, which every laptop has and the serverless bundle does
-  // not. It is a close reproduction, not the identical pipeline, and the check
-  // that uses it says so.
-  output: "standalone",
+  // not.
+  //
+  // Behind a flag rather than always on, because whether Vercel's own builder
+  // honours, ignores or trips over `output: "standalone"` is a question I
+  // could not answer from the documentation, and the first deploy of a new
+  // project is the worst place to find out. The check sets the variable
+  // itself; nothing else needs to know.
+  ...(process.env.JOBBY_STANDALONE_BUILD ? { output: "standalone" } : {}),
   reactStrictMode: true,
   poweredByHeader: false,
   // The board reads Postgres directly from server components; `pg` must stay
