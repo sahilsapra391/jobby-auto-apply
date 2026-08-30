@@ -45,7 +45,7 @@ const WEB = dirname(dirname(fileURLToPath(import.meta.url)));
  */
 const BASE_PATH = "";
 /** Every route the app serves. A page absent from here is a page unchecked. */
-const ROUTES = ["/", "/settings"];
+const ROUTES = ["/", "/profile", "/settings"];
 const PORT = 3199;
 /**
  * The gate is on in this check, not bypassed for it.

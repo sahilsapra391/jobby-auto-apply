@@ -125,12 +125,29 @@ jobs:
             exit 1
           fi
 
+      - name: The v2 stylesheet matches the board
+        # Same shape as the renderer check above and the same reason: the
+        # requirement is that v2 looks one for one identical to the board it
+        # replaces, and nothing but a regenerate-and-diff can hold that.
+        run: |
+          python3 scripts/sync_v2_styles.py
+          stale="$(git status --porcelain -- apps/web/app/board.css apps/web/app/chrome.generated.ts)"
+          if [ -n "$stale" ]; then
+            echo "$stale"
+            echo "::error::apps/web/app/board.css is stale. Run 'python3 scripts/sync_v2_styles.py' and commit it."
+            exit 1
+          fi
+
       - name: Node tests
-        # Two globs because the tests live in two places, and
-        # tests/test_ci_covers_everything.py asserts that every *.test.mjs on
-        # disk is reached by one of them. The root suite covers the Python
-        # board's embedded scripts; apps/web covers the /v2 design system.
-        run: node --test tests/*.test.mjs apps/web/test/*.test.mjs
+        # One glob again: apps/web/test/ held the hand-written design-system
+        # tests, and the stylesheet is generated from dashboard.py now, so
+        # those assertions moved to tests/test_v2_styles_are_current.py.
+        # An unmatched glob under `bash -e` passes the literal string to node,
+        # so a dead glob is a failure waiting for the first clean checkout.
+        # tests/test_ci_covers_everything.py asserts every *.test.mjs on disk
+        # is reached by a glob here, so adding a directory fails until this
+        # line learns about it.
+        run: node --test tests/*.test.mjs
 
       - name: The /v2 board builds and deploys the shape it was tested in
         # The Next.js half of the renderer-sync check above, and it exists for

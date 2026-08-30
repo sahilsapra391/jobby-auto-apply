@@ -1,0 +1,1271 @@
+/*
+ * GENERATED. Do not edit.
+ *
+ * `python3 scripts/sync_v2_styles.py` takes the complete <style> block that
+ * `dashboard.build` emits -- dashboard's own CSS, then found_lane,
+ * settings_panel, profile_panel and premium_ui in that order, premium_ui last
+ * so it overrides -- and writes it here verbatim.
+ *
+ * The v2 board has to look one for one identical to the board that exists, and
+ * a hand-port delivers that on the day it is written and drifts from then on.
+ * This makes identity a property of the build. tests/test_v2_styles_are_
+ * current.py fails when the two disagree.
+ *
+ * Change the styling in scripts/premium_ui.py and re-run the generator.
+ */
+
+  :root {
+    color-scheme:light dark;
+    --bg:#f5f5f7; --card:#fff; --sunk:#f0f0f2; --seg:#e8e8ed;
+    --ink:#1d1d1f; --ink-2:#6e6e73; --ink-3:#8e8e93;
+    --hair:rgba(0,0,0,.07);
+    --blue:#0071e3; --orange:#b45309; --green:#047857; --purple:#6d28d9; --red:#b3261e; --btn-g:#047857; --btn-g-ink:#fff;
+    --t-o:rgba(234,88,12,.08); --t-g:rgba(5,150,105,.08); --t-p:rgba(109,40,217,.07);
+    --t-red:rgba(179,38,30,.08); --red-ink:#b3261e;
+    --sh:0 1px 3px rgba(0,0,0,.05), 0 6px 20px rgba(0,0,0,.05);
+    /* One logo in every theme: the pack's primary, white mark knocked out of
+       an ink circle. Deliberately not themed, so the mark reads the same on
+       the board as it does in the tab strip and on a home screen. */
+    --brand-bg:#2B2D2C; --brand-fg:#FFFFFF;
+  }
+  @media (prefers-color-scheme:dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
+      --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
+      --hair:rgba(255,255,255,.1);
+      --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
+      --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
+      --t-red:rgba(201,55,44,.16); --red-ink:#ff6961;
+      --sh:0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#000; --card:#1c1c1e; --sunk:#2c2c2e; --seg:#2c2c2e;
+    --ink:#f5f5f7; --ink-2:#aeaeb2; --ink-3:#8e8e93;
+    --hair:rgba(255,255,255,.1);
+    --blue:#0a84ff; --orange:#ff9f0a; --green:#30d158; --purple:#bf5af2; --red:#c9372c; --btn-g:#30d158; --btn-g-ink:#04240f;
+    --t-o:rgba(255,159,10,.13); --t-g:rgba(48,209,88,.12); --t-p:rgba(191,90,242,.12);
+    --t-red:rgba(201,55,44,.16); --red-ink:#ff6961;
+    --sh:0 1px 3px rgba(0,0,0,.5);
+  }
+  *,*::before,*::after { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;
+    font-size:17px; line-height:1.47; letter-spacing:-.022em;
+    -webkit-font-smoothing:antialiased; }
+  /* Home and Settings sit in the centre of the app bar, between the brand and
+     theme control, using the same control language as the lane tabs. */
+  .primary-nav { width:max-content; max-width:100%; margin:0; padding:.24rem;
+    display:flex; align-items:center; justify-content:center; gap:.18rem;
+    background:var(--seg); border:1px solid var(--hair); border-radius:999px;
+    justify-self:center; }
+  .primary-nav a { display:flex; align-items:center; justify-content:center; min-height:2.15rem;
+    padding:.42rem .95rem; border-radius:999px; color:var(--ink-2); text-decoration:none;
+    font-size:.88rem; font-weight:650; }
+  .primary-nav a:hover { color:var(--ink); background:var(--sunk); }
+  .primary-nav a[aria-current="page"] { color:var(--ink); background:var(--card);
+    box-shadow:var(--sh); }
+  .wrap { max-width:860px; margin:0 auto; padding:clamp(2rem,6vw,4rem) 1.25rem 6rem; }
+  /* Tables get the whole screen; prose-width containers keep the rest readable. */
+  .panel .sheet { max-width:none; width:min(1800px, calc(100vw - 2.5rem));
+    margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
+    margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }
+  /* Only the table lanes break the filter bar out to the full page. The card
+     lanes keep it in the wrap, so it lines up with the cards instead of
+     spanning half a screen past them. */
+  .panel .filters.wide { width:min(1800px, calc(100vw - 2.5rem));
+    margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
+    margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }
+
+  /* Brand. The lockup's circle and mark are painted from --brand-*, which the
+     theme blocks invert; the wordmark rides currentColor. */
+  .jb-defs { position:absolute; width:0; height:0; overflow:hidden; }
+  .appbar { max-width:860px; margin:0 auto; padding:1.15rem 1.25rem 0;
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:1rem; }
+  .brand { display:inline-flex; align-items:center; color:var(--ink);
+    text-decoration:none; border-radius:8px; justify-self:start; }
+  .brand:focus-visible { outline:3px solid var(--blue); outline-offset:4px; }
+  /* The circle is tangent to its viewBox on all four sides, so the default
+     SVG overflow:hidden shaves the antialiased edge and the curve reads flat
+     top and bottom. The nudge is optical: the wordmark has no descender past
+     the circle, which makes the pair look low against the theme control. */
+  .lockup { height:1.6rem; width:auto; display:block; overflow:visible;
+    position:relative; top:-1px; }
+  /* The mascot is the hero mark, at rest. It used to be a hover reveal over the
+     circular badge, but the badge already sits in the app bar lockup, so the
+     drawing is the thing worth showing and hover is no longer a prerequisite.
+     The linework is one colour, so on a near-black page it rendered as cream on
+     ink and read as a ghost. Dark themes therefore set it on a cream oval and
+     ink it dark: --mark-plate and --mark-ink carry that pair, and in light
+     themes the plate is transparent because the page is already cream. */
+  .jb-morph { position:relative; top:-10px; width:139px; height:153px;
+    margin:0 auto 1.15rem; display:grid; place-items:center; cursor:pointer;
+    -webkit-tap-highlight-color:transparent; }
+  .jb-morph:focus-visible { outline:3px solid var(--blue); outline-offset:6px;
+    border-radius:50%; }
+  .jb-plate { position:absolute; left:50%; top:50%; width:100%; height:100%;
+    transform:translate(-50%,-50%); border-radius:50%; background:var(--mark-plate);
+    transition:background-color .38s cubic-bezier(.22,1,.36,1); }
+  .jb-mascot2 { position:relative; height:111px; width:auto; display:block;
+    color:var(--mark-ink); pointer-events:none;
+    transition:color .38s cubic-bezier(.22,1,.36,1); }
+  /* The draw-on beats play once on first paint, and again whenever the mark is
+     clicked: the contour runs its dashoffset to zero, then the interior ink
+     wipes down. Resting state is the finished drawing, so anything that
+     re-renders the hero gets the mark whole rather than replaying the reveal.
+
+     Both beats animate a property the compositor cannot take: stroke-dashoffset
+     on the contour, and the height of the clip rect inside the SVG. The wipe
+     used to be a CSS clip-path with an opacity fade, and both of those promote
+     the pack to its own layer, which Chrome rasterizes coarse for the length of
+     the animation and re-rasterizes sharp at the end. On linework this fine
+     that reads as half a second of blur. */
+  .jb-mascot2 .jm2-contour { stroke-dasharray:1; stroke-dashoffset:0; }
+  .jb-mascot2 .jm2-wipe-rect { height:1628px; }
+  .jb-intro .jm2-contour { animation:jm2-draw .75s ease .1s backwards; }
+  .jb-intro .jm2-wipe-rect { animation:jm2-wipe .8s ease .5s backwards; }
+  @keyframes jm2-draw { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
+  @keyframes jm2-wipe { from { height:0px; } to { height:1628px; } }
+  @media (prefers-reduced-motion:reduce) {
+    .jb-intro .jm2-contour, .jb-intro .jm2-wipe-rect { animation:none; } }
+
+  .themeseg { display:inline-flex; background:var(--seg); border-radius:100px;
+    padding:3px; gap:2px; flex:none; justify-self:end; }
+  .themebtn { border:none; background:none; color:var(--ink-3); font:inherit;
+    cursor:pointer; width:2.1rem; height:1.75rem; padding:0; border-radius:100px;
+    display:inline-flex; align-items:center; justify-content:center;
+    transition:background .22s cubic-bezier(.4,0,.2,1), color .22s; }
+  .themebtn svg { width:1rem; height:1rem; display:block; }
+  .themebtn:hover { color:var(--ink-2); }
+  .themebtn.on { background:var(--card); color:var(--ink);
+    box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  .themebtn:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+  @media (max-width:600px) { .appbar { padding:.9rem .75rem 0; gap:.4rem;
+      grid-template-columns:auto 1fr auto; }
+    .lockup { height:1.4rem; }
+    .primary-nav { padding:.18rem; gap:.1rem; }
+    .primary-nav a { min-height:1.9rem; padding:.34rem .62rem; font-size:.8rem; }
+    .themebtn { width:1.75rem; }
+    .jb-morph { width:109px; height:121px; top:-6px; }
+    .jb-mascot2 { height:88px; } }
+
+  .top { text-align:center; margin-bottom:2rem; }
+  h1 { font-size:clamp(2rem,5.5vw,2.75rem); font-weight:700; letter-spacing:-.035em;
+    line-height:1.07; margin:0 0 .5rem; }
+  .lede { font-size:1.1rem; color:var(--ink-2); margin:0; letter-spacing:-.018em; }
+  .stamp { font-size:.8rem; color:var(--ink-3); margin:.7rem 0 0;
+    font-variant-numeric:tabular-nums; }
+
+  .segwrap { display:flex; justify-content:center; margin-bottom:2.25rem;
+    position:sticky; top:.75rem; z-index:5; }
+  .seg { display:inline-flex; background:var(--seg); border-radius:100px; padding:3px;
+    gap:2px; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+  .seg::-webkit-scrollbar { display:none; }
+  .tab { border:none; background:none; color:var(--ink-2); font:inherit; font-size:.93rem;
+    font-weight:510; letter-spacing:-.015em; padding:.5rem 1.05rem; border-radius:100px;
+    cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:.4rem;
+    transition:background .22s cubic-bezier(.4,0,.2,1), color .22s; }
+  .tab .n { font-size:.78rem; color:var(--ink-3); font-variant-numeric:tabular-nums;
+    background:var(--card); padding:.05rem .38rem; border-radius:100px; min-width:1.35em;
+    text-align:center; }
+  .tab.on { background:var(--card); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  .tab.on .n { background:var(--sunk); color:var(--ink-2); }
+  .tab:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+
+  .panel { display:none; animation:in .3s cubic-bezier(.4,0,.2,1); }
+  .panel.on { display:block; }
+  @keyframes in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  .hint { text-align:center; color:var(--ink-2); font-size:.95rem; margin:0 0 1.75rem;
+    letter-spacing:-.015em; }
+
+  .grid { display:grid; gap:.9rem; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); }
+  .card { background:var(--card); border-radius:20px; padding:1.35rem 1.45rem 1.15rem;
+    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.95rem; }
+  .card.hold { background:linear-gradient(var(--t-o),var(--t-o)),var(--card); }
+  .card.ready { background:linear-gradient(var(--t-g),var(--t-g)),var(--card); }
+  .card.ref { background:linear-gradient(var(--t-p),var(--t-p)),var(--card); }
+  .card header { display:flex; justify-content:space-between; gap:.85rem; align-items:flex-start; }
+  .card h3 { margin:0; font-size:1.1rem; font-weight:620; letter-spacing:-.022em; line-height:1.25; }
+  .role { margin:.2rem 0 0; color:var(--ink-2); font-size:.91rem; letter-spacing:-.014em; }
+  .chip { font-size:.73rem; font-weight:590; padding:.26rem .6rem; border-radius:100px;
+    white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .chip.hold { color:var(--orange); background:var(--t-o); }
+  .chip.ready { color:var(--green); background:var(--t-g); }
+  .chip.warm { color:var(--purple); background:var(--t-p); }
+  .chip.fault { color:var(--red-ink); background:var(--t-red); }
+  .capacity { margin:0 0 .85rem; padding:.6rem .85rem; border-radius:var(--radius);
+    background:var(--t-o); color:var(--orange); font-size:.9rem; line-height:1.45; }
+
+  ul.todo { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.45rem; }
+  ul.todo li { font-size:.92rem; line-height:1.38; padding-left:1.25rem; position:relative;
+    letter-spacing:-.014em; }
+  ul.todo li::before { content:""; position:absolute; left:.3rem; top:.52em; width:6px;
+    height:6px; border-radius:50%; background:var(--orange); }
+  ul.todo li.done { color:var(--green); font-weight:550; }
+  ul.todo li.done::before { content:"\2713"; background:none; width:auto; height:auto;
+    left:0; top:0; font-weight:700; }
+  .why { color:var(--ink-2); }
+  .why::before { content:": "; }
+
+  .act { display:flex; gap:.55rem; flex-wrap:wrap; align-items:center; margin-top:auto;
+    padding-top:.95rem; border-top:1px solid var(--hair); }
+  .btn { display:inline-block; background:var(--blue); color:#fff; text-decoration:none;
+    border:none; font:inherit; font-size:.9rem; font-weight:520; letter-spacing:-.014em;
+    padding:.52rem 1.15rem; border-radius:100px; cursor:pointer;
+    transition:opacity .2s, transform .12s; }
+  .btn:hover { opacity:.86; }
+  .btn:active { transform:scale(.97); }
+  .btn.ghost { background:var(--sunk); color:var(--ink); }
+  .btn[data-done] { background:var(--btn-g); color:var(--btn-g-ink); }
+  .btn:focus-visible { outline:3px solid var(--blue); outline-offset:3px; }
+  .ats { color:var(--ink-3); font-size:.78rem; margin-left:auto; }
+  .card.marked { opacity:.55; }
+  .card.marked .chip { background:var(--t-g); color:var(--green); }
+  .card.marked ul.todo { display:none; }
+  .stub { display:none; align-items:center; gap:.5rem; font-size:.9rem; color:var(--green);
+    font-weight:550; }
+  .card.marked .stub { display:flex; }
+  .card.marked .mark { display:none; }
+  .undo { background:none; border:none; color:var(--ink-3); font:inherit; font-size:.82rem;
+    text-decoration:underline; cursor:pointer; padding:0; }
+  .undo:hover { color:var(--ink); }
+
+  .contact { margin:0; font-size:.93rem; line-height:1.4; letter-spacing:-.015em; }
+  .contact strong { font-weight:600; }
+  .contact span { display:block; color:var(--ink-2); font-size:.86rem; margin-top:.1rem; }
+  .msg pre { background:var(--bg); border-radius:12px; padding:.85rem .95rem;
+    font-family:inherit; font-size:.86rem; line-height:1.5; white-space:pre-wrap; margin:0;
+    max-height:140px; overflow:auto; color:var(--ink-2); letter-spacing:-.012em; }
+
+  .sheet { background:var(--card); border-radius:20px; box-shadow:var(--sh); overflow:hidden; }
+  .tablewrap { overflow-x:auto; }
+  .tablewrap table { min-width:900px; }
+  table { width:100%; border-collapse:collapse; font-size:.93rem; letter-spacing:-.015em;
+    table-layout:fixed; }
+  table td { overflow-wrap:anywhere; word-break:normal; }
+  th { text-align:left; font-size:.78rem; color:var(--ink-3); font-weight:510;
+    padding:.9rem 1.4rem; border-bottom:1px solid var(--hair); white-space:nowrap; }
+  td { padding:.88rem 1.4rem; border-bottom:1px solid var(--hair); vertical-align:top; }
+  .watch th, .watch td { padding:.8rem .8rem; }
+  .watch th:first-child, .watch td:first-child { padding-left:1.2rem; }
+  .watch th:last-child, .watch td:last-child { padding-right:1.2rem; }
+  tr:last-child td { border-bottom:none; }
+  td.when { color:var(--ink-3); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .watch td.when { white-space:normal; }
+  a.go { color:var(--blue); text-decoration:none; font-weight:510; }
+  td.note-cell { color:var(--ink-2); font-size:.86rem; line-height:1.42; }
+  td.loc { color:var(--ink-2); font-size:.85rem; }
+  th { white-space:normal; }
+  /* Long skill phrases must wrap inside the pill rather than push the column
+     wider than its share and reintroduce sideways scroll. */
+  .pill { display:inline-block; font-size:.73rem; color:var(--ink-2); background:var(--sunk);
+    border-radius:10px; padding:.16rem .5rem; margin:0 .25rem .25rem 0;
+    max-width:100%; overflow-wrap:anywhere; line-height:1.35; }
+  .posted { font-size:.82rem; font-variant-numeric:tabular-nums; }
+  .posted.fresh { color:var(--green); font-weight:590; }
+  .ago { display:block; font-size:.72rem; color:var(--ink-3); }
+  .scanbar { margin:1.1rem 0 0; display:flex; gap:.6rem; align-items:center;
+    justify-content:center; flex-wrap:wrap; }
+  .btn.scan { background:var(--purple); }
+  .card.flight { background:linear-gradient(var(--t-p),var(--t-p)),var(--card); }
+  .steps { display:flex; gap:.3rem; align-items:center; }
+  .step { width:100%; height:4px; border-radius:100px; background:var(--sunk); }
+  .step.on { background:var(--purple); }
+  .phase { margin:0; font-size:.92rem; font-weight:550; letter-spacing:-.014em; }
+  .btn.apply { background:var(--btn-g); color:var(--btn-g-ink);
+    font-size:.8rem; padding:.35rem .8rem; }
+  .btn.apply[disabled] { opacity:.5; cursor:default; }
+  .applymsg { display:block; font-size:.74rem; color:var(--ink-3); margin-top:.3rem;
+    max-width:16ch; line-height:1.3; }
+  .btn.scan[disabled] { opacity:.55; cursor:default; }
+  .scanmsg { font-size:.85rem; color:var(--ink-2); }
+  .scanmsg.err { color:var(--orange); }
+  .scanmsg.ok { color:var(--green); }
+  .filters { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin:0 0 1.25rem; }
+  .filters input[type=search] { flex:1 1 220px; min-width:180px; font:inherit; font-size:.92rem;
+    padding:.5rem .9rem; border-radius:100px; border:1px solid var(--hair); background:var(--card);
+    color:var(--ink); letter-spacing:-.014em; }
+  .filters input[type=search]:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
+  .filters select { font:inherit; font-size:.88rem; padding:.45rem .7rem; border-radius:100px;
+    border:1px solid var(--hair); background:var(--card); color:var(--ink); }
+  .fcount { font-size:.82rem; color:var(--ink-3); margin-left:auto; font-variant-numeric:tabular-nums; }
+  .yrs { font-size:.82rem; font-weight:550; font-variant-numeric:tabular-nums; }
+  .yrs.over { color:var(--orange); }
+  .chip-sm { display:inline-block; font-size:.68rem; font-weight:590; color:var(--ink-3);
+    border:1px solid var(--hair); border-radius:100px; padding:.05rem .4rem; margin-top:.25rem; }
+  a.go:hover { text-decoration:underline; }
+
+  .note { background:linear-gradient(var(--t-o),var(--t-o)),var(--card); border-radius:20px;
+    padding:1.3rem 1.45rem; box-shadow:var(--sh); margin-top:1.5rem; }
+  .note h4 { margin:0 0 .3rem; font-size:1rem; font-weight:620; letter-spacing:-.02em; }
+  .note p { margin:0 0 .7rem; font-size:.9rem; color:var(--ink-2); }
+  .note ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:.3rem;
+    font-size:.9rem; }
+  .empty { text-align:center; color:var(--ink-2); font-size:1.05rem; padding:3.5rem 1.5rem;
+    background:var(--card); border-radius:20px; box-shadow:var(--sh); letter-spacing:-.018em;
+    display:flex; flex-direction:column; gap:.45rem; }
+  .empty strong { color:var(--ink); font-size:1.15rem; font-weight:620; }
+  .empty span { font-size:.95rem; }
+  .muted { color:var(--ink-3); }
+  @media (prefers-reduced-motion:reduce) { *,*::before,*::after {
+    transition:none !important; animation:none !important; } }
+  @media (max-width:600px) { .grid { grid-template-columns:1fr; }
+    th,td { padding-left:1.1rem; padding-right:1.1rem; }
+    .watch th:nth-child(4), .watch td:nth-child(4),
+    .watch th:nth-child(5), .watch td:nth-child(5) { display:none; }
+    .watch th, .watch td { padding:.65rem .5rem; font-size:.86rem; } }
+  /* Dropped sits apart from the four working lanes: nothing in it is waiting
+     on anyone, so it should not read as a queue. */
+  .tab.aside { margin-left:auto; opacity:.72; }
+  .tab.aside.on { opacity:1; }
+  /* Destructive controls are filled, not outlined. .btn already sets a blue
+     background, so colouring only the text left red-on-blue. */
+  .btn.mark { background:var(--btn-g); color:var(--btn-g-ink); }
+  .btn.drop { background:var(--red); color:#fff; border-color:var(--red); }
+  .xbtn { appearance:none; border:1px solid var(--red); background:var(--red);
+    color:#fff; border-radius:6px; cursor:pointer; line-height:1; font-weight:600;
+    font-size:.95rem; padding:.3rem .55rem; }
+  .xbtn:hover, .btn.drop:hover { filter:brightness(1.1); }
+  .xbtn:active { transform:scale(.97); }
+  .xbtn:focus-visible, .btn.drop:focus-visible { outline:3px solid var(--red); outline-offset:3px; }
+  /* The three row controls need room between them; the cell stays a table-cell
+     so the colgroup widths still apply. */
+  /* The posting link on its own line, then Apply and the drop control pushed to
+     opposite ends of exactly that width, so the block reads as one unit.
+     inline-flex matters: a stretch column made the link's box span the whole
+     table cell while its text ended well short of it, which left the drop
+     control floating past the arrow instead of sitting under it. Shrink-wrapped
+     to the link, the row is exactly as wide as "View posting" and its arrow. */
+  .rowacts { display:inline-flex; flex-direction:column; align-items:stretch;
+    gap:.85rem; white-space:nowrap; margin-left:1.4rem; }
+  .rowacts-btns { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+  /* Posting and Restore sat flush against each other. */
+  .rowacts-inline { display:flex; align-items:center; gap:.85rem; }
+  .chip.lane { background:var(--sunk); color:var(--ink-2); font-weight:520; }
+  tr.dropping { opacity:.4; }
+  .sysbanner { background:#8c1d18; color:#fff; padding:.7rem 1rem; font-size:.9rem;
+    line-height:1.45; text-align:center; }
+  .sysbanner strong { font-weight:650; }
+
+  /* --- Found lane ------------------------------------------------------- */
+  /* The lane breaks out of the prose column the way the table lanes do. A
+     grid of cards in an 860px column is two per row and a lot of scrolling. */
+  .jb-wide { width:min(1800px, calc(100vw - 2.5rem));
+    margin-left:calc(50% - min(900px, calc(50vw - 1.25rem)));
+    margin-right:calc(50% - min(900px, calc(50vw - 1.25rem))); }
+
+  .jb-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem;
+    flex-wrap:wrap; background:var(--card); border-radius:14px; padding:.7rem 1.1rem;
+    box-shadow:var(--sh); margin-bottom:.6rem; font-size:.9rem; }
+  .jb-banner strong { font-weight:620; }
+  .jb-banner span { color:var(--ink-2); }
+  .jb-savestate { display:block; font-size:.82rem; margin-top:.15rem; }
+  .jb-savestate.waiting { color:var(--ink-3); }
+  .jb-savestate.landed { color:var(--green); }
+  .jb-savestate.lost { color:var(--orange); }
+  .jb-ingest { margin:0 0 .75rem; font-size:.82rem; color:var(--ink-2); line-height:1.5; }
+  .jb-ingest.none { color:var(--ink-3); }
+  .jb-skipped { color:var(--orange); }
+  .jb-errored { color:var(--red-ink); }
+
+  /* Filter bar: one line of the two things anyone actually changes, and the
+     rest folded away. It was a wall. */
+  .jb-filters { background:var(--card); border-radius:14px; padding:.7rem .9rem;
+    box-shadow:var(--sh); margin-bottom:1rem; display:flex; flex-direction:column; gap:.5rem; }
+  .jb-row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .jb-basic { gap:.75rem; }
+  .jb-row input[type=search], .jb-row input[type=url] { flex:1 1 220px; min-width:170px;
+    font:inherit; font-size:.9rem; padding:.42rem .85rem; border-radius:100px;
+    border:1px solid var(--hair); background:var(--bg); color:var(--ink); }
+  .jb-row select { font:inherit; font-size:.85rem; padding:.38rem .6rem; border-radius:9px;
+    border:1px solid var(--hair); background:var(--bg); color:var(--ink); }
+  .jb-row select[multiple] { border-radius:9px; min-width:200px; padding:.3rem; }
+  .jb-stack { display:flex; flex-direction:column; gap:.35rem; }
+  .jb-checks { display:flex; gap:.7rem; flex-wrap:wrap; }
+  .jb-radios { display:flex; gap:.1rem; background:var(--sunk); border-radius:100px; padding:2px; }
+  .jb-radio { display:inline-flex; align-items:center; cursor:pointer; }
+  .jb-radio input { position:absolute; opacity:0; width:0; height:0; }
+  .jb-radio span { display:inline-block; font-size:.8rem; color:var(--ink-2);
+    padding:.28rem .65rem; border-radius:100px; white-space:nowrap; }
+  .jb-radio input:checked + span { background:var(--card); color:var(--ink); font-weight:560;
+    box-shadow:0 1px 2px rgba(0,0,0,.12); }
+  .jb-radio input:focus-visible + span { outline:2px solid var(--blue); outline-offset:1px; }
+  .jb-check { display:inline-flex; align-items:center; gap:.3rem; font-size:.82rem;
+    color:var(--ink-2); cursor:pointer; }
+  .jb-lab { display:inline-flex; flex-direction:column; gap:.15rem; font-size:.72rem;
+    color:var(--ink-3); }
+  .jb-note { font-size:.75rem; color:var(--ink-3); }
+  .jb-count { margin-left:auto; font-size:.82rem; color:var(--ink-3);
+    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .jb-adv > summary { cursor:pointer; font-size:.82rem; color:var(--blue);
+    list-style:none; padding:.15rem 0; width:max-content; }
+  .jb-adv > summary::-webkit-details-marker { display:none; }
+  .jb-adv > summary::before { content:"\25B8  "; }
+  .jb-adv[open] > summary::before { content:"\25BE  "; }
+  .jb-adv > summary:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+  .jb-advbody { display:flex; flex-direction:column; gap:.5rem; padding-top:.5rem;
+    margin-top:.35rem; border-top:1px solid var(--hair); }
+  .jb-pills { display:flex; gap:.35rem; flex-wrap:wrap; }
+
+  /* The location selector stays one compact field until opened. Continents
+     supply the hierarchy, country checkboxes keep multi-select familiar, and
+     the popup scrolls instead of making Advanced search several screens tall. */
+  .jb-location-field { position:relative; flex:1 1 30rem; max-width:44rem;
+    display:flex; flex-direction:column; gap:.2rem; }
+  .jb-location-label { font-size:.72rem; color:var(--ink-3); padding-left:.15rem; }
+  .jb-location-picker { position:relative; }
+  .jb-location-picker > summary { list-style:none; min-height:2.7rem; cursor:pointer;
+    display:flex; align-items:center; justify-content:space-between; gap:1rem;
+    border:1px solid var(--hair); border-radius:12px; padding:.46rem .75rem;
+    background:var(--bg); color:var(--ink); }
+  .jb-location-picker > summary::-webkit-details-marker,
+  .jb-continent > summary::-webkit-details-marker { display:none; }
+  .jb-location-picker > summary:hover { border-color:var(--ink-3); }
+  .jb-location-picker > summary:focus-visible { outline:2px solid var(--blue);
+    outline-offset:2px; }
+  .jb-location-picker > summary > span:first-child { display:flex; flex-direction:column;
+    min-width:0; }
+  .jb-location-title { font-size:.88rem; font-weight:570; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .jb-location-picker > summary small { color:var(--ink-3); font-size:.7rem; }
+  .jb-location-chevron { width:.44rem; height:.44rem; flex:none;
+    border-right:1.5px solid var(--ink-3); border-bottom:1.5px solid var(--ink-3);
+    transform:rotate(45deg) translateY(-2px); transition:transform .16s; }
+  .jb-location-picker[open] .jb-location-chevron { transform:rotate(225deg) translateY(-2px); }
+  .jb-location-menu { position:absolute; z-index:30; top:calc(100% + .4rem); left:0;
+    width:min(42rem, calc(100vw - 3.5rem)); max-height:min(31rem, 68vh); overflow:auto;
+    padding:.65rem; border:1px solid var(--hair); border-radius:14px;
+    background:var(--card); box-shadow:0 18px 50px rgba(0,0,0,.2); }
+  .jb-location-actions { display:flex; align-items:center; justify-content:space-between;
+    gap:1rem; padding:.15rem .15rem .65rem; border-bottom:1px solid var(--hair); }
+  .jb-world { display:flex; align-items:center; gap:.5rem; font-size:.86rem;
+    font-weight:600; cursor:pointer; }
+  .jb-location-clear, .jb-only { font:inherit; border:0; background:none;
+    color:var(--blue); cursor:pointer; border-radius:6px; }
+  .jb-location-clear { font-size:.78rem; padding:.3rem .4rem; }
+  .jb-location-clear:hover, .jb-only:hover { background:var(--sunk); }
+  .jb-location-clear:focus-visible, .jb-only:focus-visible { outline:2px solid var(--blue);
+    outline-offset:1px; }
+  .jb-continent-list { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:.45rem; padding-top:.55rem; }
+  .jb-continent { border:1px solid var(--hair); border-radius:11px; background:var(--bg); }
+  .jb-continent > summary { list-style:none; cursor:pointer; display:flex;
+    align-items:center; justify-content:space-between; gap:.5rem; padding:.55rem .65rem;
+    min-height:2.45rem; }
+  .jb-continent > summary:focus-visible { outline:2px solid var(--blue);
+    outline-offset:1px; border-radius:10px; }
+  .jb-continent-main { display:flex; align-items:center; gap:.45rem; min-width:0;
+    font-size:.82rem; font-weight:570; }
+  .jb-continent-main input, .jb-country input, .jb-world input { accent-color:var(--blue); }
+  .jb-continent-count { color:var(--ink-3); font-size:.68rem; white-space:nowrap; }
+  .jb-country-grid { display:grid; grid-template-columns:1fr;
+    gap:.1rem; padding:.15rem .45rem .5rem; border-top:1px solid var(--hair); }
+  .jb-country-row { min-width:0; display:flex; align-items:center; gap:.2rem;
+    border-radius:7px; }
+  .jb-country-row:hover { background:var(--sunk); }
+  .jb-country { min-width:0; flex:1; display:flex; align-items:center; gap:.35rem;
+    padding:.32rem .25rem; font-size:.75rem; color:var(--ink-2); cursor:pointer; }
+  .jb-country span { white-space:normal; line-height:1.25; }
+  .jb-only { font-size:.68rem; padding:.24rem .3rem; margin-right:.1rem; }
+  @media (max-width:700px) {
+    .jb-location-field { flex-basis:100%; max-width:none; }
+    .jb-location-menu { width:calc(100vw - 3.5rem); }
+    .jb-continent-list { grid-template-columns:1fr; }
+  }
+
+  /* "2 problems" with no way to see which two is a number you can only worry
+     about. It opens. */
+  .jb-probs > summary { cursor:pointer; list-style:none; width:max-content; }
+  .jb-probs > summary::-webkit-details-marker { display:none; }
+  .jb-probs > summary::before { content:"\25B8  "; }
+  .jb-probs[open] > summary::before { content:"\25BE  "; }
+  .jb-probs > summary:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .jb-problist { margin:.4rem 0 .1rem; padding:0 0 0 1rem; list-style:none;
+    display:flex; flex-direction:column; gap:.2rem; }
+  .jb-problist li { display:flex; gap:.45rem; align-items:baseline;
+    font-size:.8rem; color:var(--ink-2); }
+  .jb-problist b { font-weight:600; color:var(--ink-1); }
+  .jb-pills:empty { display:none; }
+  .jb-pill { display:inline-flex; align-items:center; gap:.3rem; font-size:.78rem;
+    background:var(--sunk); color:var(--ink); border-radius:100px;
+    padding:.2rem .5rem .2rem .7rem; }
+  .jb-pill button { border:none; background:none; color:var(--ink-3); cursor:pointer;
+    font:inherit; line-height:1; padding:0 .1rem; }
+  .jb-pill button:hover { color:var(--red-ink); }
+
+  /* One button shape everywhere on this lane. */
+  .jb-btn { font:inherit; font-size:.845rem; font-weight:530; line-height:1;
+    padding:.5rem .9rem; border-radius:100px; cursor:pointer;
+    border:1px solid var(--hair); background:var(--bg); color:var(--ink);
+    display:inline-flex; align-items:center; gap:.32rem; text-decoration:none;
+    transition:border-color .18s, color .18s, background .18s; }
+  .jb-btn:hover { border-color:var(--ink-3); }
+  .jb-btn:active { transform:scale(.97); }
+  .jb-btn:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .jb-btn[disabled] { opacity:.5; cursor:default; }
+  .jb-btn.primary { background:var(--btn-g); border-color:var(--btn-g);
+    color:var(--btn-g-ink); }
+  .jb-btn.on { background:var(--t-g); border-color:var(--green); color:var(--green); }
+  .jb-btn.danger:hover { border-color:var(--red-ink); color:var(--red-ink); }
+  .jb-btn svg { width:.95rem; height:.95rem; display:block; }
+
+  /* Four to a row on a wide screen, and only four. Five made the cards narrow
+     enough that every title wrapped to three lines. */
+  /* Independent columns, not a grid and not CSS multi-column.
+     A grid puts every card in a row on one baseline, so opening one grew its
+     three neighbours. CSS `columns` re-balances the whole container when any
+     card changes height, so opening one would shuffle cards between columns.
+     Separate flex columns do neither: a card that grows pushes only the cards
+     below it in its own column, and nothing else on the board moves.
+     min-width:0 on the column is what stops one unbreakable string setting the
+     column's width — a 156-character tracking URL in a job description took a
+     grid track to 956px of a 1419px row and scrolled the page sideways. */
+  .jb-grid { display:flex; align-items:flex-start; gap:1.15rem; --cols:4; }
+  .jb-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column;
+    gap:1.15rem; }
+  @media (max-width:1180px) { .jb-grid { --cols:2; } }
+  .jb-card { background:var(--card); border-radius:20px; padding:1.3rem 1.4rem 1.1rem;
+    box-shadow:var(--sh); display:flex; flex-direction:column; gap:.8rem;
+    min-width:0; overflow-wrap:anywhere;
+    border:1px solid var(--hair); transition:border-color .22s; }
+  .jb-card:hover { border-color:var(--hair-strong); }
+  .jb-head { display:flex; gap:1rem; align-items:flex-start; }
+  .jb-ring { width:56px; height:56px; border-radius:50%; flex:none; display:grid;
+    place-items:center; background:var(--sunk); }
+  .jb-ring i { width:44px; height:44px; border-radius:50%; background:var(--card);
+    display:grid; place-items:center; font-style:normal; font-size:.9rem; font-weight:660;
+    font-variant-numeric:tabular-nums; color:var(--ink); letter-spacing:-.03em; }
+  .jb-co { font-size:.82rem; color:var(--ink-2); margin:0; font-weight:540;
+    letter-spacing:-.01em; }
+  .jb-ti { font-size:1.06rem; font-weight:620; letter-spacing:-.025em; margin:.15rem 0 0;
+    line-height:1.28; }
+  .jb-sum { margin:0; font-size:.845rem; line-height:1.5; color:var(--ink-2);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; }
+  .jb-chips { display:flex; gap:.35rem; flex-wrap:wrap; }
+  .jb-chip { font-size:.735rem; font-weight:550; padding:.22rem .6rem; border-radius:100px;
+    background:var(--sunk); color:var(--ink-2); white-space:nowrap;
+    letter-spacing:-.005em; }
+  .jb-chip.place { background:var(--t-p); color:var(--purple); }
+  .jb-chip.pay { background:var(--t-g); color:var(--green); }
+  .jb-chip.unknown { background:transparent; color:var(--ink-3);
+    border:1px dashed var(--hair); }
+  .jb-chip.gate { background:var(--t-red); color:var(--red-ink); }
+  .jb-chip.boards { background:var(--t-g); color:var(--green); }
+  .jb-chip.years { background:var(--t-o); color:var(--orange); }
+  .jb-chip.direct { background:var(--t-p); color:var(--purple); font-weight:590; }
+  .jb-sections { display:grid; gap:.9rem 2.2rem; margin:.2rem 0 .1rem;
+    grid-template-columns:1fr 1fr; align-items:start; }
+  .jb-section h4 { margin:0 0 .35rem; font-size:.74rem; font-weight:640;
+    letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); }
+  .jb-section ul { margin:0; padding-left:1.05rem; display:grid; gap:.22rem; }
+  .jb-section li { font-size:.82rem; line-height:1.5; color:var(--ink-2); }
+  .jb-loading { margin:0; font-size:.8rem; color:var(--ink-3); }
+  @media (max-width:900px) {
+    .jb-sections { grid-template-columns:1fr; }
+  }
+  .jb-facts { display:flex; flex-wrap:wrap; gap:.35rem; }
+  .jb-fact { display:grid; grid-template-columns:4.4rem 1fr 2.1rem; align-items:center;
+    gap:.4rem; width:100%; font-size:.7rem; color:var(--ink-3); }
+  .jb-fact-name { text-transform:capitalize; letter-spacing:-.005em; }
+  .jb-fact-track { height:4px; border-radius:4px; background:var(--sunk); overflow:hidden; }
+  .jb-fact-fill { display:block; height:100%; border-radius:4px; background:var(--green);
+    min-width:2px; }
+  .jb-fact-fill.none { background:var(--red); }
+  .jb-fact-num { text-align:right; font-variant-numeric:tabular-nums; }
+  .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
+    padding-top:.9rem; border-top:1px solid var(--hair); }
+
+  /* The disclosure. Small, lowercase, no button chrome: it is a way in, not an
+     action, and it sat under Posting looking like a fifth control. */
+  .jb-det { display:inline-flex; align-items:center; gap:.35rem; background:none;
+    border:0; padding:.15rem 0; margin:.15rem 0 0; cursor:pointer; font:inherit;
+    font-size:.78rem; color:var(--ink-3); width:max-content; }
+  .jb-det:hover, .jb-card.open .jb-det { color:var(--ink-2); }
+  .jb-det:focus-visible { outline:2px solid var(--blue); outline-offset:3px;
+    border-radius:4px; }
+  .jb-caret { width:0; height:0; border-left:4px solid currentColor;
+    border-top:3.5px solid transparent; border-bottom:3.5px solid transparent;
+    transition:transform .22s ease; transform-origin:30% 50%; }
+  .jb-card.open .jb-caret { transform:rotate(90deg); }
+
+  /* The height is measured and set in script. The tidier 0fr-to-1fr grid trick
+     needs a grid parent, and the card is a flex column, so `1fr` there resolves
+     against no free space and computes to zero — an open panel that stays shut.
+     The ceiling is never guessed: it is this panel's own scrollHeight, and it
+     is released to `none` once the transition ends so a reflow cannot clip it. */
+  .jb-slot { max-height:0; overflow:hidden;
+    transition:max-height .26s cubic-bezier(.4,0,.2,1); }
+
+  @media (prefers-reduced-motion:reduce) {
+    .jb-slot, .jb-caret { transition:none; }
+  }
+  .jb-panel { border-top:1px solid var(--hair); padding-top:.6rem; font-size:.83rem;
+    color:var(--ink-2); display:flex; flex-direction:column; gap:.45rem; }
+  .jb-bars { display:flex; flex-direction:column; gap:.22rem; }
+  .jb-bar { display:grid; grid-template-columns:5.2rem 1fr 2.4rem; align-items:center;
+    gap:.5rem; font-size:.75rem; }
+  .jb-bar u { text-decoration:none; color:var(--ink-3); }
+  .jb-bar span { height:5px; border-radius:100px; background:var(--sunk); display:block; }
+  .jb-bar span i { display:block; height:100%; border-radius:100px; background:var(--blue); }
+  .jb-bar em { font-style:normal; text-align:right; color:var(--ink-3);
+    font-variant-numeric:tabular-nums; }
+  .jb-sight { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .jb-out { display:inline-block; margin-left:.18rem; font-size:.86em;
+    line-height:1; opacity:.7; }
+  .jb-sight a:hover .jb-out { opacity:1; }
+  .jb-excerpt { margin:0; line-height:1.45; }
+  .jb-decidefail { color:var(--red-ink); }
+  .jb-footer { text-align:center; color:var(--ink-3); font-size:.85rem; margin:1.1rem 0 0;
+    line-height:1.55; }
+  .jb-more { text-align:center; color:var(--ink-3); font-size:.85rem;
+    padding:1.2rem 0; }
+  .jb-addlink { background:var(--card); border-radius:14px; padding:.85rem 1.1rem;
+    box-shadow:var(--sh); margin-top:1.2rem; }
+  .jb-addlink h4 { margin:0 0 .15rem; font-size:.92rem; font-weight:620; }
+  .jb-addlink p { margin:0 0 .5rem; font-size:.84rem; color:var(--ink-2); }
+  .jb-linkmsg { font-size:.82rem; color:var(--ink-2); }
+  .jb-linkmsg.err { color:var(--orange); }
+  .jb-linkmsg.ok { color:var(--green); }
+  @media (max-width:900px) {
+    .jb-wide { width:auto; margin-left:0; margin-right:0; }
+    .jb-grid { --cols:1; }
+    .jb-count { margin-left:0; }
+  }
+
+
+  .settings-link { display:inline-flex; align-items:center; gap:.42rem; color:var(--ink-2);
+    text-decoration:none; border:1px solid var(--hair); border-radius:999px; padding:.46rem .75rem;
+    font-size:.86rem; font-weight:650; background:var(--card); }
+  .settings-link:hover { color:var(--ink); border-color:var(--ink-3); }
+  .settings-page { display:none; max-width:1050px; margin:0 auto; padding:1.5rem 0 4rem; }
+  body.settings-view .settings-page { display:block; }
+  body.settings-view .top, body.settings-view .segwrap,
+  body.settings-view .panel { display:none !important; }
+  .settings-titlebar { display:flex; justify-content:space-between; align-items:flex-start;
+    gap:2rem; margin-bottom:1.2rem; }
+  .settings-titlebar h2 { margin:.15rem 0 .45rem; font-size:clamp(1.65rem,4vw,2.45rem);
+    letter-spacing:-.045em; }
+  .settings-titlebar p { margin:0; color:var(--ink-2); max-width:680px; line-height:1.5; }
+  .eyebrow { color:var(--blue) !important; text-transform:uppercase; letter-spacing:.11em;
+    font-size:.72rem; font-weight:750; }
+  .split-note { border:1px solid var(--hair); background:var(--sunk); border-radius:16px;
+    padding:1rem 1.1rem; color:var(--ink-2); line-height:1.5; margin-bottom:1.1rem; }
+  .split-note strong { color:var(--ink); display:block; margin-bottom:.16rem; }
+  .provider-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+  .provider-card { background:var(--card); border:1px solid var(--hair); border-radius:18px;
+    padding:1rem; box-shadow:0 8px 30px rgba(0,0,0,.045); }
+  .provider-head { display:flex; justify-content:space-between; gap:.7rem; align-items:flex-start;
+    padding:.15rem .15rem .9rem; }
+  .provider-head h3 { margin:0; font-size:1.12rem; }
+  .provider-head p { margin:.18rem 0 0; color:var(--ink-3); font-size:.84rem; }
+  .provider-active { background:var(--green-bg); color:var(--green); border-radius:999px;
+    padding:.28rem .48rem; font-size:.7rem; font-weight:750; white-space:nowrap; }
+  .host-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
+    gap:.5rem .7rem; border-top:1px solid var(--hair); padding:.85rem .15rem; }
+  .host-row > div span { display:block; color:var(--ink-3); font-size:.76rem; margin-top:.12rem; }
+  .provider-state { color:var(--green); font-size:.76rem; font-weight:700; }
+  .provider-state.pending { color:var(--ink-3); }
+  .provider-state.bad { color:var(--red); }
+  .provider-action { width:100%; padding:.55rem .75rem; margin-top:.25rem;
+    background:var(--btn-g); color:var(--btn-g-ink); }
+  .provider-action:disabled { opacity:.58; cursor:wait; }
+  .provider-detail { color:var(--red); min-height:1.1em; font-size:.76rem; margin:.2rem .15rem 0; }
+  .credential-note { color:var(--ink-3); font-size:.8rem; line-height:1.5; margin:1rem .2rem 0; }
+  .provider-message { margin-top:.8rem; color:var(--ink-2); min-height:1.3em; }
+  @media (max-width:860px) { .provider-grid { grid-template-columns:1fr; }
+    .settings-titlebar { align-items:stretch; } }
+  @media (max-width:560px) { .settings-titlebar { flex-direction:column; gap:1rem; }
+    .back-board { width:100%; text-align:center; } }
+
+  .profile-page { display:none; max-width:1050px; margin:0 auto; padding:1.5rem 0 4rem; }
+  body.profile-view .profile-page { display:block; }
+  body.profile-view .top, body.profile-view .segwrap,
+  body.profile-view .panel, body.profile-view .settings-page,
+  body.profile-view .dropped-dock { display:none !important; }
+  body.settings-view .profile-page { display:none !important; }
+  .vh { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0);
+white-space:nowrap; }
+  /* The one number the nav is allowed to carry. It is warm rather than loud
+ because an unanswered question is a thing to get to, not an alarm. */
+  .primary-nav a { display:inline-flex; align-items:center; gap:.4rem; }
+  .primary-nav .nav-n { background:var(--t-o); color:var(--orange); border-radius:999px;
+padding:.06rem .38rem; font-size:.7rem; font-weight:750; line-height:1.5; }
+  .primary-nav a[aria-current="page"] .nav-n { background:var(--sunk); color:var(--ink-2); }
+  .primary-nav .nav-n[hidden] { display:none; }
+  .profile-block { margin-top:1.6rem; }
+  .block-head { display:flex; justify-content:space-between; align-items:flex-start;
+gap:1.5rem; margin-bottom:.85rem; }
+  .block-head h3 { margin:0; font-size:1.28rem; letter-spacing:-.03em; }
+  .block-head p { margin:.28rem 0 0; color:var(--ink-2); line-height:1.5; max-width:62ch; }
+  .bank-count { color:var(--ink-3); white-space:nowrap; }
+  /* One card per right to work. Rests on --hair, hovers to --hair-strong, and
+ does not move: nothing on this board answers hover by moving except a
+ control you press. */
+  .identity-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr));
+gap:1rem; }
+  .identity-card { background:var(--card); border:1px solid var(--hair); border-radius:18px;
+padding:1rem 1.05rem; box-shadow:var(--sh); transition:border-color .28s var(--ease); }
+  .identity-card:hover { border-color:var(--hair-strong); }
+  .identity-head { display:flex; justify-content:space-between; align-items:flex-start;
+gap:.7rem; }
+  .identity-head h4 { margin:0; font-size:1.05rem; letter-spacing:-.02em; }
+  .identity-scope { color:var(--ink-3); font-size:.8rem; margin:.16rem 0 0; }
+  .identity-default { background:var(--green-bg); color:var(--green); border-radius:999px;
+padding:.28rem .5rem; font-size:.7rem; font-weight:750; white-space:nowrap; }
+  .identity-rows { margin:.85rem 0 0; padding:.8rem 0 0; border-top:1px solid var(--hair);
+display:grid; gap:.42rem; }
+  .identity-row { display:grid; grid-template-columns:5.4rem minmax(0,1fr); gap:.6rem;
+font-size:.85rem; align-items:baseline; }
+  .identity-row dt { color:var(--ink-3); }
+  .identity-row dd { margin:0; color:var(--ink); overflow-wrap:anywhere; }
+  .identity-act { margin-top:.9rem; display:flex; gap:.5rem; }
+  .identity-act .btn { flex:1; padding:.5rem .7rem; }
+  .wording { margin-top:1.15rem; border:1px solid var(--hair); border-radius:18px;
+background:var(--card); box-shadow:var(--sh); overflow:hidden; }
+  .wording > summary { cursor:pointer; padding:.95rem 1.05rem; display:flex;
+justify-content:space-between; align-items:center; gap:1rem; font-weight:620;
+transition:background-color .28s var(--ease); }
+  .wording > summary::-webkit-details-marker { display:none; }
+  .wording > summary:hover { background:var(--hover-wash); }
+  .wording-hint { color:var(--ink-3); font-weight:500; font-size:.82rem; }
+  .wording-body { padding:0 1.05rem 1.05rem; border-top:1px solid var(--hair); }
+  .wording-body .split-note { margin:1rem 0; }
+  .wording-field { margin-top:.9rem; }
+  .wording-field > label { display:block; color:var(--ink-3); font-size:.78rem;
+font-weight:700; text-transform:uppercase; letter-spacing:.08em; margin-bottom:.35rem; }
+  .wording-list { display:grid; gap:.45rem; }
+  .wording-role { border:1px solid var(--hair); border-radius:14px; padding:.85rem;
+margin-top:.6rem; background:var(--sunk); }
+  .wording-role h5 { margin:0 0 .5rem; font-size:.84rem; color:var(--ink-2);
+text-transform:uppercase; letter-spacing:.07em; }
+  .wording-act { margin-top:1.1rem; display:flex; align-items:center; gap:.8rem; }
+  .profile-page textarea, .profile-page input[type="text"], .profile-page input[type="search"] {
+width:100%; font:inherit; font-size:.92rem; color:var(--ink); background:var(--card);
+border:1px solid var(--hair); border-radius:11px; padding:.55rem .7rem;
+line-height:1.45; resize:vertical;
+transition:border-color .24s var(--ease),background-color .24s var(--ease); }
+  .profile-page textarea:hover, .profile-page input:hover { border-color:var(--hair-strong); }
+  .profile-page textarea:focus-visible, .profile-page input:focus-visible {
+outline:2px solid var(--blue); outline-offset:1px; border-color:transparent; }
+  .bank-tools { display:flex; gap:.7rem; align-items:center; flex-wrap:wrap;
+margin-bottom:1rem; }
+  .bank-search { flex:1 1 18rem; min-width:0; max-width:100%; }
+  .bank-filters { display:flex; gap:.25rem; padding:3px; border:1px solid var(--hair);
+border-radius:13px; background:var(--seg); }
+  .bank-chip { border-radius:10px; padding:.46rem .8rem; font-size:.86rem; font-weight:600;
+color:var(--ink-2); background:transparent; border:0; cursor:pointer;
+display:inline-flex; align-items:center; gap:.4rem;
+transition:background-color .28s var(--ease),color .24s; }
+  /* An unselected chip washes toward the selected chip's own treatment at about
+ half strength, so the hover previews what the click gives. */
+  .bank-chip:not(.on):hover { background:color-mix(in srgb,var(--t-p) 55%,transparent);
+color:color-mix(in srgb,var(--blue) 62%,var(--ink-2)); }
+  .bank-chip.on { background:var(--t-p); color:var(--blue); }
+  .chip-n { background:var(--sunk); border-radius:999px; padding:.1rem .38rem;
+font-size:.72rem; font-weight:750; }
+  .bank-chip.on .chip-n { background:var(--card); }
+  /* Category chips: a second, quieter row under the kind split, because they
+ are a filter within a filter and should not compete with it. */
+  .bank-cats { display:flex; flex-wrap:wrap; gap:.35rem; margin:-.4rem 0 1rem; }
+  .bank-cat { border:1px solid var(--hair); border-radius:999px; padding:.3rem .7rem;
+font-size:.8rem; font-weight:600; color:var(--ink-2); background:var(--card);
+cursor:pointer; display:inline-flex; align-items:center; gap:.35rem;
+transition:border-color .24s var(--ease),background-color .24s var(--ease),color .2s; }
+  .bank-cat:hover { border-color:var(--hair-strong); color:var(--ink); }
+  .bank-cat.on { background:var(--t-p); border-color:transparent; color:var(--blue); }
+  .bank-cat .chip-n { background:var(--sunk); }
+  .bank-cat.on .chip-n { background:var(--card); }
+  .bank-more { background:none; border:0; padding:0; margin:.35rem 0 0; cursor:pointer;
+color:var(--blue); font-size:.8rem; font-weight:650; }
+  .bank-more:hover { text-decoration:underline; }
+  .bank-alts { margin:.4rem 0 0; padding-left:1.1rem; color:var(--ink-3); font-size:.84rem;
+line-height:1.5; }
+  /* The resume, shown as the document. Scaled to fit rather than clipped: it is
+ 816px wide at 96dpi and the panel is narrower on most screens. */
+  .resume-stage { position:relative; overflow:hidden; border:1px solid var(--hair);
+border-radius:14px; background:#fff; margin-top:.4rem; }
+  .resume-frame { border:0; display:block; background:#fff; }
+  .identity-add { margin-top:1rem; }
+  .base-form { margin-top:.8rem; border:1px solid var(--hair); border-radius:16px;
+padding:1rem; background:var(--card); display:grid; gap:.6rem; }
+  .base-form label { display:grid; gap:.25rem; color:var(--ink-3); font-size:.8rem;
+font-weight:650; }
+  .base-file { display:grid; gap:.3rem; }
+  .base-file input[type="file"] { font:inherit; font-size:.86rem; color:var(--ink-2); }
+  .base-file input[type="file"]::file-selector-button { font:inherit; font-size:.86rem;
+padding:.4rem .7rem; margin-right:.6rem; border-radius:10px; cursor:pointer;
+border:1px solid var(--hair); background:var(--card); color:var(--ink); }
+  .base-file input[type="file"]::file-selector-button:hover { border-color:var(--hair-strong); }
+  .base-form select { width:100%; font:inherit; font-size:.92rem; color:var(--ink);
+background:var(--card); border:1px solid var(--hair); border-radius:11px;
+padding:.55rem .7rem; }
+  .bank-group { margin-top:1.4rem; }
+  .bank-group:first-child { margin-top:0; }
+  .bank-group > h4 { margin:0 0 .2rem; font-size:.78rem; font-weight:750;
+text-transform:uppercase; letter-spacing:.1em; color:var(--ink-3); }
+  .bank-group.open > h4 { color:var(--orange); }
+  .bank-group > p { margin:0 0 .7rem; color:var(--ink-3); font-size:.84rem; }
+  .bank-list { display:grid; gap:.6rem; }
+  .bank-row { background:var(--card); border:1px solid var(--hair); border-radius:16px;
+padding:.9rem 1rem; box-shadow:var(--sh); transition:border-color .28s var(--ease); }
+  .bank-row:hover { border-color:var(--hair-strong); }
+  .bank-row.open { border-left:3px solid var(--orange); }
+  .bank-q { margin:0; font-weight:620; line-height:1.45; overflow-wrap:anywhere; }
+  .bank-a { margin:.4rem 0 0; color:var(--ink-2); line-height:1.5; white-space:pre-wrap;
+overflow-wrap:anywhere; }
+  .bank-a.none { color:var(--orange); font-style:italic; }
+  .bank-meta { margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem .5rem;
+align-items:center; }
+  .bank-tag { background:var(--sunk); color:var(--ink-3); border-radius:999px;
+padding:.16rem .48rem; font-size:.72rem; font-weight:650; }
+  .bank-tag.state-sensitive { background:var(--t-red); color:var(--red); }
+  .bank-tag.state-missing { background:var(--t-o); color:var(--orange); }
+  /* A dismissed row is struck through and set back, because it is still a real
+ record the loop consults and not a deleted one. It stays legible enough to
+ read and be put back, and quiet enough not to compete with the questions
+ that are still outstanding. */
+  .bank-row.struck { background:transparent; box-shadow:none; border-style:dashed; }
+  .bank-row.struck .bank-q { text-decoration:line-through; color:var(--ink-3);
+font-weight:560; }
+  .bank-row.struck .bank-a.none { color:var(--ink-3); }
+  .bank-tag.state-dismissed { background:var(--sunk); color:var(--ink-3);
+text-decoration:none; }
+  .bank-when { color:var(--ink-3); font-size:.76rem; margin-left:auto; }
+  .bank-act { margin-top:.7rem; display:flex; gap:.45rem; flex-wrap:wrap; }
+  .bank-act .btn { padding:.44rem .8rem; font-size:.86rem; }
+  .bank-edit { margin-top:.7rem; display:grid; gap:.55rem; }
+  .bank-sensitive { display:flex; align-items:center; gap:.5rem; color:var(--ink-2);
+font-size:.85rem; cursor:pointer; }
+  .bank-sensitive input { accent-color:var(--blue); width:1rem; height:1rem; margin:0; }
+  .bank-note { color:var(--ink-3); line-height:1.5; margin:0; }
+  .bank-empty { border:1px dashed var(--hair-strong); border-radius:16px;
+padding:1.4rem 1.1rem; text-align:center; color:var(--ink-3); }
+  .profile-message { color:var(--ink-2); font-size:.86rem; min-height:1.2em; }
+  .profile-message.bad { color:var(--red); }
+  .profile-error { border:1px solid var(--hair); border-left:3px solid var(--red);
+background:var(--card); border-radius:16px; padding:1rem 1.1rem; color:var(--ink-2);
+line-height:1.5; }
+  .profile-error strong { display:block; color:var(--ink); margin-bottom:.2rem; }
+  @media (max-width:640px) {
+.block-head { flex-direction:column; gap:.5rem; }
+.bank-tools { flex-direction:column; align-items:stretch; }
+/* A flex item's min-width is auto, so `overflow-x:auto` alone never
+   engages: the track just grows and takes the document with it. Measured
+   at 375px, the four kind chips pushed the page to 459px wide. */
+.bank-filters { overflow-x:auto; min-width:0; max-width:100%;
+  scrollbar-width:none; }
+.bank-filters::-webkit-scrollbar { display:none; }
+.bank-chip { flex:0 0 auto; }
+.bank-cats { min-width:0; max-width:100%; }
+.resume-stage { max-width:100%; }
+.bank-when { margin-left:0; }
+.identity-row { grid-template-columns:1fr; gap:.1rem; }
+  }
+
+  @view-transition { navigation:auto; }
+  :root {
+    --bg:#f7f3ed; --card:#fffdf9; --sunk:#f0ebe3; --seg:#ece7df;
+    --ink:#202131; --ink-2:#65636b; --ink-3:#8b8790;
+    --hair:rgba(47,43,55,.12); --hair-strong:rgba(47,43,55,.34);
+    --hover-wash:rgba(255,253,249,.85); --hover-wash-strong:#fffdf9;
+    --mark-plate:transparent; --mark-ink:#202131;
+    --blue:#37388f; --purple:#5150a9;
+    --green:#347157; --green-bg:#e5f1e8; --orange:#a65a32;
+    --red:#a6403d; --red-ink:#963936; --btn-g:#37388f; --btn-g-ink:#fff;
+    --t-o:rgba(166,90,50,.09); --t-g:rgba(52,113,87,.10);
+    --t-p:rgba(81,80,169,.09); --t-red:rgba(166,64,61,.09);
+    --sh:0 1px 2px rgba(34,29,45,.04),0 14px 38px rgba(34,29,45,.055);
+    --sh-hover:0 4px 8px rgba(34,29,45,.055),0 22px 54px rgba(34,29,45,.10);
+    --radius:15px; --ease:cubic-bezier(.22,1,.36,1); --shell:1800px;
+  }
+  @media (prefers-color-scheme:dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
+      --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
+      --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+      --hover-wash:rgba(255,255,255,.07); --hover-wash-strong:rgba(255,255,255,.11);
+      --mark-plate:#f4efe3; --mark-ink:#1d1e27;
+      --blue:#a6a7ff; --purple:#b9a8ff;
+      --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
+      --red:#e07d79; --red-ink:#ee8b87; --btn-g:#9c9dff; --btn-g-ink:#171827;
+      --t-o:rgba(231,155,112,.11); --t-g:rgba(124,197,158,.11);
+      --t-p:rgba(185,168,255,.12); --t-red:rgba(224,125,121,.13);
+      --sh:0 1px 2px rgba(0,0,0,.32),0 16px 42px rgba(0,0,0,.22);
+      --sh-hover:0 4px 12px rgba(0,0,0,.28),0 24px 58px rgba(0,0,0,.36);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#141519; --card:#1d1e23; --sunk:#27282e; --seg:#222329;
+    --ink:#f2eee7; --ink-2:#b6b0aa; --ink-3:#85828a;
+    --hair:rgba(255,255,255,.105); --hair-strong:rgba(255,255,255,.32);
+    --hover-wash:rgba(255,255,255,.07); --hover-wash-strong:rgba(255,255,255,.11);
+    --mark-plate:#f4efe3; --mark-ink:#1d1e27;
+    --blue:#a6a7ff; --purple:#b9a8ff;
+    --green:#7cc59e; --green-bg:rgba(70,151,105,.17); --orange:#e79b70;
+    --red:#e07d79; --red-ink:#ee8b87; --btn-g:#9c9dff; --btn-g-ink:#171827;
+    --t-o:rgba(231,155,112,.11); --t-g:rgba(124,197,158,.11);
+    --t-p:rgba(185,168,255,.12); --t-red:rgba(224,125,121,.13);
+    --sh:0 1px 2px rgba(0,0,0,.32),0 16px 42px rgba(0,0,0,.22);
+    --sh-hover:0 4px 12px rgba(0,0,0,.28),0 24px 58px rgba(0,0,0,.36);
+  }
+
+  html { background:var(--bg); }
+  body { min-height:100vh; background:var(--bg); font-size:16px;
+    letter-spacing:-.016em; transition:background-color .38s var(--ease),color .3s var(--ease); }
+  body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:-1;
+    background:radial-gradient(circle at 82% 3%,var(--t-p),transparent 30rem); opacity:.55; }
+  .appbar { width:100%; max-width:var(--shell); min-height:5.4rem; margin:0 auto;
+    padding:1rem clamp(1rem,3vw,2.5rem); border-bottom:1px solid var(--hair);
+    position:relative; view-transition-name:jobby-header; }
+  .lockup { height:1.85rem; }
+  .primary-nav { padding:.28rem; border-radius:13px; background:var(--seg); gap:.15rem; }
+  .primary-nav a { min-height:2.45rem; border-radius:10px; padding:.48rem 1.2rem;
+    font-weight:620; transition:background-color .28s var(--ease),color .24s,transform .24s var(--ease); }
+  .primary-nav a:not([aria-current="page"]):hover { background:var(--hover-wash); color:var(--ink); }
+  .primary-nav a[aria-current="page"] { box-shadow:0 1px 3px rgba(30,26,38,.11); }
+
+  .themeseg { padding:3px; border:1px solid var(--hair); border-radius:13px;
+    background:var(--seg); gap:2px; }
+  .themebtn { width:2.15rem; min-width:2.15rem; height:2rem; padding:0;
+    border-radius:9px; font-size:.72rem; font-weight:620;
+    transition:background-color .3s var(--ease),color .24s,transform .2s var(--ease); }
+  .themebtn:not(.on):hover { background:var(--hover-wash); color:var(--ink); }
+  .themebtn svg { width:.92rem; height:.92rem; }
+
+  .wrap { max-width:var(--shell); padding:clamp(2rem,4vw,3.5rem) clamp(1rem,3vw,2.5rem) 7rem; }
+  /* The table lanes used to break out of a narrower wrap with negative margins.
+     The wrap is that width now, so the break-out has nothing left to do and
+     would only pull the sheets back in by the difference. */
+  .panel .sheet,.panel .filters.wide { width:auto; max-width:none;
+    margin-left:0; margin-right:0; }
+  .top { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
+    gap:1.25rem; text-align:left; margin:0 auto 2.4rem;
+    width:100%; max-width:1360px; }
+  .hero-copy { min-width:0; }
+  .top h1 { margin:0 0 .3rem; font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    font-size:clamp(2.25rem,4.6vw,4.2rem); font-weight:500; line-height:.98;
+    letter-spacing:-.045em; }
+  .lede { font-size:1rem; }
+  .stamp { margin:.35rem 0 0; }
+  .jb-morph { width:139px; height:153px; margin:0; }
+  .jb-mascot2 { height:111px; }
+
+  .segwrap { position:sticky; top:.7rem; margin:0 auto 1.6rem; z-index:20;
+    width:100%; max-width:1360px; }
+  .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
+    padding:0; gap:0; overflow:visible; border:1px solid var(--hair);
+    border-radius:var(--radius); background:var(--card); box-shadow:var(--sh); }
+  .tab { min-height:4.3rem; justify-content:center; border-radius:0; padding:.8rem 1rem;
+    position:relative; font-weight:570; transition:color .24s,background-color .3s var(--ease); }
+  .tab:first-child { border-radius:calc(var(--radius) - 1px) 0 0 calc(var(--radius) - 1px); }
+  .tab:last-child { border-radius:0 calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0; }
+  .tab + .tab { border-left:1px solid var(--hair); }
+  .tab:not(.on):hover { background:color-mix(in srgb,var(--t-p) 55%,transparent);
+    color:color-mix(in srgb,var(--blue) 62%,var(--ink-2)); }
+  .tab:not(.on):hover .n { background:color-mix(in srgb,var(--t-p) 60%,var(--sunk)); }
+  .tab.on { color:var(--blue); background:var(--t-p); box-shadow:none; }
+  .tab.on::after { content:""; position:absolute; left:1rem; right:1rem; bottom:0;
+    height:3px; border-radius:3px 3px 0 0; background:var(--blue); }
+  .tab .n { background:var(--sunk); }
+
+  .panel { animation:premium-panel-in .32s var(--ease); }
+  @keyframes premium-panel-in { from { opacity:0; transform:translateY(8px); }
+    to { opacity:1; transform:none; } }
+  html.jb-vt .panel { animation:none; }
+  ::view-transition-old(root) { animation:premium-fade-out .22s var(--ease) both; }
+  ::view-transition-new(root) { animation:premium-fade-in .34s var(--ease) both; }
+  ::view-transition-old(jobby-header),::view-transition-new(jobby-header) { animation:none; }
+  @keyframes premium-fade-out { to { opacity:0; } }
+  @keyframes premium-fade-in { from { opacity:0; } }
+
+  .card,.sheet,.empty,.note,.jb-banner,.jb-filters,.jb-addlink,.provider-card,.split-note {
+    border:1px solid var(--hair); border-radius:var(--radius); box-shadow:var(--sh); }
+  /* One ring. The status rule along the top is 3px, so the other three sides
+     are too, and only the colour differs. At 1px the grey met the coloured rule
+     at a step and read as two separate lines rather than one frame. Width does
+     not change on hover, so nothing moves. */
+  .card { border-width:3px; }
+  .card { border-radius:var(--radius); padding:1.25rem;
+    transition:border-color .24s var(--ease),box-shadow .24s var(--ease),
+    background-color .3s; }
+  .card:hover { border-color:var(--hair-strong); }
+  .card.hold,.card.ready,.card.ref,.card.flight { background:var(--card); }
+  .card.hold { border-top-color:var(--orange); }
+  .card.ready { border-top-color:var(--green); }
+  .card.ref,.card.flight { border-top-color:var(--purple); }
+  /* A park nobody can act on. Red rather than orange, because orange in this
+     lane means "a step is waiting for you" and this one is waiting for us. */
+  .card.fault { background:var(--card); border-top-color:var(--red); }
+  .fault-note { margin:.15rem 0 .6rem; color:var(--red-ink); font-size:.9rem;
+    line-height:1.45; }
+  .grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+  .act { flex-wrap:wrap; gap:.45rem; }
+  .act .btn { flex:0 0 auto; white-space:nowrap; padding:.52rem .7rem; }
+  .sheet { border-radius:var(--radius); }
+  tr { transition:background-color .2s ease; }
+  tbody tr:hover { background:var(--t-p); }
+  th { background:color-mix(in srgb,var(--sunk) 55%,transparent); letter-spacing:.025em;
+    text-transform:uppercase; font-size:.7rem; }
+  td,th { border-color:var(--hair); }
+  .btn,.jb-btn { border-radius:10px; font-weight:600;
+    transition:transform .22s var(--ease),box-shadow .28s var(--ease),background-color .24s,color .24s,border-color .24s; }
+  .btn:hover,.jb-btn:hover { opacity:1; transform:translateY(-2px); box-shadow:0 8px 20px rgba(54,55,143,.16); }
+  .btn:active,.jb-btn:active { transform:translateY(0) scale(.98); }
+  .filters input[type=search],.filters select,.jb-row input[type=search],.jb-row input[type=url],
+  .jb-row select,.jb-location-picker > summary { border-radius:11px; background:var(--card);
+    min-height:2.7rem; transition:border-color .22s,box-shadow .22s,background-color .3s; }
+  .filters input[type=search]:focus,.filters select:focus,.jb-row input:focus,.jb-row select:focus {
+    border-color:var(--blue); box-shadow:0 0 0 3px var(--t-p); outline:none; }
+  .ui-separator { display:inline-block; margin-left:.45rem; color:var(--ink-2); }
+  .ui-separator::before { content:": "; }
+
+  .jb-wide { width:auto; margin-left:0; margin-right:0; }
+  .jb-banner,.jb-ingest,.jb-probs {
+    width:100%; max-width:1360px; margin-left:auto; margin-right:auto; }
+  .jb-grid { --cols:1; gap:.8rem; }
+  .jb-col { gap:.8rem; }
+  .jb-banner,.jb-filters,.jb-addlink { border-radius:var(--radius); background:var(--card); }
+  .jb-card { display:grid; grid-template-columns:minmax(16rem,1fr) minmax(20rem,1.7fr) minmax(17rem,1.1fr) minmax(13rem,auto);
+    grid-template-rows:auto auto auto; align-items:center; gap:.7rem 1.4rem;
+    border:1px solid var(--hair); border-radius:var(--radius); padding:1rem 1.1rem;
+    box-shadow:var(--sh); transition:border-color .24s var(--ease),background-color .3s; }
+  .jb-card:hover,.jb-card.open { border-color:var(--hair-strong); }
+  .jb-head { grid-column:1; grid-row:1 / span 2; align-items:center; justify-content:space-between; }
+  .jb-facts { grid-column:3; grid-row:1 / span 2; display:flex; flex-wrap:wrap;
+    align-content:center; gap:.3rem; }
+  .jb-identity { display:flex; align-items:center; gap:.72rem; min-width:0; }
+  .jb-identity > div { min-width:0; }
+  .jb-sum { grid-column:2; grid-row:1; -webkit-line-clamp:3; }
+  .jb-chips { grid-column:2; grid-row:2; }
+  .jb-acts { grid-column:4; grid-row:1 / span 2; justify-content:flex-end;
+    border-top:0; padding-top:0; }
+  .jb-det { grid-column:1; grid-row:3; }
+  .jb-slot { grid-column:1 / -1; grid-row:4; }
+  .jb-ring { width:52px; height:52px; }
+  .jb-ring i { width:42px; height:42px; }
+  .jb-location-menu { border-radius:var(--radius); box-shadow:var(--sh-hover); }
+
+  .company-mark { width:2.75rem; height:2.75rem; flex:none; border-radius:12px;
+    display:grid; place-items:center; overflow:hidden; position:relative;
+    background:var(--sunk); border:1px solid var(--hair); color:var(--ink-2);
+    font-size:.75rem; font-weight:750; letter-spacing:.02em; }
+  .company-mark img { position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; padding:0; background:transparent;
+    opacity:0; transition:opacity .3s ease; }
+  .company-mark img.loaded { opacity:1; }
+  .company-title,.company-cell { display:flex; align-items:center; gap:.72rem; min-width:0; }
+  .company-title > div,.company-cell > span { min-width:0; }
+  .company-cell .company-mark { width:2.15rem; height:2.15rem; border-radius:9px; }
+
+  .settings-page { max-width:1180px; padding:1rem 0 5rem; }
+  .settings-titlebar { margin-bottom:1.5rem; }
+  .settings-titlebar h2,.dialog-head h2 { font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    font-weight:500; letter-spacing:-.035em; }
+  .split-note { background:var(--card); padding:1.15rem 1.25rem; }
+  .provider-grid { gap:1rem; }
+  .provider-card { border-radius:var(--radius); padding:1.15rem;
+    transition:border-color .24s var(--ease),background-color .3s; }
+  .provider-card:hover { border-color:var(--hair-strong); }
+
+  .dropped-dock { position:fixed; left:1rem; bottom:1rem; z-index:45; height:2.8rem;
+    max-width:3rem; padding:0 .76rem; border:1px solid var(--hair); border-radius:12px;
+    display:flex; align-items:center; gap:.5rem; overflow:hidden; background:var(--card);
+    color:var(--ink-2); box-shadow:var(--sh); cursor:pointer; white-space:nowrap;
+    transition:max-width .4s var(--ease),transform .3s var(--ease),box-shadow .3s var(--ease),color .2s; }
+  body.settings-view .dropped-dock { display:none; }
+  .dropped-dock:hover,.dropped-dock:focus-visible { max-width:10.5rem; transform:translateY(-3px);
+    box-shadow:var(--sh-hover); color:var(--red-ink); }
+  .dropped-dock svg { width:1.25rem; height:1.25rem; flex:none; }
+  .dropped-label { opacity:0; transform:translateX(-5px); transition:opacity .2s ease .05s,transform .3s var(--ease); }
+  .dropped-dock:hover .dropped-label,.dropped-dock:focus-visible .dropped-label { opacity:1; transform:none; }
+  .dropped-count { min-width:1.3rem; height:1.3rem; padding:0 .3rem; border-radius:999px;
+    display:grid; place-items:center; background:var(--t-red); color:var(--red-ink);
+    font-size:.68rem; font-weight:700; }
+  .dropped-dialog { width:min(1100px,calc(100vw - 2rem)); max-height:min(82vh,760px);
+    padding:1.35rem; border:1px solid var(--hair); border-radius:20px;
+    background:var(--bg); color:var(--ink); box-shadow:0 32px 90px rgba(24,19,33,.28); }
+  .dropped-dialog[open] { animation:dialog-in .42s var(--ease); }
+  .dropped-dialog::backdrop { background:rgba(24,21,30,.42); backdrop-filter:blur(8px);
+    animation:backdrop-in .3s ease; }
+  @keyframes dialog-in { from { opacity:0; transform:translateY(22px) scale(.98); }
+    to { opacity:1; transform:none; } }
+  @keyframes backdrop-in { from { opacity:0; } to { opacity:1; } }
+  .dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;
+    padding:.15rem .2rem 1rem; }
+  .dialog-head h2 { margin:.08rem 0 0; font-size:2rem; }
+  .dialog-head .eyebrow { margin:0; }
+  .dialog-close { width:2.5rem; height:2.5rem; border:1px solid var(--hair); border-radius:10px;
+    background:var(--card); color:var(--ink-2); cursor:pointer; font-size:1.5rem; line-height:1; }
+  .dropped-dialog .hint { text-align:left; margin:0 0 1rem; }
+  .dropped-dialog .filters { margin-bottom:1rem; }
+  .dropped-dialog .sheet { width:100%; margin:0; }
+  .dropped-dialog .tablewrap table { min-width:720px; }
+  .dropped-dialog .rowacts-inline { white-space:nowrap; gap:.65rem; }
+  .dropped-dialog .rowacts-inline a,
+  .dropped-dialog .rowacts-inline button { white-space:nowrap; }
+
+  /* What the employer's form asked and what went into it. It borrows the
+     dropped dialog's shell and adds nothing to the palette: every colour below
+     is an existing token, so there is no new value to define three times and no
+     way for one theme block to be missed. */
+  .answers-dialog { width:min(820px,calc(100vw - 2rem)); max-height:min(84vh,780px);
+    padding:1.35rem; border:1px solid var(--hair); border-radius:20px;
+    background:var(--bg); color:var(--ink); box-shadow:0 32px 90px rgba(24,19,33,.28); }
+  .answers-dialog[open] { animation:dialog-in .42s var(--ease); }
+  .answers-dialog::backdrop { background:rgba(24,21,30,.42); backdrop-filter:blur(8px);
+    animation:backdrop-in .3s ease; }
+  .answers-dialog .hint { text-align:left; margin:0 0 1rem; }
+  .answers-dialog #answers-body { overflow-y:auto; max-height:min(58vh,540px);
+    padding-right:.35rem; }
+  .answers-count { margin:0 0 .8rem; color:var(--ink-3); font-size:.78rem;
+    text-transform:uppercase; letter-spacing:.06em; }
+  .answers-loading { margin:0; color:var(--ink-3); font-size:.9rem; }
+  .ans-list { display:grid; gap:.55rem; }
+  .ans-row { padding:.8rem .9rem; border:1px solid var(--hair); border-radius:12px;
+    background:var(--card); }
+  .ans-q { margin:0 0 .35rem; font-size:.88rem; font-weight:600; color:var(--ink-2);
+    line-height:1.4; overflow-wrap:anywhere; }
+  .ans-a { margin:0 0 .5rem; }
+  .ans-value { font-size:.98rem; color:var(--ink); line-height:1.45;
+    white-space:pre-wrap; overflow-wrap:anywhere; }
+  /* A row whose value was never captured at all: a code, a password, an
+     identifier. Not a covered value, so it gets no affordance suggesting there
+     is something behind it. There is nothing behind it. */
+  .ans-withheld { font-size:.9rem; color:var(--orange); }
+  /* A question salvaged from before answers were recorded. Quieter than a
+     withheld row, because nothing was refused here; the value is simply gone. */
+  .ans-unrecorded { font-size:.9rem; color:var(--ink-3); font-style:italic; }
+  .ans-salvage { margin:0 0 .9rem; padding:.6rem .8rem; border-radius:10px;
+    background:var(--sunk); color:var(--ink-2); font-size:.84rem; line-height:1.5; }
+  .ans-meta { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
+  .ans-badge { padding:.16rem .5rem; border-radius:999px; font-size:.68rem;
+    font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+  .ans-src-stored { background:var(--t-g); color:var(--green); }
+  .ans-src-profile { background:var(--t-p); color:var(--purple); }
+  .ans-src-generated { background:var(--sunk); color:var(--ink-2); }
+  .ans-src-provided { background:var(--t-o); color:var(--orange); }
+  .ans-differs { background:var(--t-red); color:var(--red-ink); }
+  .ans-unverified { background:var(--sunk); color:var(--ink-3); }
+  .ans-note { font-size:.78rem; color:var(--ink-3); overflow-wrap:anywhere; }
+  @media (max-width:640px) {
+    .answers-dialog { width:calc(100vw - 1rem); padding:1rem; }
+    .answers-dialog .dialog-head h2 { font-size:1.45rem; }
+  }
+
+
+  /* Checkboxes were the other control the operating system was drawing. The
+     continent rows go indeterminate when a continent is partly chosen, so that
+     state needs a mark of its own rather than reading as unchecked. */
+  input[type="checkbox"] { appearance:none; -webkit-appearance:none; position:relative;
+    width:1.05rem; height:1.05rem; flex:none; margin:0; border:1.5px solid var(--hair-strong);
+    border-radius:5px; background:var(--card); cursor:pointer;
+    transition:background-color .16s,border-color .16s; }
+  input[type="checkbox"]:hover { border-color:var(--blue); }
+  input[type="checkbox"]:checked,input[type="checkbox"]:indeterminate {
+    background:var(--btn-g); border-color:var(--btn-g); }
+  input[type="checkbox"]:checked::after { content:""; position:absolute; left:50%; top:46%;
+    width:.26rem; height:.54rem; transform:translate(-50%,-50%) rotate(45deg);
+    border:solid var(--btn-g-ink); border-width:0 2px 2px 0; }
+  input[type="checkbox"]:indeterminate::after { content:""; position:absolute; left:50%; top:50%;
+    width:.52rem; height:2px; border-radius:2px; transform:translate(-50%,-50%);
+    background:var(--btn-g-ink); }
+  input[type="checkbox"]:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+
+  /* A native select popup is drawn by the operating system, so the controls
+     people touch most were the only ones on the board that could not follow the
+     design system. The native element stays in the DOM and keeps owning value
+     and events; everything below is only its face. */
+  .jb-select { position:relative; display:inline-flex; vertical-align:middle; }
+  .jb-select > select { position:absolute; inset:0; width:100%; height:100%;
+    opacity:0; pointer-events:none; }
+  .jb-select-btn { display:inline-flex; align-items:center; gap:.55rem; width:100%;
+    min-height:2.7rem; padding:.42rem .8rem; border:1px solid var(--hair);
+    border-radius:11px; background:var(--card); color:var(--ink); font:inherit;
+    font-size:.88rem; font-weight:540; letter-spacing:-.014em; cursor:pointer;
+    white-space:nowrap; text-align:left;
+    transition:border-color .2s,background-color .2s,box-shadow .2s; }
+  .jb-select-btn:hover { border-color:var(--hair-strong);
+    background:var(--hover-wash-strong); }
+  .jb-select-btn:focus-visible,.jb-select[data-open="true"] .jb-select-btn {
+    outline:none; border-color:var(--blue); box-shadow:0 0 0 3px var(--t-p); }
+  .jb-select-value { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+  .jb-select-chevron { width:.4rem; height:.4rem; flex:none;
+    border-right:2px solid var(--ink-3); border-bottom:2px solid var(--ink-3);
+    transform:rotate(45deg) translateY(-2px); transition:transform .22s var(--ease); }
+  .jb-select[data-open="true"] .jb-select-chevron {
+    transform:rotate(225deg) translateY(-1px); }
+  .jb-select-menu { position:absolute; z-index:60; top:calc(100% + .35rem); left:0;
+    min-width:100%; max-height:17rem; overflow-y:auto; padding:.3rem; display:none;
+    border:1px solid var(--hair); border-radius:var(--radius);
+    background:var(--card); box-shadow:var(--sh-hover); }
+  .jb-select[data-open="true"] .jb-select-menu { display:block;
+    animation:jb-select-in .18s var(--ease); }
+  .jb-select.drop-up .jb-select-menu { top:auto; bottom:calc(100% + .35rem); }
+  @keyframes jb-select-in { from { opacity:0; transform:translateY(-4px); } }
+  .jb-select-opt { display:block; width:100%; padding:.46rem .6rem; border:0;
+    border-radius:8px; background:none; color:var(--ink-2); font:inherit;
+    font-size:.86rem; text-align:left; white-space:nowrap; cursor:pointer;
+    transition:background-color .14s,color .14s; }
+  /* The wash tokens are keyed to the segment, which is darker than a card in
+     light themes and lighter in dark ones. On a card the option needs --sunk,
+     which moves the right way in both. */
+  .jb-select-opt:hover,.jb-select-opt:focus-visible { background:var(--sunk);
+    color:var(--ink); outline:none; }
+  .jb-select-opt[aria-selected="true"] { background:var(--t-p); color:var(--blue);
+    font-weight:600; }
+  @media (prefers-reduced-motion:reduce) {
+    .jb-select[data-open="true"] .jb-select-menu { animation:none; }
+  }
+
+  @media (max-width:1200px) {
+    .jb-card { grid-template-columns:minmax(15rem,1.15fr) minmax(18rem,1.8fr) minmax(15rem,auto); }
+    .jb-facts { grid-column:2; grid-row:3; }
+    .jb-acts { grid-column:3; }
+    .jb-det { grid-row:4; }
+    .jb-slot { grid-row:5; }
+    .act { flex-wrap:wrap; }
+  }
+  @media (max-width:1100px) {
+    .jb-card { grid-template-columns:minmax(14rem,1fr) minmax(18rem,1.5fr); }
+    .jb-head { grid-column:1; }
+    .jb-sum,.jb-chips,.jb-facts { grid-column:2; }
+    .jb-facts { grid-row:3; }
+    .jb-acts { grid-column:1 / -1; grid-row:4; justify-content:flex-start; padding-top:.75rem;
+      border-top:1px solid var(--hair); }
+    .jb-det { grid-row:5; }
+    .jb-slot { grid-row:6; }
+    .grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  }
+  @media (max-width:760px) {
+    .appbar { min-height:4.5rem; }
+    .themebtn { padding:0; width:1.9rem; min-width:1.9rem; }
+    .top { grid-template-columns:1fr auto; gap:.85rem; }
+    .top h1 { font-size:clamp(2rem,10vw,3rem); }
+    .seg { overflow-x:auto; display:flex; }
+    .tab { min-width:8rem; min-height:3.8rem; flex:1 0 auto; }
+    .grid { grid-template-columns:1fr; }
+    .jb-card { display:flex; gap:.75rem; }
+    .jb-radios { max-width:100%; overflow-x:auto; scrollbar-width:none; }
+    .jb-radios::-webkit-scrollbar { display:none; }
+    .jb-count { width:100%; max-width:100%; white-space:normal; }
+    .jb-acts { justify-content:flex-start; padding-top:.75rem; border-top:1px solid var(--hair); }
+    .jb-det { order:8; }
+    .jb-slot { order:9; }
+    .dropped-dock { left:.75rem; bottom:.75rem; }
+  }
+  @media (max-width:520px) {
+    .appbar { grid-template-columns:1fr auto; }
+    .primary-nav { grid-column:1 / -1; grid-row:2; width:100%; }
+    .primary-nav a { flex:1; }
+    .themeseg { grid-column:2; grid-row:1; }
+    .wrap { padding-top:1.6rem; }
+    .jb-morph { width:109px; height:121px; }
+    .jb-mascot2 { height:88px; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) { animation:none !important; }
+    .dropped-dialog[open],.dropped-dialog::backdrop,.panel { animation:none; }
+    .answers-dialog[open],.answers-dialog::backdrop { animation:none; }
+  }
+

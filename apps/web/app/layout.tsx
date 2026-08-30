@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
-import "./globals.css";
+// The board's own stylesheet, generated from dashboard.py by
+// scripts/sync_v2_styles.py. Not hand-written and not to be edited: v2 has to
+// look one for one identical to the board it replaces, and a hand-port
+// delivers that once and drifts from then on.
+import "./board.css";
 
 export const metadata: Metadata = {
   title: "Jobby",
