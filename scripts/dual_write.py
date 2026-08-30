@@ -227,6 +227,65 @@ def _chunks(rows, size):
         yield rows[start:start + size]
 
 
+# A resync that would remove more than this share of the corpus is refused
+# without an explicit override. The shape is §5's closure guard: a read that
+# failed must never be read as "the store is empty", and a resync is the one
+# operation here that deletes in bulk.
+RESYNC_DELETE_CEILING = 0.25
+
+
+def resync(conn, account_id, jobs, force=False, batch=500):
+    """Bring Postgres in line with the file store, deletions included.
+
+    `mirror_pool` learns what was removed by diffing against a `before` map,
+    which is right when a caller just mutated the pool and wrong here: this is
+    the gap-closer, run when the two stores have drifted apart with nobody
+    watching, and there is no `before`. So removal is computed against what
+    Postgres actually holds.
+
+    That matters because `prune` deletes. Between the backfill and dual-write
+    going live, the pool went from 20,103 records to 16,123 and Postgres kept
+    all of them: 4,314 rows the file no longer had. An upsert-only backfill can
+    never close that, so parity would have stayed red forever with nothing
+    wrong.
+
+    **The deletion is bounded.** A truncated pool read would otherwise delete
+    the corpus, which is the same failure §5 guards the closure sweep against:
+    a connector that errors must never be read as a board returning nothing.
+    `read_pool` already refuses an unreadable file, and this is the second
+    line, because the first one only covers the failures that look like
+    failures.
+    """
+    if not jobs:
+        raise DualWriteError(
+            "refusing to resync against an empty pool: that would delete the "
+            "whole corpus, and an empty pool is a truncated read far more "
+            "often than it is the truth")
+
+    with conn.cursor() as cur:
+        cur.execute("select legacy_id from postings")
+        held = {row[0] for row in cur.fetchall()}
+
+    doomed = sorted(held - set(jobs))
+    if held and not force:
+        share = len(doomed) / len(held)
+        if share > RESYNC_DELETE_CEILING:
+            raise DualWriteError(
+                f"refusing to delete {len(doomed)} of {len(held)} postings "
+                f"({share:.0%}), over the {RESYNC_DELETE_CEILING:.0%} ceiling. "
+                f"That is the shape of a truncated pool read rather than a "
+                f"prune. Re-run with force=True if the pool really did shrink "
+                f"that far.")
+
+    report = mirror_pool(conn, account_id, {}, jobs, batch)
+    with conn.transaction():
+        for chunk in _chunks(doomed, batch):
+            conn.execute("delete from postings where legacy_id = any(%s)",
+                         (list(chunk),))
+    report["removed"] = len(doomed)
+    return report
+
+
 def persist(conn, account_id, path, before, jobs, on_file_failure=None,
             batch=500):
     """Mirror to Postgres, then write the file. In that order, always.

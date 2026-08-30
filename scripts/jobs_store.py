@@ -36,7 +36,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import dual_write
 import runlock
 import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 
@@ -178,6 +177,23 @@ def load_jobs(root):
 POOL_LOCK = "scan"
 
 
+def _dual_write():
+    """The mirror, imported only when something is about to write.
+
+    Not at module scope, and the reason is a deployment rather than a style
+    preference. `jobs_store` travels in the Vercel renderer bundle, which
+    carries no `packages/schema` and no psycopg, so a top-level import here
+    makes every deployed request 502 with "The board state could not be
+    rendered" while every local test passes. `tests/test_renderer_sync.py`
+    caught exactly that, which is the check written after the last time this
+    shape took the board down.
+
+    The renderer only ever reads the pool. Nothing that reads needs this.
+    """
+    import dual_write
+    return dual_write
+
+
 def _persist_pool(root, jobs, note, before=None):
     """The one place the pool reaches disk, and the one place it is mirrored.
 
@@ -199,21 +215,22 @@ def _persist_pool(root, jobs, note, before=None):
 
     Must be called with POOL_LOCK already held.
     """
-    if not dual_write.enabled():
+    mirror = _dual_write()
+    if not mirror.enabled():
         store.write_private(paths(root)["jobs"], jobs)
         return jobs
 
     if before is None:
         try:
-            before = dual_write.digest_pool(load_jobs(root))
+            before = mirror.digest_pool(load_jobs(root))
         except Exception:                                # pragma: no cover
             before = {}
 
-    conn = dual_write.connect()
+    conn = mirror.connect()
     try:
-        account = dual_write.account_id(conn)
-        dual_write.persist(conn, account, paths(root)["jobs"], before, jobs,
-                           on_file_failure=_report_file_failure)
+        account = mirror.account_id(conn)
+        mirror.persist(conn, account, paths(root)["jobs"], before, jobs,
+                       on_file_failure=_report_file_failure)
     finally:
         conn.close()
     return jobs
@@ -264,7 +281,8 @@ def edit(root, note="edit"):
         jobs = load_jobs(root)
         # Taken before the caller mutates, which is the only moment it is
         # available: the caller edits this same dict in place.
-        before = dual_write.digest_pool(jobs) if dual_write.enabled() else None
+        mirror = _dual_write()
+        before = mirror.digest_pool(jobs) if mirror.enabled() else None
         state = {"write": True}
         yield jobs, state
         if state["write"]:

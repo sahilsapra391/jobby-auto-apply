@@ -252,6 +252,100 @@ class AFailedPostgresWriteFailsEverything(pgtest.SchemaCase):
                          (0, 0, 0))
 
 
+class ResyncClosesAGapAndIsBounded(pgtest.SchemaCase):
+    """The gap-closer, and the reason it is the one dangerous operation here.
+
+    `mirror_pool` learns removals by diffing against a `before` map, which is
+    right when a caller just mutated the pool and useless when the two stores
+    drifted apart with nobody watching. Measured: between the backfill and
+    dual-write going live the pool went 20,103 -> 16,123 and Postgres kept all
+    of them, 4,314 rows the file no longer had. An upsert-only backfill could
+    never close that, so parity would have stayed red forever with nothing
+    actually wrong.
+    """
+
+    prefix = "resync"
+
+    def setUp(self):
+        super().setUp()
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        with self.conn.cursor() as cur:
+            cur.execute("insert into accounts (email) values ('s@example.com') "
+                        "returning id")
+            self.account = cur.fetchone()[0]
+
+    def rec(self, job_id, **kw):
+        base = {"id": job_id, "canonicalSource": "greenhouse",
+                "canonicalUrl": f"https://boards.greenhouse.io/acme/jobs/{job_id}",
+                "company": "Acme", "title": "PM", "state": "new",
+                "firstSeenAt": "2026-08-01T00:00:00Z",
+                "lastSeenAt": "2026-08-29T00:00:00Z", "postedAt": None}
+        base.update(kw)
+        return base
+
+    def pool(self, n, start=0):
+        return {f"id{i:04d}": self.rec(f"id{i:04d}")
+                for i in range(start, start + n)}
+
+    def held(self):
+        with self.conn.cursor() as cur:
+            cur.execute("select count(*) from postings")
+            return cur.fetchone()[0]
+
+    def test_it_removes_what_the_file_no_longer_has(self):
+        full = self.pool(20)
+        dual_write.mirror_pool(self.conn, self.account, {}, full)
+        self.assertEqual(self.held(), 20)
+        kept = dict(list(full.items())[:18])          # two pruned, 10%
+        dual_write.resync(self.conn, self.account, kept)
+        self.assertEqual(self.held(), 18)
+
+    def test_it_adds_what_postgres_is_missing(self):
+        dual_write.mirror_pool(self.conn, self.account, {}, self.pool(10))
+        dual_write.resync(self.conn, self.account, self.pool(12))
+        self.assertEqual(self.held(), 12)
+
+    def test_a_large_deletion_is_refused_without_force(self):
+        """A truncated pool read looks exactly like a very large prune, and
+        the difference is the whole corpus."""
+        dual_write.mirror_pool(self.conn, self.account, {}, self.pool(20))
+        survivors = dict(list(self.pool(20).items())[:5])   # 75% deleted
+        with self.assertRaises(dual_write.DualWriteError) as caught:
+            dual_write.resync(self.conn, self.account, survivors)
+        self.assertIn("ceiling", str(caught.exception))
+        self.assertEqual(self.held(), 20, "it deleted before refusing")
+
+    def test_a_large_deletion_is_allowed_when_forced(self):
+        dual_write.mirror_pool(self.conn, self.account, {}, self.pool(20))
+        survivors = dict(list(self.pool(20).items())[:5])
+        dual_write.resync(self.conn, self.account, survivors, force=True)
+        self.assertEqual(self.held(), 5)
+
+    def test_an_empty_pool_is_refused_even_when_forced(self):
+        """The one case no override should reach. An empty pool is a truncated
+        read far more often than it is the truth, and the cost of being wrong
+        is the corpus."""
+        dual_write.mirror_pool(self.conn, self.account, {}, self.pool(5))
+        for force in (False, True):
+            with self.subTest(force=force):
+                with self.assertRaises(dual_write.DualWriteError):
+                    dual_write.resync(self.conn, self.account, {}, force=force)
+        self.assertEqual(self.held(), 5)
+
+    def test_it_is_idempotent(self):
+        pool = self.pool(10)
+        dual_write.resync(self.conn, self.account, pool)
+        first = self.held()
+        dual_write.resync(self.conn, self.account, pool)
+        self.assertEqual(self.held(), first)
+
+    def test_it_reports_what_it_removed(self):
+        dual_write.mirror_pool(self.conn, self.account, {}, self.pool(20))
+        report = dual_write.resync(self.conn, self.account,
+                                   dict(list(self.pool(20).items())[:18]))
+        self.assertEqual(report["removed"], 2)
+
+
 class EmptyIsNotTheSameAsBroken(unittest.TestCase):
     """The second negative test. `json.loads(stdout or "[]")` is the shape."""
 

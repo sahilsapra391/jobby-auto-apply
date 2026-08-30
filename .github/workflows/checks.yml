@@ -109,6 +109,22 @@ jobs:
         # into testing different sets, which a hand-maintained module list did.
         run: python3 -m unittest discover -s tests -t tests -v
 
+      - name: Parity tooling runs against a real database
+        # Not the parity job itself: CI has no file store to compare against,
+        # and a green run here would say nothing about the two stores agreeing.
+        # What CI does check is that the tooling works against a real Postgres
+        # and that its exit code cannot lie, which is the half that rots.
+        run: |
+          python3 -m unittest tests.test_verify_parity tests.test_dual_write \
+                              tests.test_write_paths -v 2>&1 | tail -5
+          # A parity run with no database must exit non-zero. If it ever exits
+          # 0, the scheduled job would report green while checking nothing,
+          # and the seven-day clock would be measuring silence.
+          if python3 scripts/verify_parity.py --root /nonexistent >/dev/null 2>&1; then
+            echo "::error::verify_parity exited 0 with no store to compare"
+            exit 1
+          fi
+
       - name: Node tests
         run: node --test tests/*.test.mjs
 

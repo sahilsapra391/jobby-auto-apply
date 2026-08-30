@@ -340,7 +340,7 @@ def upsert_postings(conn, records, employers, batch=500):
     """
     columns = _columns()
 
-    prepared, seen, merged = [], {}, []
+    prepared, seen, merged, folded = [], {}, [], {}
     for record in sorted(records, key=BOARD_KEY_WINNER):
         row = posting_row(record)
         norm = norm_company(record.get("company")) or UNKNOWN_EMPLOYER
@@ -352,6 +352,12 @@ def upsert_postings(conn, records, employers, batch=500):
         key = (row["source"], row["board_slug"], row["external_id"])
         if key in seen:
             merged.append(row["legacy_id"])
+            # The loser gets no row, so the winner carries its id. Without
+            # this the record is in the file store and findable nowhere in
+            # Postgres, and parity reports a divergence that is really a
+            # merge. Recording it beats exempting it: an exemption is a
+            # filter, and a filter is where missing records hide.
+            folded.setdefault(seen[key], []).append(row["legacy_id"])
             continue
         seen[key] = row["legacy_id"]      # see BOARD_KEY_WINNER
         prepared.append([employer_id] + [row[c] for c in columns])
@@ -370,6 +376,19 @@ def upsert_postings(conn, records, employers, batch=500):
                 f"returning legacy_id, id",
                 [field for row in chunk for field in row])
             mapping.update(dict(cur.fetchall()))
+
+        # Written after the upsert, because the winner's row has to exist and
+        # because `on conflict do update` would otherwise clear the array on
+        # every later pass that saw no collision.
+        links = [(legacy, sorted(ids)) for legacy, ids in folded.items()]
+        for chunk in _chunks(links, batch):
+            values = ", ".join(["(%s, %s::text[])"] * len(chunk))
+            cur.execute(
+                f"""update postings set merged_legacy_ids = v.ids
+                    from (values {values}) as v(legacy, ids)
+                    where postings.legacy_id = v.legacy
+                      and postings.merged_legacy_ids is distinct from v.ids""",
+                [field for row in chunk for field in row])
     return mapping, merged
 
 
