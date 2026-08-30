@@ -324,6 +324,41 @@ def _chunks(rows, size):
 
 # --------------------------------------------------------------------------
 
+def writes_the_device_store(path):
+    """Is this path inside the store the device's database mirrors?
+
+    **The refusal lives at the write, not at the caller**, which is the shape
+    `provider_usage.record` established and the only one that has held. Four
+    separate holes on 2026-08-30 were one property: a process reaching the
+    device's database while whoever launched it believed it was isolated.
+    Patching the caller closes hole four and waits for hole five.
+
+    The last of those, found by instrumenting `resolved_url` to log a stack
+    trace rather than by grepping for callers: tests spawn
+    `python3 scripts/store.py --root <tmpdir>`, and `store.py` takes `--root`
+    as an argument without exporting `JOB_APPLICATION_DIR`. So the child wrote
+    a temporary store, resolved credentials from the real `config.env`, and
+    mirrored seven `completed` events into production while a fully green suite
+    reported `Ran 2871 tests ... OK`. 40 traced calls, `JOB_APPLICATION_DIR`
+    unset in every one. `finish.py` exports its `--root` and is why that path
+    was already closed; nothing made `store.py` do the same.
+
+    Comparing the written path against the device root covers every caller,
+    including the ones nobody has found: a write to somebody's temporary
+    directory is not a write to the store this database mirrors, whatever the
+    process thinks its root is.
+
+    Fails closed. An unresolvable path is not proof of belonging.
+    """
+    import store
+    try:
+        target = Path(path).resolve()
+        device = Path(store.root_dir(None)).resolve()
+    except OSError:                                      # pragma: no cover
+        return False
+    return target == device or device in target.parents
+
+
 def after_write(path, payload, root=None):
     """Called after a class B file has been written. Never raises.
 
@@ -333,6 +368,15 @@ def after_write(path, payload, root=None):
     """
     kind = kind_of(path)
     if kind is None:
+        return None
+
+    if not writes_the_device_store(path):
+        # Never silent: this is the branch that would otherwise have mirrored
+        # a fixture into the account's real history.
+        sys.stderr.write(
+            f"class_b: refusing to mirror {Path(path).name} -- it is outside "
+            f"the device store, so this process is writing somewhere the "
+            f"device's database does not mirror\n")
         return None
 
     import dual_write

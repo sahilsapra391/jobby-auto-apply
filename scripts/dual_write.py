@@ -88,7 +88,36 @@ def resolved_url():
     # device's own database however it got hold of the URL.
     if migrate.device_url_refusal():
         return None
+    _trace_device_url()
     return url
+
+
+def _trace_device_url():
+    """Say who reached the device's database, when asked to.
+
+    Off unless JOBBY_TRACE_DEVICE_URL names a file, because this is for hunting
+    a specific class of bug: a child process resolving the device's database
+    while its parent believes it is isolated. Grepping for callers that take a
+    root gives dozens of candidates and no evidence; this makes the write name
+    its own caller.
+    """
+    import os
+    target = os.environ.get("JOBBY_TRACE_DEVICE_URL")
+    if not target:
+        return
+    try:
+        import traceback, sys, json
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "pid": os.getpid(),
+                "argv": sys.argv[:4],
+                "root": os.environ.get("JOB_APPLICATION_DIR", "<unset>"),
+                "underTest": "unittest" in sys.modules or "pytest" in sys.modules,
+                "stack": [f"{f.filename.rsplit('/', 1)[-1]}:{f.lineno} {f.name}"
+                          for f in traceback.extract_stack()[:-1]][-14:],
+            }) + "\n")
+    except Exception:
+        pass
 
 
 def enabled(url=_LOOK_IT_UP):
