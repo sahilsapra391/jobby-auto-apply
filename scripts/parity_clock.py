@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""How far the seven-day parity clock has actually run.
+
+    python3 scripts/parity_clock.py
+    python3 scripts/parity_clock.py --json
+
+**This exists because the number was being read by hand and was read wrong.**
+On 2026-08-30 the clock's start was reported as 04:14:20Z, which was simply the
+newest line in the log at the moment somebody looked; the first green line was
+01:34:42Z, two hours and forty minutes earlier. Neither reading was checked
+against the other, and a daily figure that a person derives freshly each day
+from a growing file is a figure that will be wrong on the day it matters.
+
+Three distinctions the log makes that a glance does not.
+
+**A divergence resets the clock. Nothing else does.** That is the rule as set:
+seven consecutive days of parity green. `ok: false` with divergences is a real
+disagreement between the two stores and the streak restarts at zero.
+
+**An inconclusive run is not a failure, it is an absence.** The first line in
+the log is `{"ok": false, "inconclusive": true, "reason": ""}` from the launchd
+agent that could not execute its own program: a LaunchAgent may not exec a file
+under ~/Documents, so `/bin/sh` answered `Operation not permitted` and the
+check never ran. Counting that as a parity failure would restart a clock over a
+plist bug, and counting it as green would be worse. It is coverage that is
+missing, and it is reported as coverage that is missing.
+
+**A gap is not a failure either, and must not be made one.** This runs on a
+laptop that sleeps. The largest gap in the log at the time of writing is one
+hour fifty-six minutes across an overnight, against a thirty-minute interval. A
+rule that broke the streak on a gap would never let the clock complete on the
+only machine it runs on. So gaps are measured and printed rather than judged,
+and the person reading decides whether an uncovered window matters.
+
+What that leaves is the failure this repository keeps paying for: a check that
+reports green while checking nothing. So the clock also refuses to keep
+counting silently when the newest line is stale -- an empty log and a timer
+that has not fired are the same observation, and so are a running timer and one
+that stopped an hour ago if nobody looks at the timestamp.
+"""
+
+import argparse
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+LOG = Path("~/.job-application/logs/parity.jsonl").expanduser()
+REQUIRED_DAYS = 7
+# The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
+# whose newest line is older than a few of these is a timer to go and look at.
+INTERVAL = timedelta(seconds=1800)
+STALE_AFTER = INTERVAL * 4
+
+
+def read(path=LOG):
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            # Never discarded. A line the clock cannot parse is a line whose
+            # verdict is unknown, which is exactly the case worth surfacing.
+            out.append({"at": None, "unparseable": line[:120]})
+            continue
+        out.append(entry)
+    return out
+
+
+def _when(entry):
+    at = entry.get("at")
+    if not at:
+        return None
+    return datetime.fromisoformat(at.replace("Z", "+00:00"))
+
+
+def diverged(entry):
+    """A real parity failure, as opposed to a run that could not conclude."""
+    if entry.get("unparseable"):
+        return False
+    if entry.get("inconclusive"):
+        return False
+    return bool(entry.get("divergences")) or entry.get("ok") is False
+
+
+def assess(entries, now=None):
+    now = now or datetime.now(timezone.utc)
+    stamped = [e for e in entries if _when(e)]
+    if not stamped:
+        return {"state": "no runs", "day": 0, "required": REQUIRED_DAYS}
+
+    # The streak is everything after the last divergence.
+    last_bad = None
+    for entry in stamped:
+        if diverged(entry):
+            last_bad = entry
+
+    after = [e for e in stamped
+             if last_bad is None or _when(e) > _when(last_bad)]
+    green = [e for e in after if e.get("ok") is True]
+
+    if not green:
+        return {"state": "reset", "day": 0, "required": REQUIRED_DAYS,
+                "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
+                           if last_bad else None,
+                "runs": len(stamped)}
+
+    start = _when(green[0])
+    newest = _when(stamped[-1])
+    elapsed = now - start
+    gate = start + timedelta(days=REQUIRED_DAYS)
+
+    gaps = []
+    for a, b in zip(green, green[1:]):
+        gaps.append((_when(b) - _when(a), _when(a), _when(b)))
+    widest = max(gaps, default=(timedelta(0), start, start))
+
+    return {
+        "state": "running" if now < gate else "gate open",
+        "day": elapsed.days,
+        "required": REQUIRED_DAYS,
+        "elapsedDays": round(elapsed.total_seconds() / 86400, 2),
+        "startedAt": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "gateAt": gate.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "greenRuns": len(green),
+        "inconclusive": sum(1 for e in after if e.get("inconclusive")),
+        "unparseable": sum(1 for e in entries if e.get("unparseable")),
+        "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
+                   if last_bad else None,
+        "widestGapHours": round(widest[0].total_seconds() / 3600, 2),
+        "widestGapFrom": widest[1].strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "newestRunAt": newest.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # The half that rots quietly: a stale log keeps producing a rising day
+        # count for as long as nobody reads the timestamp beside it.
+        "stale": (now - newest) > STALE_AFTER,
+        "sinceNewestHours": round((now - newest).total_seconds() / 3600, 2),
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--log", type=Path, default=LOG)
+    args = parser.parse_args(argv)
+
+    result = assess(read(args.log))
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    day = result.get("day", 0)
+    print(f"day {day} of {result['required']}   ({result['state']})")
+    if result.get("startedAt"):
+        print(f"  started      {result['startedAt']}")
+        print(f"  gate opens   {result['gateAt']}")
+        print(f"  green runs   {result['greenRuns']}")
+        if result.get("resetAt"):
+            print(f"  last reset   {result['resetAt']}")
+        if result.get("inconclusive"):
+            print(f"  inconclusive {result['inconclusive']} "
+                  f"(ran, could not conclude; coverage missing, not a failure)")
+        if result.get("unparseable"):
+            print(f"  UNPARSEABLE  {result['unparseable']} line(s)")
+        print(f"  widest gap   {result['widestGapHours']}h "
+              f"from {result['widestGapFrom']}")
+        print(f"  newest run   {result['newestRunAt']} "
+              f"({result['sinceNewestHours']}h ago)")
+        if result.get("stale"):
+            print("  STALE: the newest run is older than four intervals. "
+                  "The day count keeps rising whether or not the timer fires; "
+                  "check `install_parity_timer.py --status` before trusting it.")
+    return 1 if result.get("stale") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
