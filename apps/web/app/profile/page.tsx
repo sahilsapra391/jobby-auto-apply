@@ -1,24 +1,25 @@
-import { LOCKUP, DEFS } from "../chrome.generated";
+import { AppBar } from "../_ui/Chrome";
 
-/** Profile. Read-only, and a stub until its own piece. */
+/**
+ * Profile. A page behind the nav item, so the pill is not a link to a 404.
+ * Its own content is not part of this piece.
+ */
 export const dynamic = "force-dynamic";
-const raw = (html: string) => ({ dangerouslySetInnerHTML: { __html: html } });
 
 export default function Profile() {
   return (
     <>
-      <span {...raw(DEFS)} />
-      <header className="appbar">
-        <a className="brand" href="/" aria-label="Jobby home" {...raw(LOCKUP)} />
-        <nav className="primary-nav">
-          <a href="/">Home</a>
-          <a href="/profile" aria-current="page">Profile</a>
-          <a href="/settings">Settings</a>
-        </nav>
-      </header>
+      <AppBar here="profile" />
       <div className="wrap">
         <section className="profile-page">
-          <p className="note">Profile arrives with the rest of the surface.</p>
+          <div className="settings-titlebar">
+            <h2>Profile</h2>
+            <p className="eyebrow">What every tailored resume starts from</p>
+          </div>
+          <div className="split-note">
+            The wording travels in the job bundle, not off the disk. Editing it
+            here is its own piece.
+          </div>
         </section>
       </div>
     </>

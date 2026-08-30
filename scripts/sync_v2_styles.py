@@ -94,6 +94,34 @@ CHROME_HEADER = """// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py
 """
 
 
+def element_at(html, start, tag="div"):
+    """The balanced `<tag>...</tag>` beginning at `start`.
+
+    **A regex cannot balance tags and `.*?</div>\\s*</div>` looks like it
+    can.** The first version used exactly that for the theme controls and
+    captured the entire hero with them, so v2 rendered two heroes and two
+    mascots -- obvious in a screenshot, invisible in a diff, and produced by a
+    pattern that reads as careful.
+    """
+    depth, i = 0, start
+    opener = re.compile(rf"<{tag}\b", re.I)
+    closer = re.compile(rf"</{tag}\s*>", re.I)
+    while i < len(html):
+        o = opener.search(html, i)
+        c = closer.search(html, i)
+        if c is None:
+            raise SystemExit(f"unbalanced <{tag}> from offset {start}")
+        if o is not None and o.start() < c.start():
+            depth += 1
+            i = o.end()
+            continue
+        depth -= 1
+        i = c.end()
+        if depth == 0:
+            return html[start:i]
+    raise SystemExit(f"unbalanced <{tag}> from offset {start}")
+
+
 def chrome_parts():
     """The pieces of the board's head and hero that are markup, not data."""
     import dashboard
@@ -120,7 +148,29 @@ def chrome_parts():
         # only the SVG produced dark ink on a dark page -- a mascot that was
         # technically present and visually absent.
         "MORPH": between(r'<div class="jb-morph"[^>]*>(.*?)</div>'),
+        # The three icon-only theme controls, whole and balanced. Hand-drawing
+        # a sun and a moon is how two boards end up with different suns.
+        "THEMESEG": element_at(html, html.index('<div class="themeseg"')),
+        # The Dropped dock: an archive control, not a workflow tab.
+        "DROPPED_DOCK": between(r'(<button class="dropped-dock".*?</button>)'),
     }
+
+
+def select_script():
+    """`premium_ui.SCRIPT`, which is the styled-select face and nothing else.
+
+    **The native `<select>` stays in the DOM owning value and events**, and
+    this is the code that puts a face over it. Writing a custom listbox
+    instead would look the same and behave differently in every way that
+    matters: keyboard, form participation, and the two things CLAUDE.md says
+    this face has to keep doing -- saved searches assign to `.value` and
+    dispatch nothing, so the face redefines that property to stay in step, and
+    an implicit `<label>` forwards clicks to a control that is now invisible.
+
+    Carried rather than reimplemented, for the same reason the stylesheet is.
+    """
+    import premium_ui
+    return premium_ui.SCRIPT
 
 
 def chrome_module():
@@ -134,6 +184,7 @@ def chrome_module():
     lines = [CHROME_HEADER]
     for name, markup in chrome_parts().items():
         lines.append(f"export const {name} = {json.dumps(markup)};")
+    lines.append(f"export const SELECT_SCRIPT = {json.dumps(select_script())};")
     return "\n\n".join(lines) + "\n"
 
 
