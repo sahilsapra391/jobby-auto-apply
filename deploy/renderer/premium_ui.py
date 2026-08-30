@@ -101,8 +101,14 @@ CSS = r"""
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
     padding:0; gap:0; overflow:visible; border:1px solid var(--hair);
     border-radius:var(--radius); background:var(--card); box-shadow:var(--sh); }
+  /* `text-decoration:none` is a no-op on this board, where every .tab is a
+     <button>. It is here because v2 serves the same lanes as links -- a
+     server-rendered board navigates rather than switching a panel with script
+     -- and an anchor arrives underlined. One line in the source of truth
+     beats a v2-only override, which is where two design systems start. */
   .tab { min-height:4.3rem; justify-content:center; border-radius:0; padding:.8rem 1rem;
-    position:relative; font-weight:570; transition:color .24s,background-color .3s var(--ease); }
+    position:relative; font-weight:570; text-decoration:none;
+    transition:color .24s,background-color .3s var(--ease); }
   .tab:first-child { border-radius:calc(var(--radius) - 1px) 0 0 calc(var(--radius) - 1px); }
   .tab:last-child { border-radius:0 calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0; }
   .tab + .tab { border-left:1px solid var(--hair); }
