@@ -125,6 +125,19 @@ jobs:
             exit 1
           fi
 
+      - name: The v2 stylesheet matches the board
+        # Same shape as the renderer check above and the same reason: the
+        # requirement is that v2 looks one for one identical to the board it
+        # replaces, and nothing but a regenerate-and-diff can hold that.
+        run: |
+          python3 scripts/sync_v2_styles.py
+          stale="$(git status --porcelain -- apps/web/app/board.css apps/web/app/chrome.generated.ts)"
+          if [ -n "$stale" ]; then
+            echo "$stale"
+            echo "::error::apps/web/app/board.css is stale. Run 'python3 scripts/sync_v2_styles.py' and commit it."
+            exit 1
+          fi
+
       - name: Node tests
         # Two globs because the tests live in two places, and
         # tests/test_ci_covers_everything.py asserts that every *.test.mjs on

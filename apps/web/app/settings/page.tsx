@@ -1,38 +1,29 @@
-/** Settings. Read-only like everything else under /v2/ during Phase 2. */
-export const dynamic = "force-dynamic";
+import { LOCKUP, DEFS } from "../chrome.generated";
 
-const PROVIDERS = ["OpenAI", "Anthropic", "Gemini"] as const;
+/** Settings. Read-only; the row layout arrives with the rest of the surface. */
+export const dynamic = "force-dynamic";
+const raw = (html: string) => ({ dangerouslySetInnerHTML: { __html: html } });
 
 export default function Settings() {
   return (
-    <div className="jb-wrap">
-      <header className="jb-appbar">
-        <div className="jb-logo">Jobby</div>
-        <nav className="jb-nav">
-          <a className="jb-pill" href="/">
-            Home
-          </a>
-          <a className="jb-pill" href="/settings" aria-current="page">
-            Settings
-          </a>
+    <>
+      <span {...raw(DEFS)} />
+      <header className="appbar">
+        <a className="brand" href="/" aria-label="Jobby home" {...raw(LOCKUP)} />
+        <nav className="primary-nav">
+          <a href="/">Home</a>
+          <a href="/profile">Profile</a>
+          <a href="/settings" aria-current="page">Settings</a>
         </nav>
       </header>
-
-      <section className="jb-panel">
-        <p className="jb-note">
-          Scaffold only. Provider connection stays on the device and is not
-          moving in Phase 2.
-        </p>
-        {PROVIDERS.map((name) => (
-          <div className="jb-row" key={name}>
-            <div className="jb-co">
-              <span className="jb-mono">{name.slice(0, 2).toUpperCase()}</span>
-              {name}
-            </div>
-            <div className="jb-meta">Your Device</div>
-          </div>
-        ))}
-      </section>
-    </div>
+      <div className="wrap">
+        <section className="settings-page">
+          <p className="note">
+            Provider connection stays on the device. The row layout -- provider,
+            status, action -- arrives with the rest of the surface.
+          </p>
+        </section>
+      </div>
+    </>
   );
 }
