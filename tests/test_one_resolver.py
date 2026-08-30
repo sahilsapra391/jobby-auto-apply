@@ -33,21 +33,28 @@ class TheyCannotDisagree(unittest.TestCase):
     """Every combination of the two inputs that decide a URL."""
 
     def combinations(self):
+        """Both env vars, a redirected store, and both sides of the test-runner
+        guard. The guard has to vary: this module runs under unittest, so
+        without it every combination resolves to None and an agreement test
+        over them would be vacuous. The control below is what caught that."""
         for test_url in ("", OTHER):
             for device_url in ("", DEVICE):
                 for redirected in (False, True):
-                    yield test_url, device_url, redirected
+                    for under_test in (True, False):
+                        yield test_url, device_url, redirected, under_test
 
     def test_enabled_and_connect_resolve_the_same_url_every_time(self):
-        for test_url, device_url, redirected in self.combinations():
+        for test_url, device_url, redirected, under_test in self.combinations():
             with self.subTest(test=bool(test_url), device=bool(device_url),
-                              redirected=redirected):
+                              redirected=redirected, under_test=under_test):
                 with tempfile.TemporaryDirectory() as d:
                     env = {"JOBBY_TEST_DATABASE_URL": test_url,
                            "JOBBY_DATABASE_URL": device_url}
                     if redirected:
                         env["JOB_APPLICATION_DIR"] = d
-                    with mock.patch.dict(os.environ, env):
+                    with mock.patch.dict(os.environ, env), \
+                         mock.patch.object(migrate, "_under_test_runner",
+                                           lambda: under_test):
                         resolved = dual_write.resolved_url()
                         # What connect() would open, without opening it.
                         opened = {}
@@ -69,13 +76,15 @@ class TheyCannotDisagree(unittest.TestCase):
         """Otherwise "they always agree" passes because the resolver always
         returns None."""
         answers = set()
-        for test_url, device_url, redirected in self.combinations():
+        for test_url, device_url, redirected, under_test in self.combinations():
             with tempfile.TemporaryDirectory() as d:
                 env = {"JOBBY_TEST_DATABASE_URL": test_url,
                        "JOBBY_DATABASE_URL": device_url}
                 if redirected:
                     env["JOB_APPLICATION_DIR"] = d
-                with mock.patch.dict(os.environ, env):
+                with mock.patch.dict(os.environ, env), \
+                     mock.patch.object(migrate, "_under_test_runner",
+                                       lambda: under_test):
                     answers.add(dual_write.resolved_url())
         self.assertGreater(len(answers), 1,
                            "every combination resolved identically, so the "
@@ -87,6 +96,43 @@ class TheyCannotDisagree(unittest.TestCase):
                                return_value="postgresql://x/y") as resolver:
             self.assertTrue(dual_write.enabled())
         resolver.assert_called_once()
+
+
+class TheMirrorTargetIsNotWhateverDatabaseIsAround(unittest.TestCase):
+    """`resolved_url` answers "where does this device's store mirror to".
+    `migrate.database_url` answers "which database is the schema tool pointed
+    at". A test database is the right answer to the second and never to the
+    first, and consulting `JOBBY_TEST_DATABASE_URL` here turned dual-write on
+    for every store-writing test in CI, which sets it for pgtest: 57 errors
+    across test_ingest and test_found_script."""
+
+    def test_a_test_database_does_not_become_the_mirror_target(self):
+        with mock.patch.dict(os.environ,
+                             {"JOBBY_TEST_DATABASE_URL": OTHER,
+                              "JOBBY_DATABASE_URL": ""}), \
+             tempfile.TemporaryDirectory() as d:
+            os.environ["JOB_APPLICATION_DIR"] = d
+            try:
+                self.assertIsNone(dual_write.resolved_url())
+                self.assertFalse(dual_write.enabled())
+            finally:
+                os.environ.pop("JOB_APPLICATION_DIR", None)
+
+    def test_control_the_schema_tool_does_use_it(self):
+        """The other half. If `migrate.database_url` stopped honouring it,
+        pgtest and the migration runner would both lose their database and the
+        test above would still pass."""
+        with mock.patch.dict(os.environ,
+                             {"JOBBY_TEST_DATABASE_URL": OTHER,
+                              "JOBBY_DATABASE_URL": ""}):
+            self.assertEqual(migrate.database_url(), OTHER)
+
+    def test_the_device_url_is_still_the_mirror_target_outside_a_test_run(self):
+        with mock.patch.dict(os.environ,
+                             {"JOBBY_TEST_DATABASE_URL": OTHER,
+                              "JOBBY_DATABASE_URL": DEVICE}), \
+             mock.patch.object(migrate, "_under_test_runner", lambda: False):
+            self.assertEqual(dual_write.resolved_url(), DEVICE)
 
 
 class ATestUrlMayNotBeProduction(unittest.TestCase):
