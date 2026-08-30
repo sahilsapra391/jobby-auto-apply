@@ -6,6 +6,7 @@ forty minutes late, and nothing compared the two.
 """
 
 import json
+import subprocess
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -129,6 +130,88 @@ class TheClockCounts(unittest.TestCase):
         r = parity_clock.assess([], now=NOW)
         self.assertEqual(r["state"], "no runs")
         self.assertEqual(r["day"], 0)
+
+
+class AGatePathChangeAlsoResetsIt(unittest.TestCase):
+    """The rule has two resets and only one of them leaves a trace in the log.
+
+    A divergence writes a red line. Editing class_b.py writes nothing at all,
+    and without this the clock keeps counting green runs that were measuring
+    the code as it was before the edit. Found by making exactly that change and
+    watching the day count not move.
+    """
+
+    def test_a_gate_path_change_after_the_last_divergence_restarts_it(self):
+        entries = [green("2026-08-30T01:00:00Z"), green("2026-08-31T01:00:00Z"),
+                   green("2026-09-01T12:00:00Z")]
+        touched = datetime(2026, 8, 31, 6, 0, tzinfo=timezone.utc)
+        r = parity_clock.assess(entries, now=NOW, gate_change=touched)
+        self.assertEqual(r["startedAt"], "2026-09-01T12:00:00Z")
+        self.assertEqual(r["resetBy"], "a gate path changing")
+
+    def test_control_without_the_change_the_clock_runs_from_the_first_green(self):
+        """The half that makes the test above mean something: same entries, no
+        gate change, and the clock starts two days earlier."""
+        entries = [green("2026-08-30T01:00:00Z"), green("2026-08-31T01:00:00Z"),
+                   green("2026-09-01T12:00:00Z")]
+        r = parity_clock.assess(entries, now=NOW, gate_change=None)
+        self.assertEqual(r["startedAt"], "2026-08-30T01:00:00Z")
+
+    def test_a_gate_path_change_older_than_the_last_divergence_is_ignored(self):
+        """Whichever reset is later wins. An edit before a divergence is not a
+        second reset, and treating it as one would move the clock backwards."""
+        entries = [red("2026-08-31T00:00:00Z"), green("2026-09-01T00:00:00Z")]
+        touched = datetime(2026, 8, 30, tzinfo=timezone.utc)
+        r = parity_clock.assess(entries, now=NOW, gate_change=touched)
+        self.assertEqual(r["startedAt"], "2026-09-01T00:00:00Z")
+        self.assertEqual(r["resetBy"], "a divergence")
+
+    def test_a_gate_path_change_newer_than_every_run_is_a_reset_not_a_clock(self):
+        entries = [green("2026-08-30T01:00:00Z")]
+        touched = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        r = parity_clock.assess(entries, now=NOW, gate_change=touched)
+        self.assertEqual(r["state"], "reset")
+        self.assertEqual(r["day"], 0)
+        self.assertEqual(r["resetBy"], "a gate path changing")
+
+    def test_the_gate_paths_are_the_four_the_rule_names(self):
+        self.assertEqual(set(parity_clock.GATE_PATHS), {
+            "scripts/verify_parity.py", "scripts/class_b.py",
+            "scripts/dual_write.py", "scripts/jobs_store.py"})
+
+    def test_a_directory_that_is_not_a_repo_reads_as_no_change(self):
+        self.assertIsNone(parity_clock.gate_path_touched(repo="/nonexistent"))
+
+    def test_it_fails_open_when_git_itself_raises(self):
+        """The `except` branch, reached deliberately.
+
+        The first version of this test passed `/nonexistent` and called it
+        done. `git -C /nonexistent log` exits non-zero rather than raising, so
+        the handler never ran and replacing `return None` with `raise` passed
+        the whole suite. Caught by the mutation, not by reading it."""
+        from unittest import mock
+        for boom in (OSError("no git"), subprocess.SubprocessError("boom"),
+                     subprocess.TimeoutExpired("git", 10)):
+            with self.subTest(error=type(boom).__name__):
+                with mock.patch("subprocess.run", side_effect=boom):
+                    self.assertIsNone(parity_clock.gate_path_touched())
+
+    def test_it_finds_a_real_commit_in_this_checkout(self):
+        """The control for both of the above, and it may not skip.
+
+        Fails-open is only acceptable if the non-failing path works, and a
+        version of `gate_path_touched` that always returns None satisfies every
+        other test in this class. The first version skipped when it got None,
+        which is exactly how a check reads as a pass while measuring nothing.
+        So this asserts we are in a checkout first, then requires an answer."""
+        repo = Path(parity_clock.__file__).resolve().parents[1]
+        self.assertTrue((repo / ".git").exists() or (repo / ".git").is_file(),
+                        "these tests must run from a git checkout")
+        touched = parity_clock.gate_path_touched()
+        self.assertIsNotNone(
+            touched, "gate_path_touched found nothing in a real checkout that "
+                     "contains all four gate paths, so the reset can never fire")
+        self.assertLessEqual(touched, datetime.now(timezone.utc))
 
 
 class TheClockReadsTheRealLog(unittest.TestCase):

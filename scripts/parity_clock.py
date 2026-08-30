@@ -42,6 +42,7 @@ that stopped an hour ago if nobody looks at the timestamp.
 import argparse
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -51,6 +52,21 @@ from pathlib import Path
 # write path in docs/write-paths.md observed firing at least once during the
 # clock. Duration alone never proved the rare paths ran; a counter does.
 REQUIRED_DAYS = 3
+
+# The four paths whose modification restarts the clock, per the rule the gate
+# is written under. A change to any of them changes what parity is measuring,
+# so the green runs before it were measuring something else.
+#
+# File granularity, and `jobs_store.py` is the loose one: the rule names
+# `_persist_pool` rather than the whole module, so an unrelated edit there
+# restarts the clock when it need not. That is the safe direction and the
+# alternative is parsing a diff for one function, which would be wrong quietly.
+GATE_PATHS = (
+    "scripts/verify_parity.py",
+    "scripts/class_b.py",
+    "scripts/dual_write.py",
+    "scripts/jobs_store.py",
+)
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
 INTERVAL = timedelta(seconds=1800)
@@ -69,6 +85,40 @@ def log_path():
     """
     root = Path(os.environ.get("JOB_APPLICATION_DIR", "~/.job-application"))
     return root.expanduser() / "logs" / "parity.jsonl"
+
+
+def gate_path_touched(repo=None):
+    """When a gate path last changed in this checkout, or None.
+
+    **The clock resets on a divergence and on a change to what it measures, and
+    only the first leaves a trace in the log.** Without this the counter reads
+    green runs since the last divergence and silently over-reports whenever
+    somebody edits the mirror, which is precisely when the previous runs stop
+    being evidence.
+
+    Read from git rather than from anyone's memory. It is the checkout's own
+    history, so the reset arms when the change reaches the checkout the timer
+    runs from -- the deploy, which is the same arming rule CLAUDE.md gives for
+    everything else here.
+
+    Fails open on any git error: a clock that stops reporting because git is
+    unavailable is worse than one that reports the divergence half alone, and
+    the divergence half is the one that catches real drift.
+    """
+    repo = Path(repo) if repo else Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%cI", "--"]
+            + list(GATE_PATHS),
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return datetime.fromisoformat(result.stdout.strip()).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def read(path=None):
@@ -114,7 +164,11 @@ def diverged(entry):
     return bool(entry.get("divergences")) or entry.get("ok") is False
 
 
-def assess(entries, now=None):
+def assess(entries, now=None, gate_change=None):
+    """`gate_change` is when a gate path last moved; the clock starts after
+    whichever reset is later, a divergence or a change to the code under
+    measurement. Passed in rather than read here so the tests can drive both
+    halves without a git repository."""
     now = now or datetime.now(timezone.utc)
     stamped = [e for e in entries if _when(e)]
     if not stamped:
@@ -126,14 +180,18 @@ def assess(entries, now=None):
         if diverged(entry):
             last_bad = entry
 
-    after = [e for e in stamped
-             if last_bad is None or _when(e) > _when(last_bad)]
+    cutoff = _when(last_bad) if last_bad else None
+    if gate_change and (cutoff is None or gate_change > cutoff):
+        cutoff = gate_change
+    after = [e for e in stamped if cutoff is None or _when(e) > cutoff]
     green = [e for e in after if e.get("ok") is True]
 
     if not green:
         return {"state": "reset", "day": 0, "required": REQUIRED_DAYS,
-                "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
-                           if last_bad else None,
+                "resetAt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None,
+                "resetBy": ("a gate path changing"
+                            if gate_change and gate_change == cutoff
+                            else "a divergence"),
                 "runs": len(stamped)}
 
     start = _when(green[0])
@@ -156,8 +214,11 @@ def assess(entries, now=None):
         "greenRuns": len(green),
         "inconclusive": sum(1 for e in after if e.get("inconclusive")),
         "unparseable": sum(1 for e in entries if e.get("unparseable")),
-        "resetAt": _when(last_bad).strftime("%Y-%m-%dT%H:%M:%SZ")
-                   if last_bad else None,
+        "resetAt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None,
+        "resetBy": ("a gate path changing" if gate_change and gate_change == cutoff
+                    else "a divergence" if cutoff else None),
+        "gatePathTouched": (gate_change.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if gate_change else None),
         "widestGapHours": round(widest[0].total_seconds() / 3600, 2),
         "widestGapFrom": widest[1].strftime("%Y-%m-%dT%H:%M:%SZ"),
         "newestRunAt": newest.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -174,7 +235,7 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, default=None)
     args = parser.parse_args(argv)
 
-    result = assess(read(args.log))
+    result = assess(read(args.log), gate_change=gate_path_touched())
     if args.json:
         print(json.dumps(result, indent=2))
         return 0
@@ -186,7 +247,8 @@ def main(argv=None):
         print(f"  gate opens   {result['gateAt']}")
         print(f"  green runs   {result['greenRuns']}")
         if result.get("resetAt"):
-            print(f"  last reset   {result['resetAt']}")
+            print(f"  last reset   {result['resetAt']}"
+                  f"  ({result.get('resetBy') or 'unknown'})")
         if result.get("inconclusive"):
             print(f"  inconclusive {result['inconclusive']} "
                   f"(ran, could not conclude; coverage missing, not a failure)")
