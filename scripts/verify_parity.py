@@ -153,11 +153,131 @@ def compare(records, database):
     return findings
 
 
+# --------------------------------------------------------------------------
+# Class B: sessions, history, answers and profile
+#
+# Compared the same way and reported in the same list. The gate is "the file
+# store is deleted", and a store that is the sole record for sessions, history,
+# answers and profile cannot be deleted, so parity that only covers the pool is
+# parity that cannot open that gate.
+# --------------------------------------------------------------------------
+
+def class_b_file_state(root=None):
+    """What the file store holds for class B, keyed for comparison."""
+    import store
+    base = Path(store.root_dir(root))
+    paths = store.paths(base)
+
+    sessions = {}
+    directory = Path(paths["sessions"])
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ParityError(f"{path.name} could not be read: {exc}")
+            key = (payload.get("applicationId") or path.stem).strip()
+            sessions[key] = (payload.get("status") or "unknown").strip()
+
+    events = {}
+    history = Path(paths["history"])
+    if history.exists():
+        for line in history.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError as exc:
+                raise ParityError(f"applications.jsonl unreadable: {exc}")
+            if event.get("eventId"):
+                events[event["eventId"]] = event.get("event")
+
+    answers = {}
+    path = Path(paths["answers"])
+    if path.exists():
+        for key, entry in json.loads(path.read_text(encoding="utf-8")).items():
+            if isinstance(entry, dict):
+                answers[key] = (entry.get("value"), bool(entry.get("sensitive")))
+
+    profile = None
+    path = Path(paths["profile"])
+    if path.exists():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        profile = {k: v for k, v in raw.items()
+                   if k not in ("resumes", "writingSamples")}
+
+    return {"sessions": sessions, "events": events, "answers": answers,
+            "profile": profile}
+
+
+def class_b_postgres_state(conn, account_id):
+    with conn.cursor() as cur:
+        cur.execute("select legacy_id, status from applications "
+                    "where account_id = %s", (account_id,))
+        sessions = dict(cur.fetchall())
+        cur.execute("select payload->>'eventId', kind from application_events "
+                    "where account_id = %s and payload ? 'eventId'",
+                    (account_id,))
+        events = dict(cur.fetchall())
+        cur.execute("select key, value, sensitive from answer_bank "
+                    "where account_id = %s", (account_id,))
+        answers = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+        cur.execute("select identity from profiles where account_id = %s",
+                    (account_id,))
+        row = cur.fetchone()
+        profile = row[0] if row else None
+    return {"sessions": sessions, "events": events, "answers": answers,
+            "profile": profile}
+
+
+def compare_class_b(files, database):
+    """Divergences across sessions, history events, answers and profile."""
+    findings = []
+
+    # `roles.json` also creates applications rows, so Postgres legitimately
+    # holds application ids the sessions directory does not: a session is
+    # deleted once an application completes and the role index outlives it.
+    # Only the other direction is a divergence.
+    for group, key in (("sessions", "session"), ("events", "event"),
+                       ("answers", "answer")):
+        ours, theirs = files[group], database[group]
+        for name in sorted(set(ours) - set(theirs)):
+            findings.append({"kind": f"only_in_file", "id": name,
+                             "field": key})
+        for name in sorted(set(ours) & set(theirs)):
+            if ours[name] != theirs[name]:
+                findings.append({"kind": "field_mismatch", "id": name,
+                                 "field": key, "file": ours[name],
+                                 "postgres": theirs[name]})
+
+    for name in sorted(set(database["events"]) - set(files["events"])):
+        findings.append({"kind": "only_in_postgres", "id": name,
+                         "field": "event"})
+    for name in sorted(set(database["answers"]) - set(files["answers"])):
+        findings.append({"kind": "only_in_postgres", "id": name,
+                         "field": "answer"})
+
+    if files["profile"] is not None:
+        if database["profile"] is None:
+            findings.append({"kind": "only_in_file", "id": "profile",
+                             "field": "profile"})
+        elif files["profile"] != database["profile"]:
+            findings.append({"kind": "field_mismatch", "id": "profile",
+                             "field": "profile",
+                             "file": sorted(files["profile"]),
+                             "postgres": sorted(database["profile"])})
+    return findings
+
+
 def run_once(conn, account_id, root=None):
     """One reading of both stores. Returns (findings, mtime)."""
     records, mtime = file_state(root)
     database = postgres_state(conn, account_id)
-    return compare(records, database), mtime
+    findings = compare(records, database)
+    findings.extend(compare_class_b(class_b_file_state(root),
+                                    class_b_postgres_state(conn, account_id)))
+    return findings, mtime
 
 
 def run(conn, account_id, root=None, on_note=None):

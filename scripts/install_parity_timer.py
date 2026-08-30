@@ -19,7 +19,7 @@ whole run costs about 4 seconds against the live store, so the interval is set
 by how soon somebody should know rather than by cost.
 
 The seven-day clock is counted from `~/.job-application/logs/parity.jsonl`,
-which this appends to through `parity_cron.sh`.
+which this appends to through `parity_cron.py`.
 """
 
 import argparse
@@ -39,7 +39,12 @@ def plist_body(python):
     root = Path("~/.job-application").expanduser()
     return {
         "Label": LABEL,
-        "ProgramArguments": [str(REPO / "scripts" / "parity_cron.sh")],
+        # The interpreter, with the script as an argument. Never the script
+        # directly: a LaunchAgent may not exec a file under ~/Documents, and
+        # launchd answers `Operation not permitted`, exit 126, without ever
+        # reaching the program. The three existing services take the same shape
+        # for the same reason.
+        "ProgramArguments": [python, str(REPO / "scripts" / "parity_cron.py")],
         "StartInterval": INTERVAL_SECONDS,
         "RunAtLoad": True,
         # Its own log, not the watcher's. A check that shares a log with the

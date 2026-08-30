@@ -87,15 +87,16 @@ none of them writes. They mutate the in-memory pool and their caller persists
 it through the choke point, so they are covered by construction rather than by
 being remembered. That is the reason for hooking the primitive.
 
-## Class B: applications, answers and profile, inventoried and NOT yet mirrored
+## Class B: applications, answers and profile, mirrored the other way up
 
-These have tables waiting for them in `applications`, `application_events`,
-`answers` and `profiles`, and nothing writes to those tables yet. Class A is
-mirrored; class B is not. Saying otherwise would be the more dangerous kind of
-wrong, because it reads as coverage.
+These reach `applications`, `application_events`, `answer_bank` and `profiles`.
+They are mirrored, and the ordering is the **opposite** of class A's:
 
-**The reason to leave it that way is the submit path.** Measured 2026-08-30
-against an unreachable database:
+    class A   Postgres, then the file.  Postgres fails -> the operation fails.
+    class B   the file, then Postgres.  Postgres fails -> the operation stands.
+
+**The submit path is why.** Measured 2026-08-30 against an unreachable
+database, and the behaviour is unchanged now that the mirror exists:
 
     session-save (status completed)   SUCCEEDS, file written
     history-append                    SUCCEEDS
@@ -103,22 +104,35 @@ against an unreachable database:
     a pool write                      FAILS in 0.1s, file unchanged
 
 `finish.py` records a completion by shelling out to `store.py session-save` and
-`store.py history-append`. If those were mirrored under class A's ordering,
-Postgres first and fail the operation, then a Neon blip in the seconds after an
-agent clicks submit would fail the completion record for an application that
-has already been sent to a real employer under a real name. The run would
+`store.py history-append`. Under class A's ordering a Neon blip in the seconds
+after an agent clicks submit would fail the completion record for an
+application already sent to a real employer under a real name. The run would
 strand with the submission made and nothing recorded, and the duplicate guard
 reads that history: the next attempt would not know it had already applied.
 
 A failed pool write costs a sweep, is loud, and is recoverable by re-running.
-A failed completion record costs an application nobody can un-send.
+A failed completion record costs an application nobody can un-send. There is no
+ordering under which that is worth a network call.
 
-So class B needs the **opposite** ordering: file first, then mirror, with the
-mirror failing loudly and separately without taking the operation down. That is
-a different design with a different argument, and it belongs in its own change
-rather than being smuggled in under this one. `tests/test_submit_path_has_no_database_dependency.py`
-holds the line meanwhile: it fails if the submit path acquires a database
-dependency, so this stays a decision instead of drifting back into an accident.
+**Which makes silence the danger here rather than failure.** A mirror that
+cannot fail the write is one that can stop working with nothing visibly wrong,
+so every failure goes to stderr and to `logs/dual-write.log`, and parity is what
+turns the resulting drift red. `tests/test_submit_path_has_no_database_dependency.py`
+holds the line, with a control that fails if the mirror stops engaging at all.
+
+`scripts/class_b.py` is the mirror and `class_b.backfill` loads what was already
+on disk: 88 sessions, 213 history events, 190 answers and one profile, none of
+which the mirror would ever see otherwise.
+
+**`answer_bank`, not `answers`.** §3 names the table `answers` and migration
+0002 duly said `create table if not exists answers (...)`, which did nothing:
+`public.answers` is a legacy `(slug, record)` table with 190 rows, and
+`if not exists` matches the name rather than the shape. The migration reported
+success and the column did not exist. Every database test runs in its own
+scratch schema, where the name was free, so nothing caught it until the mirror
+tried to insert. `tests/test_corpus_schema.py` now seeds the legacy names into
+its scratch schema before migrating, which is the only way a test can reach
+that failure at all.
 
 | Module | Function | Primitive | What it means |
 |---|---|---|---|

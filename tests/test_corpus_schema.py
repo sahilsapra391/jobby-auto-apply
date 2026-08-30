@@ -326,5 +326,148 @@ class TheSearchVectorIsStoredAndWeighted(CorpusSchemaCase):
             self.assertEqual(cur.fetchone()[0], 1)
 
 
+class ALegacyTableNameCannotSilentlySwallowAMigration(pgtest.SchemaCase):
+    """`create table if not exists` matches on the name, not the shape.
+
+    Migration 0002 wrote `create table if not exists answers (...)` with §3's
+    columns and did nothing, because `public.answers` was already a legacy
+    `(slug, record)` jsonb table with 190 rows. The statement succeeded, the
+    migration was recorded as applied, and the column did not exist. It
+    surfaced only when the class B mirror tried to insert into it.
+
+    **The tests could not have caught it, and that is the interesting part.**
+    Every database test runs in its own scratch schema, which is what stops
+    them writing the live store; a scratch schema has no legacy tables, so the
+    name was free and the migration worked on every run. The isolation that
+    makes the tests safe is the isolation that hid the collision.
+
+    So this seeds the legacy names into the scratch schema first. It is the
+    only shape of test that can reach this failure at all.
+    """
+
+    prefix = "collide"
+
+    LEGACY = ("answers", "companies", "history", "jobs", "passed", "roles",
+              "sessions")
+
+    def setUp(self):
+        super().setUp()
+        with self.conn.cursor() as cur:
+            for name in self.LEGACY:
+                cur.execute(f"create table {name} (slug text primary key, "
+                            f"record jsonb)")
+
+    def test_the_migrations_still_apply(self):
+        migrate.run(self.conn, migrate.MIGRATIONS)
+
+    def test_no_managed_table_lost_its_columns_to_a_legacy_name(self):
+        """The assertion that would have caught it, derived not typed.
+
+        `migrate.declared_tables` parses the shape out of the migration files,
+        so this cannot drift from them the way a hand-written expectation can:
+        a list written beside the migrations is a second declaration, and it
+        can be wrong in the same direction as the first.
+
+        Run against a schema where every legacy name is already taken, which
+        is the condition the real `public` is in and the condition a scratch
+        schema never reproduces on its own.
+        """
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        declared = migrate.declared_tables()
+        with self.conn.cursor() as cur:
+            cur.execute("""select table_name, column_name
+                           from information_schema.columns
+                           where table_schema = %s""", (self.schema,))
+            real = {}
+            for table, column in cur.fetchall():
+                real.setdefault(table, set()).add(column)
+
+        broken = {}
+        for table, columns in declared.items():
+            if table in self.LEGACY:
+                continue          # see GRANDFATHERED below
+            missing = sorted(columns - real.get(table, set()))
+            if missing:
+                broken[table] = missing
+        self.assertEqual(
+            broken, {},
+            "these tables exist without the columns their migration declares, "
+            "which is what `create table if not exists` does when a legacy "
+            "table already holds the name")
+
+    def test_the_check_covers_every_table_the_migrations_declare(self):
+        """A parser that stopped matching would make the check above pass by
+        finding nothing. Thirteen tables on 2026-08-30."""
+        declared = migrate.declared_tables()
+        self.assertGreaterEqual(len(declared), 12)
+        for expected in ("postings", "employers", "job_decisions",
+                         "applications", "answer_bank", "accounts"):
+            with self.subTest(table=expected):
+                self.assertIn(expected, declared)
+        self.assertGreater(len(declared["postings"]), 25)
+
+    # The one statement that got through before this rule existed. 0002 says
+    # `create table if not exists answers (...)`, which has never done anything
+    # because `public.answers` is a legacy `(slug, record)` table. It cannot be
+    # edited: 0002 is applied, and an applied migration is history. 0005 creates
+    # `answer_bank` instead, and the dead statement stays where it is.
+    #
+    # Named exactly, one migration and one table, rather than exempted by
+    # version range. A range would grandfather every future collision in any
+    # migration numbered below some line, which is how an exemption becomes a
+    # category.
+    GRANDFATHERED = {("0002_corpus_and_decisions.sql", "answers")}
+
+    def test_no_managed_table_uses_a_legacy_name(self):
+        """The rule that prevents the next one. A managed table named the same
+        as a legacy one is a statement that does nothing, reported as applied."""
+        for path in sorted(migrate.MIGRATIONS.glob("*.sql")):
+            created = self.tables_created(path)
+            clash = sorted((created & set(self.LEGACY))
+                           - {t for m, t in self.GRANDFATHERED
+                              if m == path.name})
+            with self.subTest(migration=path.name):
+                self.assertEqual(
+                    clash, [],
+                    f"{path.name} creates {clash}, which the legacy store "
+                    f"already holds, so the statement does nothing")
+
+    @staticmethod
+    def tables_created(path):
+        """Table names a migration actually creates, comments excluded.
+
+        Through `migrate.split_code_and_comments` rather than a second
+        stripper. 0005's own prose quotes the dead statement it exists to
+        replace, and the first version of this scanned the raw file and
+        reported 0005 as the collision it was written to fix. Reading SQL as
+        text is the failure this repository has paid for three times; the one
+        parser that already strips comments is the one to use.
+        """
+        import re
+        code, _comments = migrate.split_code_and_comments(
+            path.read_text(encoding="utf-8"))
+        return set(re.findall(r"create table if not exists\s+(\w+)",
+                              code, re.I))
+
+    def test_the_grandfathered_statement_is_still_the_only_one(self):
+        """The exemption is a fact about one file, so it has to keep matching
+        that file. If 0002 stops containing it, the exemption is stale and
+        should go rather than sit there licensing something else."""
+        for name, table in self.GRANDFATHERED:
+            with self.subTest(migration=name):
+                self.assertIn(table,
+                              self.tables_created(migrate.MIGRATIONS / name))
+
+    def test_the_scan_ignores_comments(self):
+        """The negative control for the stripper. Without it this whole class
+        reports whichever migration best explains the rule."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "0099_x.sql"
+            path.write_text("-- create table if not exists answers (x int);\n"
+                            "create table if not exists real_one (x int);\n")
+            self.assertEqual(self.tables_created(path), {"real_one"})
+
+
 if __name__ == "__main__":
     unittest.main()

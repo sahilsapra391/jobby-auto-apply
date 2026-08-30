@@ -408,5 +408,105 @@ class TheScheduledRunLogsWhatHappened(unittest.TestCase):
         self.assertEqual(line["mergedFieldDropped"], 2)
 
 
+class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
+    """A number in a green report with no explanation is a number people stop
+    reading, and an exemption nobody counts is one that grows.
+
+    Both drops belong to one record: `9c9cf0baa815c1eb`, folded into
+    `5f10861ba0ce8980`, two stored records for one Braze posting reached
+    through `boards.` and `job-boards.`. Its URL differs because the two
+    hostnames are why there were ever two records, and its fingerprint differs
+    because the pages were fetched separately and land 4 bits apart.
+
+    A third drop means a new collision or a new differing field. Either is
+    worth a look rather than a larger total, so this fails on any other number
+    and `docs/parity.md` names the two it allows.
+    """
+
+    EXPECTED = {"apply_url", "desc_fingerprint"}
+
+    def test_the_document_names_both_fields(self):
+        doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        for field in self.EXPECTED:
+            with self.subTest(field=field):
+                self.assertIn(field, doc)
+
+    def test_the_document_names_the_record_and_its_winner(self):
+        doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        self.assertIn("9c9cf0baa815c1eb", doc)
+        self.assertIn("5f10861ba0ce8980", doc)
+
+    @unittest.skipUnless(
+        Path("~/.job-application/jobs.json").expanduser().exists()
+        and dual_write.enabled(),
+        "needs the real store and a configured database")
+    def test_the_live_run_drops_exactly_these_two(self):
+        conn = dual_write.connect()
+        try:
+            report = verify_parity.run(conn, dual_write.account_id(conn))
+        finally:
+            conn.close()
+        dropped = report["merged_field_dropped"]
+        self.assertEqual(
+            len(dropped), 2,
+            f"{len(dropped)} merged-field drops, expected 2. A third is a new "
+            f"collision or a newly differing field, and both want looking at: "
+            f"{[(d['id'], d['field']) for d in dropped]}")
+        self.assertEqual({d["field"] for d in dropped}, self.EXPECTED)
+        self.assertEqual({d["id"] for d in dropped}, {"9c9cf0baa815c1eb"})
+
+
+class TheScheduledTimerCanActuallyRun(unittest.TestCase):
+    """launchd would not execute the shell version, and said so where nobody
+    was looking.
+
+        /bin/sh: .../scripts/parity_cron.sh: Operation not permitted
+
+    exit 126, twice, while `parity.jsonl` stayed empty. An empty parity log and
+    a timer that has not fired yet are the same observation, so the failure
+    looked like waiting. The cause is the macOS Privacy control CLAUDE.md
+    already records for the launchd installer: a LaunchAgent may not exec a file
+    under ~/Documents. The three existing services run the interpreter with the
+    script as an argument, so the binary executed is one that holds the grant.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "scripts"))
+        import install_parity_timer
+        self.installer = install_parity_timer
+
+    def test_the_plist_runs_an_interpreter_not_the_script(self):
+        body = self.installer.plist_body("/opt/anaconda3/bin/python3")
+        argv = body["ProgramArguments"]
+        self.assertEqual(argv[0], "/opt/anaconda3/bin/python3")
+        self.assertTrue(argv[1].endswith(".py"),
+                        f"launchd is asked to exec {argv[1]}, which it may not "
+                        f"do for a file under ~/Documents")
+
+    def test_it_does_not_point_at_a_shell_script(self):
+        body = self.installer.plist_body("/usr/bin/python3")
+        for entry in body["ProgramArguments"]:
+            with self.subTest(entry=entry):
+                self.assertFalse(entry.endswith(".sh"))
+
+    def test_the_shell_version_is_gone_rather_than_left_beside_it(self):
+        """A script that cannot run on the only machine it targets is a trap
+        for whoever finds it next."""
+        self.assertFalse((REPO / "scripts" / "parity_cron.sh").exists())
+
+    def test_the_entrypoint_it_names_exists(self):
+        body = self.installer.plist_body(sys.executable)
+        self.assertTrue(Path(body["ProgramArguments"][1]).exists())
+
+    def test_a_crash_still_writes_a_line(self):
+        """Silence is the failure mode here: an empty log and a timer that has
+        not fired look identical."""
+        sys.path.insert(0, str(REPO / "scripts"))
+        import parity_log
+        line = parity_log.summarise("RuntimeError: exploded", 1)
+        self.assertFalse(line["ok"])
+        self.assertIn("exploded", line["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

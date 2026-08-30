@@ -97,6 +97,37 @@ def write_private(path, payload):
         Path(tmp).unlink(missing_ok=True)
         raise
 
+    # Class B mirror, after the file and never before it. The file is on disk
+    # and this caller has already succeeded, so nothing below may change that:
+    # `after_write` swallows its own failures and logs them, and parity is what
+    # makes the resulting drift visible. See docs/write-paths.md for why this
+    # ordering is the opposite of the pool's.
+    _mirror_class_b(path, payload)
+
+
+def _mirror_class_b(path, payload):
+    """Imported lazily, and failing quietly on purpose.
+
+    Lazy because `store` travels in the Vercel renderer bundle, which carries
+    no packages/schema and no psycopg: a top-level import here 502s every
+    deployed request while every local test passes, which is the failure
+    tests/test_renderer_sync.py caught once already.
+
+    Quiet because a class B write must never fail on the mirror's account. The
+    loudness lives inside `class_b.after_write`, which writes to stderr and to
+    logs/dual-write.log.
+    """
+    try:
+        import class_b
+    except Exception:
+        return
+    try:
+        class_b.after_write(path, payload)
+    except Exception as exc:                             # pragma: no cover
+        # after_write is supposed to swallow its own failures. If one escapes,
+        # it still must not fail the write, and it must not be silent either.
+        sys.stderr.write(f"store: class B mirror escaped: {exc!r}\n")
+
 
 def read_json(path, default):
     path = Path(path)
@@ -2002,7 +2033,37 @@ def cmd_history_append(args):
     with open(path, "a") as fh:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
     os.chmod(path, 0o600)
+    # The history file is appended rather than written through write_private,
+    # so it needs its own call. Same ordering and same contract: the line is
+    # already on disk.
+    _mirror_history_event(event)
     return event
+
+
+def _mirror_history_event(event):
+    try:
+        import class_b
+    except Exception:
+        return
+    conn = None
+    try:
+        import dual_write
+        if not dual_write.enabled():
+            return
+        conn = dual_write.connect()
+        class_b.mirror(conn, dual_write.account_id(conn), "history", event)
+    except Exception as exc:
+        class_b_module = sys.modules.get("class_b")
+        if class_b_module is not None:
+            class_b_module._report("applications.jsonl", "history", exc)
+        else:                                            # pragma: no cover
+            sys.stderr.write(f"store: history mirror failed: {exc!r}\n")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:                            # pragma: no cover
+                pass
 
 
 def cmd_history_list(args):

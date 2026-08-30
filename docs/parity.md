@@ -97,6 +97,42 @@ them. That list is the difference between "we chose not to keep this" and "we
 lost this", and it is checked by a test that every key present in the legacy
 records is either mapped to a column or named on the dropped list.
 
+## The two merged-field drops, named
+
+A green report currently reads
+
+    divergences 0, transient 0, merged-field drops 2
+
+and a number in a green report with no explanation is a number people stop
+reading. There are exactly two and they are both the same record:
+
+| Record | Field | File store | Postgres |
+|---|---|---|---|
+| `9c9cf0baa815c1eb` | `apply_url` | `.../boards.greenhouse.io/braze/jobs/8139241?gh_jid=8139241` | `.../job-boards.greenhouse.io/braze/jobs/8139241` |
+| `9c9cf0baa815c1eb` | `desc_fingerprint` | `simhash64:acc5bde5e8f76426` | `simhash64:a24fbde5f85f6de4` |
+
+`9c9cf0baa815c1eb` and `5f10861ba0ce8980` are two stored records for one Braze
+posting, Greenhouse job 8139241, reached through two hostnames. The legacy
+dedupe keys on the URL so it kept both; the board key sees one posting and
+folds them, and `5f10861ba0ce8980` wins by `BOARD_KEY_WINNER`.
+
+**Both exemptions are the merge, not a fault.** The URL differs because the two
+hostnames are the whole reason there were ever two records. The fingerprint
+differs because the two pages were fetched separately and Greenhouse renders
+them with slightly different boilerplate, so the simhashes land 4 bits apart,
+inside the distance `identity.similar` treats as the same posting and outside
+exact equality.
+
+Nothing else about the pair differs. Their `state` is compared like any other
+record's and agrees, because a merge cannot be allowed to hide a disagreement
+about whether a job is expired.
+
+**The count is asserted at exactly 2.** A third would mean either a new
+collision in the corpus or a field starting to differ that did not before, and
+both are things somebody should look at rather than watch join a running total.
+`tests/test_verify_parity.py` fails on any other number, so the exemption
+cannot quietly grow into a category.
+
 ## A moving pool is not a divergence
 
 The pool changes while parity runs. A sweep can insert a record between reading
