@@ -408,5 +408,53 @@ class TheScheduledRunLogsWhatHappened(unittest.TestCase):
         self.assertEqual(line["mergedFieldDropped"], 2)
 
 
+class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
+    """A number in a green report with no explanation is a number people stop
+    reading, and an exemption nobody counts is one that grows.
+
+    Both drops belong to one record: `9c9cf0baa815c1eb`, folded into
+    `5f10861ba0ce8980`, two stored records for one Braze posting reached
+    through `boards.` and `job-boards.`. Its URL differs because the two
+    hostnames are why there were ever two records, and its fingerprint differs
+    because the pages were fetched separately and land 4 bits apart.
+
+    A third drop means a new collision or a new differing field. Either is
+    worth a look rather than a larger total, so this fails on any other number
+    and `docs/parity.md` names the two it allows.
+    """
+
+    EXPECTED = {"apply_url", "desc_fingerprint"}
+
+    def test_the_document_names_both_fields(self):
+        doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        for field in self.EXPECTED:
+            with self.subTest(field=field):
+                self.assertIn(field, doc)
+
+    def test_the_document_names_the_record_and_its_winner(self):
+        doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        self.assertIn("9c9cf0baa815c1eb", doc)
+        self.assertIn("5f10861ba0ce8980", doc)
+
+    @unittest.skipUnless(
+        Path("~/.job-application/jobs.json").expanduser().exists()
+        and dual_write.enabled(),
+        "needs the real store and a configured database")
+    def test_the_live_run_drops_exactly_these_two(self):
+        conn = dual_write.connect()
+        try:
+            report = verify_parity.run(conn, dual_write.account_id(conn))
+        finally:
+            conn.close()
+        dropped = report["merged_field_dropped"]
+        self.assertEqual(
+            len(dropped), 2,
+            f"{len(dropped)} merged-field drops, expected 2. A third is a new "
+            f"collision or a newly differing field, and both want looking at: "
+            f"{[(d['id'], d['field']) for d in dropped]}")
+        self.assertEqual({d["field"] for d in dropped}, self.EXPECTED)
+        self.assertEqual({d["id"] for d in dropped}, {"9c9cf0baa815c1eb"})
+
+
 if __name__ == "__main__":
     unittest.main()

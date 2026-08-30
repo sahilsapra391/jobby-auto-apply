@@ -114,21 +114,28 @@ class TheSubmitPathSurvivesADatabaseOutage(unittest.TestCase):
         self.assertEqual(after["x1"]["state"], "new")
 
 
-class TheDocumentSaysClassBIsNotMirrored(unittest.TestCase):
-    """The claim and the code have to agree. An earlier draft of the document
-    said class B was dual-written in Phase 1, which was never true, and a
-    document that overstates coverage is worse than one that omits it."""
+class TheDocumentSaysWhichWayUpClassBIs(unittest.TestCase):
+    """The claim and the code have to agree.
 
-    def test_the_heading_does_not_claim_class_b_is_mirrored(self):
+    An earlier draft said class B was "dual-written in Phase 1" when nothing
+    wrote those tables at all. It is mirrored now, and the heading has to say
+    the thing that actually matters about it, which is the direction."""
+
+    def test_the_heading_names_the_inverted_ordering(self):
         doc = (REPO / "docs" / "write-paths.md").read_text(encoding="utf-8")
         heading = next(line for line in doc.splitlines()
                        if line.startswith("## Class B"))
-        self.assertIn("NOT yet mirrored", heading)
+        self.assertIn("other way up", heading)
 
     def test_the_reason_names_the_submit_path(self):
         doc = (REPO / "docs" / "write-paths.md").read_text(encoding="utf-8")
         self.assertIn("finish.py", doc)
         self.assertIn("un-send", doc)
+
+    def test_it_records_why_the_table_is_not_called_answers(self):
+        doc = (REPO / "docs" / "write-paths.md").read_text(encoding="utf-8")
+        self.assertIn("answer_bank", doc)
+        self.assertIn("if not exists", doc)
 
 
 if __name__ == "__main__":

@@ -291,6 +291,77 @@ def check_expand_only(name, sql, allow_contract=False):
 # Discovery
 # --------------------------------------------------------------------------
 
+_CONSTRAINT_WORDS = ("constraint", "primary", "unique", "check", "foreign",
+                     "exclude", "like")
+
+
+def _balanced(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+    raise MigrationError("unbalanced parentheses in a create table")
+
+
+def _split_top_level(body):
+    depth, item, out = 0, [], []
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(item))
+            item = []
+        else:
+            item.append(ch)
+    if "".join(item).strip():
+        out.append("".join(item))
+    return out
+
+
+def declared_tables(directory=None):
+    """{table: {columns}} that the migrations claim to create.
+
+    Parsed out of the files rather than written down beside them, because a
+    hand-maintained list is a second declaration and it can be wrong in the
+    same direction as the first. Comments are stripped first: 0005's prose
+    quotes the very `create table` statement it exists to replace, and a
+    scanner reading raw text reports 0005 as the problem it fixes.
+
+    This exists because `create table if not exists` matches on the name and
+    not the shape. `public.answers` was a legacy `(slug, record)` table, so
+    0002's declaration of `answers` did nothing and was recorded as applied.
+    Comparing this against `information_schema.columns` is the check that
+    catches the class rather than the instance.
+    """
+    tables = {}
+    for migration in discover(directory):
+        code, _comments = split_code_and_comments(migration.sql)
+        for match in re.finditer(
+                r"create\s+table\s+(?:if\s+not\s+exists\s+)?(\w+)\s*\(",
+                code, re.I):
+            body = _balanced(code, match.end() - 1)
+            columns = set()
+            for item in _split_top_level(body):
+                item = item.strip()
+                if not item:
+                    continue
+                if item.split()[0].lower().strip('"') in _CONSTRAINT_WORDS:
+                    continue
+                columns.add(item.split()[0].strip('"'))
+            tables.setdefault(match.group(1), set()).update(columns)
+        for match in re.finditer(
+                r"alter\s+table\s+(\w+)\s+add\s+column\s+"
+                r"(?:if\s+not\s+exists\s+)?(\w+)", code, re.I):
+            tables.setdefault(match.group(1), set()).add(match.group(2))
+    return tables
+
+
 def parse_version(name):
     match = NAME_RE.match(name)
     if not match:
