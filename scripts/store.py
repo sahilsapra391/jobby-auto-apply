@@ -2061,14 +2061,22 @@ def cmd_history_append(args):
     # The history file is appended rather than written through write_private,
     # so it needs its own call. Same ordering and same contract: the line is
     # already on disk.
-    _mirror_history_event(event)
+    _mirror_history_event(event, path)
     return event
 
 
-def _mirror_history_event(event):
+def _mirror_history_event(event, path=None):
+    """The history file is appended rather than written through
+    `write_private`, so it does not pass `class_b.after_write` and needs the
+    same refusal explicitly. `path` is the history file just appended to."""
     try:
         import class_b
     except Exception:
+        return
+    if path is not None and not class_b.writes_the_device_store(path):
+        sys.stderr.write(
+            "store: refusing to mirror a history event -- it was appended "
+            "outside the device store\n")
         return
     conn = None
     try:
