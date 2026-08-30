@@ -145,3 +145,76 @@ says so rather than reporting the difference as a fault. An inconclusive run
 exits non-zero like any other failure, because a parity job that can quietly
 decline to answer is a parity job that reports green while checking nothing.
 The scheduled run retries; the exit code never lies about having checked.
+
+## What the mirror costs, measured under a real sweep
+
+Phase 3 moves sourcing to the cloud and §5's connector upsert writes through
+this path, so the question is not whether the mirror is fast enough today but
+where it stops being fast enough. Measured on the tier-1 sweep of
+2026-08-30T03:49:15Z, the first to run with dual-write live:
+
+```
+sweep duration        1,264s (21.1 min), 943 requests, 27 channels
+found -> kept         17,129 -> 640
+pool                  16,123 -> 16,282
+
+mirror                29.75s
+file write             0.57s
+mirror share of persist  98.1%
+mirror share of INGEST    2.35%
+delta                 223 added, 4,673 changed, 64 removed = 4,960 rows
+per changed row       6.0 ms
+```
+
+**Two numbers, and the smaller one is the reassuring one.** The mirror is 98%
+of the time spent persisting, which sounds alarming and is not: persisting is
+30 seconds of a 21-minute sweep. Against the whole ingest it is 2.35%, and the
+sweep is dominated by HTTP to 943 boards. Nothing about today's cadence is
+threatened by this.
+
+**The scaling is the part to plan around, and it is linear in the delta rather
+than in the pool.** `mirror_pool` touches only what changed, so a sweep that
+changes 30% of a 16,282-row pool costs 30 seconds. The same 30% churn against
+§11's 500,000-row target is roughly 152,000 rows, and at 6.0 ms each that is
+about 15 minutes of mirroring per sweep, against a 4-hour cadence.
+
+That is survivable and it is not comfortable. **The obvious explanation for it
+is wrong, and the only reason anybody knows that is that it was measured
+instead of argued.**
+
+The guess was the generated `search_tsv` column and its GIN index: linear in
+the delta, and exactly what an ordinary upsert does not pay. Timed in a scratch
+schema over 5,000 rows, holding row count and statement count fixed:
+
+```
+variant     seconds  ms/row   what it isolates
+full           9.38    1.88   as shipped: generated tsv + GIN
+tsv_only       8.67    1.73   generated tsv, no GIN index
+plain          8.57    1.71   neither: the floor
+narrow         1.40    0.28   last_seen_at only, on the full table
+```
+
+GIN maintenance is 8% of the cost and the tsvector computation is 1%. Together
+they are under a tenth of it, and Phase 3 would have optimised them and gained
+almost nothing.
+
+**The driver is the payload.** Holding the row count and the ten statements
+fixed and varying only how wide each row is:
+
+```
+summary      payload  seconds  ms/row
+180 words      8.0MB     8.12    1.62
+40 words       2.2MB     3.29    0.66
+empty          0.6MB     2.02    0.40
+```
+
+Linear at about 0.83 s per MB over the wire. It is the bytes, not the indexing
+and not the round trips: all three ran in ten statements.
+
+So the number to carry forward is 6.0 ms per changed row on the real table, and
+the lever is **how much of each row is sent**, not what the table does with it
+once it arrives. `docs/plans/phase3-inputs.md` carries what follows from that.
+
+Re-measure on a materially larger pool before trusting the 500k projection,
+which is arithmetic on one observation. The two benchmarks above are separate
+measurements and are quoted as such; the projection is not.

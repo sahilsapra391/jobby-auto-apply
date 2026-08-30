@@ -1,0 +1,143 @@
+# What Phase 3 should know before the connectors are written
+
+Design inputs, measured during Phase 1. Nothing here is built. It is written
+down now because all of it is far cheaper to know before §5's connectors exist
+than after, and because two of the three findings contradict what a reasonable
+person would assume.
+
+## 1. Most of the mirror's work is a timestamp, and that is the big one
+
+The tier-1 sweep of 2026-08-30T03:49:15Z, the first with dual-write live, put
+4,960 changed rows through the mirror in 29.75 s. The shape of those changes
+matters more than the total:
+
+```
+added       223      genuinely new postings
+changed   4,673      overwhelmingly a lastSeenAt refresh and nothing else
+removed      64      pruned
+```
+
+**94% of the mirror's cost is a timestamp that nothing reads for correctness.**
+`last_seen_at` drives one thing, the closure sweep: a posting present in the
+last sweep and absent from this one gets `closed_at` set. No lane sorts on it,
+no filter uses it, no document references it. The board's newest-first ordering
+is `posted_at`.
+
+Real churn was 287 rows, 223 added and 64 removed. The other 4,673 were rows
+whose content did not change at all.
+
+So the §11 projection of ~152,000 rows and ~15 minutes of mirroring per sweep
+at 500k postings is measuring the wrong thing. It projects the *refresh* rate,
+not the *change* rate, and those differ by a factor of sixteen on the one sweep
+anybody has measured.
+
+### The shape of the fix, not the fix
+
+`last_seen_at` written separately from the row it belongs to. Either a narrow
+companion table keyed on `posting_id`, or a bulk
+
+```sql
+update postings set last_seen_at = v.seen
+from (values (%s, %s::timestamptz), ...) as v(legacy, seen)
+where postings.legacy_id = v.legacy
+```
+
+touching that column and no index. Measured below at **15% of the cost** of the
+equivalent full-row upsert, and the reason is section 2 rather than anything
+about indexes.
+
+**Not built, deliberately.** It changes `dual_write`, which is a Phase 1
+gate path: any change there restarts the seven-day parity clock at zero. It is
+also the kind of optimisation that should be designed against §5's real
+connector upsert rather than retrofitted onto the file-store mirror, since the
+connectors are the caller that will actually pay for it.
+
+Two things whoever builds it has to keep. A posting whose `last_seen_at` moved
+and whose content also changed must take the full path, so the narrow write is
+an optimisation of one case rather than a second way to write a row. And the
+closure sweep must read whichever column ends up holding the value, which is a
+one-line change today and a two-place invariant forever if the narrow write
+lands in a companion table.
+
+## 2. The cost is the payload, not the index, and the obvious guess was wrong
+
+The first write-up of the sweep named the generated `search_tsv` column and its
+GIN index as the prime suspect: linear in the delta, and exactly what an
+ordinary upsert does not pay. It reads well and it is wrong.
+
+Timed in a scratch schema over 5,000 rows, row count and statement count held
+fixed:
+
+| variant | seconds | ms/row | isolates |
+|---|---|---|---|
+| `full` | 9.38 | 1.88 | as shipped: generated tsv + GIN |
+| `tsv_only` | 8.67 | 1.73 | generated tsv, no GIN |
+| `plain` | 8.57 | 1.71 | neither: the floor |
+| `narrow` | 1.40 | 0.28 | `last_seen_at` only, full table |
+
+GIN maintenance is **8%** of the cost. The tsvector computation is **1%**.
+Together under a tenth, and an optimisation aimed there would have bought
+almost nothing.
+
+Varying only how wide each row is, same 5,000 rows in the same ten statements:
+
+| summary | payload | seconds | ms/row |
+|---|---|---|---|
+| 180 words | 8.0 MB | 8.12 | 1.62 |
+| 40 words | 2.2 MB | 3.29 | 0.66 |
+| empty | 0.6 MB | 2.02 | 0.40 |
+
+Linear at roughly **0.83 s per MB** over the wire. Not the indexing, and not
+the round trips either: all three ran in ten statements, which at Neon's
+measured 60 ms is under a second of latency.
+
+**So the lever is how much of each row is sent.** That is why the narrow
+`last_seen_at` update is 15% rather than 50%: it ships about thirty bytes a row
+instead of a kilobyte and a half. It is the same finding as section 1 from the
+other direction.
+
+A caution on transferring these numbers. The benchmark table has 10 columns and
+one index; the real `postings` has 33 columns and six, plus a foreign key and
+four check constraints, and the real mirror also upserts employers and
+decisions. The real sweep measured 6.0 ms per changed row against the
+benchmark's 1.62. **The ratios transfer; the absolute figures do not.**
+
+## 3. Employer resolution has to exist before the first sweep upserts
+
+Covered in full in `docs/employer-identity.md` and repeated here because it is a
+Phase 3 blocker rather than a nicety.
+
+§5's connector upsert keys on `(source, board_slug, external_id)` and takes the
+employer from whatever name the board's API returns. That name arrives fresh
+every sweep and is not the name the backfill normalised. Without a resolution
+step in front of the upsert, every spelling variation an ATS emits creates a new
+employer row while the postings scatter across them.
+
+The signal the backfill was confident about is already recorded:
+`employers.merged_into`, set on an exact normalised-domain collision. Nothing
+reads it yet. One collision exists in 1,934 employers, `sharegate.com` claimed
+by `sharegate` and `sharegate migrate chezworkleap`.
+
+A wrong merge files one company's postings under another's name, which is the
+stranger's-logo failure at the scale of a board lane. A missed merge shows the
+same company twice, which is untidy and correct. Prefer the second.
+
+## 4. What the board key already tells you about connector coverage
+
+`packages/schema/board_key.py` derives `(board_slug, external_id)` from a URL,
+which is what backfill and dual-write need and what a connector does not: a
+connector fetching `boards.greenhouse.io/<slug>` knows all three by
+construction and should pass them rather than re-deriving them.
+
+Measured over 20,103 records, a real tenant slug is found for 79.2% of postings
+from a source that has a pattern. The shortfall is not parser weakness, and
+Phase 3 should not try to close it by parsing harder:
+
+- aggregators and feeds have no ATS tenant at all
+- 3,528 Greenhouse postings are served from an employer's own domain, where the
+  URL carries the job id and not the board slug
+- 144 Workable short links carry no slug
+- 29 Recruitee and Teamtailor postings sit on custom careers domains
+
+For all of these the fallback `(source, record_id)` is the honest key, and a
+connector that knows its own board replaces it with the real one for free.
