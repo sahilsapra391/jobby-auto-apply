@@ -178,16 +178,43 @@ changes 30% of a 16,282-row pool costs 30 seconds. The same 30% churn against
 §11's 500,000-row target is roughly 152,000 rows, and at 6.0 ms each that is
 about 15 minutes of mirroring per sweep, against a 4-hour cadence.
 
-That is survivable and it is not comfortable, and the cost is very unlikely to
-be round trips: at batch 500 the whole write is about 30 statements, roughly 2
-seconds of latency at Neon's measured 60 ms. The remaining 28 seconds are
-per-row work on the server, and the prime suspect is `postings.search_tsv`,
-a generated stored column, plus its GIN index: every inserted or updated row
-computes a tsvector and updates the index, which is exactly linear in the delta
-and exactly what an ordinary upsert does not pay.
+That is survivable and it is not comfortable. **The obvious explanation for it
+is wrong, and the only reason anybody knows that is that it was measured
+instead of argued.**
 
-**So the number Phase 3 needs is 6.0 ms per changed row, and the lever is the
-generated column rather than the batching.** Anybody tempted to tune this by
-raising the batch size should measure first: the round trips are already 7% of
-it. Re-measure this on a materially larger pool before trusting the projection,
-which is arithmetic on one observation rather than a second measurement.
+The guess was the generated `search_tsv` column and its GIN index: linear in
+the delta, and exactly what an ordinary upsert does not pay. Timed in a scratch
+schema over 5,000 rows, holding row count and statement count fixed:
+
+```
+variant     seconds  ms/row   what it isolates
+full           9.38    1.88   as shipped: generated tsv + GIN
+tsv_only       8.67    1.73   generated tsv, no GIN index
+plain          8.57    1.71   neither: the floor
+narrow         1.40    0.28   last_seen_at only, on the full table
+```
+
+GIN maintenance is 8% of the cost and the tsvector computation is 1%. Together
+they are under a tenth of it, and Phase 3 would have optimised them and gained
+almost nothing.
+
+**The driver is the payload.** Holding the row count and the ten statements
+fixed and varying only how wide each row is:
+
+```
+summary      payload  seconds  ms/row
+180 words      8.0MB     8.12    1.62
+40 words       2.2MB     3.29    0.66
+empty          0.6MB     2.02    0.40
+```
+
+Linear at about 0.83 s per MB over the wire. It is the bytes, not the indexing
+and not the round trips: all three ran in ten statements.
+
+So the number to carry forward is 6.0 ms per changed row on the real table, and
+the lever is **how much of each row is sent**, not what the table does with it
+once it arrives. `docs/plans/phase3-inputs.md` carries what follows from that.
+
+Re-measure on a materially larger pool before trusting the 500k projection,
+which is arithmetic on one observation. The two benchmarks above are separate
+measurements and are quoted as such; the projection is not.
