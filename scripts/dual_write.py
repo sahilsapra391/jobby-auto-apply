@@ -286,6 +286,31 @@ def resync(conn, account_id, jobs, force=False, batch=500):
     return report
 
 
+def _record_timing(entry, root=None):
+    """One JSONL line per mirrored write, for the question Phase 3 has to
+    answer before it moves sourcing to the cloud.
+
+    "The mirror is fast enough" is not a number, and at 500k postings the
+    per-sweep cost is the thing that decides whether §5's connector upsert can
+    write through this path at all. Measuring it at 20k while the pool is small
+    is cheap; discovering it at 500k is a rewrite.
+
+    Best-effort by construction: a failure to record a duration must never
+    fail the write it is timing.
+    """
+    try:
+        base = Path(root) if root else Path("~/.job-application").expanduser()
+        log = base / "logs" / "mirror-timing.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone
+        entry = dict(entry,
+                     at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def persist(conn, account_id, path, before, jobs, on_file_failure=None,
             batch=500):
     """Mirror to Postgres, then write the file. In that order, always.
@@ -295,8 +320,12 @@ def persist(conn, account_id, path, before, jobs, on_file_failure=None,
     exception is re-raised regardless, because a caller told nothing would
     carry on believing both stores moved.
     """
+    import time
+    started = time.time()
     report = mirror_pool(conn, account_id, before, jobs, batch)
+    mirror_seconds = time.time() - started
 
+    file_started = time.time()
     try:
         _write_file(Path(path), jobs)
     except Exception as exc:
@@ -310,7 +339,24 @@ def persist(conn, account_id, path, before, jobs, on_file_failure=None,
             on_file_failure(message)
         else:                                            # pragma: no cover
             print(message, file=sys.stderr)
+        _record_timing({"mirrorSeconds": round(mirror_seconds, 3),
+                        "fileSeconds": None, "records": len(jobs),
+                        "added": report["added"], "changed": report["changed"],
+                        "removed": report["removed"], "fileWriteFailed": True})
         raise
+
+    file_seconds = time.time() - file_started
+    total = mirror_seconds + file_seconds
+    report["mirrorSeconds"] = round(mirror_seconds, 3)
+    report["fileSeconds"] = round(file_seconds, 3)
+    _record_timing({
+        "mirrorSeconds": round(mirror_seconds, 3),
+        "fileSeconds": round(file_seconds, 3),
+        "mirrorShare": round(mirror_seconds / total, 3) if total else None,
+        "records": len(jobs),
+        "added": report["added"], "changed": report["changed"],
+        "removed": report["removed"],
+    })
     return report
 
 

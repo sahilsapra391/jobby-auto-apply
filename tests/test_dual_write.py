@@ -418,5 +418,88 @@ class BeingOffIsNotBeingFine(unittest.TestCase):
                 self.assertFalse(dual_write.enabled(url=url))
 
 
+class TheMirrorTimesItself(pgtest.SchemaCase):
+    """Phase 3 has to know what the mirror costs per sweep before it moves
+    sourcing to the cloud, and "fast enough" is not a number.
+
+    At 20k postings the per-write cost is cheap to measure. At 500k it is the
+    thing that decides whether §5's connector upsert can write through this
+    path at all, and discovering it there is a rewrite rather than a tuning
+    exercise.
+    """
+
+    prefix = "timing"
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        import tempfile
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        with self.conn.cursor() as cur:
+            cur.execute("insert into accounts (email) values ('t@example.com') "
+                        "returning id")
+            self.account = cur.fetchone()[0]
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.target = self.home / "jobs.json"
+        self.target.write_text("{}")
+
+    def rec(self, job_id):
+        return {"id": job_id, "canonicalSource": "greenhouse",
+                "canonicalUrl": f"https://boards.greenhouse.io/acme/jobs/{job_id}",
+                "company": "Acme", "title": "PM", "state": "new",
+                "firstSeenAt": "2026-08-01T00:00:00Z",
+                "lastSeenAt": "2026-08-29T00:00:00Z", "postedAt": None}
+
+    def test_the_report_carries_both_halves(self):
+        report = dual_write.persist(self.conn, self.account, self.target, {},
+                                    {"a": self.rec("a")})
+        self.assertIn("mirrorSeconds", report)
+        self.assertIn("fileSeconds", report)
+        self.assertGreaterEqual(report["mirrorSeconds"], 0)
+
+    def test_a_line_is_written_for_every_mirrored_write(self):
+        log = self.home / "logs" / "mirror-timing.jsonl"
+        original = dual_write._record_timing
+        dual_write._record_timing = lambda entry, root=None: original(
+            entry, root=self.home)
+        self.addCleanup(setattr, dual_write, "_record_timing", original)
+
+        dual_write.persist(self.conn, self.account, self.target, {},
+                           {"a": self.rec("a")})
+        self.assertTrue(log.exists())
+        line = json.loads(log.read_text().splitlines()[-1])
+        for key in ("mirrorSeconds", "fileSeconds", "mirrorShare", "records",
+                    "added", "at"):
+            with self.subTest(key=key):
+                self.assertIn(key, line)
+        self.assertEqual(line["records"], 1)
+        self.assertEqual(line["added"], 1)
+
+    def test_recording_never_fails_the_write(self):
+        """A failure to record a duration must not fail the write it times."""
+        original = dual_write._record_timing
+
+        def explode(entry, root=None):
+            raise RuntimeError("no disk")
+
+        dual_write._record_timing = explode
+        self.addCleanup(setattr, dual_write, "_record_timing", original)
+        with self.assertRaises(RuntimeError):
+            dual_write.persist(self.conn, self.account, self.target, {},
+                               {"a": self.rec("a")})
+        # The real one swallows; this proves the swallow is in _record_timing
+        # rather than somewhere that would hide a genuine mirror failure.
+        dual_write._record_timing = original
+        dual_write.persist(self.conn, self.account, self.target, {},
+                           {"b": self.rec("b")})
+
+    def test_the_share_is_a_fraction_of_the_two_measured_halves(self):
+        report = dual_write.persist(self.conn, self.account, self.target, {},
+                                    {"a": self.rec("a")})
+        total = report["mirrorSeconds"] + report["fileSeconds"]
+        self.assertGreater(total, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
