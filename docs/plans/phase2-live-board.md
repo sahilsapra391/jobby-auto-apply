@@ -198,30 +198,72 @@ The old board must keep working while the new one is built, and the switch must
 be per account and reversible.
 
 ```
-jobby.fyi/                 -> deploy/api/page.py     the Python snapshot board
-jobby.fyi/v2/              -> apps/web               the Next.js board
+jobby.fyi        -> jobby-board  (rooted at deploy/)  the Python snapshot board
+v2.jobby.fyi     -> jobby-v2     (rooted at apps/web) the Next.js board
 ```
 
-A new route rather than a replacement, so the two never contend for one
-rewrite rule and a broken deploy of one cannot take the other down.
+**Two projects on two domains, and the second one is not a path off the first.**
+An earlier draft of this document wrote `jobby.fyi/v2/ -> apps/web` as though
+that line were a routing table. It is not one. A Vercel domain maps to exactly
+one project, `jobby.fyi` maps to `jobby-board`, and `jobby-board` is rooted at
+`deploy/`, so `apps/web` cannot build in it. Serving `/v2/` off that domain
+needs one of:
+
+- a proxy rewrite in `deploy/vercel.json` to a second project, which requires a
+  custom domain on that project anyway (the team's SSO is
+  `all_except_custom_domains`, so a `*.vercel.app` origin is unreachable), adds
+  an edge-to-origin hop to every request including every chunk, and puts the
+  Python board's configuration on the new board's critical path;
+- Vercel's microfrontends path routing, which is a billed feature per project
+  past a cap and introduces a config shared between the two apps;
+- one build producing both, which is the coupling this section exists to
+  prevent.
+
+**The requirement behind the path was isolation, and the path was the thing
+that cost it.** Neither project's configuration mentions the other now, so
+there is nothing to contend over and no deploy of one that can break the
+other. The `/v2/` string bought nothing the cutover needs: the flag gates a
+redirect, and a redirect to a subdomain is the same redirect.
+
+Do not re-propose the path. Reintroducing `basePath` is the tell.
+
+**Everything on `v2.jobby.fyi` is behind `apps/web/middleware.ts`, and that is
+the only gate there is.** `all_except_custom_domains` protects previews and
+`*.vercel.app` URLs and deliberately exempts custom domains, which is what lets
+`jobby.fyi` answer a scripted request at all. The corollary is the part to
+hold on to: the platform protection covering this app throughout development is
+exactly the protection that stops covering it the moment its domain is
+attached. So the middleware is HTTP Basic against `DASHBOARD_PASSWORD`, the
+same credential and the same mechanism `deploy/api/page.py` already uses, over
+every path including `_next/static` (those chunks are the board's own code and
+a lane's shape is inferable from them). **An unset `DASHBOARD_PASSWORD` is a
+503, never an open door**, because a missing environment variable is the most
+likely way this ends up public and it looks like nothing at all.
+
+`tools/check_deployed_shape.mjs` asserts all of that against the traced bundle,
+including booting a second server with the variable absent, since every other
+assertion runs with a password configured and none of them can see that case.
 
 **`accounts.flags.live_board` decides who sees which**, and it exists already:
 Phase 0 built the registry, the column, and the boolean-only constraint. The
-flag gates the *redirect*, not the code path, so `/v2/` stays reachable directly
-for testing while the flag is off.
+flag gates the *redirect*, not the code path, so `v2.jobby.fyi` stays reachable
+directly for testing while the flag is off.
 
 Cutover order, and each step is reversible until the last:
 
-1. `/v2/` renders read-only from Postgres. No writes, no DO. Compare lanes
-   against the old board by eye and by count.
-2. The DO ships. `/v2/` subscribes and applies events. Writes still go through
-   the existing endpoints.
-3. `live_board` on for account 1. Both boards remain correct; the old one is
-   just slower.
+1. `v2.jobby.fyi` renders read-only from Postgres. No writes, no DO. Compare
+   lanes against the old board by eye and by count.
+2. The DO ships. The new board subscribes and applies events. Writes still go
+   through the existing endpoints.
+3. `live_board` on for account 1, redirecting `jobby.fyi` to `v2.jobby.fyi`.
+   Both boards remain correct; the old one is just slower.
 4. The old board's publish path is switched off and `jobby:board-state` stops
    being written. **This is the irreversible step** and it wants its own week.
-5. `dashboard.py`, `found_lane.py`, `premium_ui.py` and `deploy/api/page.py` are
-   deleted in one revertable commit.
+5. `jobby.fyi` is moved onto the new project and `jobby-board` is retired.
+   `dashboard.py`, `found_lane.py`, `premium_ui.py` and `deploy/api/page.py` are
+   deleted in one revertable commit. Moving the domain is a project setting
+   rather than a rewrite rule, which is the other thing the two-project shape
+   buys: the final step has no routing config to unwind.
 
 ### What must not be lost in the move
 

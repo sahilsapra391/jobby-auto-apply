@@ -57,3 +57,11 @@ deploy/node_modules/
 # Scratch renders from a run. Same contents as an application: a real
 # address, phone and email on every page.
 .build/
+
+# apps/web build output. node_modules and .next are produced by npm ci and
+# next build; package-lock.json is committed on purpose, because npm ci is what
+# makes a CI build reproduce the tree that was tested.
+apps/web/node_modules/
+apps/web/.next/
+apps/web/next-env.d.ts
+apps/web/tsconfig.tsbuildinfo

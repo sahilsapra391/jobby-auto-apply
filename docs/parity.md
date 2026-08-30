@@ -218,3 +218,30 @@ once it arrives. `docs/plans/phase3-inputs.md` carries what follows from that.
 Re-measure on a materially larger pool before trusting the 500k projection,
 which is arithmetic on one observation. The two benchmarks above are separate
 measurements and are quoted as such; the projection is not.
+
+## The seven-day clock, and why no date is written down
+
+`python3 scripts/parity_clock.py` is the answer to "how far along is it".
+Nothing else is, and in particular no document states a gate date.
+
+That is a decision rather than an omission. The gate is
+`first green run after the last divergence + 7 days`, which moves every time
+parity goes red, and a date typed into a plan does not move with it. On
+2026-08-30 the clock was read by hand as starting at 04:14:20Z, which was
+simply the newest line in the log; the first green line was 01:34:42Z, two
+hours forty earlier. Both readings looked equally plausible written down.
+
+So the clock is derived, and the derivation makes three distinctions a glance
+does not:
+
+- **A divergence resets it.** Nothing else does.
+- **An inconclusive run is missing coverage, not a failure.** The first line in
+  the log is a LaunchAgent that could not exec its own program. Restarting a
+  seven-day clock over a plist bug is wrong; counting it green is worse.
+- **A gap is measured, not judged.** This runs on a laptop that sleeps. A rule
+  that broke the streak on a gap would never let the clock finish on the only
+  machine it has, so gaps are printed and the reader decides.
+
+And it refuses to keep counting quietly when the newest line is stale, because
+the day count rises with wall-clock time whether or not the timer ever fires
+again. An empty log and a timer that has not fired are the same observation.

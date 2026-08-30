@@ -44,6 +44,16 @@ class TheWorkflowRunsEveryModule(unittest.TestCase):
             self.skipTest("no workflow file in this checkout")
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
+    def command_lines(self):
+        """The workflow with its comments stripped.
+
+        A YAML comment is text in the same file as the command it describes,
+        and an assertion looking for a command finds the sentence about it just
+        as happily. `test_no_module_exclusion_filter_has_come_back` already
+        drops comment lines for exactly this reason."""
+        return "\n".join(line for line in self.text.splitlines()
+                          if not line.lstrip().startswith("#"))
+
     def test_the_python_step_discovers_rather_than_listing(self):
         self.assertIn("unittest discover -s tests", self.text)
 
@@ -51,9 +61,7 @@ class TheWorkflowRunsEveryModule(unittest.TestCase):
         """The exact shape that hid two files: a pipeline selecting module
         names and filtering some out. Matched against the command lines rather
         than the whole file so the explanation above can name it."""
-        commands = [line for line in self.text.splitlines()
-                    if not line.lstrip().startswith("#")]
-        joined = "\n".join(commands)
+        joined = self.command_lines()
         for pattern in (r"grep\s+-[a-zA-Z]*v", r"--exclude", r"\bdeselect\b"):
             with self.subTest(pattern=pattern):
                 self.assertIsNone(
@@ -82,6 +90,57 @@ class TheWorkflowRunsEveryModule(unittest.TestCase):
         on_disk = {p.stem for p in (REPO / "tests").glob("test_*.py")}
         self.assertEqual(on_disk - collected, set(),
                          "these modules are on disk and not collected")
+
+    def test_every_node_test_on_disk_is_reached_by_a_glob(self):
+        """The Python half of this file compares what unittest collects against
+        what is in the directory. The node half has no discovery: it is a shell
+        glob, and a glob covers exactly the directory somebody typed.
+
+        That is not hypothetical here. The step read `node --test
+        tests/*.test.mjs` for as long as node tests have existed, because that
+        was the only directory holding them. The moment a second one appeared
+        the old glob still passed, still ran real tests, and silently covered
+        none of the new ones -- which is the JOBBY_ADD failure with a different
+        mechanism, and it announces itself exactly as loudly."""
+        step = next((line for line in self.text.splitlines()
+                     if "node --test" in line and not line.lstrip().startswith("#")),
+                    None)
+        self.assertIsNotNone(step, "no `node --test` step in the workflow")
+
+        globs = [g for g in step.split() if g.endswith(".test.mjs")]
+        self.assertTrue(globs, f"the node step names no test glob: {step!r}")
+
+        covered = set()
+        for glob in globs:
+            covered.update(REPO.glob(glob))
+
+        on_disk = {p for p in REPO.rglob("*.test.mjs")
+                   if "node_modules" not in p.parts and ".next" not in p.parts}
+        missing = sorted(str(p.relative_to(REPO)) for p in on_disk - covered)
+        self.assertEqual(missing, [],
+                         "these node tests are on disk and no workflow glob "
+                         "reaches them, so no green check has ever run them")
+
+    def test_the_v2_build_is_checked_against_its_deployed_shape(self):
+        """A build step that only builds proves the code compiles. It was a
+        compiling, passing, locally-correct renderer that read a favicon out of
+        deploy/public/ and 502'd every deployed request for two days.
+
+        Matched against the command lines rather than the file, and that is not
+        tidiness. The first version searched the whole text for "npm ci", and
+        the workflow step's own comment says "`npm ci` rather than `npm
+        install`" -- so swapping the real command for `npm install` left the
+        assertion passing on the prose explaining why it must not be. Caught by
+        running the mutation, not by reading the test. It is the marker-in-text
+        bug CLAUDE.md has now paid for four times, and a comment is just
+        another corpus that decides what a substring means."""
+        commands = self.command_lines()
+        self.assertIn("check_deployed_shape.mjs", commands,
+                      "CI builds /v2 without checking what the deployment "
+                      "actually carries")
+        self.assertRegex(commands, r"(?m)^\s*npm ci\b",
+                         "CI installs /v2 without the lockfile, so it tests a "
+                         "tree that no deployment will reproduce")
 
     def test_the_database_container_is_declared(self):
         self.assertIn("postgres:18", self.text)
