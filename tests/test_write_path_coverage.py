@@ -208,7 +208,14 @@ class ItNeverAffectsTheCaller(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "logs").mkdir(parents=True, exist_ok=True)
-            with mock.patch.dict(os.environ, {"JOB_APPLICATION_DIR": d}):
+            # Dual-write off: this is about whether the counter's hook fires,
+            # not about mirroring. With a throwaway database configured the
+            # class A mirror would try to use it and fail on a schema it has
+            # never had -- which is correct class A behaviour and nothing to do
+            # with what is under test here.
+            with mock.patch.dict(os.environ, {"JOB_APPLICATION_DIR": d,
+                                              "JOBBY_TEST_DATABASE_URL": "",
+                                              "JOBBY_DATABASE_URL": ""}):
                 jobs_store.save_jobs(root, {"a": {"id": "a", "company": "C",
                                                   "title": "T",
                                                   "url": "https://e.com/1"}})

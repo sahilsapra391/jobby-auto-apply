@@ -408,6 +408,53 @@ class TheScheduledRunLogsWhatHappened(unittest.TestCase):
         self.assertEqual(line["mergedFieldDropped"], 2)
 
 
+def _database_holds_the_device_store():
+    """Is the configured database the one holding the store on this disk?
+
+    `dual_write.enabled()` used to answer this by accident: it read config.env,
+    so "a database is configured" and "the device's database" were the same
+    sentence. Once `enabled()` and `connect()` were unified onto one resolver
+    that prefers JOBBY_TEST_DATABASE_URL, they stopped being: with a local
+    throwaway Postgres configured, `enabled()` is true and points somewhere
+    that has never seen this store, and this test connected to it and failed on
+    a missing `accounts` table.
+
+    Two questions that were one. This asks the one that is actually meant.
+    """
+    import sys
+    sys.path.insert(0, str(REPO / "packages" / "schema"))
+    import migrate
+    resolved = dual_write.resolved_url()
+    device = migrate._device_url()
+    if resolved is None and device:
+        # The test-runner guard refuses the device URL to any fall-through, so
+        # `resolved` is None here whenever nothing else is configured. That is
+        # the guard working; this test is the documented exception to it, and
+        # it takes the exception explicitly below rather than by being allowed
+        # to fall through.
+        return True
+    return bool(resolved and device and migrate.same_database(resolved, device))
+
+
+def _device_connection():
+    """A connection to the device's own database, named explicitly.
+
+    **The one sanctioned way past the test-runner guard**, and the guard's own
+    docstring says so: an operator naming a database is not a fall-through.
+    This test is a live-corpus check -- it asserts a property of the real
+    store's 15,400 postings, which no fixture can stand in for -- and
+    `verify_parity.run` only reads.
+
+    Any test reaching for this owes the same two things: a reason a fixture
+    cannot answer the question, and a guarantee that it only reads.
+    """
+    import sys
+    sys.path.insert(0, str(REPO / "packages" / "schema"))
+    import migrate
+    return migrate.connect(url=migrate.direct_url(migrate._device_url()),
+                           announce=False)
+
+
 class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
     """A number in a green report with no explanation is a number people stop
     reading, and an exemption nobody counts is one that grows.
@@ -438,10 +485,10 @@ class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
 
     @unittest.skipUnless(
         Path("~/.job-application/jobs.json").expanduser().exists()
-        and dual_write.enabled(),
-        "needs the real store and a configured database")
+        and _database_holds_the_device_store(),
+        "needs the real store and the database that holds it")
     def test_the_live_run_drops_exactly_these_two(self):
-        conn = dual_write.connect()
+        conn = _device_connection()
         try:
             report = verify_parity.run(conn, dual_write.account_id(conn))
         finally:

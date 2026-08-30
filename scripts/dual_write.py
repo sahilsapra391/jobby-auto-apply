@@ -50,6 +50,30 @@ class DualWriteError(Exception):
 _LOOK_IT_UP = object()
 
 
+def resolved_url():
+    """**The one resolver.** `enabled()` and `connect()` both come here.
+
+    They used to answer different questions from different places: `enabled()`
+    asked `jobs_db.database_url()`, which reads `config.env` under the store
+    root, and `connect()` asked `migrate.database_url()`, which prefers
+    `JOBBY_TEST_DATABASE_URL`. A caller could therefore be told the device has
+    a database and then be handed a different one.
+
+    That split is the root cause of all three of 2026-08-30's incidents rather
+    than a fourth. `HOME=$(mktemp -d)` had been hiding it by accident, because
+    a moved home emptied both sides at once; resolving credentials through the
+    store root removed the accident and left the split exposed; and pointing
+    `JOBBY_TEST_DATABASE_URL` at production was the same hole wearing a third
+    name. Each time, `enabled()` said yes about one database and `connect()`
+    opened another.
+
+    If the two can return different databases that is a bug whichever one is
+    correct, so there is now nothing to be correct about.
+    """
+    import migrate
+    return migrate.database_url()
+
+
 def enabled(url=_LOOK_IT_UP):
     """Whether Postgres is configured at all.
 
@@ -65,8 +89,7 @@ def enabled(url=_LOOK_IT_UP):
     A run that mirrored nothing can then never also claim the stores agree.
     """
     if url is _LOOK_IT_UP:
-        import jobs_db
-        url = jobs_db.database_url()
+        url = resolved_url()
     return bool((url or "").strip())
 
 
@@ -76,9 +99,13 @@ def connect():
     Migrations need a session for their advisory lock and this needs one for
     its transaction, and Neon's configured URL is the pooled endpoint. See
     packages/schema/migrate.py, which owns the rewrite.
+
+    The URL is passed explicitly rather than letting `migrate.connect` look it
+    up again, so that what `enabled()` reported and what this opens are one
+    value read once.
     """
     import migrate
-    return migrate.connect(announce=False)
+    return migrate.connect(url=resolved_url(), announce=False)
 
 
 _ACCOUNT_CACHE = {}

@@ -509,6 +509,59 @@ def device_url_refusal():
             f"writes the store real applications live in.")
 
 
+def _identity(url):
+    """(host, database) with the things that do not change which server it is
+    stripped off.
+
+    **`-pooler` has to come out or the guard is blind to its own escape.**
+    `direct_url` rewrites `ep-x-pooler.region.aws.neon.tech` to
+    `ep-x.region.aws.neon.tech`, and `pgtest` connects through exactly that
+    rewrite, so comparing raw hosts would call the direct and pooled forms of
+    one database two different databases and let the match through.
+    """
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().replace("-pooler", "")
+    database = (parts.path or "").lstrip("/").lower()
+    if not host or not database:
+        return None
+    return (host, database)
+
+
+def same_database(a, b):
+    """Do two URLs name the same database on the same server?"""
+    ia, ib = _identity(a or ""), _identity(b or "")
+    return ia is not None and ia == ib
+
+
+def _device_url(config_path=None):
+    """This device's own configured URL, read without the test-runner guard.
+
+    Separate from `database_url` on purpose: the guard's job is to stop callers
+    *using* this, and the comparison above needs to *read* it. Folding the two
+    together would make the check ask permission to run itself.
+    """
+    value = os.environ.get(URL_NAME, "").strip()
+    if value:
+        return value
+    path = Path(config_path) if config_path else config_path_default()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        if key.strip() == URL_NAME:
+            return val.strip() or None
+    return None
+
+
 def database_url(config_path=None):
     """The connection URL, or None.
 
@@ -517,6 +570,26 @@ def database_url(config_path=None):
     """
     value = os.environ.get("JOBBY_TEST_DATABASE_URL", "").strip()
     if value:
+        # **An escape hatch that can point at production is not an escape
+        # hatch.** `pgtest`'s own docstring says the only Postgres on this Mac
+        # is the live one, so the obvious way to run the database tests is to
+        # set this variable to it -- and that is precisely what defeated the
+        # test-runner guard on 2026-08-30, third incident of the day, after the
+        # guard itself had been written that morning.
+        #
+        # Refused whether or not a test runner is present, because a script
+        # that thinks it has a throwaway database and has production is wrong
+        # either way.
+        device = _device_url(config_path)
+        if device and same_database(value, device):
+            message = (
+                "refusing JOBBY_TEST_DATABASE_URL: it names the same database "
+                f"as this device's own {URL_NAME} "
+                f"({_identity(value)[0]}/{_identity(value)[1]}). A test "
+                "database that is production is not a test database. Run a "
+                "local postgres:18, or pass --url deliberately.")
+            sys.stderr.write(f"migrate: {message}\n")
+            raise MigrationError(message)
         return value
 
     refusal = device_url_refusal()

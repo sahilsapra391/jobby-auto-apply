@@ -72,6 +72,22 @@ GATE_PATHS = (
 INTERVAL = timedelta(seconds=1800)
 STALE_AFTER = INTERVAL * 4
 
+#: How long a gap between two green runs can be and still count as covered.
+#: Two intervals, so one missed tick is tolerated and a sleeping laptop is not.
+#:
+#: **Time the checker did not run is not time the stores agreed.** Until
+#: 2026-08-30 this counted elapsed wall-clock between the first green run and
+#: now, and reported "2 green runs, no reset" across a window in which parity
+#: was actually red -- found by hand, because the scheduled check did not fire
+#: inside it. Absence of red read as green, which is the seventh instance in
+#: CLAUDE.md of a check reporting success while measuring nothing.
+#:
+#: So the clock counts *covered* time rather than elapsed time. A gap larger
+#: than this is inconclusive: it does not reset the streak, because nothing
+#: went wrong that anyone saw, and it does not count toward it either, because
+#: nothing went right that anyone saw.
+MAX_COVERED_GAP = INTERVAL * 2
+
 
 def log_path():
     """Resolved on every call, never frozen into a default argument.
@@ -196,36 +212,55 @@ def assess(entries, now=None, gate_change=None):
 
     start = _when(green[0])
     newest = _when(stamped[-1])
-    elapsed = now - start
-    gate = start + timedelta(days=REQUIRED_DAYS)
+    gate_seconds = REQUIRED_DAYS * 86400
 
+    # Covered time: the sum of the gaps between consecutive green runs, each
+    # capped at MAX_COVERED_GAP. A longer gap contributes its cap and the rest
+    # is counted as inconclusive rather than as agreement.
+    covered = 0.0
+    inconclusive = 0.0
     gaps = []
     for a, b in zip(green, green[1:]):
-        gaps.append((_when(b) - _when(a), _when(a), _when(b)))
-    widest = max(gaps, default=(timedelta(0), start, start))
+        span = (_when(b) - _when(a)).total_seconds()
+        gaps.append((span, _when(a), _when(b)))
+        covered += min(span, MAX_COVERED_GAP.total_seconds())
+        if span > MAX_COVERED_GAP.total_seconds():
+            inconclusive += span - MAX_COVERED_GAP.total_seconds()
+    # And the tail, from the newest green run to now, on the same terms.
+    tail = (now - _when(green[-1])).total_seconds()
+    covered += min(tail, MAX_COVERED_GAP.total_seconds())
+    if tail > MAX_COVERED_GAP.total_seconds():
+        inconclusive += tail - MAX_COVERED_GAP.total_seconds()
+
+    widest = max(gaps, default=(0.0, start, start))
+    elapsed = (now - start).total_seconds()
+    projected = start + timedelta(seconds=gate_seconds + inconclusive)
 
     return {
-        "state": "running" if now < gate else "gate open",
-        "day": elapsed.days,
+        "state": "running" if covered < gate_seconds else "gate open",
+        "day": int(covered // 86400),
         "required": REQUIRED_DAYS,
-        "elapsedDays": round(elapsed.total_seconds() / 86400, 2),
+        "coveredDays": round(covered / 86400, 2),
+        "elapsedDays": round(elapsed / 86400, 2),
+        "inconclusiveHours": round(inconclusive / 3600, 2),
         "startedAt": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "gateAt": gate.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # No fixed gate date: it moves out by every hour nobody watched.
+        "gateNotBefore": projected.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "greenRuns": len(green),
-        "inconclusive": sum(1 for e in after if e.get("inconclusive")),
+        "redRuns": sum(1 for e in after if diverged(e)),
+        "inconclusiveRuns": sum(1 for e in after if e.get("inconclusive")),
         "unparseable": sum(1 for e in entries if e.get("unparseable")),
         "resetAt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") if cutoff else None,
         "resetBy": ("a gate path changing" if gate_change and gate_change == cutoff
                     else "a divergence" if cutoff else None),
         "gatePathTouched": (gate_change.strftime("%Y-%m-%dT%H:%M:%SZ")
                             if gate_change else None),
-        "widestGapHours": round(widest[0].total_seconds() / 3600, 2),
+        "widestGapHours": round(widest[0] / 3600, 2),
         "widestGapFrom": widest[1].strftime("%Y-%m-%dT%H:%M:%SZ"),
         "newestRunAt": newest.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        # The half that rots quietly: a stale log keeps producing a rising day
-        # count for as long as nobody reads the timestamp beside it.
         "stale": (now - newest) > STALE_AFTER,
         "sinceNewestHours": round((now - newest).total_seconds() / 3600, 2),
+        "complete": covered >= gate_seconds,
     }
 
 
@@ -244,14 +279,18 @@ def main(argv=None):
     print(f"day {day} of {result['required']}   ({result['state']})")
     if result.get("startedAt"):
         print(f"  started      {result['startedAt']}")
-        print(f"  gate opens   {result['gateAt']}")
-        print(f"  green runs   {result['greenRuns']}")
+        print(f"  covered      {result['coveredDays']} days of "
+              f"{result['elapsedDays']} elapsed")
+        if result.get("inconclusiveHours"):
+            print(f"  UNWATCHED    {result['inconclusiveHours']}h the checker "
+                  f"did not run. Not red, not green: it does not count.")
+        print(f"  not before   {result['gateNotBefore']}")
+        print(f"  runs         {result['greenRuns']} green, "
+              f"{result.get('redRuns', 0)} red, "
+              f"{result.get('inconclusiveRuns', 0)} inconclusive")
         if result.get("resetAt"):
             print(f"  last reset   {result['resetAt']}"
                   f"  ({result.get('resetBy') or 'unknown'})")
-        if result.get("inconclusive"):
-            print(f"  inconclusive {result['inconclusive']} "
-                  f"(ran, could not conclude; coverage missing, not a failure)")
         if result.get("unparseable"):
             print(f"  UNPARSEABLE  {result['unparseable']} line(s)")
         print(f"  widest gap   {result['widestGapHours']}h "
