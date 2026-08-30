@@ -1847,6 +1847,91 @@ python3 tests/store_isolation.py
 
 It is deliberately not in CI, for the reason above.
 
+### The store is not the database, 2026-08-30
+
+**A test run wrote the device's own Postgres for as long as dual-write has
+existed, and the precaution that had been covering it was retired on the
+strength of a fix that does not cover it.**
+
+Measured, from one unredirected `python3 -m unittest discover -s tests` killed
+after sixteen minutes: 39 rows into `applications` between 04:55:24 and
+05:11:20 against 197 real ones, 21 into `application_events`, `answer_bank`
+emptied from about 180 rows to 0, the single `profiles` row overwritten with
+`{}`, two scratch schemas orphaned. Parity went from green to 221 divergences
+and the seven-day clock restarted at zero. No production impact: reads still
+come from the file store behind the Phase 0 flag, so the damage was confined to
+the mirror nothing reads yet.
+
+**The reasoning is the part worth keeping, because every premise in it was
+true.** #116 was in the checkout: `tests/store_isolation.py` present, 13
+modules calling it. The standing instruction was to keep prefixing suite runs
+with `HOME=$(mktemp -d)` until the store fix reached every checkout. Both facts
+were checked and both held, and the conclusion drawn from them -- that the
+redirect was no longer needed -- was false, because it rested on a link nobody
+had stated: **that store isolation implies database isolation.** It does not.
+`grep -c "DATABASE_URL\|psycopg\|postgres" tests/store_isolation.py` returns
+0. That module moves the file store by walking module constants and has no
+opinion about a database at all.
+
+What the `HOME` redirect had actually been doing was incidental and nobody had
+written it down. `migrate.CONFIG` and `jobs_db.CONFIG` were
+`Path("~/.job-application/config.env").expanduser()`, so with `HOME` moved the
+fall-through found no file and no URL. The redirect was covering two unrelated
+hazards and was retired for reasons that only addressed one.
+
+This is the fifth check in this file that passed while measuring nothing, and
+the first where the check was **reasoning rather than a test**. The others were
+code: a fixture with a passing test on top of a fiction, a docstring re-read
+instead of a claim verified, a fence-parsing assertion nobody ran, a suite whose
+green count hid seven skips. This one had no artefact to inspect. It was three
+true statements and an inference, and the inference is where it went. Verifying
+every claim in a list is not verifying the conclusion drawn from it -- already
+written here, from the `activity.json` near-miss -- and it recurred anyway, to
+someone who had read it.
+
+**Two guards, for two different holes, and the second only exists because the
+first was measured rather than trusted.**
+
+`migrate.device_url_refusal()` refuses to fall through from an unset
+`JOBBY_TEST_DATABASE_URL` to the device's own `JOBBY_DATABASE_URL` when
+`unittest` or `pytest` is in `sys.modules`, the same backstop
+`provider_usage.record` already uses, writing to `sys.stderr` rather than
+`print` for the reason that one learned. `JOBBY_TEST_DATABASE_URL` is honoured
+first and never refused, so CI's throwaway container is untouched, and an
+explicit `--url` bypasses it entirely, because an operator naming a database is
+not a fall-through. There is deliberately no environment variable that switches
+it off: a variable set once and forgotten is how a guard stops existing.
+
+**Then the guarded suite was re-run, and it still wrote six rows.** 885
+refusals logged, and `application_events` went 234 to 240 anyway. The guard
+inspects `sys.modules` in its own process, and `tests/test_brief_finish.py`
+spawns `scripts/finish.py` as a subprocess, where `sys.modules` is clean and
+nothing looks like a test. A guard that fires 885 times and still leaks is
+worse than none, because the count reads as coverage.
+
+The child was not even misconfigured. `finish.py` exports its `--root` as
+`JOB_APPLICATION_DIR`, so its store was correctly redirected to a temporary
+directory; it read the real `config.env` regardless, because that path was a
+`Path.home()` constant computed at import and no environment variable can reach
+one. So the second guard is the principled one and it subsumes the accident the
+`HOME` redirect was having: **credentials resolve through the store root, on
+every call.** A process told to operate on store X does not read the
+credentials of store Y. `config_path_default()` in both `jobs_db` and `migrate`.
+
+Neither guard covers the other's case. The first catches a test that connects
+in-process; the second catches the work that test causes somewhere else.
+
+**The lesson about the guard is the same one as the guard.** Adding the
+in-process refusal and reporting it as done would have been the identical
+failure a second time in one afternoon: a true premise (the guard fires, 885
+times, verifiably) supporting an unstated conclusion (therefore nothing
+reaches the database). What separated them was running the suite again and
+diffing the row counts, which cost four minutes.
+
+So the check that ends this is a measurement and not an argument: snapshot every
+table, run the full unredirected suite, diff. Anything else is the inference
+that started it.
+
 ### Interim, and delete only this subsection when it is done
 
 **Everything under this heading expires when the fix is in every checkout.

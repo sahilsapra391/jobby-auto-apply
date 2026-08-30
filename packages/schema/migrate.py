@@ -55,8 +55,33 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 MIGRATIONS = HERE / "migrations"
-CONFIG = Path("~/.job-application/config.env").expanduser()
 URL_NAME = "JOBBY_DATABASE_URL"
+
+
+def config_path_default():
+    """Where this process's credentials live, resolved on every call.
+
+    **Through the store root, never `Path.home()` frozen at import.** A process
+    told to operate on store X must not read the credentials of store Y, and
+    until 2026-08-30 every one of them did: `CONFIG` was
+    `Path("~/.job-application/config.env").expanduser()` evaluated when the
+    module loaded, so no environment variable could reach it afterwards.
+
+    That is what let a test reach the live database through a child process.
+    `finish.py` already exports its `--root` as `JOB_APPLICATION_DIR`, so a
+    child handed a temporary store had its store redirected correctly and read
+    the real `config.env` anyway. `tests/test_brief_finish.py` spawns exactly
+    that child, and it wrote six `submitting` rows into the device's Postgres
+    on a run where the in-process guard was live and firing 885 times, because
+    a subprocess has a clean `sys.modules` and nothing in it looked like a
+    test.
+
+    The two halves are different guards for different holes and both are
+    needed. `device_url_refusal` catches a test that connects in-process; this
+    catches the work that test causes somewhere else.
+    """
+    return (Path(os.environ.get("JOB_APPLICATION_DIR", "~/.job-application"))
+            .expanduser() / "config.env")
 
 # The advisory-lock namespace. Any constant works; it only has to be the same
 # constant in every runner, which is the point of it being here rather than
@@ -430,13 +455,83 @@ create table if not exists schema_migrations (
 """
 
 
+def _under_test_runner():
+    """Is this process a test run?
+
+    Measured rather than assumed, the same way `provider_usage._under_test_runner`
+    is: nothing under `scripts/` or `packages/schema/` imports unittest or
+    pytest, and importing the apply path, the document worker, the watcher or
+    the migration runner leaves neither name in `sys.modules`. So this cannot
+    be true on the device during real work, and
+    `tests/test_device_database_is_not_reachable_from_tests.py` proves that by
+    importing those modules in a fresh interpreter rather than by asserting it.
+    """
+    return "unittest" in sys.modules or "pytest" in sys.modules
+
+
+def device_url_refusal():
+    """Why the device's own database must not be used here, or None.
+
+    **A test run may not fall through to the device's database, and until
+    2026-08-30 it did.** `JOBBY_TEST_DATABASE_URL` names a throwaway container
+    in CI and is unset on a laptop, and this function's whole job was to fall
+    back to `JOBBY_DATABASE_URL` when it was -- which is correct for the
+    watcher and catastrophic for a test. Every test driving `class_b`,
+    `dual_write` or `backfill` reaches Postgres through `connect()`, so on the
+    developer's machine they reached Neon.
+
+    Measured that day, from one unredirected `unittest discover` run that was
+    killed after sixteen minutes: 39 rows written to `applications` between
+    04:55:24 and 05:11:20 against 197 real ones, 21 to `application_events`,
+    `answer_bank` emptied from about 180 rows to 0, the single `profiles` row
+    overwritten with `{}`, and two scratch schemas orphaned. Parity went from
+    green to 221 divergences and the seven-day clock restarted at zero.
+
+    **`tests/store_isolation.py` does not cover this and cannot.** It moves the
+    file store by walking module constants; it contains no reference to
+    psycopg, to a URL, or to a database. The guard that did happen to cover it
+    was `HOME=$(mktemp -d)`, and only incidentally: with `HOME` moved, `CONFIG`
+    below resolves to a file that does not exist, so the fall-through found
+    nothing. Retiring that precaution because the store fix had landed is
+    exactly the reasoning error this refusal exists to make impossible.
+
+    Two ways past it remain, both deliberate and neither reachable by accident.
+    `JOBBY_TEST_DATABASE_URL` is honoured first and always, because a test
+    database is what a test should have. And an explicit `--url` bypasses this
+    entirely, since `connect(url=...)` never asks: an operator naming a
+    database is not a fall-through.
+    """
+    if not _under_test_runner():
+        return None
+    return (f"refusing to use the device's own {URL_NAME} from a test run. "
+            f"Set JOBBY_TEST_DATABASE_URL to a throwaway database, or pass "
+            f"--url explicitly. A test that reaches the device database "
+            f"writes the store real applications live in.")
+
+
 def database_url(config_path=None):
-    """The connection URL, or None."""
-    for name in ("JOBBY_TEST_DATABASE_URL", URL_NAME):
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    path = Path(config_path) if config_path else CONFIG
+    """The connection URL, or None.
+
+    `JOBBY_TEST_DATABASE_URL` wins outright and is never refused. Everything
+    below it is the device's own database, so it goes through the guard.
+    """
+    value = os.environ.get("JOBBY_TEST_DATABASE_URL", "").strip()
+    if value:
+        return value
+
+    refusal = device_url_refusal()
+    if refusal:
+        # sys.stderr.write, not print. The runs that trigger this are the ones
+        # wrapped in mock.patch("builtins.print") to keep the runner readable,
+        # and a diagnostic silenced by exactly the runs it exists to explain is
+        # this repository's oldest failure shape.
+        sys.stderr.write(f"migrate: {refusal}\n")
+        return None
+
+    value = os.environ.get(URL_NAME, "").strip()
+    if value:
+        return value
+    path = Path(config_path) if config_path else config_path_default()
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -505,10 +600,16 @@ def connect(url=None, announce=True):
     somewhere other than where the operator typed is worse than the friction of
     telling them.
     """
-    url = url or database_url()
+    if url is None:
+        url = database_url()
     if not url:
+        # Never the generic message when a specific one exists. "It is not set"
+        # would be false under the guard -- it is set, and it is refused -- and
+        # a wrong reason costs more than no reason.
+        refusal = device_url_refusal()
         raise MigrationError(
-            f"{URL_NAME} is not set in {CONFIG} and no --url was given")
+            f"migrate: {refusal}" if refusal else
+            f"{URL_NAME} is not set in {config_path_default()} and no --url was given")
     if is_pooled(url):
         url = direct_url(url)
         if announce:

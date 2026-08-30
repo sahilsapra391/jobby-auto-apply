@@ -34,8 +34,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import identity  # noqa: E402
 import jobs_store  # noqa: E402
 
-CONFIG = Path("~/.job-application/config.env").expanduser()
 URL_NAME = "JOBBY_DATABASE_URL"
+
+
+def config_path_default():
+    """Where this process's credentials live, resolved on every call.
+
+    **Through the store root, never `Path.home()` frozen at import.** A process
+    told to operate on store X must not read the credentials of store Y, and
+    until 2026-08-30 every one of them did: `CONFIG` was
+    `Path("~/.job-application/config.env").expanduser()` evaluated when the
+    module loaded, so no environment variable could reach it afterwards.
+
+    That is what let a test reach the live database through a child process.
+    `finish.py` already exports its `--root` as `JOB_APPLICATION_DIR`, so a
+    child handed a temporary store had its store redirected correctly and read
+    the real `config.env` anyway. `tests/test_brief_finish.py` spawns exactly
+    that child, and it wrote six `submitting` rows into the device's Postgres
+    on a run where the in-process guard was live and firing 885 times, because
+    a subprocess has a clean `sys.modules` and nothing in it looked like a
+    test.
+
+    The two halves are different guards for different holes and both are
+    needed. `device_url_refusal` catches a test that connects in-process; this
+    catches the work that test causes somewhere else.
+    """
+    return (Path(os.environ.get("JOB_APPLICATION_DIR", "~/.job-application"))
+            .expanduser() / "config.env")
 
 
 class DatabaseError(Exception):
@@ -50,7 +75,7 @@ def database_url(config_path=None):
     secret that only works when someone's shell exported it is a secret that
     works interactively and fails at 3am.
     """
-    path = Path(config_path) if config_path else CONFIG
+    path = Path(config_path) if config_path else config_path_default()
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -70,7 +95,7 @@ def connect(url=None):
     url = url or database_url()
     if not url:
         raise DatabaseError(
-            f"{URL_NAME} is not set in {CONFIG}. "
+            f"{URL_NAME} is not set in {config_path_default()}. "
             "Add it with: python3 scripts/worker_key.py set-database")
     try:
         import psycopg
