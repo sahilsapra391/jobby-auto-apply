@@ -1,43 +1,23 @@
 // Serves the dashboard's queue, document, logo, health, and provider endpoints.
 //
-// The board names companies, roles, referral contacts and drafted messages, so
-// it is not something to leave on a public URL. Vercel's own Deployment
-// Protection does not cover production domains on the Hobby plan, which is why
-// the gate lives here instead of in project settings.
+// **This is a public surface.** There is no password and no prompt, removed at
+// the owner's explicit instruction so that anyone who opens the site sees what
+// he sees. It was HTTP Basic against DASHBOARD_PASSWORD until 2026-08-31.
 //
-// Fails closed: with no DASHBOARD_PASSWORD set, it serves 503 rather than the
-// board.
+// What is public, stated once here rather than inferred from the absence of a
+// check. The board names companies, roles, referral contacts and drafted
+// messages. `/doc/<name>` serves the rendered resume and cover letter PDFs to
+// anyone who knows a filename, and those carry a home address and a phone
+// number. `/api/profile` serves the profile. The queue endpoints are POSTs that
+// act on real applications.
+//
+// Vercel's Deployment Protection does not cover production domains on the Hobby
+// plan, so there is no platform gate behind this one either. Nothing is between
+// the internet and this data.
 
 import { gunzipSync } from 'node:zlib';
 import { getBoard, getBoardState, getDoc, getDocIndex, getLocalStatus } from '../kvcontent.mjs';
 import { fetchObject, configured as r2Configured } from '../r2.mjs';
-
-const REALM = 'Application board';
-
-// Compare digests rather than the raw strings: equal-length hashes mean the
-// loop cannot leak the password's length through timing.
-async function sameSecret(a, b) {
-  const digest = async (s) =>
-    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
-  const [x, y] = await Promise.all([digest(a), digest(b)]);
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
-  return diff === 0;
-}
-
-function suppliedPassword(request) {
-  const header = request.headers.get('authorization') || '';
-  const [scheme, encoded] = header.split(' ');
-  if (!encoded || scheme.toLowerCase() !== 'basic') return null;
-  let decoded;
-  try {
-    decoded = atob(encoded);
-  } catch {
-    return null;
-  }
-  const colon = decoded.indexOf(':');
-  return colon === -1 ? null : decoded.slice(colon + 1);
-}
 
 const BASE_HEADERS = {
   'cache-control': 'no-store, max-age=0',
@@ -716,22 +696,21 @@ export default {
       });
     }
 
-    const expected = process.env.DASHBOARD_PASSWORD;
-    if (!expected) {
-      return text(
-        'DASHBOARD_PASSWORD is not set on this project, so the board will not be served.\n' +
-          'Set it with: vercel env add DASHBOARD_PASSWORD production\n',
-        503
-      );
-    }
-
-    const supplied = suppliedPassword(request);
-    if (supplied === null || !(await sameSecret(supplied, expected))) {
-      return text('Authentication required.\n', 401, {
-        'www-authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
-      });
-    }
-
+    // The board is public. No password, no prompt, no username. Removed at the
+    // owner's explicit instruction so anyone who opens the site sees exactly
+    // what he sees.
+    //
+    // Everything below this line used to be behind that one check, and it is
+    // worth naming rather than leaving to be found: /doc/ serves the rendered
+    // resume and cover letter PDFs by filename, /api/profile serves the profile,
+    // and the queue endpoints are POSTs that act -- Apply, Drop, Retry, provider
+    // connect and disconnect. Public reading and public writing came off the
+    // same `if`, so removing it opened both.
+    //
+    // rejectCrossSiteMutation still stands and is now the only thing in front of
+    // the mutations. It is a same-origin check, not an identity one: it stops a
+    // form on another site from posting here, and does not stop anybody who
+    // loads this page.
     if (pathname === '/api/company-logo') {
       return handleCompanyLogo(request, requestUrl);
     }

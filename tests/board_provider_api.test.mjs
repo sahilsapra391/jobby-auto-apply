@@ -66,12 +66,15 @@ test.beforeEach(() => {
   values.clear();
 });
 
-test('provider controls stay behind the dashboard password', async () => {
+test('provider controls are reachable without credentials', async () => {
+  // Public board, so this is no longer gated by identity. What still stands is
+  // the same-origin check: a form on another site cannot post here, and that is
+  // now the only thing in front of this endpoint.
   const response = await handler.fetch(
     request('/api/provider', { provider: 'openai', target: 'local', action: 'connect' }, 'POST', false)
   );
-  assert.equal(response.status, 401);
-  assert.equal(values.size, 0);
+  assert.notEqual(response.status, 401);
+  assert.equal(response.headers.get('www-authenticate'), null);
 });
 
 test('sanitized board state is compressed and health reports its publication', async () => {
@@ -129,20 +132,21 @@ test('the posting route decodes the state envelope it is given', async () => {
   assert.equal(missing.status, 200);
   assert.deepEqual((await missing.json()).responsibilities, []);
 
-  // And the gate and the id shape are both enforced.
+  // No gate any more; the id shape is still enforced, which is the half that
+  // was ever about safety rather than identity.
   const anonymous = await handler.fetch(
     request('/api/posting?id=abc123', undefined, 'GET', false));
-  assert.equal(anonymous.status, 401);
+  assert.notEqual(anonymous.status, 401);
   const hostile = await handler.fetch(
     request('/api/posting?id=' + encodeURIComponent('../etc'), undefined, 'GET'));
   assert.equal(hostile.status, 400);
 });
 
-test('company logos stay behind the password and proxy only safe domains', async () => {
+test('company logos need no password and still proxy only safe domains', async () => {
   const anonymous = await handler.fetch(
     request('/api/company-logo?domain=example.com', undefined, 'GET', false)
   );
-  assert.equal(anonymous.status, 401);
+  assert.notEqual(anonymous.status, 401);
 
   const logo = await handler.fetch(
     request('/api/company-logo?domain=example.com', undefined, 'GET')
@@ -330,13 +334,23 @@ async function publishBank(bank) {
   }), '2026-08-25T12:00:00Z');
 }
 
-test('the Memory Bank stays behind the dashboard password', async () => {
+test('the Memory Bank is public, sensitive rows included', async () => {
+  // This is the sharpest consequence of removing the gate and it is asserted
+  // rather than deleted, because a test that quietly stops checking is how a
+  // change like this becomes invisible later.
+  //
+  // The bank holds expected compensation and demographic answers. CLAUDE.md
+  // records why they are drawn plainly: "The board has one reader, he knows his
+  // own salary", and that "reverses the moment there is a second one". There is
+  // now an unbounded number of readers, and the value is served to all of them.
   await publishBank([{ key: 'expected-comp', question: 'Expected compensation?',
                        value: '$185,000', state: 'sensitive', sensitive: true }]);
   const response = await handler.fetch(request('/api/profile', undefined, 'GET', false));
-  assert.equal(response.status, 401);
-  // And nothing leaked into the challenge body on the way past.
-  assert.equal((await response.text()).includes('185,000'), false);
+  assert.notEqual(response.status, 401);
+  assert.equal(response.headers.get('www-authenticate'), null);
+  assert.equal(response.status, 200);
+  assert.ok((await response.text()).includes('185,000'),
+    'the sensitive value is served to an anonymous reader; that is the state of the board');
 });
 
 test('an authenticated read gets the answers, the identities and the wording', async () => {
@@ -641,16 +655,27 @@ test('an upload id that is not a plain token is refused', async () => {
   assert.equal(values.size, 0);
 });
 
-test('uploading stays behind the password and refuses a cross-site post', async () => {
+test('uploading needs no password and still refuses a cross-site post', async () => {
+  // Identity is gone; origin is what remains. The cross-site half below is now
+  // the only thing standing in front of this endpoint.
   const unauth = await handler.fetch(
     request('/api/resume-upload', { uploadId: 'x', pdf: PDF.toString('base64') }, 'POST', false));
-  assert.equal(unauth.status, 401);
+  assert.notEqual(unauth.status, 401);
+  // And it does not merely answer, it acts: an anonymous post writes a resume.
+  // Stated as an assertion because this is the sharpest thing the open board
+  // does, and a test that only checked "not 401" would hide it.
+  const wroteAnonymously = values.size;
+  assert.equal(wroteAnonymously, 1,
+    'an anonymous request uploads a resume to the board');
+
+  // Origin is what remains. It stops a form on another site from posting here;
+  // it does not stop anyone who loads this page.
   const crossSite = new Request('https://board.example/api/resume-upload', {
     method: 'POST',
-    headers: { authorization: auth(), origin: 'https://evil.example',
+    headers: { origin: 'https://evil.example',
                'content-type': 'application/json', 'x-jobby-request': '1' },
-    body: JSON.stringify({ uploadId: 'x', pdf: PDF.toString('base64') }),
+    body: JSON.stringify({ uploadId: 'y', pdf: PDF.toString('base64') }),
   });
   assert.equal((await handler.fetch(crossSite)).status, 403);
-  assert.equal(values.size, 0);
+  assert.equal(values.size, wroteAnonymously, 'the cross-site post wrote nothing');
 });

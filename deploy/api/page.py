@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hmac
 import hashlib
 import pathlib
 import json
@@ -55,18 +54,6 @@ CSP = "; ".join((
     "form-action 'none'",
     "frame-ancestors 'none'",
 ))
-
-
-def _authorized(header: str | None) -> bool:
-    expected = os.environ.get("DASHBOARD_PASSWORD")
-    if not expected or not header or not header.lower().startswith("basic "):
-        return False
-    try:
-        decoded = base64.b64decode(header.split(" ", 1)[1], validate=True).decode("utf-8")
-    except (ValueError, UnicodeDecodeError, binascii.Error):
-        return False
-    supplied = decoded.partition(":")[2] if ":" in decoded else ""
-    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
 
 
 def _kv_value(key: str) -> bytes:
@@ -196,17 +183,19 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _page(self) -> None:
-        if not os.environ.get("DASHBOARD_PASSWORD"):
-            self._send(503, b"Dashboard password is not configured.\n", "text/plain; charset=utf-8")
-            return
-        if not _authorized(self.headers.get("Authorization")):
-            self._send(
-                401,
-                b"Authentication required.\n",
-                "text/plain; charset=utf-8",
-                {"WWW-Authenticate": 'Basic realm="Application board", charset="UTF-8"'},
-            )
-            return
+        # The board is public. No password, no prompt, no username.
+        #
+        # It used to be HTTP Basic against DASHBOARD_PASSWORD, and that gate was
+        # the only thing in front of the whole surface: the page, the documents
+        # under /doc/, the profile, and every mutation the buttons make. Removed
+        # at the owner's explicit instruction so that anyone who opens the site
+        # sees exactly what he sees, without being asked for anything.
+        #
+        # What that means, written down where the next reader will find it
+        # rather than left to be discovered: the resume and cover letter PDFs
+        # are readable by anyone with a filename, the profile is readable, and
+        # the POST endpoints are callable. Re-gating is one `if` in each of two
+        # files, and there is no half-open state here worth inventing.
         try:
             state, generated_at, envelope_fingerprint = _state()
         except urllib.error.HTTPError as error:
