@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Publish the dashboard to Vercel, behind a password, at a stable URL.
+"""Publish the dashboard to Vercel, publicly, at a stable URL.
 
 Publishing writes sanitized board state and application documents to Cloudflare KV. It
 is not a deployment. The board changes dozens of times a day, Vercel's free plan
 allows a hundred deployments a day, and inlining the board into the function
 spent the lot in an afternoon. Code reaches production by merging to main.
 
-  python3 scripts/publish.py --setup     # link the project, set the password
+  python3 scripts/publish.py --setup     # link the project
   python3 scripts/publish.py             # write board state to KV
   python3 scripts/publish.py --deploy    # also push code from here
   python3 scripts/publish.py --local     # serve it on localhost instead
@@ -26,7 +26,6 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import shutil
 import subprocess
 import sys
@@ -215,22 +214,17 @@ def cmd_setup(args, base):
         if run(base + ["link", "--yes", "--project", args.project]).returncode != 0:
             raise PublishError("vercel link failed")
 
-    password = args.password or secrets.token_urlsafe(18)
-
-    # Replace rather than stack: a project can hold several values for one key,
-    # and two live passwords is a confusing gate.
+    # No password is set. The board is public and nothing reads this variable
+    # any more, so minting one here would print a secret that gates nothing --
+    # which is worse than no gate, because it reads as though there were one.
+    # Any value left over from before is removed rather than left to mislead.
     run(base + ["env", "rm", PASSWORD_ENV, "production", "--yes"],
         capture_output=True)
-    proc = run(base + ["env", "add", PASSWORD_ENV, "production"],
-               input=password + "\n", capture_output=True)
-    if proc.returncode != 0:
-        raise PublishError(f"could not set {PASSWORD_ENV}: {(proc.stderr or '').strip()}")
 
     print("\n" + "=" * 62)
-    print("  Dashboard password (save this in your password manager now,")
-    print("  it is not stored anywhere on disk):")
-    print(f"\n      {password}\n")
-    print("  Username at the browser prompt can be anything.")
+    print("  This board is PUBLIC. There is no password and no prompt.")
+    print("  Anyone with the URL can read it, open the resume and cover")
+    print("  letter PDFs, and press its buttons.")
     print("=" * 62 + "\n")
     return 0
 
@@ -238,12 +232,11 @@ def cmd_setup(args, base):
 def cmd_local(args, _base):
     # Local serving uses the exact rendered page without touching shared KV.
     summary = fit_state(args.root)
-    password = os.environ.get(PASSWORD_ENV) or "local"
-    print(f"Serving on http://localhost:{args.port} (password: {password})")
+    print(f"Serving on http://localhost:{args.port}")
     with tempfile.TemporaryDirectory() as tmp:
         page = Path(tmp) / "board.html"
         page.write_text(summary["html"], encoding="utf-8")
-        env = {**os.environ, PASSWORD_ENV: password, "JOBBY_LOCAL_BOARD_FILE": str(page)}
+        env = {**os.environ, "JOBBY_LOCAL_BOARD_FILE": str(page)}
         return run([toolpath.node(), "dev-server.mjs", str(args.port)], env=env).returncode
 
 
@@ -827,13 +820,12 @@ def cmd_publish(args, base):
 
 def main():
     ap = argparse.ArgumentParser(description="Publish the job-application dashboard to Vercel.")
-    ap.add_argument("--setup", action="store_true", help="link the project and set the password")
+    ap.add_argument("--setup", action="store_true", help="link the Vercel project")
     ap.add_argument("--local", action="store_true", help="serve locally instead of deploying")
     ap.add_argument("--deploy", action="store_true",
                     help="also push code to Vercel from here. Normally unnecessary: "
                          "merging to main deploys, and publishing board state is a KV write")
     ap.add_argument("--preview", action="store_true", help="deploy to a preview URL, not production")
-    ap.add_argument("--password", help="use this password instead of generating one")
     # Deliberately bland: this becomes the public hostname, and the board is
     # readable over someone's shoulder before the password prompt is answered.
     ap.add_argument("--project", default="jobby-board",

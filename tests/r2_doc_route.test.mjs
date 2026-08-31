@@ -100,9 +100,14 @@ test.beforeEach(async () => {
   await index({});
 });
 
-test('a document link is still behind the dashboard password', async () => {
+test('a document link is served to anyone, with no credentials', async () => {
+  // The board is public. This used to assert 401 and now asserts the opposite,
+  // which is the whole change: /doc/ hands the rendered resume and cover letter
+  // PDFs to any request that knows a filename. 404 here rather than 200 only
+  // because nothing is indexed yet in this test; the point is that it is not 401.
   const response = await handler.fetch(get('/doc/Sahil_Sapra_Acme_Resume.pdf', false));
-  assert.equal(response.status, 401);
+  assert.notEqual(response.status, 401);
+  assert.equal(response.headers.get('www-authenticate'), null);
 });
 
 test('an indexed artifact is read from R2 and returned as bytes', async () => {

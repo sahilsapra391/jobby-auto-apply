@@ -123,10 +123,15 @@ test('a record comes back from R2 as JSON, byte for byte', async () => {
   assert.equal(response.headers.get('location'), null);
 });
 
-test('a record is behind the same password as the board', async () => {
+test('a record is served to anyone, like the rest of the board', async () => {
+  // Public board. An answer record carries what the employer asked and what was
+  // entered, including rows flagged sensitive, and it is now readable by anyone
+  // who knows the filename. Asserted rather than left implicit: this test used
+  // to prove the opposite and its inversion is the change.
   await publish();
   const response = await handler.fetch(get(`/doc/${NAME}`, false));
-  assert.equal(response.status, 401);
+  assert.notEqual(response.status, 401);
+  assert.equal(response.headers.get('www-authenticate'), null);
 });
 
 test('an application with no record answers 404, not an empty record', async () => {
