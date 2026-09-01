@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { LANES, type Lane } from "../lanes.generated";
+import { LANES, type Lane, type Sort } from "../lanes.generated";
 
 /**
  * Read-only access to the board's Postgres.
@@ -57,22 +57,41 @@ export type Row = Record<string, unknown> & { id: string };
  * and the SQL is generated from scripts/v2_lanes.py, so the ordering, the
  * `nulls last` and the three cases the cursor predicate has are written once.
  */
-export async function page(lane: Lane, after: Cursor, limit = 50) {
+export async function page(lane: Lane, after: Cursor, limit = 50,
+                           sort: Sort = "new") {
   const account = await accountId();
-  const { rows } = await pool().query(LANES[lane].page, [
+  // One query per (lane, sort), all generated. Substituting an ORDER BY on
+  // this side would be a second spelling of the predicate.
+  const sql = LANES[lane].sorts[sort] ?? LANES[lane].page;
+  const { rows } = await pool().query(sql, [
     account, after?.at ?? null, after?.id ?? null, limit,
   ]);
-  // The cursor column differs by lane shape: postings order on posted_at,
-  // applications on updated_at. Reading it off the row rather than restating
-  // which is which keeps the two in step with the generated SQL.
+  // **The cursor column follows the sort, not the lane.** Ordering Found by
+  // match score walks `total`, and handing the next page a `posted_at` cursor
+  // would compare a date against a smallint: either an error or, worse, a
+  // silent restart at the top of the lane on every page.
   const last = rows[rows.length - 1];
-  const at = last === undefined ? null
-    : (("posted_at" in last ? last.posted_at : last.updated_at) ?? null);
+  const column = sort === "score" ? "score"
+    : (last !== undefined && "posted_at" in last ? "posted_at" : "updated_at");
+  const at = last === undefined ? null : (last[column] ?? null);
   return {
     rows: rows as Row[],
-    next: last ? { at: at ? new Date(at).toISOString() : null, id: last.id } : null,
+    next: last ? { at: cursorValue(at, sort), id: last.id } : null,
     done: rows.length < limit,
   };
+}
+
+/**
+ * A cursor value the generated SQL can cast back.
+ *
+ * A date has to go out as an ISO string; a score is a number and must not be
+ * put through `new Date`, which would turn 70 into 1970 and then fail the
+ * `::int` cast the score query applies to it.
+ */
+function cursorValue(at: unknown, sort: Sort): string | null {
+  if (at === null || at === undefined) return null;
+  if (sort === "score") return String(at);
+  return new Date(at as string).toISOString();
 }
 
 export async function counts(): Promise<Record<Lane, number>> {

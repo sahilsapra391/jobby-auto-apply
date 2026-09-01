@@ -1,5 +1,5 @@
 import { MORPH } from "./chrome.generated";
-import { LANES, type Lane } from "./lanes.generated";
+import { LANES, SORT_LABELS, type Lane, type Sort } from "./lanes.generated";
 import { AppBar, raw } from "./_ui/Chrome";
 import { SelectFace } from "./_ui/SelectFace";
 import { ScanBanner, Filters } from "./_ui/FoundSurface";
@@ -26,14 +26,16 @@ const TAB_ORDER: Lane[] = ["found", "watch", "flight", "act", "done"];
 export default async function Board({
   searchParams,
 }: {
-  searchParams: Promise<{ lane?: string }>;
+  searchParams: Promise<{ lane?: string; sort?: string }>;
 }) {
-  const { lane: asked } = await searchParams;
+  const { lane: asked, sort: askedSort } = await searchParams;
   const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
     ? (asked as Lane)
     : "found";
 
-  const [tally, first] = await Promise.all([counts(), page(active, null, 50)]);
+  const sort: Sort = (askedSort ?? "") in SORT_LABELS
+    ? (askedSort as Sort) : "new";
+  const [tally, first] = await Promise.all([counts(), page(active, null, 50, sort)]);
 
   return (
     <>
