@@ -1223,6 +1223,80 @@ def board_staleness():
     return time.time() - max(stamps) if stamps else None
 
 
+#: How many scheduled sweeps may be missed before the pool being unchanged is
+#: an outage rather than a quiet afternoon. Two, so one entirely missed sweep
+#: and some slack is tolerated; at the configured four hours that is eight.
+SWEEP_STALE_INTERVALS = 2
+SWEEP_STALE_FLOOR_SECONDS = 2 * 3600
+
+
+def pool_staleness():
+    """Seconds since the job pool was last written, or None if it never was.
+
+    **The pool, not the publish.** `board_staleness` reads the mtimes of
+    LAST_DEPLOY and LAST_PUBLISH, which answer "when did we last publish" and
+    not "when did the data last change". Publishing keeps succeeding over a
+    frozen store, because it publishes whatever the store holds; on 2026-09-01
+    every sweep died for seventeen hours and the board was republished the
+    whole time, fresh and a day old at once.
+    """
+    try:
+        import jobs_store
+        pool = jobs_store.paths(None)["jobs"]
+    except Exception:
+        return None
+    try:
+        return time.time() - pool.stat().st_mtime
+    except OSError:
+        return None
+
+
+def sweep_interval_seconds():
+    """The configured tier-1 interval, so the alarm follows the schedule."""
+    minutes = 60
+    config_path = STATE_DIR / "search-config.json"
+    if config_path.exists():
+        try:
+            minutes = int(json.loads(config_path.read_text())
+                          .get("tier1IntervalMinutes") or 60)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            minutes = 60
+    return max(minutes, 1) * 60
+
+
+def stale_sweep_warning():
+    """The message for the dead-man ping when sweeps have stopped landing.
+
+    **Nothing alerted on this and that is the whole reason it exists.** The
+    watcher spawns `ingest.py` detached and `spawn` never waits on it, so a
+    sweep that dies writes its traceback to `ingest-runs.log`, exits non-zero,
+    releases its lock, and is observed by nothing. Of the three warnings the
+    dead-man ping was composed from, board staleness measured the publish
+    rather than the data, the parked-slot warning fired three hundred times
+    about a different and lesser problem, and the Chrome flag warning is
+    unrelated.
+
+    Measured on the outage this was written for: the pool went unwritten from
+    15:08Z to 14:31 the next afternoon while the board published normally
+    throughout. At the configured four-hour interval this fires after eight.
+
+    Outcome rather than cause, deliberately: a sweep can fail to land for
+    reasons that are not a non-zero exit, and the question the user has is
+    always "is the pool current", never "did process 47456 return 1".
+    """
+    age = pool_staleness()
+    if age is None:
+        return ""
+    limit = max(SWEEP_STALE_INTERVALS * sweep_interval_seconds(),
+                SWEEP_STALE_FLOOR_SECONDS)
+    if age <= limit:
+        return ""
+    return (f"no sweep has written the job pool for {age / 3600:.1f} hours, "
+            f"against a {limit / 3600:.1f} hour limit. The board is still "
+            f"publishing, so it looks current and is not. Read "
+            f"~/.job-application/logs/ingest-runs.log for the reason.")
+
+
 def stale_board_warning():
     """The message for the dead-man ping, or empty when the board is current."""
     age = board_staleness()
@@ -2991,8 +3065,8 @@ def main():
             last_line = line
             stale = "; ".join(
                 message for message in
-                (stale_board_warning(), parked_slot_warning(),
-                 chrome_flag_warning())
+                (stale_board_warning(), stale_sweep_warning(),
+                 parked_slot_warning(), chrome_flag_warning())
                 if message
             )
             if stale:

@@ -577,6 +577,96 @@ the old board is carried across, the question "does the markup match" and the
 question "does the page render" are different questions, and only the second
 one is the one anybody cares about.
 
+### A correct fix, mutation-verified, and the board stayed frozen, 2026-09-01
+
+**Two uncovered `on conflict` targets, one table apart, froze the board for
+seventeen hours. Fixing the first one changed nothing observable, and only
+running a real sweep showed why.**
+
+Both tables carry two unique constraints and both upserts named one:
+
+```
+postings   legacy_id  +  (source, board_slug, external_id)   on conflict (legacy_id)
+employers  norm_name  +  domain                              on conflict (norm_name)
+```
+
+Each resolved collisions *within a batch* in Python, correctly. Neither knew
+about a row already stored under a different key, so an arriving record whose
+board key or domain was already held raised `UniqueViolation` inside a
+multi-row INSERT and aborted the batch. Class A dual-write fails the operation
+on a mirror error, so `save_jobs` failed, the sweep could not persist, and
+every sweep after it failed identically. **2 records of 20,835 did this.**
+
+The `postings` fix was right. Five negative tests written before it, three
+failing with the production error. Mutation-verified: reverting it fails, and
+so does replacing the winner rule with "the stored row always wins", which
+would otherwise have passed every test drawn from the live pool because both
+real collisions happened to have the incumbent winning. Full suite green,
+2,925 tests. Deployed under the lock.
+
+The board stayed frozen. `employers` failed one layer earlier, on
+`employers_domain_key`, and from outside the two are indistinguishable: same
+exception class, same effect on the sweep, same silence. Nothing about
+inspecting the first fix could reach the second. What found it was running
+`ingest.py --tier 1` against the production store and reading where it died.
+
+**So: for a defect that stops a pipeline, the fix is not verified by its own
+tests passing. It is verified by the pipeline running.** Third time this week
+that observing rather than inferring was the only thing that worked, and the
+first where the inference was supported by a green suite and a mutation test.
+
+The generalisation, because two instances one table apart is a class: **any
+table with two unique constraints whose upsert names one of them has this
+failure available to it.** Before adding a constraint, or an upsert, check
+which conflict target covers which constraint. `packages/schema/backfill.py`
+is where all three live (`upsert_employers`, `upsert_postings`,
+`upsert_decisions`).
+
+#### The gate list did not include the file both outages were in
+
+`parity_clock.GATE_PATHS` named `verify_parity`, `class_b`, `dual_write` and
+`jobs_store`, and not `packages/schema/backfill.py` -- which `dual_write`
+calls for every class A upsert. Neither fix reset the clock, so nine green runs
+stayed on the counter across a day when the thing they measure had been
+rewritten twice. The list named the caller and not the code that writes.
+
+**The test guarding it was worse than absent.** It said `assertEqual` against
+the four names, so it did not merely fail to notice the gap: it would have
+failed the correct fix. A restatement of a list, defending the list from being
+corrected. That is the shape to watch for -- a check whose subject is the
+configuration rather than the property the configuration is for.
+
+It is now a floor (those four are load-bearing, none may quietly leave), and
+what the gate must *cover* is derived in
+`tests/test_gate_paths_cover_the_mirror.py` from the `upsert_*` call sites in
+`dual_write.py`. Same shape as parsing declared tables out of the migrations
+rather than listing them alongside. Deliberately not the whole import closure:
+`parity_clock.py` and `write_path_coverage.py` are both reachable from the
+write path, and gating on those would restart the clock for editing the clock.
+
+#### Nothing alerted, and the check that should have measured the wrong thing
+
+The dead-man ping was composed from three warnings and not one could see it.
+`stale_board_warning` reads `LAST_DEPLOY` and `LAST_PUBLISH`, which answer
+"when did we last publish" and not "when did the data last change" -- and the
+publish kept succeeding, because it publishes whatever the store holds. The
+board was republished the whole time, fresh and a day old at once.
+`parked_slot_warning` fired three hundred times about a lesser problem, which
+is its own lesson about a loud alarm for the wrong thing. `chrome_flag_warning`
+is unrelated.
+
+Underneath that, `watch.spawn` says "Never waits on it" and means it: a sweep
+that dies writes a traceback to `ingest-runs.log`, exits non-zero, releases its
+lock, and is observed by nothing. The traceback naming the exact constraint sat
+in that file for hours.
+
+`stale_sweep_warning()` is the fix and it is one more reason on the same alarm,
+not a second alarm. It reads the **pool's** mtime against the configured
+tier-1 interval, fires after two of them, and names `ingest-runs.log` so it is
+a diagnostic rather than a notification. Outcome rather than cause on purpose:
+a sweep can fail to land without a non-zero exit, and the question is always
+"is the pool current".
+
 ### Instrumentation on the branch tests take, 2026-09-01
 
 **A hook can be correct, exercised, and never once run in production, because
