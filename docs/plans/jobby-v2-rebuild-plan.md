@@ -182,6 +182,21 @@ create policy account_isolation on job_decisions
 
 Every request sets `app.account_id` in a transaction-local `set_config` before any query. The API must use a role that is **not** the table owner, so RLS actually applies. Owner roles bypass RLS silently, which is exactly the class of failure that reports success while doing nothing.
 
+**`rolbypassrls` is not that check, and it is the one this plan currently
+names.** A table owner bypasses its own policies through *ownership*, not
+through the role attribute, so an owner passes a `rolbypassrls is false`
+assertion while seeing every row. Measured on postgres:18, policy enabled,
+`app.account_id` set to one of two accounts, neither role a superuser:
+
+| role | `rolbypassrls` | rows visible of 2 |
+|---|---|---|
+| `owner_role` (owns the table) | f | **2** |
+| `reader_role` (granted select) | f | 1 |
+
+So assert the connected role is not the table's owner, or put `force row level
+security` on every policied table and re-measure. An attribute that reads false
+in both the safe case and the unsafe one cannot tell them apart.
+
 ### The submit invariant, moved into the database
 
 Today the submit nonce is enforced in code. Move it into a constraint so it holds even if a runner is buggy or replayed:
@@ -512,7 +527,26 @@ A note the agent should internalise before Phase 0: **agent transcripts are not 
 - Per-account DO instances. Per-account encryption keys for the document bundle.
 - Admin surface: list accounts, revoke a device, disable a board, read a sweep run. Read-mostly.
 
-**Negative tests:** the cross-tenant read matrix from §8.2 — authenticate as A, attempt every account-scoped table and every R2 prefix for B, assert zero rows and 403s. Assert the API's DB role cannot bypass RLS by checking `pg_roles.rolbypassrls` is false.
+**v2 connects as the database owner today, and moving it off is a requirement
+of this phase rather than a hardening step inside it.** `JOBBY_DATABASE_URL` on
+the `jobby-v2` Vercel project is the device's own credential, set 2026-09-01
+because v2's routes are GET-only and password-gated and the alternative was
+holding a working read-only board back on a credential it will not keep.
+Enabling the policies above against that connection produces a green migration,
+a passing suite and no isolation whatsoever, per the measurement in §3's RLS section. The
+non-owner role therefore goes in **before** the policies rather than after, and
+it is read-only until Phase 2's write path exists. Do not let the interim
+credential become the permanent one by never being the thing that is blocking.
+
+**Until it moves, "no writes from v2" is enforced by discipline and not by the
+credential.** Against a read-only role an accidental write fails loudly at the
+database. Against this one it succeeds, and the file store then falls behind on
+exactly the rows it touched, which is a third write path parity cannot see and
+would not report. So no POST route, no mutation and no ORM convenience that
+writes lands before the parity gate closes. The credential will not stop any of
+them, and nothing else is standing there.
+
+**Negative tests:** the cross-tenant read matrix from §8.2 — authenticate as A, attempt every account-scoped table and every R2 prefix for B, assert zero rows and 403s. Assert the API's DB role cannot bypass RLS, which takes **two** assertions and not one: `pg_roles.rolbypassrls` is false, *and* the role does not own any policied table (`pg_class.relowner`). §3's RLS section measures why the first alone passes on a connection with no isolation at all.
 
 **Gate:** create a real second account end to end, from signup to a submitted application, using a different provider account, without any manual server-side setup.
 
