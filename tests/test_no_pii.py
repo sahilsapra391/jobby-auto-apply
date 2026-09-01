@@ -35,7 +35,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".h
 # deployed board serves, and the brand-pack copy sync_vercel_renderer.py writes
 # into the function bundle. Everything else is a screenshot until proven
 # otherwise.
-IMAGE_ALLOWED = ("assets/", "deploy/assets/", "deploy/public/")
+IMAGE_ALLOWED = ("assets/", "deploy/assets/", "deploy/public/",
+                 "apps/web/public/")
 
 TEXT_SUFFIXES = {".py", ".md", ".txt", ".json", ".html", ".js", ".mjs", ".css",
                  ".yml", ".yaml", ".sh", ".plist", ".toml", ".jsonl"}

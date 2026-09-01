@@ -44,6 +44,17 @@ sys.path.insert(0, str(REPO / "scripts"))
 TARGET = REPO / "apps" / "web" / "app" / "board.css"
 CHROME = REPO / "apps" / "web" / "app" / "chrome.generated.ts"
 LANES = REPO / "apps" / "web" / "app" / "lanes.generated.ts"
+STATIC_SRC = REPO / "deploy" / "public"
+STATIC_DST = REPO / "apps" / "web" / "public"
+
+#: The files the board's own head points at by URL rather than inlining.
+#: `deploy/public/` is the board's copy and stays the source; v2 is a separate
+#: Vercel project with its own static directory, so it needs its own copy and
+#: a generator that keeps the two the same. Hand-copying them is how a manifest
+#: ends up naming an icon that is not there.
+STATIC_FILES = ("site.webmanifest", "favicon.ico", "apple-touch-icon.png",
+                "icon-192x192.png", "icon-512x512.png",
+                "icon-maskable-512x512.png")
 
 #: Enough shape for `dashboard.build` to render, and nothing real. Keys come
 #: from the published state's own contract; a missing one raises here rather
@@ -181,6 +192,117 @@ def lane_module():
     return v2_lanes.as_typescript()
 
 
+def _span(html, start_marker, end_marker, what):
+    """The text from `start_marker` through `end_marker`, inclusive."""
+    a = html.find(start_marker)
+    if a < 0:
+        raise SystemExit(f"could not find the start of {what} "
+                         f"({start_marker!r}) in the rendered board.")
+    b = html.find(end_marker, a)
+    if b < 0:
+        raise SystemExit(f"found the start of {what} but not its end. The "
+                         f"markup changed shape and this generator has to be "
+                         f"taught it rather than silently emit less.")
+    return html[a:b + len(end_marker)]
+
+
+def _script_around(html, marker, what):
+    """The whole `<script>` element containing `marker`, without its tags."""
+    at = html.find(marker)
+    if at < 0:
+        raise SystemExit(f"could not find {what} ({marker!r}) in the rendered board.")
+    start = html.rfind("<script", 0, at)
+    open_end = html.find(">", start)
+    end = html.find("</script>", at)
+    if start < 0 or open_end < 0 or end < 0:
+        raise SystemExit(f"{what} is not inside a <script> element.")
+    return html[open_end + 1:end].strip()
+
+
+def _parses(js, what):
+    """Refuse JavaScript that is not a program, using a real parser.
+
+    **This is the check that was missing, and its absence cost the whole
+    feature.** The first extractor took the theme boot as a span from
+    `var t = localStorage...` to `classList.add('jb-intro')`. That begins
+    inside a `try {` and ends before the closing `})();`, so what it produced
+    carried `} catch (e) {}` with no opener. The browser answered
+    `Unexpected token '}'`, both theme scripts died, and three controls
+    rendered and did nothing -- the exact symptom the extraction was written
+    to cure.
+
+    Every test passed throughout, because they asserted the strings were
+    *present*. Present and parseable are different claims, and only one of
+    them is the one that matters.
+
+    A hand-rolled bracket counter was tried first and reported the board's own
+    155 KB script block as unbalanced, because JavaScript has regex literals
+    and division and a counter that does not know the grammar cannot tell them
+    apart. So the check is `node --check`, which does.
+    """
+    import subprocess
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
+        handle.write(js)
+        path = handle.name
+    try:
+        done = subprocess.run(["node", "--check", path],
+                              capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit("node is required to verify the extracted scripts parse. "
+                         "Emitting an unchecked fragment is what this guards.")
+    finally:
+        Path(path).unlink(missing_ok=True)
+    if done.returncode:
+        detail = (done.stderr or "").strip().splitlines()
+        raise SystemExit(f"{what} does not parse as JavaScript, so the "
+                         f"extraction is a fragment of a larger block rather "
+                         f"than a whole one:\n  "
+                         + "\n  ".join(detail[:6]))
+    return js
+
+
+def head_parts():
+    """The board's own `<head>`, and the two scripts that make the theme work.
+
+    **The favicon is not decoration and it is not four files.** The board
+    inlines three icons as data URIs (SVG, ICO, PNG) and links a manifest, and
+    it does that because `deploy/public/` is Vercel's static output directory
+    and is not in the serverless bundle: a renderer that reads a path under it
+    resolves on a laptop and 404s deployed. Carrying the rendered links means
+    v2 inherits the resolution that outage already paid for.
+
+    The theme is two scripts, not one, and they are separated on purpose. The
+    boot runs before first paint or a dark reader gets a frame of cream. The
+    wiring runs after the controls exist. v2 had the boot and not the wiring,
+    which is exactly a control that renders and does nothing.
+    """
+    import dashboard
+    html = dashboard.build(SYNTHETIC_STATE, "2026-01-01T00:00:00Z")
+
+    start = html.index("<meta charset=")
+    manifest = '<link rel="manifest" href="/site.webmanifest">'
+    head = html[start:html.index(manifest) + len(manifest)]
+    # The boot is its own small <script> in the head, so the element is the
+    # unit. The wiring is one section inside the board's 155 KB main block, so
+    # it has to be a span -- and both go through the parser either way.
+    boot = _parses(_script_around(html, "localStorage.getItem('jobby.theme')",
+                                  "the theme boot"), "the theme boot")
+    wire = _parses(_span(html, "var themeBtns = document.querySelectorAll('.themebtn');",
+                         "paintTheme(document.documentElement.dataset.theme || 'auto');",
+                         "the theme wiring"), "the theme wiring")
+
+    # The storage key is the whole point of carrying this rather than porting
+    # it: v2 had written `jobby-theme`, the board writes `jobby.theme`, and a
+    # theme saved on one board would not be read by the other.
+    for name, body in (("boot", boot), ("wiring", wire)):
+        if "jobby.theme" not in body:
+            raise SystemExit(f"the theme {name} no longer names jobby.theme; "
+                             f"the storage key moved and v2 would silently "
+                             f"keep its own.")
+    return {"HEAD": head, "THEME_BOOT": boot, "THEME_WIRE": wire}
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -192,8 +314,37 @@ def chrome_module():
     lines = [CHROME_HEADER]
     for name, markup in chrome_parts().items():
         lines.append(f"export const {name} = {json.dumps(markup)};")
+    for name, markup in head_parts().items():
+        lines.append(f"export const {name} = {json.dumps(markup)};")
     lines.append(f"export const SELECT_SCRIPT = {json.dumps(select_script())};")
     return "\n\n".join(lines) + "\n"
+
+
+def sync_static():
+    """Copy the board's served icons into v2's static directory.
+
+    **Every one of these is reachable only by URL**, so nothing about a
+    successful render says they arrived. `site.webmanifest` names three PNGs
+    and the head links a fourth; a missing one is a 404 that no test of the
+    HTML can see, which is the shape of the outage `deploy/public/` already
+    caused once.
+
+    Returns the names that changed, so the caller can report them and CI can
+    fail on drift the same way it does for the stylesheet.
+    """
+    import shutil
+    changed = []
+    STATIC_DST.mkdir(parents=True, exist_ok=True)
+    for name in STATIC_FILES:
+        src = STATIC_SRC / name
+        if not src.is_file():
+            raise SystemExit(f"{src} is missing; the board serves it and v2 "
+                             f"cannot be given a copy of a file that is not there.")
+        dst = STATIC_DST / name
+        if not dst.is_file() or dst.read_bytes() != src.read_bytes():
+            shutil.copyfile(src, dst)
+            changed.append(name)
+    return changed
 
 
 def rendered():
@@ -238,6 +389,9 @@ def main(argv=None):
     print(f"wrote {CHROME.relative_to(REPO)} ({len(chrome)} chars)")
     lanes = lane_module()
     LANES.write_text(lanes, encoding="utf-8")
+    moved = sync_static()
+    print(f"synced {len(STATIC_FILES)} static files into apps/web/public"
+          + (f" ({', '.join(moved)} changed)" if moved else " (all current)"))
     print(f"wrote {LANES.relative_to(REPO)} ({len(lanes)} chars)")
     return 0
 
