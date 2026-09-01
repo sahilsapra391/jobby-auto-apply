@@ -61,11 +61,35 @@ REQUIRED_DAYS = 3
 # `_persist_pool` rather than the whole module, so an unrelated edit there
 # restarts the clock when it need not. That is the safe direction and the
 # alternative is parsing a diff for one function, which would be wrong quietly.
+#: Changing any of these makes every green run before it stop being evidence.
+#:
+#: **`backfill.py` was missing and it is where both of 2026-09-01's outages
+#: lived.** `dual_write.persist` calls `backfill.upsert_employers`,
+#: `upsert_postings` and `upsert_decisions`, so every class A write to Postgres
+#: goes through it; two uncovered `on conflict` targets in that file froze the
+#: board for seventeen hours. Neither fix reset the clock, because the list
+#: named the caller and not the code that does the writing. A gate list that
+#: does not include the module where the failures happen is the same shape as
+#: everything else that went wrong that day: a check that passes while not
+#: measuring its subject.
+#:
+#: `board_key.py` is here because it derives the key those upserts conflict on.
+#: A change to it changes which records collide, which is a change to what the
+#: mirror stores, without a line of `backfill.py` moving.
+#:
+#: Deliberately not the whole import closure. `parity_clock.py` itself,
+#: `write_path_coverage.py`, `runlock.py`, `migrate.py` and `search_config.py`
+#: are all reachable from the write path and none of them decides what is
+#: written; including them would restart the clock for editing the clock.
+#: `tests/test_gate_paths_cover_the_mirror.py` derives the upsert modules
+#: rather than restating this list, so a new one fails until it is named here.
 GATE_PATHS = (
     "scripts/verify_parity.py",
     "scripts/class_b.py",
     "scripts/dual_write.py",
     "scripts/jobs_store.py",
+    "packages/schema/backfill.py",
+    "packages/schema/board_key.py",
 )
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
