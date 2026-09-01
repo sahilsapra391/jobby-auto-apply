@@ -33,13 +33,13 @@
       "note": "No announced expiry; ratesExpireOn is a review date, not a vendor deadline."
     },
     "claude-sonnet-5": {
-      "inputPerMTok": 2.0,
-      "cachedInputPerMTok": 0.2,
-      "cacheWritePerMTok": 2.5,
-      "outputPerMTok": 10.0,
-      "ratesExpireOn": "2026-08-31",
-      "source": "Anthropic published rates. Introductory pricing of $2.00/$10.00 runs through 2026-08-31; standard rates are $3.00/$15.00.",
-      "note": "EXPIRES 2026-08-31. From 2026-09-01 set inputPerMTok 3.00, cachedInputPerMTok 0.30, cacheWritePerMTok 3.75, outputPerMTok 15.00. Cache multipliers are Anthropic's standard 0.1x read and 1.25x write applied to the base input rate; verify against the pricing page when updating."
+      "inputPerMTok": 3.0,
+      "cachedInputPerMTok": 0.3,
+      "cacheWritePerMTok": 3.75,
+      "outputPerMTok": 15.0,
+      "ratesExpireOn": "2026-11-30",
+      "source": "Anthropic published rates. Standard pricing $3.00/$15.00, in effect from 2026-09-01 when the $2.00/$10.00 introductory period ended.",
+      "note": "Transitioned on 2026-09-01 exactly as the previous entry's own note instructed: it recorded the standard rates and the date they took effect, and named the cache multipliers as Anthropic's standard 0.1x read and 1.25x write on the base input rate. Taken from that note rather than re-read off the pricing page; verify there at the next review. ratesExpireOn is a review date now, not a vendor deadline."
     },
     "gemini-3.7-flash-low": {
       "inputPerMTok": 0.75,
