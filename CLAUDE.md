@@ -660,6 +660,27 @@ that dies writes a traceback to `ingest-runs.log`, exits non-zero, releases its
 lock, and is observed by nothing. The traceback naming the exact constraint sat
 in that file for hours.
 
+**And the first version of that alarm could never fire.** `pool_staleness`
+called `jobs_store.paths(None)`, which raises `TypeError` because that function
+takes the store root; a broad `except Exception` turned the raise into `None`,
+and `stale_sweep_warning` reads `None` as "nothing to say". It returned `None`
+on every machine. Shipped, with a green suite, as the fix for an outage that
+nothing alerted on.
+
+Every test in the file mocked `pool_staleness`, **including the one named for
+testing it**, which mocked `jobs_store.paths` as well and so never exercised
+the call that was wrong. A test that supplies an input the real caller does not
+supply is testing a configuration nobody ships, which this file already says
+about the document worker and which recurred here anyway, in a file written the
+same afternoon.
+
+What found it was running the function on the real machine after deploying and
+reading the number, which printed `pool age: unknown` next to a pool twenty-seven
+minutes old. Nothing else would have. So the rule for an alarm specifically: an
+alarm that is silent has two possible meanings, and only one of them is good
+news. Prove which by making it fire, or by reading the value it is silent
+about. Silence is not evidence.
+
 `stale_sweep_warning()` is the fix and it is one more reason on the same alarm,
 not a second alarm. It reads the **pool's** mtime against the configured
 tier-1 interval, fires after two of them, and names `ingest-runs.log` so it is

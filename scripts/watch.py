@@ -1233,6 +1233,18 @@ SWEEP_STALE_FLOOR_SECONDS = 2 * 3600
 def pool_staleness():
     """Seconds since the job pool was last written, or None if it never was.
 
+    **`jobs_store.paths` takes the store root and the first version passed it
+    None.** That raised `TypeError`, a broad `except Exception` swallowed it,
+    and this returned None on every machine, which `stale_sweep_warning` reads
+    as "nothing to say". An alarm that can never fire, shipped as the fix for
+    an outage nothing alerted on. Every test mocked this function, including
+    the one named for testing it, so the suite was green and the thing measured
+    nothing. Caught by calling it on the real machine after deploying, which is
+    the only check that would have.
+
+    So the root is `STATE_DIR`, the same constant every other path here uses,
+    and the only caught error is the pool file being absent.
+
     **The pool, not the publish.** `board_staleness` reads the mtimes of
     LAST_DEPLOY and LAST_PUBLISH, which answer "when did we last publish" and
     not "when did the data last change". Publishing keeps succeeding over a
@@ -1240,14 +1252,13 @@ def pool_staleness():
     every sweep died for seventeen hours and the board was republished the
     whole time, fresh and a day old at once.
     """
-    try:
-        import jobs_store
-        pool = jobs_store.paths(None)["jobs"]
-    except Exception:
-        return None
+    import jobs_store
+    pool = jobs_store.paths(STATE_DIR)["jobs"]
     try:
         return time.time() - pool.stat().st_mtime
     except OSError:
+        # The only honest None: a machine that has never swept. Anything else
+        # is a fault and must not be swallowed into "healthy".
         return None
 
 

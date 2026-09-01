@@ -19,7 +19,9 @@ afternoon, seventeen hours, while the board republished throughout.
 """
 import ast
 import json
+import os
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -133,11 +135,54 @@ class PoolStalenessTests(unittest.TestCase):
         self.assertNotIn("LAST_PUBLISH", body)
         self.assertNotIn("LAST_DEPLOY", body)
 
+    def test_it_returns_a_number_for_a_pool_that_exists(self):
+        """**The test the first version did not have, and the fault it hid.**
+
+        `jobs_store.paths` takes the store root and this passed it None, which
+        raises TypeError; a broad `except Exception` turned that into None, and
+        `stale_sweep_warning` reads None as "nothing to say". The alarm could
+        never fire on any machine.
+
+        Every test in this file mocked `pool_staleness`, including the one
+        named for testing it, which mocked `jobs_store.paths` as well and so
+        never exercised the call that was wrong. A test that supplies an input
+        the real caller does not supply is testing a configuration nobody
+        ships. This one gives it a real directory and reads a real number.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            pool = Path(root) / "jobs.json"
+            pool.write_text("{}")
+            os.utime(pool, (time.time() - 7200, time.time() - 7200))
+            with mock.patch.object(watch, "STATE_DIR", Path(root)):
+                age = watch.pool_staleness()
+        self.assertIsNotNone(age, "a pool that exists must produce a number")
+        self.assertAlmostEqual(age, 7200, delta=60)
+
     def test_a_missing_pool_is_none_rather_than_an_alarm(self):
-        with mock.patch.dict(sys.modules):
-            with mock.patch("jobs_store.paths",
-                            return_value={"jobs": Path("/nonexistent/pool.json")}):
+        """A machine that has never swept is not one whose sweeps died. This is
+        the only None it may return; anything else is a fault."""
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(watch, "STATE_DIR", Path(root)):
                 self.assertIsNone(watch.pool_staleness())
+
+    def test_it_does_not_swallow_a_programming_error_into_healthy(self):
+        """The broad `except Exception` is what made a TypeError read as a
+        clean bill of health. Only OSError is caught now."""
+        body = code_of("pool_staleness")
+        self.assertNotIn("except Exception", body)
+        self.assertIn("except OSError", body)
+
+    def test_the_alarm_is_silent_on_this_machine_for_the_right_reason(self):
+        """Silence is only meaningful if the thing underneath it is measuring.
+
+        Skipped where there is no store, rather than passing vacuously.
+        """
+        real = Path.home() / ".job-application" / "jobs.json"
+        if not real.exists():
+            self.skipTest("no job pool on this machine")
+        self.assertIsNotNone(watch.pool_staleness(),
+                             "pool_staleness returns None on a machine that "
+                             "has a pool, so the alarm cannot fire")
 
 
 if __name__ == "__main__":
