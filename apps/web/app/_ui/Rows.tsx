@@ -31,9 +31,13 @@ export function PostingRow(row: Row) {
       <div className="jb-head">
         <div className="jb-identity">
           <span className="company-mark">{monogram(employer)}</span>
+          {/* The board's own pair: p.jb-co for the company, h3.jb-ti for the
+              title, in a bare div. `jb-meta` was invented and the class guard
+              caught it -- a class the stylesheet does not define is the start
+              of a second design system. */}
           <div>
-            <strong>{employer ?? "Unknown employer"}</strong>
-            <div className="jb-meta">{s(row.title)}</div>
+            <p className="jb-co">{employer ?? "Unknown employer"}</p>
+            <h3 className="jb-ti">{s(row.title)}</h3>
           </div>
         </div>
       </div>
@@ -59,8 +63,8 @@ export function ApplicationRow(row: Row) {
       <div className="jb-identity">
         <span className="company-mark">{monogram(company ?? s(row.legacy_id))}</span>
         <div>
-          <strong>{company ?? s(row.legacy_id)}</strong>
-          <div className="jb-meta">{role ?? s(row.status)}</div>
+          <p className="jb-co">{company ?? s(row.legacy_id)}</p>
+          <h3 className="jb-ti">{role ?? s(row.status)}</h3>
         </div>
       </div>
       <div className="jb-chips">
