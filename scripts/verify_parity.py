@@ -107,9 +107,45 @@ def postgres_state(conn, account_id):
     return state
 
 
+def merge_groups(database):
+    """{winner: {every legacy id that resolves to that posting}}.
+
+    Read from the database side, because `__merged_into__` is what
+    `postgres_state` stamps on a folded id and it is the only place the
+    grouping exists.
+    """
+    groups = {}
+    for legacy_id, row in database.items():
+        winner = row.get("__merged_into__") or legacy_id
+        groups.setdefault(winner, set()).add(legacy_id)
+    return groups
+
+
+def states_disagree(records, group):
+    """Do the legacy records folded into one posting disagree about `state`?
+
+    **This is the whole exemption and it is deliberately narrow.** Two legacy
+    records sharing a board key collapse into one posting row, so when a sweep
+    expires one and leaves the other new, the file holds two answers and
+    Postgres can hold one. Neither side is wrong and no correct write resolves
+    it -- parity was red for a day on exactly that.
+
+    But only then. If every folded record agrees on a state and Postgres says
+    something else, that is a real divergence and must still fail: exempting
+    `state` on merged records generally would blind the check on five records
+    and growing, which is the shape of a filter that hides what it was built
+    to find.
+    """
+    seen = {records[i].get("state") for i in group if i in records}
+    return len(seen) > 1
+
+
 def compare(records, database):
     """Every difference, as a list of dicts. Never a boolean."""
     findings = []
+    groups = merge_groups(database)
+    #: legacy id -> the ids it shares a posting row with, when there are any.
+    shared = {i: g for g in groups.values() if len(g) > 1 for i in g}
 
     for legacy_id in sorted(set(records) - set(database)):
         findings.append({"kind": "only_in_file", "id": legacy_id})
@@ -120,14 +156,23 @@ def compare(records, database):
         record, row = records[legacy_id], database[legacy_id]
         winner = row.get("__merged_into__")
 
-        # State is compared for every record, folded ones included. Two legacy
-        # records merged into one posting that disagree about state is a fact
-        # somebody needs to see: the surviving row can only hold one answer.
+        # State is compared for every record, folded ones included, and is
+        # exempt in exactly one case: the records sharing this posting row
+        # disagree with each other, so the file holds two answers and the row
+        # can hold one. See `states_disagree` for why it is not wider.
         expected_state = record.get("state")
         if row["__state__"] != expected_state:
-            findings.append({"kind": "field_mismatch", "id": legacy_id,
-                             "field": "state", "file": expected_state,
-                             "postgres": row["__state__"]})
+            group = shared.get(legacy_id)
+            if group and states_disagree(records, group):
+                findings.append({"kind": "merged_field_dropped",
+                                 "id": legacy_id, "field": "state",
+                                 "file": expected_state,
+                                 "postgres": row["__state__"],
+                                 "merged_into": winner or legacy_id})
+            else:
+                findings.append({"kind": "field_mismatch", "id": legacy_id,
+                                 "field": "state", "file": expected_state,
+                                 "postgres": row["__state__"]})
 
         for name, read in FIELDS.items():
             want, got = read(record), row[name]

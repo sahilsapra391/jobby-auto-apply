@@ -179,3 +179,22 @@ Phase 3 should not try to close it by parsing harder:
 
 For all of these the fallback `(source, record_id)` is the honest key, and a
 connector that knows its own board replaces it with the real one for free.
+
+## 8. A session deletion is not mirrored, and it leaks
+
+A session file is deleted when its application completes; the `applications`
+row keeps whatever status it last had, forever. Nothing clears it and nothing
+notices.
+
+Measured 2026-09-01: 108 applications have no session file. 107 carry
+`unknown` or `known`, which is `roles.json` doing its job. **One carries
+`active`** -- `actively-ai-agent-product-manager` -- so a lane reading
+`applications.status` puts it in Needs you while the old board, which buckets
+sessions, puts it nowhere.
+
+One row today, and it is a slow leak rather than a one-off: every future
+deletion adds another, and each one is a role the board says is waiting for
+you when it is not. Parity does not see it, because a session absent from the
+file store is `only_in_postgres`, which is the exemption section 6 is about.
+
+The fix belongs with whatever mirrors deletions, which nothing currently does.

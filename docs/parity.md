@@ -245,3 +245,45 @@ does not:
 And it refuses to keep counting quietly when the newest line is stale, because
 the day count rises with wall-clock time whether or not the timer ever fires
 again. An empty log and a timer that has not fired are the same observation.
+
+## The merged-field drops, and why a constant could not bound them
+
+Two legacy records that share a board key collapse into one `postings` row, so
+the fields they disagree on are discarded by the merge. That loss is recorded
+rather than hidden: `merged_field_dropped` is its own finding kind, visible and
+counted, and never red.
+
+**The count was pinned at 2 and that could not survive its own subject.** It
+went 2, then 5, then 7 within two days, and each rise failed a test that was
+measuring the corpus rather than the rule. The check is the rule now: every
+drop must belong to a record actually folded into another, and every dropped
+field must be one a merge may legitimately discard. A new collision passes; a
+drop that should have been a divergence still fails.
+
+The two collisions as of 2026-09-01:
+
+`9c9cf0baa815c1eb` into `5f10861ba0ce8980`, Braze. Two stored records for one
+posting, reached through `boards.greenhouse.io` and `job-boards.greenhouse.io`.
+The URL differs because the hostnames are why there were ever two; the
+fingerprint differs because the pages were fetched separately and land four
+bits apart.
+
+`3c12eb512130a4bb` into `1dc73a213adfc263`, Bitdeer. The employer retitled
+"Operations Technician (Night Shift - Mining Data Center)" to "Operations
+Technician (Mining Data Center-Night Shift)". The slug moved with the title, so
+it was scraped again under the same Breezy id -- same board key, two records,
+the before and the after. Title, normalised title and URL all differ for that
+one reason.
+
+### `state` is exempt only when the sources disagree with each other
+
+When a sweep expires one of a colliding pair and leaves the other new, the file
+holds two answers and the row can hold one. Neither side is wrong and no
+correct write resolves it; parity was red for a day on exactly that, from
+2026-08-31T12:17:45Z.
+
+The exemption is that case and no wider. **If every record folded into a
+posting agrees on a state and Postgres says something else, that is still a
+divergence and still fails** -- exempting `state` on merged records generally
+would blind the check on every collision, which is the shape of a filter that
+hides what it was built to find. `TheStateExemptionIsNarrow` has the control.

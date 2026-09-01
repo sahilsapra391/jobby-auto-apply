@@ -455,28 +455,43 @@ def _device_connection():
                            announce=False)
 
 
-class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
-    """A number in a green report with no explanation is a number people stop
-    reading, and an exemption nobody counts is one that grows.
+class EveryMergedFieldDropIsExplainable(unittest.TestCase):
+    """An exemption nobody counts is one that grows, and a count pinned to a
+    constant is one that stops meaning anything.
 
-    Both drops belong to one record: `9c9cf0baa815c1eb`, folded into
-    `5f10861ba0ce8980`, two stored records for one Braze posting reached
-    through `boards.` and `job-boards.`. Its URL differs because the two
-    hostnames are why there were ever two records, and its fingerprint differs
-    because the pages were fetched separately and land 4 bits apart.
+    This used to assert exactly two drops on one record, `9c9cf0baa815c1eb`
+    folded into `5f10861ba0ce8980` -- two stored records for one Braze posting
+    reached through `boards.` and `job-boards.`, differing in URL because the
+    hostnames are why there were ever two, and in fingerprint because the pages
+    were fetched separately and land 4 bits apart.
 
-    A third drop means a new collision or a new differing field. Either is
-    worth a look rather than a larger total, so this fails on any other number
-    and `docs/parity.md` names the two it allows.
+    **That constant could not survive its own subject.** Collisions accumulate:
+    the count went 2, then 5, then 7 within two days, and each rise failed a
+    test that was measuring the corpus rather than the rule. So the check is
+    the rule now -- every drop must be explainable -- and a new collision
+    passes while a drop that should have been a divergence still fails.
     """
 
-    EXPECTED = {"apply_url", "desc_fingerprint"}
-
-    def test_the_document_names_both_fields(self):
-        doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
-        for field in self.EXPECTED:
-            with self.subTest(field=field):
-                self.assertIn(field, doc)
+    #: Fields a merge may legitimately discard, each because it is a property
+    #: of *how* the two source records were captured rather than of the job:
+    #:
+    #:   apply_url, title, norm_title  the two records differ in the thing that
+    #:                                 made them two. Braze: `boards.` against
+    #:                                 `job-boards.`. Bitdeer: the employer
+    #:                                 retitled the posting, so the slug moved
+    #:                                 and it was scraped again under the same
+    #:                                 Breezy id -- same board key, two records,
+    #:                                 the before and the after.
+    #:   desc_fingerprint              the pages were fetched separately.
+    #:   state, posted_at, last_seen_at, seen_count
+    #:                                 per-record sweep bookkeeping; `state`
+    #:                                 only under the disagreement rule below.
+    #:
+    #: Adding to this list is a classification, not a widening: each entry
+    #: above was added after looking at the actual pair, because a set that
+    #: grows to make a test pass is the exemption this class exists to bound.
+    DROPPABLE = {"apply_url", "title", "norm_title", "desc_fingerprint",
+                 "state", "summary", "posted_at", "last_seen_at", "seen_count"}
 
     def test_the_document_names_the_record_and_its_winner(self):
         doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
@@ -487,20 +502,101 @@ class TheMergedFieldDropsAreExactlyTwoAndNamed(unittest.TestCase):
         Path("~/.job-application/jobs.json").expanduser().exists()
         and _database_holds_the_device_store(),
         "needs the real store and the database that holds it")
-    def test_the_live_run_drops_exactly_these_two(self):
+    def test_every_drop_belongs_to_a_genuinely_merged_record(self):
+        conn = _device_connection()
+        try:
+            report = verify_parity.run(conn, dual_write.account_id(conn))
+            with conn.cursor() as cur:
+                cur.execute("select unnest(merged_legacy_ids) from postings")
+                folded = {r[0] for r in cur.fetchall()}
+        finally:
+            conn.close()
+        dropped = report["merged_field_dropped"]
+        self.assertTrue(dropped, "no drops at all, so this proves nothing")
+        stray = sorted({d["id"] for d in dropped} - folded)
+        self.assertEqual(stray, [],
+                         f"these records had a field exempted without being "
+                         f"folded into anything: {stray}")
+
+    @unittest.skipUnless(
+        Path("~/.job-application/jobs.json").expanduser().exists()
+        and _database_holds_the_device_store(),
+        "needs the real store and the database that holds it")
+    def test_every_dropped_field_is_one_a_merge_may_discard(self):
         conn = _device_connection()
         try:
             report = verify_parity.run(conn, dual_write.account_id(conn))
         finally:
             conn.close()
-        dropped = report["merged_field_dropped"]
-        self.assertEqual(
-            len(dropped), 2,
-            f"{len(dropped)} merged-field drops, expected 2. A third is a new "
-            f"collision or a newly differing field, and both want looking at: "
-            f"{[(d['id'], d['field']) for d in dropped]}")
-        self.assertEqual({d["field"] for d in dropped}, self.EXPECTED)
-        self.assertEqual({d["id"] for d in dropped}, {"9c9cf0baa815c1eb"})
+        fields = {d["field"] for d in report["merged_field_dropped"]}
+        self.assertTrue(fields)
+        unexpected = sorted(fields - self.DROPPABLE)
+        self.assertEqual(unexpected, [],
+                         f"a merge discarded fields nobody has classified: "
+                         f"{unexpected}. Each is either a new legitimate "
+                         f"casualty of folding two records, or a real "
+                         f"divergence wearing the exemption.")
+
+
+class TheStateExemptionIsNarrow(unittest.TestCase):
+    """`state` is exempt on a merged record only when the records sharing that
+    posting disagree with each other.
+
+    Two legacy records sharing a board key collapse into one row, so when a
+    sweep expires one and leaves the other new, the file holds two answers and
+    Postgres can hold one. Neither side is wrong. Parity was red for a day on
+    exactly that.
+
+    Exempting `state` on merged records generally would blind the check on
+    every collision, which is the shape of a filter that hides what it was
+    built to find -- so these are the two cases, and the second is the control.
+    """
+
+    def _pair(self, file_states, postgres_state):
+        """Two legacy records folded into one posting, with the file saying
+        `file_states` and Postgres holding `postgres_state`."""
+        records = {
+            "winner": {"state": file_states[0], "url": "https://e.com/1"},
+            "loser":  {"state": file_states[1], "url": "https://e.com/1"},
+        }
+        row = {"__state__": postgres_state}
+        for name in verify_parity.FIELDS:
+            row[name] = None
+        for key in records:
+            records[key].update({k: None for k in ("company", "title")
+                                 if k not in records[key]})
+        database = {
+            "winner": dict(row),
+            "loser": dict(row, __merged_into__="winner"),
+        }
+        return records, database
+
+    def test_disagreeing_sources_make_state_a_drop_not_a_divergence(self):
+        records, database = self._pair(("new", "expired"), "expired")
+        findings = verify_parity.compare(records, database)
+        states = [f for f in findings if f.get("field") == "state"]
+        self.assertTrue(states, "no state finding at all")
+        self.assertEqual({f["kind"] for f in states}, {"merged_field_dropped"})
+
+    def test_control_agreeing_sources_still_fail_on_a_state_divergence(self):
+        """**The control the exemption needs.** Both legacy records say `new`,
+        so the file has one answer; Postgres saying `expired` is a real
+        divergence and exempting it would be the check going quiet on the thing
+        it exists for."""
+        records, database = self._pair(("new", "new"), "expired")
+        findings = verify_parity.compare(records, database)
+        states = [f for f in findings if f.get("field") == "state"]
+        self.assertTrue(states, "no state finding at all")
+        self.assertEqual({f["kind"] for f in states}, {"field_mismatch"})
+
+    def test_an_unmerged_record_is_never_exempt(self):
+        records = {"solo": {"state": "new"}}
+        row = {"__state__": "expired"}
+        for name in verify_parity.FIELDS:
+            row[name] = None
+        findings = verify_parity.compare(records, {"solo": row})
+        states = [f for f in findings if f.get("field") == "state"]
+        self.assertEqual({f["kind"] for f in states}, {"field_mismatch"})
 
 
 class TheScheduledTimerCanActuallyRun(unittest.TestCase):
