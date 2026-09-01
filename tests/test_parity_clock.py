@@ -250,10 +250,26 @@ class AGatePathChangeAlsoResetsIt(unittest.TestCase):
         self.assertEqual(r["day"], 0)
         self.assertEqual(r["resetBy"], "a gate path changing")
 
-    def test_the_gate_paths_are_the_four_the_rule_names(self):
-        self.assertEqual(set(parity_clock.GATE_PATHS), {
-            "scripts/verify_parity.py", "scripts/class_b.py",
-            "scripts/dual_write.py", "scripts/jobs_store.py"})
+    def test_the_gate_paths_include_the_four_the_rule_names(self):
+        """The four the rule names, and no assertion that they are the only
+        four.
+
+        **This test used to say `assertEqual` and that is why the list was
+        wrong for as long as it was.** `packages/schema/backfill.py` is where
+        every class A upsert happens, two uncovered `on conflict` targets in it
+        froze the board for seventeen hours on 2026-09-01, and neither fix
+        reset the clock. Adding it was the correct change and this test would
+        have failed it -- a restatement of a list protecting the list from
+        being corrected.
+
+        What the gate must *cover* is derived instead, in
+        `tests/test_gate_paths_cover_the_mirror.py`, from the modules
+        `dual_write` actually upserts through. This one now only holds the
+        floor: these four are load-bearing and none may quietly leave.
+        """
+        for named in ("scripts/verify_parity.py", "scripts/class_b.py",
+                      "scripts/dual_write.py", "scripts/jobs_store.py"):
+            self.assertIn(named, parity_clock.GATE_PATHS)
 
     def test_a_directory_that_is_not_a_repo_reads_as_no_change(self):
         self.assertIsNone(parity_clock.gate_path_touched(repo="/nonexistent"))
