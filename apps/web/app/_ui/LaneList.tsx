@@ -151,9 +151,28 @@ export function LaneList({
   ) : (
     <>
       <div style={{ height: above }} aria-hidden="true" />
-      <div className={shape === "found" ? "jb-grid" : "grid"}>
-        {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
-      </div>
+      {shape === "found" ? (
+        // **`.jb-grid` is a flex row of `.jb-col`, not of cards.** The board's
+        // own script appends columns to it and puts the cards inside those;
+        // dropping 50 cards in directly made every one a flex item in a single
+        // row, squeezed to 37px wide and overlapping. Measured at 1600px
+        // before this: --cols resolves to 1 at every width, because
+        // premium_ui's base `.jb-grid { --cols:1 }` is the last declaration
+        // and beats the two media queries above it. So one column is not a
+        // simplification of the board's round-robin, it is what the board
+        // itself builds here.
+        <div className="jb-grid">
+          <div className="jb-col">
+            {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+          </div>
+        </div>
+      ) : (
+        // The card lanes put their articles straight into `.grid`, which is
+        // what the board does for Needs you and In flight.
+        <div className="grid">
+          {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+        </div>
+      )}
       <div style={{ height: below }} aria-hidden="true" />
     </>
   );
