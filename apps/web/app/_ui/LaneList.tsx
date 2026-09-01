@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { Lane } from "../lanes.generated";
-import { PostingRow, ApplicationRow } from "./Rows";
+import {
+  PostingRow, WatchRow, DoneRow, DroppedRow, ActCard, FlightCard,
+} from "./Rows";
 
 type Row = Record<string, unknown> & { id: string };
 type Cursor = { at: string | null; id: string } | null;
@@ -13,6 +15,35 @@ const WINDOW = 60;
  *  does not outrun the re-render and show a gap. */
 const OVERSCAN = 12;
 const ROW_PX = 132;
+
+/** Which component draws one row of each lane. */
+const ROWS: Record<Lane, (row: Row) => React.ReactElement> = {
+  found: PostingRow, watch: WatchRow, done: DoneRow,
+  dropped: DroppedRow, act: ActCard, flight: FlightCard,
+};
+
+/**
+ * The three lanes the board draws as tables, with their own columns.
+ *
+ * Taken from a real `dashboard.build` render rather than retyped; the widths
+ * are the board's own colgroup, which is load-bearing because CLAUDE.md notes
+ * the table lanes are the ones that used to break out of the shell width.
+ */
+const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
+  done: {
+    head: ["Company", "Role", "Status", "When", "Posting", "Proof", "Resume",
+           "Cover letter", "Answers"],
+  },
+  watch: {
+    head: ["Role", "Posted", "Experience", "Location", "Core skills",
+           "How you line up", ""],
+    cols: ["17%", "7%", "8%", "12%", "18%", "26%", "12%"],
+  },
+  dropped: {
+    head: ["Role", "Dropped from", "Last stage", "When", ""],
+    cols: ["25%", "13%", "31%", "11%", "20%"],
+  },
+};
 
 /**
  * A lane, windowed.
@@ -38,9 +69,13 @@ export function LaneList({
   // renderer -- React refuses to serialise it -- and the build accepts it
   // happily, so the whole board 500s at request time with a green typecheck
   // behind it.
-  shape: "posting" | "application";
+  //
+  // It is the lane now rather than "posting or application", because the board
+  // draws five shapes across six lanes and collapsing them to two is what made
+  // Watching and Submitted render as cards where the board renders tables.
+  shape: Lane;
 }) {
-  const render = shape === "posting" ? PostingRow : ApplicationRow;
+  const render = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
   const [cursor, setCursor] = useState<Cursor>(initialCursor);
   const [done, setDone] = useState(initiallyDone);
@@ -94,15 +129,38 @@ export function LaneList({
 
   const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
   const slice = rows.slice(first, last);
+  const table = TABLES[shape];
+  const above = first * ROW_PX;
+  const below = Math.max(0, rows.length - last) * ROW_PX;
+
+  // A table lane cannot take the spacer divs: a <div> between <tbody> and <tr>
+  // is dropped by the parser, the rows reparent, and the windowing silently
+  // stops working. Same two spacers, as rows.
+  const body = table ? (
+    <div className="sheet"><div className="tablewrap"><table>
+      {table.cols ? (
+        <colgroup>{table.cols.map((w, i) => <col style={{ width: w }} key={i} />)}</colgroup>
+      ) : null}
+      <thead><tr>{table.head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+      <tbody>
+        <tr aria-hidden="true" style={{ height: above }}><td colSpan={table.head.length} /></tr>
+        {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+        <tr aria-hidden="true" style={{ height: below }}><td colSpan={table.head.length} /></tr>
+      </tbody>
+    </table></div></div>
+  ) : (
+    <>
+      <div style={{ height: above }} aria-hidden="true" />
+      <div className={shape === "found" ? "jb-grid" : "grid"}>
+        {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+      </div>
+      <div style={{ height: below }} aria-hidden="true" />
+    </>
+  );
 
   return (
     <div ref={holder}>
-      <div style={{ height: first * ROW_PX }} aria-hidden="true" />
-      {slice.map((row) => (
-        <div key={row.id}>{render(row)}</div>
-      ))}
-      <div style={{ height: Math.max(0, rows.length - last) * ROW_PX }}
-           aria-hidden="true" />
+      {body}
       {done ? (
         <p className="hint">
           {rows.length.toLocaleString()} shown, and that is all of them.

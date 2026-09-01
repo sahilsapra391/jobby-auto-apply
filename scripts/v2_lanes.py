@@ -96,7 +96,7 @@ LANES = {
 
 POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
              p.workplace, p.posted_at, p.apply_url, p.years_min, p.years_max,
-             p.summary, p.source, e.canonical_name as employer,
+             p.summary, p.source, p.salary_raw, e.canonical_name as employer,
              e.domain as employer_domain, e.logo_url as employer_logo"""
 
 #: An application lane has no posting to draw from, because nothing links the

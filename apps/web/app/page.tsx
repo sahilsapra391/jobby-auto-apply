@@ -85,7 +85,7 @@ export default async function Board({
               initial={first.rows}
               initialCursor={first.next}
               done={first.done}
-              shape={active === "found" ? "posting" : "application"}
+              shape={active}
             />
           )}
         </div>
