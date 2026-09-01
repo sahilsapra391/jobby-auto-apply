@@ -326,17 +326,35 @@ class AMergedRecordIsFoundRatherThanExempted(pgtest.SchemaCase):
         report = verify_parity.run(self.conn, self.account, str(self.root))
         self.assertFalse(report["reread"])
 
-    def test_a_state_disagreement_between_merged_records_is_still_red(self):
+    def test_a_state_disagreement_between_merged_records_is_reported(self):
         """The surviving row holds one state. If the two legacy records
         disagree about it, somebody has to be told: this is the one field a
-        merge cannot quietly discard."""
+        merge cannot **quietly** discard.
+
+        It used to be told as a divergence. That went red on 2026-08-31 and
+        stayed red for a day for a reason nobody could fix by writing
+        correctly: a sweep expired one of a colliding pair and left the other
+        new, so the file held two answers and the row held one. Neither side
+        was wrong.
+
+        The word the original decision turns on is *quietly*, and
+        `merged_field_dropped` is not quiet -- it is its own finding kind,
+        visible and counted in every report. So the disagreement is still
+        told and is no longer a fault, which is what the earlier reasoning
+        actually asked for. `TheStateExemptionIsNarrow` holds the other half:
+        when the folded records agree and Postgres does not, it is red again.
+        """
         records = self.colliding()
         dual_write.mirror_pool(self.conn, self.account, {}, records)
         records["zzz"]["state"] = "watched"
         (self.root / "jobs.json").write_text(json.dumps(records))
         report = verify_parity.run(self.conn, self.account, str(self.root))
-        fields = [f.get("field") for f in report["divergences"]]
-        self.assertIn("state", fields)
+
+        self.assertNotIn("state", [f.get("field") for f in report["divergences"]],
+                         "a disagreement neither side can fix is red again")
+        self.assertIn("state", [f.get("field") for f in report["merged_field_dropped"]],
+                      "the disagreement vanished from the report entirely, "
+                      "which is the one thing the original decision forbids")
 
 
 class TheExitCodeCannotLie(unittest.TestCase):
