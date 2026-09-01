@@ -103,8 +103,13 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: two. `updated_at` is the ordering: it is when the work last moved, which is
 #: the question these lanes answer, and `posted_at` would be unavailable
 #: anyway.
+#: `applications` holds no company or role -- it never has -- so an
+#: application lane rendered from it alone shows an opaque legacy id and
+#: nothing a person recognises. `roles` carries both, keyed on the same
+#: legacy id, and joins 196 of them. LEFT, because a row it cannot name is
+#: still a row and dropping it would be a filter.
 APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
-             a.created_at"""
+             a.created_at, r.company, r.role, r.url"""
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
@@ -169,6 +174,7 @@ select {POSTING_COLUMNS}
     return f"""
 select {APPLICATION_COLUMNS}
   from applications a
+  left join roles r on r.application_id = a.legacy_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
    and {keyset('a.updated_at')}

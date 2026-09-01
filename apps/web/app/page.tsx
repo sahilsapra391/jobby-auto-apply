@@ -1,28 +1,39 @@
 import { MORPH } from "./chrome.generated";
+import { LANES, type Lane } from "./lanes.generated";
 import { AppBar, raw } from "./_ui/Chrome";
 import { SelectFace } from "./_ui/SelectFace";
 import { ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
-import { LANES } from "./_ui/fixture";
+import { LaneList } from "./_ui/LaneList";
+import { counts, page } from "./_ui/db";
 
 /**
- * The board. Structure and classes are the board's own; the numbers come from
- * a fixture until (d) reads them from Postgres.
+ * The board, reading Postgres.
  *
- * Read-only. Nothing here writes.
+ * **Read-only.** Nothing on this route writes, and nothing will until the
+ * parity gate closes: a new write path is one parity does not know about, and
+ * the file store would fall behind on exactly the records it touched.
+ *
+ * The first page is server-rendered so the lane is there on first paint; the
+ * rest arrives through /api/lane on the same keyset. `LaneList` then windows
+ * what has arrived, so neither the wire nor the DOM ever carries the corpus.
  */
 export const dynamic = "force-dynamic";
+
+const TAB_ORDER: Lane[] = ["found", "watch", "flight", "act", "done"];
 
 export default async function Board({
   searchParams,
 }: {
-  // A promise since Next 15. Awaited rather than read directly, which the
-  // build rejects outright rather than letting it be wrong at runtime.
   searchParams: Promise<{ lane?: string }>;
 }) {
-  const { lane } = await searchParams;
-  const active = LANES.some((l) => l.key === lane) ? (lane as string) : "found";
+  const { lane: asked } = await searchParams;
+  const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
+    ? (asked as Lane)
+    : "found";
+
+  const [tally, first] = await Promise.all([counts(), page(active, null, 50)]);
 
   return (
     <>
@@ -32,9 +43,10 @@ export default async function Board({
           <div className="hero-copy">
             <h1>Jobby is a free agent.</h1>
             <p className="lede">
-              {LANES.find((l) => l.key === "act")!.count} waiting on you
+              {tally.act === 0 ? "Nothing blocked"
+                               : `${tally.act} waiting on you`}
             </p>
-            <p className="stamp">Sahil &middot; a fixture, until the next piece</p>
+            <p className="stamp">Reading Postgres directly</p>
           </div>
           <div className="jb-morph" role="button" tabIndex={0}
                aria-label="Replay the Jobby mark" {...raw(MORPH)} />
@@ -42,17 +54,17 @@ export default async function Board({
 
         <div className="segwrap">
           <div className="seg" role="tablist">
-            {LANES.map((lane) => (
+            {TAB_ORDER.map((lane) => (
               <a
-                key={lane.key}
-                className={lane.key === active ? "tab on" : "tab"}
-                href={`/?lane=${lane.key}`}
+                key={lane}
+                className={lane === active ? "tab on" : "tab"}
+                href={`/?lane=${lane}`}
                 role="tab"
-                aria-selected={lane.key === active}
-                aria-controls={`p-${lane.key}`}
+                aria-selected={lane === active}
+                aria-controls={`p-${lane}`}
               >
-                {lane.label}
-                <span className="n">{lane.count.toLocaleString()}</span>
+                {LANES[lane].label}
+                <span className="n">{tally[lane].toLocaleString()}</span>
               </a>
             ))}
           </div>
@@ -65,13 +77,21 @@ export default async function Board({
               <Filters />
             </>
           ) : null}
-          <div className="empty">
-            Rows arrive with Postgres in the next piece.
-          </div>
+          {first.rows.length === 0 ? (
+            <div className="empty">Nothing in this lane.</div>
+          ) : (
+            <LaneList
+              lane={active}
+              initial={first.rows}
+              initialCursor={first.next}
+              done={first.done}
+              shape={active === "found" ? "posting" : "application"}
+            />
+          )}
         </div>
       </div>
 
-      <DroppedDock />
+      <DroppedDock count={tally.dropped} />
       <SelectFace />
       <DroppedOpen />
     </>

@@ -278,3 +278,30 @@ A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
 URL, so it sidesteps the whole class. That is the second argument for passing
 the key rather than re-deriving it -- section 4 gives the first, which is that
 79.2% is as far as derivation gets on the corpus that exists.
+
+## 10. `roles` is mirrored and never compared, and it is seven rows behind
+
+`class_b._mirror_roles` writes it and `docs/write-paths.md` classifies it as
+class B, so it is a mirrored artifact by every account the repository gives.
+**`verify_parity` does not compare it.** Its class B buckets are `sessions`,
+`events`, `answers` and `profile`; there is no `roles` bucket on either side.
+
+Measured 2026-09-01: `roles.json` holds 203 entries and the table holds 196.
+The seven missing are real roles -- SWIGGY, Reddit, Talkspace ×2, Turing,
+Cloudflare, Toast -- and one of them, `42f553a7d7487009`, is the Toast watch
+driven deliberately during Phase 1 to prove class B was exercised. **The
+session half of that write mirrored and the role half did not, and the gate
+said green throughout.**
+
+It surfaced from the v2 lanes rather than from any check: `applications` has no
+company or role, so the lanes join `roles` for them, and seven rows came back
+unnamed. Nothing else in the system reads that table often enough to notice.
+
+This is the fifth thing the gate cannot see, after section 6's extra
+applications, the `sessions` table of section 7, session deletions in section
+8, and `job_decisions` states nothing writes. Adding a `roles` comparison is a
+change to `verify_parity`, which is a gate path and restarts the clock, so it
+is a decision rather than a fix to make in passing.
+
+Whoever adds it should expect it to open red on those seven and should find out
+why they were never written before deciding what "green" means.
