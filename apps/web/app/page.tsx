@@ -1,4 +1,5 @@
 import { MORPH } from "./chrome.generated";
+import { HeroIntro } from "./_ui/HeroIntro";
 import { LANES, SORT_LABELS, type Lane, type Sort } from "./lanes.generated";
 import { AppBar, raw } from "./_ui/Chrome";
 import { SelectFace } from "./_ui/SelectFace";
@@ -61,6 +62,7 @@ export default async function Board({
           </div>
           <div className="jb-morph" role="button" tabIndex={0}
                aria-label="Replay the Jobby mark" {...raw(MORPH)} />
+          <HeroIntro />
         </div>
 
         <div className="segwrap">

@@ -169,6 +169,37 @@ def chrome_parts():
     }
 
 
+def _jsx_props(tag_html):
+    """The opening tag's attributes as JSX props.
+
+    **The element carrying the class has to be the one React renders**, not a
+    wrapper around it. `.appbar` is `grid-template-columns: 1fr auto 1fr` and
+    `.themeseg` is placed with `justify-self: end`, which applies to a *grid
+    item*: wrapping the whole element in a `<span>` made the span the item, so
+    the rule selected a child and did nothing, and the theme controls sat
+    against the nav instead of the right edge. Same shape as dropping cards
+    straight into `.jb-grid`, which is a flex row of `.jb-col`.
+
+    So the attributes travel too, rather than being retyped in the TSX where
+    they can drift from what the board actually emits.
+    """
+    import re
+    RENAME = {"class": "className", "tabindex": "tabIndex",
+              "for": "htmlFor", "readonly": "readOnly"}
+    open_tag = tag_html[:tag_html.index(">") + 1]
+    out = {}
+    for name, value in re.findall(r'([a-zA-Z-]+)="([^"]*)"', open_tag):
+        out[RENAME.get(name, name)] = value
+    return out
+
+
+def split_element(html, start, tag="div"):
+    """`(props, inner_html)` for the element at `start`."""
+    whole = element_at(html, start, tag)
+    inner = whole[whole.index(">") + 1:whole.rindex("</")]
+    return _jsx_props(whole), inner
+
+
 def select_script():
     """`premium_ui.SCRIPT`, which is the styled-select face and nothing else.
 
@@ -263,6 +294,17 @@ def _parses(js, what):
     return js
 
 
+def _themeseg_split():
+    """The theme controls' own attributes and children, separately.
+
+    v2 has to render `div.themeseg` itself so that the element the stylesheet
+    places is the element React puts in the grid. See `_jsx_props`.
+    """
+    import dashboard
+    html = dashboard.build(SYNTHETIC_STATE, "2026-01-01T00:00:00Z")
+    return split_element(html, html.index('<div class="themeseg"'))
+
+
 def head_parts():
     """The board's own `<head>`, and the two scripts that make the theme work.
 
@@ -289,6 +331,24 @@ def head_parts():
     # it has to be a span -- and both go through the parser either way.
     boot = _parses(_script_around(html, "localStorage.getItem('jobby.theme')",
                                   "the theme boot"), "the theme boot")
+    # The hero mark's intro and its replay. `html.jb-intro` is added by the
+    # boot above and gates the contour-draw and ink-wipe; without this nothing
+    # ever removes it, so the flourish never ends, and clicking the mark does
+    # nothing. The replay needs the reflow between removing and re-adding the
+    # class or the browser coalesces the two, which CLAUDE.md records.
+    intro = _parses(_span(
+        html, "var heroMark = document.querySelector('.jb-morph');",
+        "event.preventDefault(); playIntro(); }\n    });\n  }",
+        "the hero intro"), "the hero intro")
+    # **`_parses` catches taking too little, not too much.** A loose end marker
+    # matched 41 KB later and swallowed the rest of the board's script; the
+    # result was balanced, so it parsed, and it would have shipped the whole
+    # board's wiring inside a hero-intro effect. A span that grew past its own
+    # section is not a section.
+    if len(intro) > 1500:
+        raise SystemExit(f"the hero intro extraction is {len(intro)} chars, "
+                         f"which is far past the end of that block; the end "
+                         f"marker is matching something later.")
     wire = _parses(_span(html, "var themeBtns = document.querySelectorAll('.themebtn');",
                          "paintTheme(document.documentElement.dataset.theme || 'auto');",
                          "the theme wiring"), "the theme wiring")
@@ -301,7 +361,8 @@ def head_parts():
             raise SystemExit(f"the theme {name} no longer names jobby.theme; "
                              f"the storage key moved and v2 would silently "
                              f"keep its own.")
-    return {"HEAD": head, "THEME_BOOT": boot, "THEME_WIRE": wire}
+    return {"HEAD": head, "THEME_BOOT": boot, "THEME_WIRE": wire,
+            "HERO_INTRO": intro}
 
 
 def rubric_module():
@@ -333,6 +394,9 @@ def chrome_module():
     lines = [CHROME_HEADER]
     for name, markup in chrome_parts().items():
         lines.append(f"export const {name} = {json.dumps(markup)};")
+    props, inner = _themeseg_split()
+    lines.append(f"export const THEMESEG_PROPS = {json.dumps(props)};")
+    lines.append(f"export const THEMESEG_INNER = {json.dumps(inner)};")
     for name, markup in head_parts().items():
         lines.append(f"export const {name} = {json.dumps(markup)};")
     lines.append(f"export const SELECT_SCRIPT = {json.dumps(select_script())};")
