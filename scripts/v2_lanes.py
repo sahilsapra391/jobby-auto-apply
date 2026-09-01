@@ -97,7 +97,9 @@ LANES = {
 POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
              p.workplace, p.posted_at, p.apply_url, p.years_min, p.years_max,
              p.summary, p.source, p.salary_raw, e.canonical_name as employer,
-             e.domain as employer_domain, e.logo_url as employer_logo"""
+             e.domain as employer_domain, e.logo_url as employer_logo,
+             s.total as score, s.parts as score_parts, s.gates as score_gates,
+             s.unknowns as score_unknowns"""
 
 #: An application lane has no posting to draw from, because nothing links the
 #: two. `updated_at` is the ordering: it is when the work last moved, which is
@@ -134,8 +136,8 @@ APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
-def keyset(column):
-    """The keyset predicate for a lane ordered on `column`, newest first.
+def keyset(column, cast="timestamptz"):
+    """The keyset predicate for a lane ordered on `column`, highest first.
 
     **One implementation for both lane shapes**, and that is not tidiness. The
     first version had a second copy for the application lanes, and because
@@ -156,40 +158,62 @@ def keyset(column):
     which is the first page of every lane, so nothing worked at all until they
     were added.
     """
+    #: The cursor column is not always a date. Ordering Found by match score
+    #: walks a smallint, and a `::timestamptz` cast on it fails outright, which
+    #: is why this takes the type rather than assuming one. The id tie-breaker
+    #: is always a uuid, and `job_scores.total` is NOT NULL so its null arms are
+    #: unreachable -- kept because the predicate is one implementation and a
+    #: second copy for the numeric case is exactly the duplication this
+    #: function's own history warns about.
+    ident = column.split(".")[0]
     return f"""(
       %(after_id)s::uuid is null
-   or (%(after_at)s::timestamptz is not null and (
-            {column} < %(after_at)s::timestamptz
+   or (%(after_at)s::{cast} is not null and (
+            {column} < %(after_at)s::{cast}
          or {column} is null
-         or ({column} = %(after_at)s::timestamptz
+         or ({column} = %(after_at)s::{cast}
              and {{id}} < %(after_id)s::uuid)))
-   or (%(after_at)s::timestamptz is null and {column} is null
+   or (%(after_at)s::{cast} is null and {column} is null
        and {{id}} < %(after_id)s::uuid)
-)""".replace("{id}", column.split(".")[0] + ".id")
+)""".replace("{id}", ident + ".id")
 
 
 def order_by(column):
-    """Newest first, undated last. `nulls last` is not optional: PostgreSQL
+    """Highest first, absent last. `nulls last` is not optional: PostgreSQL
     sorts nulls FIRST under `desc`, and an index whose ordering differs from
     the query's cannot serve it, so the lane silently sorts the corpus."""
     alias = column.split(".")[0]
     return f"order by {column} desc nulls last, {alias}.id desc"
 
 
-def page_sql(lane):
-    """One page of a lane, newest first, undated last."""
+#: What the Found lane may be ordered by, and the type its cursor walks. The
+#: board offers exactly these two (`found_lane.SORT_OPTIONS`), so v2 offers
+#: exactly these two: "Newest" and "Match %".
+SORTS = {
+    "new": ("p.posted_at", "timestamptz"),
+    "score": ("s.total", "int"),
+}
+
+
+def page_sql(lane, sort="new"):
+    """One page of a lane, highest first, absent last."""
+    if sort not in SORTS:
+        raise KeyError(f"no sort {sort!r}")
     if lane not in LANES:
         raise KeyError(f"no lane {lane!r}")
     if lane in POSTING_LANES:
+        column, cast = SORTS[sort]
         return f"""
 select {POSTING_COLUMNS}
   from postings p
   left join job_decisions d
     on d.posting_id = p.id and d.account_id = %(account)s
   left join employers e on e.id = p.employer_id
+  left join job_scores s
+    on s.posting_id = p.id and s.account_id = %(account)s
  where {LANES[lane]["where"]}
-   and {keyset('p.posted_at')}
- {order_by('p.posted_at')}
+   and {keyset(column, cast)}
+ {order_by(column)}
  limit %(limit)s
 """.strip()
     return f"""

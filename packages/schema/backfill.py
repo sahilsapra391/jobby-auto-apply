@@ -531,6 +531,82 @@ def upsert_postings(conn, records, employers, batch=500):
     return mapping, merged
 
 
+def upsert_scores(conn, records, postings, account_id, batch=500):
+    """Mirror the match score for every record that carries one.
+
+    **The score is the Found lane's ordering**, and without it here the lane
+    can only sort by date: 17,339 rows newest-first, which on a corpus that
+    ingests everything means warehouse night shifts above the roles the reader
+    actually wants. That is not a missing feature, it is the lane being
+    unusable.
+
+    Written per account because the score is computed from the reader's own
+    saved search. See the migration for why that is not a column on `postings`.
+
+    A record with no score is skipped rather than written as zero. 21,868 of
+    21,890 pool records carry one; the 22 that do not are new arrivals the
+    scorer has not reached, and a zero would sort them below every genuine
+    low scorer and look like a decision rather than an absence.
+    """
+    import json as _json
+
+    rows = []
+    for record in records:
+        score = record.get("score")
+        if not isinstance(score, dict):
+            continue
+        total = score.get("total")
+        if not isinstance(total, (int, float)):
+            continue
+        posting_id = postings.get(record.get("id"))
+        if posting_id is None:
+            # A folded loser has no row of its own; its winner carries the key
+            # and will bring its own score.
+            continue
+        rows.append((account_id, posting_id, int(total),
+                     _json.dumps(score.get("parts") or {}),
+                     _json.dumps(score.get("why") or {}),
+                     _json.dumps(score.get("gates") or []),
+                     _json.dumps(score.get("unknowns") or []),
+                     score.get("configVersion")))
+
+    if not rows:
+        return 0
+
+    # **No dedup on the primary key, and the reason is worth stating** because
+    # Postgres refuses `ON CONFLICT DO UPDATE` when one statement presents the
+    # same key twice, so a fold reaching here would abort the batch the way the
+    # board-key collision did. It cannot: `upsert_postings` returns a mapping
+    # built from the rows it inserted, and a folded loser is not one of them, so
+    # `postings.get` above already returned None and skipped it. A dedup here
+    # was written first and a mutation removing it changed nothing, which is
+    # how it was found to be unreachable. Asserted instead.
+    assert len({(row[0], row[1]) for row in rows}) == len(rows), (
+        "two records mapped to one posting, which the fold in upsert_postings "
+        "is supposed to have already removed")
+
+    with conn.cursor() as cur:
+        for chunk in _chunks(rows, batch):
+            values = ", ".join(
+                ["(%s::uuid, %s::uuid, %s, %s::jsonb, %s::jsonb, %s::jsonb, "
+                 "%s::jsonb, %s)"] * len(chunk))
+            cur.execute(
+                f"""insert into job_scores (account_id, posting_id, total,
+                                            parts, why, gates, unknowns,
+                                            config_version)
+                    values {values}
+                    on conflict (account_id, posting_id) do update
+                      set total = excluded.total,
+                          parts = excluded.parts,
+                          why = excluded.why,
+                          gates = excluded.gates,
+                          unknowns = excluded.unknowns,
+                          config_version = excluded.config_version,
+                          computed_at = now()""",
+                [field for row in chunk for field in row])
+    return len(rows)
+
+
 def upsert_decisions(conn, records, postings, account_id, batch=500):
     """The per-account half of the legacy `state` field."""
     rows = []
@@ -598,6 +674,12 @@ def run(conn, account_id, records):
     employers, contested = upsert_employers(conn, values)
     postings, merged = upsert_postings(conn, values, employers)
     decisions = upsert_decisions(conn, values, postings, account_id)
+    # After the postings, because a score references one. Here as well as in
+    # `dual_write.mirror_pool` because the mirror only sees a sweep's delta:
+    # roughly a fifth of the pool changes per sweep, so scores would arrive
+    # over days rather than at once, and the lane's ordering would be sorting
+    # a corpus most of which had no score to sort on.
+    scores = upsert_scores(conn, values, postings, account_id)
     unnamed = sum(1 for r in values if not norm_company(r.get("company")))
     return {
         "records": len(values),
@@ -607,6 +689,7 @@ def run(conn, account_id, records):
         "merged": merged,
         "contested_domains": contested,
         "decisions": decisions,
+        "scores": scores,
     }
 
 

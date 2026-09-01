@@ -44,6 +44,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 TARGET = REPO / "apps" / "web" / "app" / "board.css"
 CHROME = REPO / "apps" / "web" / "app" / "chrome.generated.ts"
 LANES = REPO / "apps" / "web" / "app" / "lanes.generated.ts"
+RUBRIC = REPO / "apps" / "web" / "app" / "rubric.generated.ts"
 STATIC_SRC = REPO / "deploy" / "public"
 STATIC_DST = REPO / "apps" / "web" / "public"
 
@@ -303,6 +304,24 @@ def head_parts():
     return {"HEAD": head, "THEME_BOOT": boot, "THEME_WIRE": wire}
 
 
+def rubric_module():
+    """The match rubric's component order and weights, as TypeScript.
+
+    Generated because the card's breakdown draws `earned/possible` for each
+    component, and `possible` is `match_score.WEIGHTS`. Retyping five integers
+    into a TSX file is how the two boards end up disagreeing about what a
+    perfect title match is worth, silently, in a bar that still renders.
+    """
+    import found_lane
+    import json
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// The rubric's own component order and weights, from\n"
+            "// found_lane.COMPONENTS and match_score.WEIGHTS.\n\n"
+            f"export const COMPONENTS = {json.dumps(list(found_lane.COMPONENTS))} as const;\n\n"
+            f"export const WEIGHTS: Record<string, number> = "
+            f"{json.dumps(dict(found_lane.MATCH_WEIGHTS))};\n")
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -389,6 +408,9 @@ def main(argv=None):
     print(f"wrote {CHROME.relative_to(REPO)} ({len(chrome)} chars)")
     lanes = lane_module()
     LANES.write_text(lanes, encoding="utf-8")
+    RUBRIC.write_text(rubric_module(), encoding="utf-8")
+    print(f"wrote {RUBRIC.relative_to(REPO)} "
+          f"({len(rubric_module())} chars)")
     moved = sync_static()
     print(f"synced {len(STATIC_FILES)} static files into apps/web/public"
           + (f" ({', '.join(moved)} changed)" if moved else " (all current)"))
