@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 TARGET = REPO / "apps" / "web" / "app" / "board.css"
 CHROME = REPO / "apps" / "web" / "app" / "chrome.generated.ts"
+LANES = REPO / "apps" / "web" / "app" / "lanes.generated.ts"
 
 #: Enough shape for `dashboard.build` to render, and nothing real. Keys come
 #: from the published state's own contract; a missing one raises here rather
@@ -173,6 +174,13 @@ def select_script():
     return premium_ui.SCRIPT
 
 
+def lane_module():
+    """The lane SQL as TypeScript. One spelling of each predicate, generated,
+    for the reason `LogoContractTests` exists."""
+    import v2_lanes
+    return v2_lanes.as_typescript()
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -202,6 +210,12 @@ def main(argv=None):
     current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else None
 
     if args.check:
+        lanes_now = LANES.read_text(encoding="utf-8") if LANES.exists() else None
+        if lanes_now != lane_module():
+            print(f"{LANES.relative_to(REPO)} is stale. Run "
+                  f"'python3 scripts/sync_v2_styles.py' and commit it.",
+                  file=sys.stderr)
+            return 1
         chrome_now = CHROME.read_text(encoding="utf-8") if CHROME.exists() else None
         if chrome_now != chrome_module():
             print(f"{CHROME.relative_to(REPO)} is stale. Run "
@@ -222,6 +236,9 @@ def main(argv=None):
     chrome = chrome_module()
     CHROME.write_text(chrome, encoding="utf-8")
     print(f"wrote {CHROME.relative_to(REPO)} ({len(chrome)} chars)")
+    lanes = lane_module()
+    LANES.write_text(lanes, encoding="utf-8")
+    print(f"wrote {LANES.relative_to(REPO)} ({len(lanes)} chars)")
     return 0
 
 

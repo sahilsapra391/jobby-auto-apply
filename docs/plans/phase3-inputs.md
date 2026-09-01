@@ -198,3 +198,26 @@ you when it is not. Parity does not see it, because a session absent from the
 file store is `only_in_postgres`, which is the exemption section 6 is about.
 
 The fix belongs with whatever mirrors deletions, which nothing currently does.
+
+## 9. A retitle is a false collision under a URL-derived key
+
+Bitdeer's "Operations Technician" was captured twice: the employer retitled it,
+the slug moved with the title, and the scraper took it as a new posting. The
+two records share `(breezy, bitdeer, eeab1edbc9db)`, so they collapse into one
+row and every field that moved with the title -- title, normalised title, apply
+URL -- shows up as a merged-field drop.
+
+**That is one posting merged with its own past, not two records for one job.**
+The distinction matters because the remedy is different: there is nothing to
+reconcile between two employers' listings, only a stale capture of the same one.
+
+**And it is normal traffic rather than a curiosity.** The collision count went
+2, then 5, then 7 within two days of anyone looking. §5's connector upsert will
+meet this constantly, and a connector that re-derives its key from a URL will
+keep manufacturing pairs every time a title changes.
+
+A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
+`board_slug` and `external_id` by construction and never has to look at the
+URL, so it sidesteps the whole class. That is the second argument for passing
+the key rather than re-deriving it -- section 4 gives the first, which is that
+79.2% is as far as derivation gets on the corpus that exists.
