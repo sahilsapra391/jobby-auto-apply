@@ -1805,6 +1805,49 @@ reason anyone knows it works.
 
 ## No diagnostic path is ever discarded
 
+**A guard, alarm or counter is unverified until it has been observed firing on
+the production machine. Not tested. Observed.** A green suite is evidence that
+the code is internally consistent. It is not evidence that the thing works,
+and for this class of code the two have come apart every single time.
+
+The count is now four in one week, and the shape is identical each time: the
+mechanism was correct, its tests passed, and it measured nothing.
+
+- The write-path counter sat inside `store.write_private`, which production
+  does not reach for class A writes: mirror off, 2 observations; mirror on, 0.
+  19 of 27 required paths were invisible to it.
+- The firewall's `activity.json` was written at the end of `main()`, which a
+  process killed by a signal never reaches. Two months, zero records from any
+  run that reached a form.
+- `ping_health` returned `None` on any network error and every caller ignored
+  it, so a misconfigured alarm was indistinguishable from a healthy system.
+- `pool_staleness` called `jobs_store.paths(None)`, which raises; a broad
+  `except Exception` returned `None`; and `None` reads as "nothing to say". An
+  alarm that could not fire on any machine, shipped as the fix for an outage
+  nothing alerted on.
+
+The last one is the sharpest because of what it was for and how it was found.
+Every test in its file mocked the function, **including the one named for
+testing it**. What caught it was calling it on this Mac after deploying and
+reading the number: `pool age: unknown`, beside a pool twenty-seven minutes
+old.
+
+So, concretely, before calling any of this done: make it fire, or read the
+value it is silent about. A silent alarm has two meanings and only one of them
+is good news. `docs/health-observed.md` records which of this repository's
+guards have actually been seen firing here and which have not, and a guard that
+has never fired is not thereby broken, it is unverified, which is a different
+claim and the honest one.
+
+**Auditing that list is itself subject to this rule.** Two of the first
+readings in it were wrong in the safe-looking direction: `activity.json` is
+absent from the disk *by design*, removed with the staged uploads it sits
+beside, and `attempts[].browserCalls` lives in the run log rather than the
+session file. Both initially read as "never fired" because the instrument was
+pointed at the wrong place, which is the same defect as the guards it was
+auditing. Grep for the message the code actually emits, in the file it actually
+writes to.
+
 **Stderr, health-check results, error branches: none of them may be dropped,
 swallowed or routed to `/dev/null`. The failure nobody can reproduce is almost
 always the one whose evidence was thrown away at the source.**
