@@ -202,6 +202,35 @@ SORTS = {
 #: The board's own wording for them, from `found_lane.SORT_OPTIONS`.
 SORT_LABELS = {"new": "Newest", "score": "Match %"}
 
+#: The date windows the board's own radio row offers, and the interval each
+#: means. From `found_lane.DATE_WINDOWS`, so the two cannot drift.
+WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
+           "14d": "14 days", "30d": "30 days"}
+
+#: The Found lane's filters, as one predicate each.
+#:
+#: **Parameters rather than query variants.** Three optional filters and two
+#: sorts is sixteen generated queries per lane, and every one of them a place
+#: for the predicate to be spelled differently. A NULL parameter means the
+#: filter is off, so there is one query and the caller decides.
+#:
+#: `websearch_to_tsquery` rather than `plainto_tsquery`, because the board's
+#: keyword box takes phrases in quotes and `-word` to exclude, and the reader
+#: who types them should get what they asked for rather than a token soup.
+#:
+#: "direct listings only" is `sourceClass = 'ats'`, which is `direct_rank` 0.
+#: The board draws the same chip on the same rows: `canonical_rank` puts ats at
+#: 0, aggregator and feed at 2, and employer and other at 3, and the card's
+#: chip is `rank <= 1`.
+FILTERS = """
+   and (%(q)s::text is null
+        or p.search_tsv @@ websearch_to_tsquery('english', %(q)s::text))
+   and (%(within)s::text is null
+        or (p.posted_at is not null
+            and p.posted_at >= now() - %(within)s::interval))
+   and (not coalesce(%(direct)s::boolean, false)
+        or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)"""
+
 
 def page_sql(lane, sort="new"):
     """One page of a lane, highest first, absent last."""
@@ -221,7 +250,7 @@ select {POSTING_COLUMNS}
   left join job_scores s
     on s.posting_id = p.id and s.account_id = %(account)s
  where {LANES[lane]["where"]}
-   and {keyset(column, cast, "p")}
+   and {keyset(column, cast, "p")}{FILTERS}
  {order_by(column, "p")}
  limit %(limit)s
 """.strip()
@@ -242,12 +271,14 @@ def count_sql(lane):
     """The lane's size. Separate from the page so a count never drags a page
     of columns across the wire with it."""
     if lane in POSTING_LANES:
+        # The count carries the filters too, or the tab badge says 18,104 over
+        # a lane showing nine.
         return f"""
 select count(*)
   from postings p
   left join job_decisions d
     on d.posting_id = p.id and d.account_id = %(account)s
- where {LANES[lane]["where"]}
+ where {LANES[lane]["where"]}{FILTERS}
 """.strip()
     return f"""
 select count(*)
@@ -264,12 +295,28 @@ def as_typescript():
     thing `LogoContractTests` exists to prevent, and a lane predicate is
     exactly the kind of text that gets edited on one side only.
     """
-    order = ["account", "after_at", "after_id", "limit"]
+    #: Every parameter any query here can take, in a fixed order so the
+    #: numbering is deterministic. Which of them a given query actually uses is
+    #: read off that query, not assumed.
+    known = ["account", "after_at", "after_id", "limit", "q", "within", "direct"]
 
     def positional(sql):
-        for i, name in enumerate(order, start=1):
+        """`(sql, params)` with **contiguous** numbering for this query alone.
+
+        **A global name-to-position map does not work and the failure is
+        obscure.** The Found count uses `account` and the three filters and
+        never mentions the cursor or the limit, so a shared numbering gave it
+        `$1, $5, $6, $7`; Postgres cannot infer a type for a parameter the
+        statement does not reference, and the whole page 500s with "could not
+        determine data type of parameter $2" no matter what is passed for it.
+
+        So each query is numbered from 1 over the parameters it actually names,
+        and it carries the list, which is also what stops a caller guessing.
+        """
+        used = [name for name in known if f"%({name})s" in sql]
+        for i, name in enumerate(used, start=1):
             sql = sql.replace(f"%({name})s", f"${i}")
-        return sql
+        return sql, used
 
     # **Every sort a lane offers, emitted as its own query.** Only Found has
     # more than one, and building the alternative by string-substituting the
@@ -278,11 +325,20 @@ def as_typescript():
     lanes = {}
     for k, v in LANES.items():
         sorts = SORTS if k in POSTING_LANES else {"new": None}
+        page_text, page_params = positional(page_sql(k))
+        count_text, count_params = positional(
+            count_sql(k).replace("%(limit)s", ""))
+        emitted = {}
+        for name in sorts:
+            text, params = positional(page_sql(k, name))
+            emitted[name] = {"sql": text, "params": params}
         lanes[k] = {
             "label": v["label"],
-            "page": positional(page_sql(k)),
-            "count": positional(count_sql(k).replace("%(limit)s", "")),
-            "sorts": {name: positional(page_sql(k, name)) for name in sorts},
+            "page": page_text,
+            "pageParams": page_params,
+            "count": count_text,
+            "countParams": count_params,
+            "sorts": emitted,
         }
     return (
         "// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
@@ -292,12 +348,20 @@ def as_typescript():
         "// for node-postgres, in the order [account, afterAt, afterId, limit].\n"
         "export type Lane = " + " | ".join(f'"{k}"' for k in LANES) + ";\n\n"
         "export type Sort = " + " | ".join(f'"{s}"' for s in SORTS) + ";\n\n"
+        "// The date windows the board's radio row offers, from\n"
+        "// found_lane.DATE_WINDOWS. The value is the interval the SQL casts.\n"
+        "export const WINDOWS: Record<string, string> = "
+        + json.dumps(WINDOWS) + ";\n\n"
         "// What each sort is called in the control, taken from the\n"
         "// board's own found_lane.SORT_OPTIONS.\n"
         "export const SORT_LABELS: Record<Sort, string> = "
         + json.dumps(SORT_LABELS) + ";\n\n"
+        "// Each query carries the parameters it takes, in order. Numbering is\n"
+        "// contiguous per query: a shared map leaves gaps Postgres cannot type.\n"
+        "export type LaneQuery = { sql: string; params: string[] };\n\n"
         "export const LANES: Record<Lane, { label: string; page: string; "
-        "count: string; sorts: Record<string, string> }> =\n"
+        "pageParams: string[]; count: string; countParams: string[]; "
+        "sorts: Record<string, LaneQuery> }> =\n"
         + json.dumps(lanes, indent=2) + " as const;\n")
 
 

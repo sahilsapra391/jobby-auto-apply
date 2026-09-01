@@ -17,6 +17,12 @@ and a fixture with no undated rows in it would not.
 import sys
 import re
 import unittest
+
+#: The Found lane's filter parameters, all off. Every generated Found query
+#: names them now, and psycopg raises on a missing key rather than defaulting,
+#: which is the behaviour to want: a walk that silently filtered would report a
+#: smaller lane as correct.
+NO_FILTERS = {"q": None, "within": None, "direct": None}
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -149,7 +155,8 @@ class LaneCase(pgtest.SchemaCase):
         for _ in range(500):                    # a bound, not an expectation
             with self.conn.cursor() as cur:
                 cur.execute(sql, {"account": self.account, "limit": page,
-                                  "after_at": after_at, "after_id": after_id})
+                                  "after_at": after_at, "after_id": after_id,
+                                  **NO_FILTERS})
                 batch = cur.fetchall()
             if not batch:
                 return seen
@@ -340,7 +347,7 @@ class TheIndexActuallyServesTheLane(LaneCase):
         with self.conn.cursor() as cur:
             cur.execute("explain (format text) " + sql,
                         {"account": self.account, "limit": 50,
-                         "after_at": None, "after_id": None})
+                         "after_at": None, "after_id": None, **NO_FILTERS})
             plan = "\n".join(r[0] for r in cur.fetchall())
         # On a 51-row fixture the planner will choose a sort regardless, so
         # this asserts the index exists and is declared to match, which is the
@@ -389,7 +396,8 @@ class FoundWalksByScoreToo(LaneCase):
         for _ in range(500):
             with self.conn.cursor() as cur:
                 cur.execute(sql, {"account": self.account, "limit": page,
-                                  "after_at": after_at, "after_id": after_id})
+                                  "after_at": after_at, "after_id": after_id,
+                                  **NO_FILTERS})
                 batch = cur.fetchall()
                 at = [c.name for c in cur.description].index("score")
             if not batch:

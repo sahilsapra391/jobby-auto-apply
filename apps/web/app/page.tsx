@@ -26,16 +26,25 @@ const TAB_ORDER: Lane[] = ["found", "watch", "flight", "act", "done"];
 export default async function Board({
   searchParams,
 }: {
-  searchParams: Promise<{ lane?: string; sort?: string }>;
+  searchParams: Promise<{ lane?: string; sort?: string; q?: string;
+                          within?: string; direct?: string }>;
 }) {
-  const { lane: asked, sort: askedSort } = await searchParams;
+  const { lane: asked, sort: askedSort, q, within, direct } =
+    await searchParams;
   const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
     ? (asked as Lane)
     : "found";
 
   const sort: Sort = (askedSort ?? "") in SORT_LABELS
     ? (askedSort as Sort) : "new";
-  const [tally, first] = await Promise.all([counts(), page(active, null, 50, sort)]);
+  // The filters only mean anything on Found; the other lanes ignore them, and
+  // carrying them into those counts would make a tab badge disagree with the
+  // lane behind it.
+  const filters = active === "found"
+    ? { q, within, direct: direct === "1" } : undefined;
+  const [tally, first] = await Promise.all([
+    counts(filters), page(active, null, 50, sort, filters),
+  ]);
 
   return (
     <>
@@ -76,7 +85,9 @@ export default async function Board({
           {active === "found" ? (
             <>
               <ScanBanner />
-              <Filters />
+              <Filters q={q} within={within} direct={direct === "1"}
+                       sort={sort} shown={first.rows.length}
+                       total={tally[active]} />
             </>
           ) : null}
           {first.rows.length === 0 ? (

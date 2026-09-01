@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { LANES, type Lane, type Sort } from "../lanes.generated";
+import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
 
 /**
  * Read-only access to the board's Postgres.
@@ -57,15 +57,46 @@ export type Row = Record<string, unknown> & { id: string };
  * and the SQL is generated from scripts/v2_lanes.py, so the ordering, the
  * `nulls last` and the three cases the cursor predicate has are written once.
  */
+/** The Found lane's filters. Absent means off, never "match everything". */
+export type Filters = { q?: string; within?: string; direct?: boolean };
+
+/**
+ * The arguments a generated query asks for, in the order it asks for them.
+ *
+ * **Each query is numbered from 1 over the parameters it actually names**, so
+ * the caller cannot assume a fixed layout: the Found count takes `account` and
+ * the three filters and never mentions the cursor. Building the array from the
+ * query's own `params` list is what keeps the two in step, and it is the same
+ * reason the SQL is generated rather than written twice.
+ */
+function argsFor(params: readonly string[], values: Record<string, unknown>) {
+  return params.map((name) => {
+    if (!(name in values)) {
+      throw new Error(`the query asks for ${name}, which this caller has not got`);
+    }
+    return values[name];
+  });
+}
+
+function filterValues(f: Filters | undefined) {
+  return {
+    q: f?.q?.trim() || null,
+    within: f?.within && f.within in WINDOWS ? WINDOWS[f.within] : null,
+    direct: f?.direct ?? false,
+  };
+}
+
 export async function page(lane: Lane, after: Cursor, limit = 50,
-                           sort: Sort = "new") {
+                           sort: Sort = "new", filters?: Filters) {
   const account = await accountId();
   // One query per (lane, sort), all generated. Substituting an ORDER BY on
   // this side would be a second spelling of the predicate.
-  const sql = LANES[lane].sorts[sort] ?? LANES[lane].page;
-  const { rows } = await pool().query(sql, [
-    account, after?.at ?? null, after?.id ?? null, limit,
-  ]);
+  const query = LANES[lane].sorts[sort]
+    ?? { sql: LANES[lane].page, params: LANES[lane].pageParams };
+  const { rows } = await pool().query(query.sql, argsFor(query.params, {
+    account, after_at: after?.at ?? null, after_id: after?.id ?? null, limit,
+    ...filterValues(filters),
+  }));
   // **The cursor column follows the sort, not the lane.** Ordering Found by
   // match score walks `total`, and handing the next page a `posted_at` cursor
   // would compare a date against a smallint: either an error or, worse, a
@@ -94,12 +125,16 @@ function cursorValue(at: unknown, sort: Sort): string | null {
   return new Date(at as string).toISOString();
 }
 
-export async function counts(): Promise<Record<Lane, number>> {
+export async function counts(filters?: Filters): Promise<Record<Lane, number>> {
   const account = await accountId();
   const out = {} as Record<Lane, number>;
+  const values = { account, ...filterValues(filters) };
   await Promise.all(
     (Object.keys(LANES) as Lane[]).map(async (lane) => {
-      const { rows } = await pool().query(LANES[lane].count, [account]);
+      // Only Found's count names the filters; the others ask for the account
+      // alone, and `argsFor` gives each what it declares.
+      const { rows } = await pool().query(
+        LANES[lane].count, argsFor(LANES[lane].countParams, values));
       out[lane] = Number(rows[0].count);
     }),
   );
