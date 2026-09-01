@@ -384,6 +384,36 @@ def _record_timing(entry, root=None):
         pass
 
 
+def _observe_write_path():
+    """Tick the write paths that led here, for the parity gate's checklist.
+
+    **The pool does not reach disk through `store.write_private` when the
+    mirror is on, and the coverage hook was only there.** `_persist_pool` has
+    two branches: mirror off writes the file through `store.write_private`, and
+    mirror on calls `persist`, which writes it itself. So the instrumentation
+    sat on the branch a test takes -- temp root, no database, mirror disabled --
+    and never on the branch production takes.
+
+    Measured 2026-09-01, the same call on the same machine: 2 observations with
+    the mirror off, 0 with it on. **19 of the 27 paths the gate requires are
+    class A pool paths**, so a counter built to prove the rare paths fire could
+    not see 70% of its subject on the only machine that matters, while every
+    test stayed green.
+
+    Same contract as the copy in `store.write_private`, and placed for the same
+    reason: after the bytes are down, so an observation never claims a write
+    that failed. It cannot affect the caller.
+    """
+    try:
+        import write_path_coverage
+        write_path_coverage.observe()
+    except Exception:
+        # Silent here and loud inside `observe`, which writes its own reason.
+        # An ImportError on a machine without the sidecar is not worth a line
+        # on every pool write in the system.
+        pass
+
+
 def persist(conn, account_id, path, before, jobs, on_file_failure=None,
             batch=500):
     """Mirror to Postgres, then write the file. In that order, always.
@@ -419,6 +449,7 @@ def persist(conn, account_id, path, before, jobs, on_file_failure=None,
         raise
 
     file_seconds = time.time() - file_started
+    _observe_write_path()
     total = mirror_seconds + file_seconds
     report["mirrorSeconds"] = round(mirror_seconds, 3)
     report["fileSeconds"] = round(file_seconds, 3)
