@@ -333,14 +333,62 @@ def upsert_postings(conn, records, employers, batch=500):
     Board-key collisions are resolved in Python before anything is written
     rather than caught per row, which is what makes batching possible at all:
     one row raising inside a multi-row INSERT aborts the whole batch, and
-    catching that per row is the per-row round trip again. Measured on the real
-    pool there is exactly one such collision, two records for one Greenhouse
-    posting reached through two hostnames. The loser is reported, not dropped
-    quietly.
+    catching that per row is the per-row round trip again. The loser is
+    reported, not dropped quietly.
+
+    **A collision has two sides and the first version only saw one.** Records
+    arriving together were folded here in Python, and then the write said
+    `on conflict (legacy_id)`. `postings` has a second unique constraint,
+    `(source, board_slug, external_id)`, so a record whose board key already
+    belonged to a *different stored row* was not a conflict this statement
+    knew about: it raised `UniqueViolation`, aborted the batch, and because
+    class A dual-write fails the operation on a mirror error, `save_jobs`
+    failed and the sweep could not persist. Every sweep after it failed the
+    same way. That froze the board for seventeen hours on 2026-09-01, on
+    **2 records out of 20,835**.
+
+    So the claimants for a key are now the arriving records *and* whatever
+    already holds it, and `BOARD_KEY_WINNER` decides among all of them. One
+    rule, one implementation, both paths. It matters that it is one rule
+    rather than "the stored row always wins": both live collisions happened to
+    have the incumbent winning, so that shortcut would have passed every test
+    written from the pool and been a second rule waiting for the first record
+    that sorted lower.
+
+    A displaced incumbent keeps its `id`. The row is renamed rather than
+    replaced, because the uuid is what decisions point at and what parity
+    matches on, and a uuid that moves makes both flap.
     """
     columns = _columns()
 
-    prepared, seen, merged, folded = [], {}, [], {}
+    # Which stored row, if any, already holds each key the batch is about to
+    # claim. Read in one statement for the same reason everything else here is
+    # batched: Neon answers a round trip in about 60 ms.
+    incoming_keys = set()
+    for record in records:
+        row = posting_row(record)
+        incoming_keys.add((row["source"], row["board_slug"], row["external_id"]))
+    held = {}
+    if incoming_keys:
+        keys = sorted(incoming_keys)
+        with conn.cursor() as cur:
+            for chunk in _chunks(keys, batch):
+                placeholders = ", ".join(["(%s, %s, %s)"] * len(chunk))
+                cur.execute(
+                    f"select source, board_slug, external_id, legacy_id "
+                    f"from postings where (source, board_slug, external_id) "
+                    f"in ({placeholders})",
+                    [field for key in chunk for field in key])
+                for source, slug, external, legacy in cur.fetchall():
+                    held[(source, slug, external)] = legacy
+
+    prepared, seen, merged, folded, renames = [], {}, [], {}, []
+    # The stored holder is a claimant like any other, so it is seeded into
+    # `seen` before the arriving records are considered. Nothing below can then
+    # tell an incumbent from a record that simply sorted earlier.
+    for key, legacy in held.items():
+        seen[key] = legacy
+
     for record in sorted(records, key=BOARD_KEY_WINNER):
         row = posting_row(record)
         norm = norm_company(record.get("company")) or UNKNOWN_EMPLOYER
@@ -350,15 +398,44 @@ def upsert_postings(conn, records, employers, batch=500):
                 f"{row['legacy_id']} names employer {norm!r}, which was "
                 f"not created; employers must be upserted first")
         key = (row["source"], row["board_slug"], row["external_id"])
-        if key in seen:
+        holder = seen.get(key)
+        if holder == row["legacy_id"]:
+            # **The stored row is this record, not a rival for its key.** The
+            # first version compared the two ids and folded on `<=`, so on the
+            # second pass over an unchanged pool every record folded into
+            # itself: nothing was written, and the merged-ids update then set
+            # an empty array on a NOT NULL column. Idempotency is the property
+            # a mirror is most often asked for and least often tested, and it
+            # was five existing tests that caught this rather than any of the
+            # new ones.
+            holder = None
+        if holder is not None and BOARD_KEY_WINNER({"id": holder}) <= \
+                BOARD_KEY_WINNER(record):
             merged.append(row["legacy_id"])
             # The loser gets no row, so the winner carries its id. Without
             # this the record is in the file store and findable nowhere in
             # Postgres, and parity reports a divergence that is really a
             # merge. Recording it beats exempting it: an exemption is a
             # filter, and a filter is where missing records hide.
-            folded.setdefault(seen[key], []).append(row["legacy_id"])
+            folded.setdefault(holder, []).append(row["legacy_id"])
             continue
+        if holder is not None:
+            # This record sorts lower than the row already storing its key, so
+            # it takes that row: renamed rather than replaced, because the uuid
+            # is what decisions point at and what parity matches on.
+            # `on conflict (legacy_id)` then finds it.
+            #
+            # **The displaced holder is always the stored one**, never another
+            # record from this batch, because the batch is iterated in
+            # `BOARD_KEY_WINNER` order: a later record cannot sort lower than
+            # an earlier one. So there is nothing to un-prepare and no earlier
+            # fold to re-key, and the first version's code for both was
+            # unreachable. Unreachable handling reads as protection and is not.
+            assert holder == held.get(key), (
+                "a batch record was displaced, which the sort order forbids")
+            renames.append((holder, row["legacy_id"]))
+            merged.append(holder)
+            folded.setdefault(row["legacy_id"], []).append(holder)
         seen[key] = row["legacy_id"]      # see BOARD_KEY_WINNER
         prepared.append([employer_id] + [row[c] for c in columns])
 
@@ -368,6 +445,15 @@ def upsert_postings(conn, records, employers, batch=500):
 
     mapping = {}
     with conn.cursor() as cur:
+        # Before the insert, so `on conflict (legacy_id)` finds the row it is
+        # meant to update instead of colliding with it on the other constraint.
+        for chunk in _chunks(renames, batch):
+            values = ", ".join(["(%s, %s)"] * len(chunk))
+            cur.execute(
+                f"""update postings set legacy_id = v.after
+                    from (values {values}) as v(before, after)
+                    where postings.legacy_id = v.before""",
+                [field for row in chunk for field in row])
         for chunk in _chunks(prepared, batch):
             cur.execute(
                 f"insert into postings (employer_id, {', '.join(columns)}) "
@@ -384,10 +470,13 @@ def upsert_postings(conn, records, employers, batch=500):
         for chunk in _chunks(links, batch):
             values = ", ".join(["(%s, %s::text[])"] * len(chunk))
             cur.execute(
-                f"""update postings set merged_legacy_ids = v.ids
+                f"""update postings set merged_legacy_ids = coalesce((
+                        select array_agg(distinct m order by m)
+                          from unnest(coalesce(postings.merged_legacy_ids,
+                                               '{{}}'::text[]) || v.ids) as m
+                         where m <> postings.legacy_id), '{{}}'::text[])
                     from (values {values}) as v(legacy, ids)
-                    where postings.legacy_id = v.legacy
-                      and postings.merged_legacy_ids is distinct from v.ids""",
+                    where postings.legacy_id = v.legacy""",
                 [field for row in chunk for field in row])
     return mapping, merged
 
