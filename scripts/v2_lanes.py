@@ -103,13 +103,24 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: two. `updated_at` is the ordering: it is when the work last moved, which is
 #: the question these lanes answer, and `posted_at` would be unavailable
 #: anyway.
-#: `applications` holds no company or role -- it never has -- so an
-#: application lane rendered from it alone shows an opaque legacy id and
-#: nothing a person recognises. `roles` carries both, keyed on the same
-#: legacy id, and joins 196 of them. LEFT, because a row it cannot name is
-#: still a row and dropping it would be a filter.
+#: **§3 cannot name an application, and there is nothing to join for it.**
+#:
+#: `applications` holds no company or role. The obvious fix is to join `roles`,
+#: which has both on the same key -- and that is wrong for the same reason
+#: reading `history` for Submitted was wrong, one function earlier: `roles` is
+#: a pre-§3 `jobs_db` table that no migration creates and nothing maintains.
+#: `class_b._mirror_roles` says so in its own docstring and mirrors roles.json
+#: as *applications* instead. The table is frozen at whatever the backfill left,
+#: 196 rows, and a role written today does not reach it -- demonstrated by
+#: writing one and watching the count stay at 196.
+#:
+#: So a lane joining it would look right on this machine and show nothing on a
+#: clean deployment, which is the launchd PATH bug's shape. Until §3 carries a
+#: name -- either company and role on `applications`, or the posting link of
+#: section 5 -- the lanes show the legacy id, and that is the honest answer
+#: rather than a join to a table on its way out.
 APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
-             a.created_at, r.company, r.role, r.url"""
+             a.created_at"""
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
@@ -174,7 +185,6 @@ select {POSTING_COLUMNS}
     return f"""
 select {APPLICATION_COLUMNS}
   from applications a
-  left join roles r on r.application_id = a.legacy_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
    and {keyset('a.updated_at')}

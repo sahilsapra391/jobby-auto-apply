@@ -279,29 +279,37 @@ URL, so it sidesteps the whole class. That is the second argument for passing
 the key rather than re-deriving it -- section 4 gives the first, which is that
 79.2% is as far as derivation gets on the corpus that exists.
 
-## 10. `roles` is mirrored and never compared, and it is seven rows behind
+## 10. §3 cannot name an application, and `roles` is not the way out
 
-`class_b._mirror_roles` writes it and `docs/write-paths.md` classifies it as
-class B, so it is a mirrored artifact by every account the repository gives.
-**`verify_parity` does not compare it.** Its class B buckets are `sessions`,
-`events`, `answers` and `profile`; there is no `roles` bucket on either side.
+`applications` holds no company and no role. An application lane rendered from
+it shows an opaque legacy id and nothing a person recognises, which is what
+Watching and Needs you looked like the first time they drew real rows.
 
-Measured 2026-09-01: `roles.json` holds 203 entries and the table holds 196.
-The seven missing are real roles -- SWIGGY, Reddit, Talkspace ×2, Turing,
-Cloudflare, Toast -- and one of them, `42f553a7d7487009`, is the Toast watch
-driven deliberately during Phase 1 to prove class B was exercised. **The
-session half of that write mirrored and the role half did not, and the gate
-said green throughout.**
+**The obvious fix is to join `roles`, and it is wrong.** That table has both,
+on the same key, for 196 rows -- and no migration creates it. It is a pre-§3
+`jobs_db` table, like `sessions` and `history`, and nothing maintains it:
+`class_b._mirror_roles` says so in its own docstring and mirrors `roles.json`
+as *applications* instead, on the grounds that inventing a `roles` table would
+be a fifth spelling of the same fact.
 
-It surfaced from the v2 lanes rather than from any check: `applications` has no
-company or role, so the lanes join `roles` for them, and seven rows came back
-unnamed. Nothing else in the system reads that table often enough to notice.
+Demonstrated rather than argued, on 2026-09-01: writing a role through
+`store.py role-put` returned `remembered: true`, the file took it, and the
+table stayed at 196.
 
-This is the fifth thing the gate cannot see, after section 6's extra
-applications, the `sessions` table of section 7, session deletions in section
-8, and `job_decisions` states nothing writes. Adding a `roles` comparison is a
-change to `verify_parity`, which is a gate path and restarts the clock, so it
-is a decision rather than a fix to make in passing.
+**This was written up once as "`roles` is mirrored and the parity gate cannot
+see it". That was wrong and the correction is the point.** The gate is not
+blind to a mirrored table; the table is not mirrored, and not part of the
+schema. It is the same mistake as reading `history` for the Submitted lane,
+made one function later, in the same afternoon, by someone who had just caught
+it. A join that works on this machine and returns nothing on a clean
+deployment is the launchd PATH bug's shape, and knowing the shape is evidently
+not enough to stop making it.
 
-Whoever adds it should expect it to open red on those seven and should find out
-why they were never written before deciding what "green" means.
+So the lanes show the legacy id until §3 carries a name. Two ways to give it
+one, and section 5 argues for the second:
+
+- company and role on `applications`, which duplicates what the posting
+  already holds;
+- `applications.posting_id`, which is NULL for all 224 rows and which every
+  other Phase 3 item needs anyway.
+

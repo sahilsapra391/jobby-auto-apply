@@ -48,9 +48,10 @@ export function PostingRow(row: Row) {
 }
 
 export function ApplicationRow(row: Row) {
-  // `applications` carries no company or role, so the lane joins `roles` for
-  // them. A row it cannot name falls back to its legacy id rather than being
-  // dropped: an unnameable application is still an application.
+  // §3 carries no company or role for an application, and there is nothing
+  // to join for one: `roles` has both and is a pre-§3 table no migration
+  // creates and nothing maintains. So the row shows its legacy id, which is
+  // honest, until `applications.posting_id` exists. See phase3-inputs §10.
   const company = s(row.company);
   const role = s(row.role);
   return (
