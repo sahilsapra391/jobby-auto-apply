@@ -15,6 +15,7 @@ and a fixture with no undated rows in it would not.
 """
 
 import sys
+import re
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -430,6 +431,86 @@ class FoundWalksByScoreToo(LaneCase):
         sql = v2_lanes.page_sql("found", "score")
         self.assertNotIn("s.id", sql)
         self.assertIn("p.id", sql)
+
+
+class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
+    """**The general form, because Found-by-score is only the first instance.**
+
+    Until a lane sorted on another table, deriving the keyset tie-breaker from
+    the sort column's alias was always right: every lane ordered on its own
+    table, so the alias and the row's identity were the same letter. The
+    six-lane walk could not see the defect because the defect did not exist
+    yet, and the test written for the instance would not see the next one
+    either. Any lane that later sorts on something other than its own row has
+    the same fault waiting.
+
+    So this reads every `(lane, sort)` the generator emits and asserts the
+    ordering breaks ties on the lane's *own* row, whatever it sorts by. It
+    needs no database.
+
+    The identity is derived from each query's own FROM clause rather than
+    restated here, so a lane built on a third table is covered the day it
+    exists.
+    """
+
+    def pairs(self):
+        for lane in v2_lanes.LANES:
+            sorts = (v2_lanes.SORTS if lane in v2_lanes.POSTING_LANES
+                     else {"new": None})
+            for sort in sorts:
+                yield lane, sort, v2_lanes.page_sql(lane, sort)
+
+    def identity(self, sql):
+        """The alias of the table the lane is a lane *of*, from its FROM."""
+        found = re.search(r"\bfrom\s+(\w+)\s+(\w+)", sql)
+        self.assertIsNotNone(found, "the query has no FROM clause to read")
+        return found.group(2)
+
+    def test_there_is_more_than_one_pair_to_check(self):
+        """Without this the whole class passes on an empty generator."""
+        pairs = list(self.pairs())
+        self.assertGreater(len(pairs), len(list(v2_lanes.LANES)),
+                           "no lane offers a second sort, so nothing here "
+                           "exercises cross-table ordering at all")
+
+    def test_at_least_one_pair_actually_sorts_on_another_table(self):
+        """The control. If every sort column shares the lane's own alias, this
+        class is asserting something that cannot fail."""
+        crossing = []
+        for lane, sort, sql in self.pairs():
+            column, _ = (v2_lanes.SORTS[sort] if lane in v2_lanes.POSTING_LANES
+                         else ("p.posted_at", None))
+            if column.split(".")[0] != self.identity(sql):
+                crossing.append((lane, sort))
+        self.assertTrue(crossing,
+                        "no lane sorts on a table other than its own, so the "
+                        "assertion below is vacuous")
+
+    def test_every_ordering_ties_on_the_lanes_own_row(self):
+        for lane, sort, sql in self.pairs():
+            with self.subTest(lane=lane, sort=sort):
+                own = self.identity(sql)
+                order = [line.strip() for line in sql.splitlines()
+                         if line.strip().startswith("order by")]
+                self.assertEqual(len(order), 1, "expected one order by clause")
+                tie = re.findall(r"\b(\w+)\.id\b", order[0])
+                self.assertEqual(tie, [own],
+                                 f"{lane}/{sort} breaks ties on {tie} rather "
+                                 f"than its own row {own!r}")
+
+    def test_the_keyset_ties_on_the_same_row_as_the_ordering(self):
+        """A cursor predicate and an ORDER BY that disagree about the
+        tie-breaker walk two different sequences, which repeats and skips
+        rows at every page boundary rather than failing outright."""
+        for lane, sort, sql in self.pairs():
+            with self.subTest(lane=lane, sort=sort):
+                own = self.identity(sql)
+                where = sql[sql.index(" where "):sql.index("order by")]
+                cursor = set(re.findall(r"\b(\w+)\.id\s*<\s*%\(after_id\)s",
+                                        where))
+                self.assertEqual(cursor, {own},
+                                 f"{lane}/{sort} walks its cursor on {cursor} "
+                                 f"rather than {own!r}")
 
 
 if __name__ == "__main__":
