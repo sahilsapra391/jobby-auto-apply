@@ -221,3 +221,60 @@ A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
 URL, so it sidesteps the whole class. That is the second argument for passing
 the key rather than re-deriving it -- section 4 gives the first, which is that
 79.2% is as far as derivation gets on the corpus that exists.
+## 5. An application is not linked to its posting, and Phase 3 needs it to be
+
+**`applications.posting_id` is NULL for all 224 rows.** Measured 2026-08-31.
+The column exists, the foreign key exists, and nothing has ever populated it.
+
+That does not block the v2 lanes, which read `applications.status` and the
+history events directly. It blocks three things that all arrive in Phase 3:
+
+- a Submitted card cannot link to the posting it came from, because it does
+  not know which one that is;
+- dedup against the pool has nothing to dedup on;
+- §5's connector upsert cannot reconcile a re-seen job with an application
+  already made against it, which is the case that produces a duplicate
+  application under a real name.
+
+It also explains a delta that looks like a bug and is not. The pool holds
+`passed 9` and the applications hold `dropped 57`; those are different
+populations -- a posting you pressed Pass on, versus an application you
+abandoned after it existed -- and with no link between them they can never
+agree. Anyone comparing the two counts will keep rediscovering that.
+
+The backfill has the material to do it: an application's legacy id and the
+posting's `apply_url` and `(source, board_slug, external_id)` are both in the
+store. It was not done because the board key work landed after the application
+backfill, and nothing since has needed it.
+
+## 6. The parity gate cannot see extra applications
+
+`verify_parity.compare_class_b` reports `only_in_file` for sessions and
+deliberately not `only_in_postgres`, because `roles.json` legitimately creates
+`applications` rows that the sessions directory never had. That exemption is
+correct and should stay.
+
+The cost is that **anything which appears in `applications` from nowhere is
+invisible to the gate**. Measured 2026-08-31: 27 test fixtures -- `a`, `b`,
+`c`, `nw-pm`, `criteo`, `acme-pm`, `hostile` -- sat in production for hours
+while parity read green on every run.
+
+The fix is not to remove the exemption. It is to distinguish "created by
+roles.json" from "appeared from nowhere", which the store can answer: a row
+whose legacy id is in neither `sessions/` nor `roles.json` is in the second
+category. That is a change to a gate path, so it waits for the clock.
+
+## 7. Three spellings of session status, and one is dead
+
+The status of an application exists in three places: the session files under
+`sessions/`, the `applications` table, and a `sessions` table.
+
+`sessions` is left over from `jobs_db.SCHEMA`, the pre-§3 layout. Nothing in
+the §3 path reads it -- the only reference anywhere is a table name in a counts
+helper at `jobs_db.py:307` -- and it is already wrong: 88 rows against 89
+session files, missing the Toast watch driven on 2026-08-30.
+
+**It is a deletion candidate rather than a repair.** Fixing it would mean
+maintaining a third copy that nothing consumes, which is the same argument the
+`jobby:doc:*` KV copies are retired under. Parity compares the files against
+`applications`, which is the pair that matters.
