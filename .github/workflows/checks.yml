@@ -157,8 +157,22 @@ jobs:
         # strips the source tree away, and serves the traced bundle: an asset
         # URL that forgets the basePath or a file the server reads that the
         # tracer never carried fails the PR instead of the board.
-        working-directory: apps/web
         run: |
+          # The board reads Postgres, so the traced server needs a schema and
+          # an account or every route 500s with a named reason -- correct
+          # behaviour, and not what this check is about. Applied here rather
+          # than before the test suite, because a migrated `public` shared by
+          # every test makes them see each other's rows: measured, 13 tests
+          # that pass alone and fail in a suite.
+          python3 packages/schema/migrate.py apply
+          python3 -c "
+          import sys; sys.path.insert(0, 'packages/schema')
+          import migrate
+          conn = migrate.connect(announce=False)
+          with conn.cursor() as cur:
+              cur.execute(\"insert into accounts (email) values ('ci@example.com') on conflict do nothing\")
+          conn.commit()"
+          cd apps/web
           npm ci
           node tools/check_deployed_shape.mjs
 

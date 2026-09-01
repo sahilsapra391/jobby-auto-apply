@@ -108,6 +108,13 @@ const running = [];
 async function boot(port, password) {
   const env = { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1",
                 NODE_ENV: "production" };
+  // The board reads Postgres, so the traced server needs one or every route
+  // 500s with a named reason -- which is the page failing correctly and this
+  // check failing for a reason that is not about shape. CI supplies the
+  // throwaway container; a laptop supplies whatever it has.
+  if (!env.JOBBY_DATABASE_URL && process.env.JOBBY_TEST_DATABASE_URL) {
+    env.JOBBY_DATABASE_URL = process.env.JOBBY_TEST_DATABASE_URL;
+  }
   if (password === undefined) delete env.DASHBOARD_PASSWORD;
   else env.DASHBOARD_PASSWORD = password;
 
