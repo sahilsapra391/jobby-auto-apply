@@ -387,3 +387,67 @@ source), but that is a property of this corpus, not of the method.
 `roles.record` carries a `source` for 172 of 196 and an `ats` for 155, so a real
 backfill should use the recorded source and treat a URL with none as
 unresolvable rather than guessing across all sixteen.
+
+### What the backfill actually did, and which part Phase 3 closes for free
+
+Run against production on 2026-09-01 with `scripts/link_applications.py
+--apply`. **121 of 204 linked, 59%.** Every other table count unchanged.
+
+```
+via apply_url    112      exact equality, never a normalised url
+via board_key      8      (source, board_slug, external_id)
+via legacy_id      1
+                 ---
+                 121 of 204
+```
+
+The URL to resolve came from two places and the report keeps them apart:
+
+```
+session          61      the device's own session files, live
+roles-snapshot   60      the frozen table, used for the URL only
+```
+
+**Using the snapshot for a URL is a different act from using it for content,**
+and the distinction is the whole reason `roles` is otherwise refused. The value
+stored is the uuid of a row that is in `postings` at resolution time, checked
+then. Reading `roles.company` onto the board would instead put a snapshot's
+content on screen as though it were current, which is the `answers.json` join
+in different clothing. The report prints the split so a reader can tell which
+applications were named through which.
+
+#### The 83 that did not resolve, by reason
+
+```
+the url carries no board key      52
+no posting in the pool matches    31
+```
+
+**A connector closes the first 52 and cannot touch the second 31.** §4 already
+says why: a connector fetching `boards.greenhouse.io/<slug>` knows its
+`(source, board_slug, external_id)` by construction and does not have to derive
+them from a URL. That is exactly the population in the first bucket, which is
+§4's shortfall categories again:
+
+- Greenhouse postings served from an employer's own domain, where the URL
+  carries a `gh_jid` and no board slug (Duolingo, Dropbox, Coupang)
+- Workable short links (`apply.workable.com/j/AA703B6828`)
+- aggregator redirects (`jobviewtrack.com/v2/...`), which carry no board
+  identity at all and which a connector reaches directly instead
+
+The other 31 are postings that have been pruned from the pool. **There is no
+row to point at, so no amount of connector coverage recovers them.** That is a
+ceiling on this approach rather than a gap in it, and it is the reason the
+answer is 59% and not 90%. An application whose posting has aged out keeps its
+legacy id and says "posting not linked" rather than showing a blank.
+
+#### One resolver, both directions
+
+`scripts/posting_link.py` is the only place this decision lives, so the
+backfill over history and anything writing a new application cannot disagree
+about what the column means. Two refusals in it are load-bearing and both are
+verified by disabling them: it never matches a query-stripped URL (4,202 of
+14,569 pool jobs carry their identity in the query, and one Stripe role already
+made `seen.check` call every other Stripe job known), and it never guesses a
+source to derive a board key with (trying all sixteen patterns measured zero
+ambiguity on this corpus, which is a property of the corpus and not the method).

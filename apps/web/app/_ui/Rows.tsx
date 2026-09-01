@@ -140,9 +140,9 @@ export function WatchRow(row: Row) {
   return (
     <tr data-id={row.id}>
       <td><NameCell row={row} /></td>
-      <td className="when">{day(row.updated_at) || <Muted>unknown</Muted>}</td>
-      <td><Muted>not stated</Muted></td>
-      <td className="loc"></td>
+      <td className="when">{day(row.posted_at) || <Muted>unknown</Muted>}</td>
+      <td>{years(row) ?? <Muted>not stated</Muted>}</td>
+      <td className="loc">{s(row.location_raw) ?? ""}</td>
       <td className="skills"><Muted>not captured</Muted></td>
       <td className="note-cell"></td>
       <td>
@@ -164,7 +164,7 @@ export function DoneRow(row: Row) {
   return (
     <tr data-id={row.id} data-state="completed">
       <td><NameCell row={row} plain /></td>
-      <td>{<Muted>not recorded</Muted>}</td>
+      <td>{s(row.role) ?? <Muted>posting not linked</Muted>}</td>
       {/* **The lane is the status here, and that is item 2.** This column used
           to draw applications.status, which for the newest submitted row reads
           "active" -- a session's last-known state, not an outcome. Membership
@@ -210,13 +210,7 @@ export function ActCard(row: Row) {
   return (
     <article className="card hold" data-id={row.id} data-state="hold">
       <header>
-        <div className="company-title">
-          <CompanyMark name={s(row.legacy_id)} domain={null} />
-          <div>
-            <h3>{s(row.legacy_id)}</h3>
-            <p className="role"><Muted>role not recorded</Muted></p>
-          </div>
-        </div>
+        <CardTitle row={row} />
         <span className="chip hold">{s(row.phase) ?? "waiting"}</span>
       </header>
       {/* The board lists the blockers here, one <li> per pendingField. Those
@@ -244,13 +238,7 @@ export function FlightCard(row: Row) {
   return (
     <article className="card flight" data-id={row.id}>
       <header>
-        <div className="company-title">
-          <CompanyMark name={s(row.legacy_id)} domain={null} />
-          <div>
-            <h3>{s(row.legacy_id)}</h3>
-            <p className="role"><Muted>role not recorded</Muted></p>
-          </div>
-        </div>
+        <CardTitle row={row} />
         <span className="chip warm">in flight</span>
       </header>
       <div className="steps">
@@ -275,20 +263,54 @@ const READ_ONLY =
 /**
  * The company cell both table lanes share.
  *
- * **It draws the legacy id because there is nothing better to draw**, and that
- * is `applications.posting_id` being NULL for all 204 rows rather than an
- * oversight here. `roles` has a company and a role on the same key and is a
- * frozen snapshot nothing maintains, so joining it would show today's snapshot
- * as the record of what happened. `docs/plans/phase3-inputs.md` §5 measures
- * what a real backfill reaches (125 of 204) and what it would cost.
+ * **A linked application shows its posting's company and role. An unlinked one
+ * says so, and never shows a blank where a name belongs.**
+ *
+ * `applications.posting_id` is filled by `scripts/link_applications.py` for
+ * the 59% that can be resolved honestly; the rest point at postings that have
+ * been pruned, or at aggregator redirects and short links carrying no board
+ * identity. Those keep their legacy id, which is what the store actually knows
+ * about them, with an explicit "posting not linked" underneath rather than an
+ * empty cell that reads as a bug.
+ *
+ * Still never `roles`: it would name 196 of 204 and is a snapshot nothing
+ * maintains. See `docs/plans/phase3-inputs.md` §5.
  */
+/** The card lanes' header, on the same rule as the table lanes' cell. */
+function CardTitle({ row }: { row: Row }) {
+  const company = s(row.company);
+  const role = s(row.role);
+  const linked = row.posting_id != null && company != null;
+  const heading = linked ? company! : (s(row.legacy_id) ?? "");
+  return (
+    <div className="company-title">
+      <CompanyMark name={heading} domain={linked ? s(row.employer_domain) : null} />
+      <div>
+        <h3>{heading}</h3>
+        <p className="role">
+          {linked && role ? role : <Muted>posting not linked</Muted>}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
 function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
-  const name = s(row.legacy_id) ?? "";
+  const company = s(row.company);
+  const role = s(row.role);
+  const linked = row.posting_id != null && company != null;
+  const heading = linked ? company! : (s(row.legacy_id) ?? "");
   return (
     <div className="company-cell">
-      <CompanyMark name={name} domain={null} />
-      {plain ? <span>{name}</span>
-             : <span><strong>{name}</strong><br /><Muted>role not recorded</Muted></span>}
+      <CompanyMark name={heading} domain={linked ? s(row.employer_domain) : null} />
+      {plain ? <span>{heading}</span> : (
+        <span>
+          <strong>{heading}</strong><br />
+          {linked && role ? <span className="muted">{role}</span>
+                          : <Muted>posting not linked</Muted>}
+        </span>
+      )}
     </div>
   );
 }

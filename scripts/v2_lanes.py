@@ -103,12 +103,19 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: two. `updated_at` is the ordering: it is when the work last moved, which is
 #: the question these lanes answer, and `posted_at` would be unavailable
 #: anyway.
-#: **§3 cannot name an application, and there is nothing to join for it.**
+#: **An application is named by the posting it points at, or not at all.**
 #:
-#: `applications` holds no company or role. The obvious fix is to join `roles`,
-#: which has both on the same key -- and that is wrong for the same reason
-#: reading `history` for Submitted was wrong, one function earlier: `roles` is
-#: a pre-§3 `jobs_db` table that no migration creates and nothing maintains.
+#: `applications` holds no company or role of its own, and `posting_id` was
+#: NULL for every row until `scripts/link_applications.py` filled in what could
+#: be resolved. So the name comes through a LEFT join to the posting: present
+#: for a linked application, null for the rest, and the row says which.
+#:
+#: Still never `roles`. It carries a company and a role on the same key and
+#: would name 196 of 204, and it is a pre-§3 table that no migration creates
+#: and nothing maintains: reading it would put a snapshot's content on the
+#: board as though it were current. The join is LEFT rather than INNER for the
+#: same reason the resolver refuses to guess -- an application whose posting
+#: has been pruned must still appear in its lane.
 #: `class_b._mirror_roles` says so in its own docstring and mirrors roles.json
 #: as *applications* instead. The table is frozen at whatever the backfill left,
 #: 196 rows, and a role written today does not reach it -- demonstrated by
@@ -120,7 +127,10 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: section 5 -- the lanes show the legacy id, and that is the honest answer
 #: rather than a join to a table on its way out.
 APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
-             a.created_at"""
+             a.created_at, a.posting_id,
+             p.title as role, p.apply_url, p.location_raw, p.posted_at,
+             p.years_min, p.years_max,
+             e.canonical_name as company, e.domain as employer_domain"""
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
@@ -185,6 +195,8 @@ select {POSTING_COLUMNS}
     return f"""
 select {APPLICATION_COLUMNS}
   from applications a
+  left join postings p on p.id = a.posting_id
+  left join employers e on e.id = p.employer_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
    and {keyset('a.updated_at')}
