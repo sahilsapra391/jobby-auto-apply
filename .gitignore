@@ -48,6 +48,7 @@ deploy/node_modules/
 **/*.png
 !assets/**/*.png
 !deploy/public/*.png
+!apps/web/public/*.png
 # The generated brand-pack copy the serverless bundle carries. Written
 # only by sync_vercel_renderer.py, out of assets/brand/, which is already
 # allowed above. Vercel keeps deploy/public/ out of the function, so the

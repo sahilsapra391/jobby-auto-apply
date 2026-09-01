@@ -54,3 +54,26 @@ path. It is guarded now, but the shape stays: **a second way to reach disk is a
 second place every future guard must remember to go.** Worth folding into
 `write_private` with an append mode, which is a bigger change than that day
 allowed.
+
+## A SyntaxError on the v2 board with no failing script, 2026-09-01
+
+`v2.jobby.fyi` logs one `Uncaught SyntaxError: Unexpected token '}'` per load.
+It predates the head and theme work of 2026-09-01 (it is in the first console
+read taken that day, before any of it) and nothing observable is broken by it.
+
+What has been ruled out, by measurement rather than by reading:
+
+- every inline script in the served HTML passes `node --check`, 69 of 69
+- every inline script in the live DOM passes `new Function`, 71 of 71
+- `THEME_BOOT`, `THEME_WIRE` and `SELECT_SCRIPT` each parse on their own
+
+So it is not a script the page serves. The remaining candidates are something
+created at runtime and discarded, or something the browser itself injected,
+and neither has been demonstrated. The Chrome pane recorded no network
+requests for the load, so a script that failed to fetch has not been excluded
+either.
+
+Recorded rather than guessed at. The next person to look should capture the
+error's `filename` and `lineno` from a listener installed before first paint,
+which is the one thing that would name it and the one thing a console read
+after the fact cannot.
