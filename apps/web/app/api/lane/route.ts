@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { page, type Cursor } from "../../_ui/db";
-import { LANES, type Lane } from "../../lanes.generated";
+import { LANES, SORT_LABELS, type Lane, type Sort } from "../../lanes.generated";
 
 /**
  * One page of a lane. **GET only, and it reads.**
@@ -25,12 +25,22 @@ export async function GET(request: NextRequest) {
       { error: `unknown lane ${lane}`, lanes: Object.keys(LANES) },
       { status: 400 });
   }
+  const asked = params.get("sort") ?? "new";
+  if (!(asked in SORT_LABELS)) {
+    // Named rather than defaulted, for the same reason an unknown lane is: a
+    // typo silently serving the other order is how a reader concludes the
+    // ranking is broken.
+    return NextResponse.json(
+      { error: `unknown sort ${asked}`, sorts: Object.keys(SORT_LABELS) },
+      { status: 400 });
+  }
+  const sort = asked as Sort;
   const afterId = params.get("afterId");
   const after: Cursor = afterId
     ? { id: afterId, at: params.get("afterAt") }
     : null;
   try {
-    return NextResponse.json(await page(lane as Lane, after));
+    return NextResponse.json(await page(lane as Lane, after, 50, sort));
   } catch (err) {
     console.error("lane page failed", err);
     return NextResponse.json({ error: "lane page failed" }, { status: 500 });

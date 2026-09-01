@@ -355,5 +355,82 @@ class TheIndexActuallyServesTheLane(LaneCase):
         self.assertIn("Scan", plan)
 
 
+class FoundWalksByScoreToo(LaneCase):
+    """The Found lane's other ordering, walked through the real keyset.
+
+    **The tie-breaker is the row's identity, not the sort column's table.**
+    Deriving it from the column alias worked while every lane sorted on its own
+    table, and emitted `s.id` the moment Found sorted on `job_scores.total`,
+    which has no id: the whole lane answered 500 with "column s.id does not
+    exist". Nothing in the suite could see it, because nothing walked this
+    ordering.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # A score for every posting the Found lane can see, deliberately with
+        # ties: a keyset over a non-unique column repeats or skips at the page
+        # boundary without its tie-breaker, and a fixture of distinct values
+        # cannot show that.
+        with self.conn.cursor() as cur:
+            cur.execute("select id from postings order by legacy_id")
+            ids = [r[0] for r in cur.fetchall()]
+            for index, posting in enumerate(ids):
+                cur.execute(
+                    "insert into job_scores (account_id, posting_id, total) "
+                    "values (%s, %s, %s) on conflict do nothing",
+                    (self.account, posting, 40 + (index % 5) * 10))
+        self.scored = len(ids)
+
+    def walk_by_score(self, page=2):
+        sql = v2_lanes.page_sql("found", "score")
+        seen, after_at, after_id = [], None, None
+        for _ in range(500):
+            with self.conn.cursor() as cur:
+                cur.execute(sql, {"account": self.account, "limit": page,
+                                  "after_at": after_at, "after_id": after_id})
+                batch = cur.fetchall()
+                at = [c.name for c in cur.description].index("score")
+            if not batch:
+                return seen
+            for row in batch:
+                seen.append((row[0], row[at]))
+            after_id, after_at = batch[-1][0], batch[-1][at]
+        raise AssertionError("the score keyset did not terminate")
+
+    def test_the_fixture_actually_scored_something(self):
+        """Without this every assertion below passes on an empty walk."""
+        self.assertGreater(self.scored, 0)
+        self.assertGreater(len(self.walk_by_score()), 0)
+
+    def test_it_yields_the_same_set_as_the_date_ordering(self):
+        by_score = {pid for pid, _ in self.walk_by_score()}
+        by_date = {pid for pid, _ in self.walk("found")}
+        self.assertEqual(by_score, by_date,
+                         "the two orderings disagree about what is in the lane")
+
+    def test_it_repeats_nothing_across_pages_despite_ties(self):
+        walked = self.walk_by_score()
+        ids = [pid for pid, _ in walked]
+        self.assertEqual(len(ids), len(set(ids)), "a row appeared twice")
+
+    def test_it_is_highest_first(self):
+        totals = [total for _, total in self.walk_by_score()]
+        self.assertEqual(totals, sorted(totals, reverse=True))
+
+    def test_the_ties_are_real(self):
+        """The control for the two above: a walk over distinct values cannot
+        show that the tie-breaker works."""
+        totals = [total for _, total in self.walk_by_score()]
+        self.assertLess(len(set(totals)), len(totals),
+                        "no two rows share a score, so nothing here exercises "
+                        "the tie-breaker")
+
+    def test_the_predicate_never_names_the_score_tables_id(self):
+        sql = v2_lanes.page_sql("found", "score")
+        self.assertNotIn("s.id", sql)
+        self.assertIn("p.id", sql)
+
+
 if __name__ == "__main__":
     unittest.main()

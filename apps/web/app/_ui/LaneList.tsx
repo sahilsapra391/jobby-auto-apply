@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import type { Lane } from "../lanes.generated";
+import type { Lane, Sort } from "../lanes.generated";
 import {
   PostingRow, WatchRow, DoneRow, DroppedRow, ActCard, FlightCard,
 } from "./Rows";
@@ -59,7 +59,7 @@ const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
  * height and the browser's own find-in-page still lands somewhere sensible.
  */
 export function LaneList({
-  lane, initial, initialCursor, done: initiallyDone, shape,
+  lane, initial, initialCursor, done: initiallyDone, shape, sort = "new",
 }: {
   lane: Lane;
   initial: Row[];
@@ -74,6 +74,7 @@ export function LaneList({
   // draws five shapes across six lanes and collapsing them to two is what made
   // Watching and Submitted render as cards where the board renders tables.
   shape: Lane;
+  sort?: Sort;
 }) {
   const render = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
@@ -106,7 +107,10 @@ export function LaneList({
     if (loading || done) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ lane });
+      // The sort has to travel with the cursor: the next page is a keyset on
+      // whichever column this lane is ordered by, and asking for page two of a
+      // different ordering restarts at the top.
+      const params = new URLSearchParams({ lane, sort });
       if (cursor) {
         params.set("afterId", cursor.id);
         if (cursor.at) params.set("afterAt", cursor.at);
@@ -125,7 +129,7 @@ export function LaneList({
     } finally {
       setLoading(false);
     }
-  }, [lane, cursor, done, loading]);
+  }, [lane, cursor, done, loading, sort]);
 
   const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
   const slice = rows.slice(first, last);

@@ -136,7 +136,7 @@ APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
-def keyset(column, cast="timestamptz"):
+def keyset(column, cast="timestamptz", ident=None):
     """The keyset predicate for a lane ordered on `column`, highest first.
 
     **One implementation for both lane shapes**, and that is not tidiness. The
@@ -165,7 +165,12 @@ def keyset(column, cast="timestamptz"):
     #: unreachable -- kept because the predicate is one implementation and a
     #: second copy for the numeric case is exactly the duplication this
     #: function's own history warns about.
-    ident = column.split(".")[0]
+    #: **The tie-breaker is the row's identity, never the sort column's
+    #: table.** Deriving it from the column's alias worked while every lane
+    #: sorted on its own table and emitted `s.id` the moment Found sorted on
+    #: `job_scores.total`, which has no id: the whole lane 500'd with "column
+    #: s.id does not exist". Passed in explicitly now.
+    ident = ident or column.split(".")[0]
     return f"""(
       %(after_id)s::uuid is null
    or (%(after_at)s::{cast} is not null and (
@@ -178,11 +183,11 @@ def keyset(column, cast="timestamptz"):
 )""".replace("{id}", ident + ".id")
 
 
-def order_by(column):
+def order_by(column, ident=None):
     """Highest first, absent last. `nulls last` is not optional: PostgreSQL
     sorts nulls FIRST under `desc`, and an index whose ordering differs from
     the query's cannot serve it, so the lane silently sorts the corpus."""
-    alias = column.split(".")[0]
+    alias = ident or column.split(".")[0]
     return f"order by {column} desc nulls last, {alias}.id desc"
 
 
@@ -194,6 +199,9 @@ SORTS = {
     "score": ("s.total", "int"),
 }
 
+#: The board's own wording for them, from `found_lane.SORT_OPTIONS`.
+SORT_LABELS = {"new": "Newest", "score": "Match %"}
+
 
 def page_sql(lane, sort="new"):
     """One page of a lane, highest first, absent last."""
@@ -203,6 +211,7 @@ def page_sql(lane, sort="new"):
         raise KeyError(f"no lane {lane!r}")
     if lane in POSTING_LANES:
         column, cast = SORTS[sort]
+        # Postings are the row here whatever the ordering reads.
         return f"""
 select {POSTING_COLUMNS}
   from postings p
@@ -212,8 +221,8 @@ select {POSTING_COLUMNS}
   left join job_scores s
     on s.posting_id = p.id and s.account_id = %(account)s
  where {LANES[lane]["where"]}
-   and {keyset(column, cast)}
- {order_by(column)}
+   and {keyset(column, cast, "p")}
+ {order_by(column, "p")}
  limit %(limit)s
 """.strip()
     return f"""
@@ -262,10 +271,19 @@ def as_typescript():
             sql = sql.replace(f"%({name})s", f"${i}")
         return sql
 
-    lanes = {k: {"label": v["label"],
-                 "page": positional(page_sql(k)),
-                 "count": positional(count_sql(k).replace("%(limit)s", ""))}
-             for k, v in LANES.items()}
+    # **Every sort a lane offers, emitted as its own query.** Only Found has
+    # more than one, and building the alternative by string-substituting the
+    # order clause on the client would be a second spelling of the predicate,
+    # which is the thing generating this file exists to prevent.
+    lanes = {}
+    for k, v in LANES.items():
+        sorts = SORTS if k in POSTING_LANES else {"new": None}
+        lanes[k] = {
+            "label": v["label"],
+            "page": positional(page_sql(k)),
+            "count": positional(count_sql(k).replace("%(limit)s", "")),
+            "sorts": {name: positional(page_sql(k, name)) for name in sorts},
+        }
     return (
         "// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
         "//\n"
@@ -273,7 +291,13 @@ def as_typescript():
         "// there is one spelling of each predicate. Parameters are positional\n"
         "// for node-postgres, in the order [account, afterAt, afterId, limit].\n"
         "export type Lane = " + " | ".join(f'"{k}"' for k in LANES) + ";\n\n"
-        "export const LANES: Record<Lane, { label: string; page: string; count: string }> =\n"
+        "export type Sort = " + " | ".join(f'"{s}"' for s in SORTS) + ";\n\n"
+        "// What each sort is called in the control, taken from the\n"
+        "// board's own found_lane.SORT_OPTIONS.\n"
+        "export const SORT_LABELS: Record<Sort, string> = "
+        + json.dumps(SORT_LABELS) + ";\n\n"
+        "export const LANES: Record<Lane, { label: string; page: string; "
+        "count: string; sorts: Record<string, string> }> =\n"
         + json.dumps(lanes, indent=2) + " as const;\n")
 
 
