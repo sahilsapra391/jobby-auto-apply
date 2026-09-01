@@ -272,6 +272,9 @@ def mirror_pool(conn, account_id, before, jobs, batch=500):
             postings, merged = backfill.upsert_postings(conn, records,
                                                         employers, batch)
             backfill.upsert_decisions(conn, records, postings, account_id, batch)
+            # After the postings, because a score references one, and after the
+            # decisions for no reason but reading order.
+            backfill.upsert_scores(conn, records, postings, account_id, batch)
             report["merged"] = merged
             report["contested_domains"] = contested
 

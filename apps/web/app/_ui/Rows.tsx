@@ -13,6 +13,8 @@
  * gate closes. They render disabled rather than absent so the card is the
  * right shape and the wiring is one step later, not two.
  */
+import { COMPONENTS, WEIGHTS } from "../rubric.generated";
+
 type Row = Record<string, unknown> & { id: string };
 
 const s = (v: unknown) => (v == null ? null : String(v));
@@ -88,6 +90,7 @@ export function PostingRow(row: Row) {
   const pay = s(row.salary_raw);
   if (pay) chips.push([pay, "pay"]);
   chips.push([s(row.source) ?? "Unknown source", ""]);
+  for (const label of gateLabels(row.score_gates)) chips.push([label, "gate"]);
 
   return (
     <article className="jb-card" data-id={row.id}>
@@ -99,18 +102,14 @@ export function PostingRow(row: Row) {
             <h3 className="jb-ti">{s(row.title)}</h3>
           </div>
         </div>
-        {/* The board puts a .jb-ring here, a conic-gradient of the match
-            percentage. It is deliberately absent rather than drawn at 0%:
-            postings carries no score column, job_scores does not exist, and
-            jobs.score is a frozen snapshot covering 9,286 of 17,339 Found
-            rows. A ring reading 0% on every card is not a missing feature, it
-            is a wrong number, and a wrong number is worse than a gap. */}
+        <Ring score={row.score} />
       </div>
       {s(row.summary) ? <p className="jb-sum">{s(row.summary)}</p> : null}
       <div className="jb-chips">
         {chips.map(([text, kind], i) =>
           <span className={kind ? `chip ${kind}` : "chip"} key={i}>{text}</span>)}
       </div>
+      <Facts score={row.score} parts={row.score_parts} />
       <div className="jb-acts">
         <button className="jb-btn" type="button" disabled
                 title="Watching is a write. v2 is read-only until the parity gate closes.">
@@ -132,6 +131,69 @@ export function PostingRow(row: Row) {
       </div>
     </article>
   );
+}
+
+/**
+ * The match percentage, as the board draws it: a conic gradient behind the
+ * number, green at 75, blue at 50, grey below.
+ *
+ * **Absent rather than zero when there is no score.** 22 of 21,890 pool
+ * records carry none because the scorer has not reached them, and a ring
+ * reading 0% is a wrong number rather than a missing one.
+ */
+function Ring({ score }: { score: unknown }) {
+  if (typeof score !== "number") return null;
+  const colour = score >= 75 ? "var(--green)"
+               : score >= 50 ? "var(--blue)" : "var(--ink-3)";
+  return (
+    <div className="jb-ring"
+         style={{ background: `conic-gradient(${colour} ${score}%, var(--sunk) 0)` }}>
+      <i>{score}%</i>
+    </div>
+  );
+}
+
+/**
+ * Why that percentage: one bar per rubric component, earned over possible.
+ *
+ * COMPONENTS and WEIGHTS are generated from `found_lane.COMPONENTS` and
+ * `match_score.WEIGHTS` rather than retyped, because "possible" is the weight
+ * and a board that disagrees about what a title match is worth disagrees
+ * silently, in a bar that still renders.
+ */
+function Facts({ score, parts }: { score: unknown; parts: unknown }) {
+  if (typeof score !== "number") return null;
+  const earnedBy = (parts && typeof parts === "object" ? parts : {}) as
+    Record<string, number>;
+  return (
+    <div className="jb-facts">
+      {COMPONENTS.map((name) => {
+        const possible = WEIGHTS[name] ?? 0;
+        if (!possible) return null;
+        const earned = Number(earnedBy[name] ?? 0);
+        const width = Math.round((100 * earned) / possible);
+        return (
+          <div className="jb-fact" key={name}
+               title={`${name}: ${earned} of ${possible}`}>
+            <span className="jb-fact-name">{name}</span>
+            <span className="jb-fact-track">
+              <span className={earned === 0 ? "jb-fact-fill none" : "jb-fact-fill"}
+                    style={{ width: `${width}%` }} />
+            </span>
+            <span className="jb-fact-num">{earned}/{possible}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A gate is a disqualifier the rubric found, and the board chips it. */
+function gateLabels(gates: unknown): string[] {
+  if (!Array.isArray(gates)) return [];
+  return gates
+    .map((g) => (g && typeof g === "object" ? (g as Record<string, unknown>).label : null))
+    .filter((label): label is string => typeof label === "string" && !!label);
 }
 
 /* -------------------------------------------------------- Watching (table) */
