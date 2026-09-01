@@ -577,6 +577,64 @@ the old board is carried across, the question "does the markup match" and the
 question "does the page render" are different questions, and only the second
 one is the one anybody cares about.
 
+### Instrumentation on the branch tests take, 2026-09-01
+
+**A hook can be correct, exercised, and never once run in production, because
+the code forks on whether a database exists and the tests are on the other
+side of the fork.**
+
+`jobs_store._persist_pool` has two branches:
+
+```
+if not mirror.enabled():
+    store.write_private(...)          # a test's branch: temp root, no database
+    return jobs
+...
+mirror.persist(conn, account, path, before, jobs, ...)   # production's branch
+```
+
+The write-path coverage hook lived in `store.write_private`, chosen because it
+is "the only function that puts bytes in the store". That was true of every
+class B write and of class A **only when the mirror is off**, which is only
+ever a test. `dual_write.persist` writes the pool file itself.
+
+Measured, the same call on the same machine:
+
+    mirror OFF (temp root)   ->  2 observations
+    mirror ON  (production)  ->  0 observations
+
+**19 of the 27 paths the parity gate requires are class A pool paths**, so a
+counter built to prove the rare paths fire could not see 70% of its subject on
+the only machine that matters. Every test was green. The counter's own tests
+were green, and they were green *because* they ran on the branch that has the
+hook.
+
+This is the eighth check in this file that passed while measuring nothing, and
+it is a shape none of the other seven share. The others were a filter, a
+paraphrase, a fixture, a skip, a constant, an inference, a stale table. This
+one is a **fork in the code selected by environment**, where the test
+environment and production take different sides and only one side is
+instrumented. Nothing about the hook was wrong. Nothing about the tests was
+wrong. They were about different lines.
+
+**It generalises worse than any of the others**, which is why it earns its own
+section rather than a line in the store-isolation one. Any hook, guard,
+counter or assertion placed inside a branch chosen by "is a database
+configured", "is this CI", "is the store redirected", or "is the mirror
+enabled" has the same defect available to it, and the symptom is always
+silence: the instrumented branch is the one under test, so nothing ever fails.
+
+So: **when instrumenting, find the fork before choosing the site.** If a
+function has two ways to reach disk, instrument both or instrument below them.
+And verify on the branch production takes -- for this one that meant driving a
+real Pass on the real store with the mirror on, which ticked six observations
+across five paths where a temp-root test had ticked two.
+
+A related habit that would have caught it earlier: the counter reported "4 of
+27, all class A sweeps" for a day, and class A sweeps run every four hours. A
+number that plausible is exactly the kind nobody questions. What broke it open
+was driving a path deliberately and watching the count not move.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

@@ -102,7 +102,8 @@ def required(doc=None):
 #: `_callers` does `sys._getframe(2)`, so its own frame and `observe`'s are
 #: already past the start of the walk; adding them here would be decoration.
 #: The hook's frame sits exactly at the start, so it is the one that has to go.
-_OWN_FRAMES = {("store", "_observe_write_path")}
+_OWN_FRAMES = {("store", "_observe_write_path"),
+               ("dual_write", "_observe_write_path")}
 
 
 def _callers(depth=MAX_DEPTH):
