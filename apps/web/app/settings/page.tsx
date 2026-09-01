@@ -44,7 +44,13 @@ export default function Settings() {
                     <strong>Your Device</strong>
                     <span>Resumes, cover letters, and application forms</span>
                   </div>
-                  <span className={p.connected ? "ok" : "warn"}
+                  {/* The board's own three states, not an invented pair.
+                      settings_panel.py writes `provider-state`, with `pending`
+                      while a check is in flight and `bad` on an error; v2 had
+                      `ok`/`warn`, which the stylesheet does not define and
+                      which no board has ever emitted. */}
+                  <span className={p.connected
+                          ? "provider-state" : "provider-state pending"}
                         data-provider-state="local">
                     {p.connected ? "Connected" : "Not connected"}
                   </span>

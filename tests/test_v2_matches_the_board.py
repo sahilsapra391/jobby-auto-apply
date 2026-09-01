@@ -13,6 +13,8 @@ compares v2 against what those produce, and none of them restates a rule.
 import re
 import sys
 import unittest
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -68,15 +70,44 @@ def v2_markup():
                 continue
             classes.add(chunk)
     # Ternaries: className={x ? "tab on" : "tab"}
-    for match in re.finditer(r'className=\{[^}]*?"([^"]+)"[^}]*?\}', source):
-        for chunk in match.group(1).split():
-            classes.add(chunk)
+    #
+    # **A ternary's condition is not a class.** `className={lane === "found"
+    # ? "jb-grid" : "grid"}` contributed `found`, and the guard then reported
+    # v2 as inventing a class it never puts on an element. Operands of an
+    # equality test are dropped for that reason.
+    for match in re.finditer(r'className=\{([^}]*)\}', source):
+        body = match.group(1)
+        operands = set(re.findall(r'[=!]==\s*"([^"]+)"', body))
+        for literal in re.findall(r'"([^"]+)"', body):
+            if literal in operands:
+                continue
+            for chunk in literal.split():
+                classes.add(chunk)
     return source, classes
 
 
 def board_markup():
     """The real board's rendered HTML, from a synthetic state."""
     return dashboard.build(sync_v2_styles.SYNTHETIC_STATE, "2026-01-01T00:00:00Z")
+
+
+def board_classes():
+    """Every class the board itself puts on an element.
+
+    **A class the board emits is not an invented one, even when no rule
+    selects it.** `retry`, `finish`, `undrop` and `skills` are behavioural
+    hooks and semantic markers that `dashboard.py` writes and `board.css` never
+    styles, so a guard that only reads the stylesheet calls them inventions the
+    moment v2 draws the same row the board draws.
+
+    Rendered from a row-bearing state rather than the empty one, because the
+    lanes are exactly where those classes live: against an empty state every
+    table renders `empty_state(...)` and this set silently loses them.
+    """
+    from test_v2_lane_shapes import ROW_BEARING_STATE
+    html = dashboard.build(ROW_BEARING_STATE, "2026-01-01T00:00:00Z")
+    return {c for m in re.findall(r'class=["\']([^"\']+)["\']', html)
+            for c in m.split()}
 
 
 class EveryClassV2UsesIsOneTheBoardStyles(unittest.TestCase):
@@ -86,8 +117,11 @@ class EveryClassV2UsesIsOneTheBoardStyles(unittest.TestCase):
     def test_no_class_is_invented(self):
         css = sync_v2_styles.TARGET.read_text(encoding="utf-8")
         selectors = set(re.findall(r"\.([A-Za-z][\w-]*)", css))
+        emitted = board_classes()
+        self.assertTrue(emitted, "the board rendered no classes; the check is vacuous")
         _, used = v2_markup()
-        invented = sorted(c for c in used if c not in selectors)
+        allowed = selectors | emitted
+        invented = sorted(c for c in used if c not in allowed)
         self.assertEqual(
             invented, [],
             f"v2 uses classes the board's stylesheet does not define: "
