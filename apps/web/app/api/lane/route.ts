@@ -40,7 +40,11 @@ export async function GET(request: NextRequest) {
     ? { id: afterId, at: params.get("afterAt") }
     : null;
   try {
-    return NextResponse.json(await page(lane as Lane, after, 50, sort));
+    return NextResponse.json(await page(lane as Lane, after, 50, sort, {
+      q: params.get("q") ?? undefined,
+      within: params.get("within") ?? undefined,
+      direct: params.get("direct") === "1",
+    }));
   } catch (err) {
     console.error("lane page failed", err);
     return NextResponse.json({ error: "lane page failed" }, { status: 500 });

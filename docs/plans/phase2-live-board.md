@@ -50,6 +50,12 @@ and it is why `logo_plan` returns a single digit and the client re-derives the
 domain. Phase 2 removes the constraint that forced that split, and the split
 should then be removed rather than left as a fossil.
 
+**Still outstanding as of 2026-09-01.** v2 inherited the split rather than
+collapsing it: the client still derives the domain and `logo_plan` still returns
+a digit, on a board with no embed cap and no reason for either. Recorded here as
+undone rather than quietly carried, because a fossil nobody has noticed is how
+the next reader concludes the constraint still exists.
+
 ## The pieces
 
 ### 1. TenantChannel, one Durable Object per account
@@ -79,15 +85,22 @@ idle account costs nothing between events.
 {
   "seq": 10412,
   "account_id": "…",
-  "kind": "job_decision.changed",
+  "kind": "application.changed",
   "at": "2026-08-30T14:02:11.418Z",
-  "payload": { "posting_id": "…", "from": "found", "to": "dropped" }
+  "payload": { "application_id": "…", "to": "dropped" }
 }
 ```
 
-Kinds: `job_decision.changed`, `application.phase`, `application.completed`,
-`application.needs_you`, `pool.delta`, `device.status`,
+Kinds: `application.changed`, `application.phase`, `application.completed`,
+`application.needs_you`, `posting.decided`, `pool.delta`, `device.status`,
 `runner.update_required`.
+
+**There is no `from: "found"`, because Found is not a state.** It is the absence
+of a decision row, which §5 says and an earlier draft of this section
+contradicted by showing `{"from": "found", "to": "dropped"}` as its worked
+example. A posting leaving Found and an application changing lane are two
+different events, not two values of one field: the first is a `job_decisions`
+insert with no application behind it yet, and it is `posting.decided`.
 
 Three rules learned the hard way elsewhere in this repository:
 
@@ -107,12 +120,24 @@ does not appear until there are users.
 ### 3. Write path, and why the order is not a preference
 
 ```
-1. browser POSTs /api/decisions on Vercel
-2. route sets app.account_id, writes the row, COMMITS
-3. route posts the event to the account's DO
+1. browser POSTs /api/applications on Vercel
+2. route sets app.account_id, writes the applications row or appends to
+   application_events, COMMITS
+3. route posts the event to the account's DO, carrying the application id
 4. DO assigns seq, appends to the ring, fans out
 5. route returns.   target: p95 under 120 ms click-to-response
 ```
+
+**`applications` is the source of truth and this design keys on it.** An earlier
+draft wrote to `job_decisions`, which is a projection that was never finished
+and will not be. Measured 2026-09-01: 125 decision rows against 204
+applications, and a Submitted lane read from a decision state gives 100 where
+the events give 104.
+
+`job_decisions` keeps exactly one job: the Found lane's exclusion set. Found is
+`postings` minus this account's decision rows, and that absence is what keeps it
+free at 500k rather than a per-account materialisation. Nothing else reads it,
+and a posting entering it is `posting.decided` rather than a lane change.
 
 **The commit precedes the publish.** A published event with no row behind it is
 a board showing a change the database does not have, and on the next reconnect
@@ -165,16 +190,37 @@ back to sorting the whole corpus. `tests/test_corpus_schema.py` pins the
 ordering, the index definitions, and a keyset walk that must not repeat or skip
 the undated row.
 
+**An ordering that spans a join has no index to serve it, and that is a Phase 6
+input rather than a thing to fix here.** Sorting Found by match score orders on
+`job_scores.total` while the lane is a query over `postings`, so Postgres
+top-N heapsorts the whole lane: measured warm against Neon on 2026-09-01,
+**39.6 ms for the score ordering against 0.6 ms for the date ordering**, which
+does use its index. At 21,888 rows that is fine. At §11's 500k it is the first
+thing to break, and it is the same class of design input the payload
+measurement was for Phase 3: a ratio that transfers even though the absolute
+number does not.
+
+The tie-breaker is the lane's own row identity, never the sort column's table.
+Deriving it from the sort column's alias is correct only while every lane
+orders on its own table, and emits `s.id` the moment one does not.
+
 Lane predicates:
 
 | Lane | Predicate |
 |---|---|
-| Found | `closed_at is null` and no decision row |
-| Watching | decision `watching` |
-| In flight | decision in `queued, applying` |
-| Needs you | decision `needs_you` |
-| Submitted | decision `submitted` |
-| Dropped | decision `dropped` |
+| Found | `postings.closed_at is null` and no `job_decisions` row |
+| Watching | `applications.status = 'watch'` |
+| In flight | `applications.status = 'inflight'` |
+| Needs you | `applications.status in ('review','active')` |
+| Submitted | a `completed` event with no later `abandoned` |
+| Dropped | `applications.status = 'dropped'` |
+
+**Five of the six read `applications`, not a decision state**, and an earlier
+draft of this table had all six on `job_decisions`. See §3 for the measurement.
+Submitted specifically is an event question rather than a status one: a
+`completed` in `application_events` not retracted by a later `abandoned`. That
+is 104 where a decision state gives 100, and the four that differ are the
+reason the distinction exists.
 
 Found being *the absence of a row* is what keeps it free: it is `postings` minus
 this account's decisions, not a per-account materialisation of 500k rows. That
@@ -182,15 +228,35 @@ is also why `found` is not a storable decision state, and the schema refuses it.
 
 Client-side: a virtualised list. 500k rows never reach the browser.
 
-### 6. Scoring stays lazy
+### 6. Scoring is eager, because the lane sorts by it
 
-ADR 0007. Filter in SQL, score only the ~50 rows being rendered, cache in
-`job_scores (account_id, posting_id, score, rubric, computed_at)`, invalidate on
-preference change. Never precompute the cross product; §11 puts that at 500
-million rows and a permanent backfill.
+**You cannot order by a value computed after choosing which rows to compute it
+for.** An earlier draft of this section said score only the ~50 rows being
+rendered, and that works exactly as long as the score is a decoration. Sorting
+Found by match is the feature, and it needs the score for every candidate row
+before the page is chosen. The two cannot both be true, and the draft asserted
+both.
 
-The rubric already rides on every record today and the Found row already draws
-it, so this is the same computation moved off a snapshot and onto a page.
+So the score is mirrored with the pool. Measured 2026-09-01: 21,866 of 21,890
+pool records carry one, and all 18,104 Found rows have theirs. A record with no
+score is skipped rather than written as zero, because a zero sorts below every
+genuine low scorer and reads as a decision rather than an absence.
+
+`job_scores (account_id, posting_id, total, parts, why, gates, unknowns,
+config_version, computed_at)`. **The rubric is not one blob**: the card draws
+each component as its own bar, and a single `rubric` column means a second read
+for every opened card.
+
+Account-scoped, because the score is computed from the reader's own saved
+search. A column on `postings` works perfectly until the second account exists
+and then silently serves each account the other's ranking, which is a Phase 5
+failure caught here, where it is cheap.
+
+**ADR 0007's cross-product warning moves to Phase 6, and it is still right
+there.** §11 puts every account times every posting at 500 million rows and a
+permanent backfill. The shape to start from is scoring at ingest for the
+accounts whose preferences a posting could match, rather than for every account,
+which is a filter on the write side rather than laziness on the read side.
 
 ## Coexistence: both boards live until cutover
 
@@ -251,8 +317,14 @@ directly for testing while the flag is off.
 
 Cutover order, and each step is reversible until the last:
 
-1. `v2.jobby.fyi` renders read-only from Postgres. No writes, no DO. Compare
-   lanes against the old board by eye and by count.
+1. `v2.jobby.fyi` renders read-only from Postgres. No writes, no DO.
+   **Explain every difference against the old board, rather than eliminate
+   it.** Equality was never achievable and demanding it produces either a false
+   pass or days spent chasing a legitimate divergence. Measured on the first
+   comparison: Watching 18 against 16 and Dropped 57 against 9, both correct,
+   because `applications.posting_id` was NULL for every row and the old board
+   reads a frozen `roles` snapshot that nothing maintains. A difference with a
+   measured cause is a pass; a difference nobody can account for is not.
 2. The DO ships. The new board subscribes and applies events. Writes still go
    through the existing endpoints.
 3. `live_board` on for account 1, redirecting `jobby.fyi` to `v2.jobby.fyi`.
@@ -301,12 +373,57 @@ the required fallback. About one company in six lands on one.
   owner role that bypasses it silently would look exactly like it worked.
 - **Not move CRUD to Workers.** ADR 0005: Vercel route handlers for CRUD,
   Workers only for the channel and the cron fan-out, seam one-directional.
-- **Not build eager scoring.** §11 and ADR 0007.
+- **Not build a cross-product scorer.** §11 and ADR 0007. Scoring the pool for
+  one account is what §6 does; scoring every account times every posting is the
+  500-million-row shape Phase 6 has to solve.
+
+### The obligation this phase creates, named where it was created
+
+**v2 connects to Postgres as the database owner, and Phase 5 inherits that.**
+`JOBBY_DATABASE_URL` on the `jobby-v2` project is the device's own credential,
+taken deliberately on 2026-09-01 because the routes are GET-only and
+password-gated and the alternative was holding a working read-only board back
+on a credential it will not keep.
+
+**The trap is that the obvious Phase 5 assertion passes on it.** Measured on
+postgres:18, policy enabled, `app.account_id` set, neither role a superuser:
+
+| role | `rolbypassrls` | rows visible of 2 |
+|---|---|---|
+| owner of the table | f | **2** |
+| non-owner with select | f | 1 |
+
+A table owner bypasses its own policies through *ownership*, not through the
+role attribute. So `pg_roles.rolbypassrls is false` is true of a connection with
+no isolation at all, and enabling RLS against this credential would produce a
+green migration, a passing suite and nothing else. The non-owner read-only role
+goes in **before** the policies rather than after.
+
+Two more things this phase must not let become permanent:
+
+- **"No writes from v2" is enforced by discipline, not by the credential.**
+  Against a read-only role an accidental write fails loudly; against this one it
+  succeeds and the file store falls behind on exactly the rows it touched.
+- **The production checkout sits under `~/Documents`**, where macOS Privacy
+  controls can deny access after an OS update: on 2026-09-01 they denied git
+  access to a worktree there mid-session, and all four launchd plists execute
+  from that path. Parked as a **Phase 4** item, because that phase rewrites the
+  plists anyway and the move is free there. It is not free now: it needs a
+  deploy window and a restart of all three services, and it is the one place
+  where getting it wrong stops real applications.
 
 ## The gate
 
 > Measured p95 click-to-visible **under 250 ms** across all lanes, on a real
 > device over a real network, recorded. Not a local benchmark.
+
+**The stopwatch is client-side, on this Mac, over a real network**, and naming
+the measurement point is not pedantry: the same system passes or fails
+depending on where it sits. Measured 2026-09-01, server-side execution for a
+Found page is 0.6 ms by date and 39.6 ms by score, while a client on this Mac
+sees 250 to 550 ms for the same queries. Almost all of that is round trip.
+**0.6 ms says the query is fine and says nothing about whether the board feels
+live.**
 
 Two negative tests before the happy path, per §9: kill the websocket mid-session
 and assert the client resyncs rather than diverging; publish 200 events while

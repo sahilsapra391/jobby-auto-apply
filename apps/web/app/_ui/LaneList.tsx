@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { Lane, Sort } from "../lanes.generated";
+import type { Filters } from "./db";
 import {
   PostingRow, WatchRow, DoneRow, DroppedRow, ActCard, FlightCard,
 } from "./Rows";
@@ -59,7 +60,7 @@ const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
  * height and the browser's own find-in-page still lands somewhere sensible.
  */
 export function LaneList({
-  lane, initial, initialCursor, done: initiallyDone, shape, sort = "new",
+  lane, initial, initialCursor, done: initiallyDone, shape, sort = "new", filters,
 }: {
   lane: Lane;
   initial: Row[];
@@ -75,6 +76,7 @@ export function LaneList({
   // Watching and Submitted render as cards where the board renders tables.
   shape: Lane;
   sort?: Sort;
+  filters?: Filters;
 }) {
   const render = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
@@ -111,6 +113,11 @@ export function LaneList({
       // whichever column this lane is ordered by, and asking for page two of a
       // different ordering restarts at the top.
       const params = new URLSearchParams({ lane, sort });
+      // The filters travel with the cursor for the same reason the sort does:
+      // page two of a different predicate is a different lane.
+      if (filters?.q) params.set("q", filters.q);
+      if (filters?.within) params.set("within", filters.within);
+      if (filters?.direct) params.set("direct", "1");
       if (cursor) {
         params.set("afterId", cursor.id);
         if (cursor.at) params.set("afterAt", cursor.at);
@@ -129,7 +136,7 @@ export function LaneList({
     } finally {
       setLoading(false);
     }
-  }, [lane, cursor, done, loading, sort]);
+  }, [lane, cursor, done, loading, sort, filters]);
 
   const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
   const slice = rows.slice(first, last);

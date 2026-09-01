@@ -218,6 +218,18 @@ Consuming a token is `update submit_tokens set consumed_at = now() where id = $1
 
 ### Event envelope
 
+**Superseded. `docs/plans/phase2-live-board.md` §2 and §3 are the settled
+version; what follows is kept only so the change is legible.** Two things in it
+are wrong and both were found by building the read-only board against real
+data on 2026-09-01: the events keyed on `job_decisions`, which is a projection
+that was never finished (125 rows against 204 applications, and a Submitted
+lane read from it gives 100 where the events give 104), and the worked example
+showed `"from": "found"` when Found is the absence of a row and has no `from`.
+
+The settled shape: `application.changed` carries an application id, a posting
+entering the exclusion set is a separate `posting.decided`, and the write path
+targets `applications` and `application_events`.
+
 ```json
 {
   "seq": 10412,

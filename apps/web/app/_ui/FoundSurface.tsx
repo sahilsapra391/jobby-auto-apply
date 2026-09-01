@@ -1,3 +1,4 @@
+import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import { SCAN, PROBLEMS } from "./fixture";
 
 /** The scan banner, the ingest summary, and the problems disclosure. */
@@ -48,32 +49,50 @@ export function ScanBanner() {
  * them; `SelectFace` runs premium_ui.SCRIPT afterwards to put the styled face
  * over them. Nothing here draws a listbox.
  */
-export function Filters() {
+export function Filters({ q, within, direct, sort, shown, total }: {
+  q?: string; within?: string; direct?: boolean; sort?: Sort;
+  shown?: number; total?: number;
+} = {}) {
   return (
     <>
-      <div className="jb-row jb-basic">
-        <input type="search" placeholder="Add a keyword and press Enter…"
+      {/* **A plain GET form, no client JavaScript.** The board filters an
+          embedded payload in the browser; v2 pages from Postgres, so a filter
+          is a predicate on a query and the honest way to carry one is the URL.
+          It also makes a filtered lane linkable and survivable across a reload,
+          which the board's version is not. Submitting on Enter in the keyword
+          box is what a form already does. */}
+      <form className="jb-row jb-basic" method="get" action="/">
+        <input type="hidden" name="lane" value="found" />
+        <input type="search" name="q" defaultValue={q ?? ""}
+               placeholder="Add a keyword and press Enter…"
                aria-label="Add a keyword" />
         <div className="jb-radios">
-          {[["6h", "6 hours"], ["24h", "24 hours"], ["7d", "7 days"],
-            ["14d", "14 days"], ["30d", "30 days"]].map(([v, label]) => (
+          {Object.entries(WINDOWS).map(([v, label]) => (
             <label className="jb-radio" key={v}>
-              <input type="radio" name="jb-date" value={v}
-                     defaultChecked={v === "30d"} />
+              <input type="radio" name="within" value={v}
+                     defaultChecked={v === (within ?? "30d")} />
               <span>{label}</span>
             </label>
           ))}
         </div>
         <label className="jb-check">
-          <input type="checkbox" />
+          <input type="checkbox" name="direct" value="1"
+                 defaultChecked={!!direct} />
           <span>direct listings only</span>
         </label>
-        <select aria-label="Sort" defaultValue="score">
-          <option value="new">Newest</option>
-          <option value="score">Match %</option>
+        <select name="sort" aria-label="Sort" defaultValue={sort ?? "new"}>
+          {Object.entries(SORT_LABELS).map(([v, label]) => (
+            <option value={v} key={v}>{label}</option>
+          ))}
         </select>
-        <span className="jb-count">reads Postgres in the next piece</span>
-      </div>
+        <button className="jb-btn primary" type="submit">Filter</button>
+        <span className="jb-count">
+          {shown === undefined || total === undefined ? ""
+            : shown === total
+              ? `${total.toLocaleString()} jobs`
+              : `${shown.toLocaleString()} of ${total.toLocaleString()} jobs`}
+        </span>
+      </form>
       <div className="jb-pills" />
       <details className="jb-adv">
         <summary>Advanced search</summary>
