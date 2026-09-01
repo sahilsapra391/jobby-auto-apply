@@ -274,17 +274,63 @@ def upsert_employers(conn, records, batch=500):
         best[UNKNOWN_EMPLOYER]["domain"] = None
         best[UNKNOWN_EMPLOYER]["logo"] = None
 
-    claimed, contested = {}, []
+    # **A domain has two possible other claimants and the first version saw
+    # one.** Contention inside the batch was resolved here and the write then
+    # said `on conflict (norm_name)`; `employers` also has a unique `domain`,
+    # so an employer whose domain already belonged to a *different stored row*
+    # raised `UniqueViolation`, aborted the batch, and failed the sweep. This
+    # is the same defect `upsert_postings` had against its board key, one table
+    # over, and it was still freezing the board after that one was fixed --
+    # found by running a real sweep rather than by reasoning about the fix.
+    #
+    # So whatever already holds a domain is seeded in as a claimant, and the
+    # documented rule (lexicographically first, so a re-run does not move it)
+    # runs over all of them together.
+    stored_domains = {}
+    wanted = sorted({entry["domain"] for entry in best.values() if entry["domain"]})
+    if wanted:
+        with conn.cursor() as cur:
+            for chunk in _chunks(wanted, batch):
+                placeholders = ", ".join(["%s"] * len(chunk))
+                cur.execute(
+                    f"select domain, norm_name from employers "
+                    f"where domain in ({placeholders})", list(chunk))
+                stored_domains.update(dict(cur.fetchall()))
+
+    claimed, contested, released = dict(stored_domains), [], []
     for norm in sorted(best):
         domain = best[norm]["domain"]
         if not domain:
             continue
-        if domain in claimed:
-            contested.append((norm, domain, claimed[domain]))
+        holder = claimed.get(domain)
+        if holder == norm:
+            # This row already holds the domain. It is not contending with
+            # itself, and treating it as though it were is what breaks
+            # idempotency: every second pass would strip every domain.
+            continue
+        if holder is not None and holder <= norm:
+            contested.append((norm, domain, holder))
             best[norm]["domain"] = None
-            best[norm]["merged_into"] = claimed[domain]
+            best[norm]["merged_into"] = holder
         else:
+            if holder is not None:
+                # This name sorts first, so it takes the domain from the row
+                # storing it. That row keeps its own row and loses only the
+                # domain, which is what the rule has always said happens to a
+                # loser; it just could not happen to a stored one before.
+                contested.append((holder, domain, norm))
+                released.append((holder, norm))
             claimed[domain] = norm
+
+    # Cleared before the insert, or the insert collides with the very row it
+    # is taking the domain from.
+    if released:
+        with conn.cursor() as cur:
+            for chunk in _chunks([r[0] for r in released], batch):
+                placeholders = ", ".join(["%s"] * len(chunk))
+                cur.execute(
+                    f"update employers set domain = null "
+                    f"where norm_name in ({placeholders})", list(chunk))
 
     rows = [(entry["name"] or norm, norm, entry["domain"], entry["logo"])
             for norm, entry in best.items()]
@@ -311,6 +357,10 @@ def upsert_employers(conn, records, batch=500):
                  if entry.get("merged_into")
                  for winner in [entry["merged_into"]]
                  if winner in ids and norm in ids]
+        # A stored row that gave its domain up is a loser too, and it is not in
+        # `best` because it was never in this batch.
+        links += [(ids[winner], ids[loser]) for loser, winner in released
+                  if winner in ids and loser in ids]
         for chunk in _chunks(links, batch):
             values = ", ".join(["(%s::uuid, %s::uuid)"] * len(chunk))
             cur.execute(
