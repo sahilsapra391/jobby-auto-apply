@@ -35,16 +35,19 @@ NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 class LaneCase(pgtest.SchemaCase):
     prefix = "v2lane"
 
-    #: Per lane, so every lane gets both dated and undated rows by
-    #: construction. The first version distributed rows with
-    #: `hash(legacy) % 6`, which is randomised per process for strings, so the
-    #: fixture differed run to run and one lane came up with no undated rows at
-    #: all -- a non-deterministic test for a bug about ordering.
+    #: Per lane, so every lane gets rows by construction. The first version
+    #: distributed them with `hash(legacy) % 6`, and Python randomises string
+    #: hashing per process, so the fixture differed run to run and one lane
+    #: came up empty -- a non-deterministic test for a bug about ordering.
     DATED = 9
     UNDATED = 4
 
-    STATE = {"found": None, "watch": "watching", "flight": "queued",
-             "act": "needs_you", "done": "submitted", "dropped": "dropped"}
+    #: Found is a posting lane; the rest are application lanes, and the two
+    #: are different objects with no link between them. See v2_lanes.
+    #: Needs you is two statuses and the fixture has to contain both, or
+    #: dropping either from the predicate passes.
+    APP_STATUS = {"watch": ["watch"], "flight": ["inflight"],
+                  "act": ["review", "active"], "dropped": ["dropped"]}
 
     def setUp(self):
         super().setUp()
@@ -58,34 +61,85 @@ class LaneCase(pgtest.SchemaCase):
             cur.execute("insert into employers (canonical_name, norm_name) "
                         "values ('Acme', 'acme') returning id")
             employer = cur.fetchone()[0]
-
             self.expected = {}
-            n = 0
-            for lane, state in self.STATE.items():
+
+            # Found: postings with no decision row, dated and undated.
+            found = []
+            for i in range(self.DATED + self.UNDATED):
+                posted = (None if i >= self.DATED
+                          else NOW - timedelta(days=i % 4))   # ties on purpose
+                legacy = f"found-{i:03d}"
+                cur.execute(
+                    """insert into postings (legacy_id, source, board_slug,
+                                             external_id, title, employer_id,
+                                             posted_at, last_seen_at, apply_url)
+                       values (%s, 'greenhouse', 'acme', %s, %s, %s, %s, now(), %s)
+                       returning id""",
+                    (legacy, legacy, f"Role {legacy}", employer, posted,
+                     f"https://example.com/{legacy}"))
+                found.append((cur.fetchone()[0], posted))
+            self.expected["found"] = found
+
+            # A decision row so the Found predicate has something to exclude.
+            cur.execute(
+                """insert into postings (legacy_id, source, board_slug, external_id,
+                                         title, employer_id, posted_at,
+                                         last_seen_at, apply_url)
+                   values ('decided', 'greenhouse', 'acme', 'decided', 'Decided',
+                           %s, %s, now(), 'https://example.com/decided')
+                   returning id""", (employer, NOW))
+            self.decided = cur.fetchone()[0]
+            cur.execute("""insert into job_decisions (account_id, posting_id,
+                                                      state, decided_at)
+                           values (%s, %s, 'watching', now())""",
+                        (self.account, self.decided))
+
+            # The application lanes. `updated_at` is NOT NULL, so these can
+            # never have an undated row and the keyset's null branch is
+            # unreachable here -- asserted below rather than left as a gap.
+            for lane, statuses in self.APP_STATUS.items():
                 rows = []
-                for i in range(self.DATED + self.UNDATED):
-                    # Ties on purpose: several rows share a date, so the id
-                    # half of the keyset has to do real work.
-                    posted = (None if i >= self.DATED
-                              else NOW - timedelta(days=i % 4))
-                    legacy = f"{lane}-{i:03d}"
+                for i in range(self.DATED):
+                    status = statuses[i % len(statuses)]
                     cur.execute(
-                        """insert into postings (legacy_id, source, board_slug,
-                                                 external_id, title, employer_id,
-                                                 posted_at, last_seen_at, apply_url)
-                           values (%s, 'greenhouse', 'acme', %s, %s, %s, %s,
-                                   now(), %s) returning id""",
-                        (legacy, legacy, f"Role {legacy}", employer, posted,
-                         f"https://example.com/{legacy}"))
-                    pid = cur.fetchone()[0]
-                    if state:
-                        cur.execute("""insert into job_decisions
-                                       (account_id, posting_id, state, decided_at)
-                                       values (%s, %s, %s, now())""",
-                                    (self.account, pid, state))
-                    rows.append((pid, posted))
-                    n += 1
+                        """insert into applications (account_id, legacy_id,
+                                                     status, updated_at)
+                           values (%s, %s, %s, %s) returning id, updated_at""",
+                        (self.account, f"{lane}-{i:03d}", status,
+                         NOW - timedelta(hours=i % 4)))     # ties on purpose
+                    rows.append(tuple(cur.fetchone()))
                 self.expected[lane] = rows
+
+            # Submitted reads the history events, not a status. One of these
+            # is retracted by a later `abandoned` and must not appear.
+            done = []
+            for i in range(self.DATED):
+                cur.execute(
+                    """insert into applications (account_id, legacy_id, status,
+                                                 updated_at)
+                       values (%s, %s, 'unknown', %s) returning id, updated_at""",
+                    (self.account, f"done-{i:03d}", NOW - timedelta(hours=i % 4)))
+                row = tuple(cur.fetchone())
+                cur.execute("""insert into application_events
+                               (account_id, application_id, kind, at, payload)
+                               values (%s, %s, 'completed', %s, '{}')""",
+                            (self.account, row[0], NOW - timedelta(hours=i % 4)))
+                if i == 0:
+                    # Retracted: a strictly later abandoned. Counted once
+                    # before, and the role fell off the board entirely.
+                    # Strictly later matters: the predicate is `r.at > h.at`,
+                    # and the first version of this fixture wrote both at the
+                    # same instant, so the retraction never applied and the
+                    # test failed on its own timestamps rather than on the
+                    # rule.
+                    cur.execute("""insert into application_events
+                                   (account_id, application_id, kind, at, payload)
+                                   values (%s, %s, 'abandoned', %s, '{}')""",
+                                (self.account, row[0], NOW + timedelta(hours=1)))
+                else:
+                    done.append(row)
+            self.expected["done"] = done
+            self.retracted = "done-000"
 
     def walk(self, lane, page=PAGE):
         """Every row the lane yields, page by page, through the real keyset."""
@@ -98,9 +152,12 @@ class LaneCase(pgtest.SchemaCase):
                 batch = cur.fetchall()
             if not batch:
                 return seen
+            # The cursor column differs by lane shape: postings order on
+            # `posted_at` (index 6) and applications on `updated_at` (index 4).
+            at = 6 if lane in v2_lanes.POSTING_LANES else 4
             for row in batch:
-                seen.append((row[0], row[6]))
-            after_id, after_at = batch[-1][0], batch[-1][6]
+                seen.append((row[0], row[at]))
+            after_id, after_at = batch[-1][0], batch[-1][at]
         raise AssertionError(f"{lane} did not terminate; the keyset is not "
                              f"advancing and the walk would loop forever")
 
@@ -130,27 +187,55 @@ class EveryLaneWalksCleanly(LaneCase):
                                 f"{lane} interleaves undated rows rather than "
                                 f"putting them last")
 
+    def test_needs_you_contains_both_of_its_statuses(self):
+        """The control for the predicate having two arms. A fixture with only
+        `review` in it passes with `active` deleted from the lane."""
+        with self.conn.cursor() as cur:
+            cur.execute("""select distinct status from applications
+                            where account_id = %s and legacy_id like 'act-%%'""",
+                        (self.account,))
+            self.assertEqual({r[0] for r in cur.fetchall()}, {"review", "active"})
+
+    def test_only_posting_lanes_can_have_undated_rows(self):
+        """Why the two assertions below are scoped to Found.
+
+        `applications.updated_at` is NOT NULL, so an application lane cannot
+        produce an undated row and the keyset's null branch is unreachable
+        there. That is a property of the schema rather than of the fixture, so
+        it is asserted: if the column ever becomes nullable, the scoping below
+        becomes a hole and this fails first."""
+        with self.conn.cursor() as cur:
+            cur.execute("""select is_nullable from information_schema.columns
+                            where table_name = 'applications'
+                              and column_name = 'updated_at'""")
+            self.assertEqual(cur.fetchone()[0], "NO")
+            cur.execute("""select is_nullable from information_schema.columns
+                            where table_name = 'postings'
+                              and column_name = 'posted_at'""")
+            self.assertEqual(cur.fetchone()[0], "YES",
+                             "postings.posted_at stopped being nullable, so the "
+                             "undated case this whole file is about is gone")
+
     def test_the_undated_rows_are_reachable_at_all(self):
         """The control for the two above. A keyset that stops at the first
         undated row still yields a correctly ordered prefix and would pass an
         ordering assertion; what it never does is arrive."""
-        for lane in v2_lanes.LANES:
+        for lane in v2_lanes.POSTING_LANES:
             with self.subTest(lane=lane):
                 expected_undated = sum(1 for _, at in self.expected[lane]
                                        if at is None)
-                if not expected_undated:
-                    continue
+                self.assertTrue(expected_undated, f"{lane} fixture has none")
                 walked = self.walk(lane)
                 got = sum(1 for _, at in walked if at is None)
                 self.assertEqual(got, expected_undated,
                                  f"{lane} reached {got} of {expected_undated} "
                                  f"undated rows")
 
-    def test_the_fixture_actually_has_undated_rows_in_every_lane(self):
+    def test_the_fixture_actually_has_undated_rows_in_every_posting_lane(self):
         """And the control for *that*: a fixture with no undated rows makes
         every assertion above vacuous, which is how this class of bug survives
         a test suite."""
-        for lane in v2_lanes.LANES:
+        for lane in v2_lanes.POSTING_LANES:
             with self.subTest(lane=lane):
                 self.assertTrue(
                     any(at is None for _, at in self.expected[lane]),
@@ -164,6 +249,58 @@ class EveryLaneWalksCleanly(LaneCase):
             with self.subTest(lane=lane):
                 self.assertEqual([p for p, _ in self.walk(lane, page=1)],
                                  [p for p, _ in self.walk(lane, page=PAGE)])
+
+
+class SubmittedReadsTheEventsNotAStatus(LaneCase):
+    """A `completed` retracted by a later `abandoned` was counted once as
+    submitted and the role fell off the board entirely -- neither submitted nor
+    anywhere else. So the lane asks whether a completion is the application's
+    last word, rather than trusting a status field to have been updated."""
+
+    def test_a_retracted_completion_is_not_submitted(self):
+        walked = {pid for pid, _ in self.walk("done")}
+        with self.conn.cursor() as cur:
+            cur.execute("select id from applications where legacy_id = %s",
+                        (self.retracted,))
+            retracted_id = cur.fetchone()[0]
+        self.assertNotIn(retracted_id, walked)
+
+    def test_control_an_unretracted_completion_is_submitted(self):
+        """Without this, "the retracted one is absent" passes when the lane is
+        empty. Its sibling has the same completion and no abandonment."""
+        walked = {pid for pid, _ in self.walk("done")}
+        with self.conn.cursor() as cur:
+            cur.execute("select id from applications where legacy_id = 'done-001'")
+            self.assertIn(cur.fetchone()[0], walked)
+
+    def test_an_abandoned_BEFORE_the_completion_does_not_retract_it(self):
+        """Order is the whole rule. An application abandoned and then later
+        completed is submitted, and a predicate that only checked for the
+        presence of an `abandoned` row would drop it."""
+        with self.conn.cursor() as cur:
+            cur.execute("""insert into applications (account_id, legacy_id,
+                                                     status, updated_at)
+                           values (%s, 'revived', 'unknown', %s) returning id""",
+                        (self.account, NOW))
+            app = cur.fetchone()[0]
+            for kind, at in (("abandoned", NOW - timedelta(hours=3)),
+                             ("completed", NOW - timedelta(hours=1))):
+                cur.execute("""insert into application_events
+                               (account_id, application_id, kind, at, payload)
+                               values (%s, %s, %s, %s, '{}')""",
+                            (self.account, app, kind, at))
+        self.assertIn(app, {pid for pid, _ in self.walk("done")})
+
+    def test_status_alone_would_have_given_a_different_answer(self):
+        """The reason the lane reads events at all: every fixture row here has
+        status 'unknown', so a status-based Submitted lane would return none of
+        them."""
+        with self.conn.cursor() as cur:
+            cur.execute("""select count(*) from applications
+                            where account_id = %s and status = 'submitted'""",
+                        (self.account,))
+            self.assertEqual(cur.fetchone()[0], 0)
+        self.assertTrue(self.walk("done"), "the events lane found nothing either")
 
 
 class FoundIsTheAbsenceOfADecision(LaneCase):

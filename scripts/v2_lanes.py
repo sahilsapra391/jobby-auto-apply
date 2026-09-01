@@ -38,57 +38,141 @@ import sys
 #:
 #: `dropped` is here as a lane because it is a query; it is not a sixth tab.
 #: The board surfaces it through the archive dialog, and CLAUDE.md says why.
+#: Every lane and the predicate that defines it.
+#:
+#: **Found is a posting; every other lane is an application.** They are
+#: different objects and the database does not link them --
+#: `applications.posting_id` is NULL for all 224 rows, measured 2026-08-31 --
+#: so no lane below can be derived from another, and the pool's `passed 9`
+#: will never equal the applications' `dropped 57`. Those are a card you
+#: pressed Pass on and work you abandoned after it existed.
+#:
+#: **`applications`, not the `sessions` table.** Both hold a status; parity
+#: compares the files against `applications`, `applications` has all 89, and
+#: the `sessions` table is a pre-§3 leftover that nothing reads and that is
+#: already missing a row. See docs/plans/phase3-inputs.md section 7.
+#:
+#: **Three of the six states `job_decisions` permits are never written.**
+#: `queued`, `applying` and `needs_you` are stages of work rather than opinions
+#: about a posting, and the work lives in `applications`. The constraint stays
+#: permissive; nothing should start writing them, because that is a mirror
+#: change on a parity gate path buying a second copy of something applications
+#: already hold correctly.
+POSTING_LANES = {"found"}
+
 LANES = {
     "found": {
         "label": "Found",
-        # Absence of a decision row, and open. LEFT JOIN ... IS NULL rather
-        # than NOT EXISTS so one plan shape serves every lane.
+        # The absence of a decision row, and open. That is what keeps it free
+        # at 500k: postings minus this account's decisions, never a per-account
+        # materialisation. It is also why `found` is not a storable state.
         "where": "p.closed_at is null and d.posting_id is null",
     },
-    "watch":  {"label": "Watching",  "where": "d.state = 'watching'"},
-    "flight": {"label": "In flight", "where": "d.state in ('queued', 'applying')"},
-    "act":    {"label": "Needs you", "where": "d.state = 'needs_you'"},
-    "done":   {"label": "Submitted", "where": "d.state = 'submitted'"},
-    "dropped": {"label": "Dropped",  "where": "d.state = 'dropped'"},
+    "watch":  {"label": "Watching",  "where": "a.status = 'watch'"},
+    "flight": {"label": "In flight", "where": "a.status = 'inflight'"},
+    "act":    {"label": "Needs you", "where": "a.status in ('review', 'active')"},
+    "done": {
+        "label": "Submitted",
+        # **Read the events, not a status.** A `completed` retracted by a later
+        # `abandoned` was counted once as submitted and the role fell off the
+        # board entirely -- it was neither submitted nor anywhere else. So the
+        # lane asks whether a completion is the application's last word.
+        #
+        # `application_events`, which migration 0002 creates, and not `history`,
+        # which is the pre-§3 `jobs_db` table holding the same rows. Both exist
+        # on this database and only one is part of the schema; a lane reading
+        # the legacy one works today and breaks on any clean deployment, which
+        # is how the first version of this was written.
+        "where": """exists (
+            select 1 from application_events h
+             where h.application_id = a.id and h.kind = 'completed'
+               and not exists (
+                 select 1 from application_events r
+                  where r.application_id = a.id
+                    and r.kind = 'abandoned' and r.at > h.at))""",
+    },
+    "dropped": {"label": "Dropped",  "where": "a.status = 'dropped'"},
 }
 
-COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote, p.workplace,
-             p.posted_at, p.apply_url, p.years_min, p.years_max, p.summary,
-             p.source, e.canonical_name as employer, e.domain as employer_domain,
-             e.logo_url as employer_logo"""
+POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
+             p.workplace, p.posted_at, p.apply_url, p.years_min, p.years_max,
+             p.summary, p.source, e.canonical_name as employer,
+             e.domain as employer_domain, e.logo_url as employer_logo"""
+
+#: An application lane has no posting to draw from, because nothing links the
+#: two. `updated_at` is the ordering: it is when the work last moved, which is
+#: the question these lanes answer, and `posted_at` would be unavailable
+#: anyway.
+APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
+             a.created_at"""
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".
-#: Casts are required, not decoration. A bare NULL parameter has no type, and
-#: `$2 is null` makes Postgres give up with "could not determine data type" --
-#: which is the first page of every lane, so nothing would have worked at all.
-KEYSET = """(
+def keyset(column):
+    """The keyset predicate for a lane ordered on `column`, newest first.
+
+    **One implementation for both lane shapes**, and that is not tidiness. The
+    first version had a second copy for the application lanes, and because
+    `applications.updated_at` is NOT NULL its null-handling was unreachable --
+    so two mutations against it, replacing it with a naive row comparison and
+    removing `nulls last`, could not be caught by any test. Untestable
+    protection reads as protection and is not. Built once, it is exercised by
+    the Found lane's undated rows wherever it is used.
+
+    **The row comparison `(column, id) < (?, ?)` is the usual shape and it is
+    wrong.** A NULL on either side makes it NULL rather than true, so the walk
+    stops dead at the first undated row and everything after it is unreachable.
+    2,087 postings have no date. The three cases a nulls-last ordering actually
+    has are written out instead.
+
+    **The casts are load-bearing.** A bare NULL parameter has no type and
+    `$2 is null` makes Postgres refuse with "could not determine data type" --
+    which is the first page of every lane, so nothing worked at all until they
+    were added.
+    """
+    return f"""(
       %(after_id)s::uuid is null
    or (%(after_at)s::timestamptz is not null and (
-            p.posted_at < %(after_at)s::timestamptz
-         or p.posted_at is null
-         or (p.posted_at = %(after_at)s::timestamptz
-             and p.id < %(after_id)s::uuid)))
-   or (%(after_at)s::timestamptz is null and p.posted_at is null
-       and p.id < %(after_id)s::uuid)
-)"""
+            {column} < %(after_at)s::timestamptz
+         or {column} is null
+         or ({column} = %(after_at)s::timestamptz
+             and {{id}} < %(after_id)s::uuid)))
+   or (%(after_at)s::timestamptz is null and {column} is null
+       and {{id}} < %(after_id)s::uuid)
+)""".replace("{id}", column.split(".")[0] + ".id")
 
-ORDER = "order by p.posted_at desc nulls last, p.id desc"
+
+def order_by(column):
+    """Newest first, undated last. `nulls last` is not optional: PostgreSQL
+    sorts nulls FIRST under `desc`, and an index whose ordering differs from
+    the query's cannot serve it, so the lane silently sorts the corpus."""
+    alias = column.split(".")[0]
+    return f"order by {column} desc nulls last, {alias}.id desc"
 
 
 def page_sql(lane):
     """One page of a lane, newest first, undated last."""
     if lane not in LANES:
         raise KeyError(f"no lane {lane!r}")
-    return f"""
-select {COLUMNS}
+    if lane in POSTING_LANES:
+        return f"""
+select {POSTING_COLUMNS}
   from postings p
   left join job_decisions d
     on d.posting_id = p.id and d.account_id = %(account)s
   left join employers e on e.id = p.employer_id
  where {LANES[lane]["where"]}
-   and {KEYSET}
- {ORDER}
+   and {keyset('p.posted_at')}
+ {order_by('p.posted_at')}
+ limit %(limit)s
+""".strip()
+    return f"""
+select {APPLICATION_COLUMNS}
+  from applications a
+ where a.account_id = %(account)s
+   and {LANES[lane]["where"]}
+   and {keyset('a.updated_at')}
+ {order_by('a.updated_at')}
  limit %(limit)s
 """.strip()
 
@@ -96,12 +180,18 @@ select {COLUMNS}
 def count_sql(lane):
     """The lane's size. Separate from the page so a count never drags a page
     of columns across the wire with it."""
-    return f"""
+    if lane in POSTING_LANES:
+        return f"""
 select count(*)
   from postings p
   left join job_decisions d
     on d.posting_id = p.id and d.account_id = %(account)s
  where {LANES[lane]["where"]}
+""".strip()
+    return f"""
+select count(*)
+  from applications a
+ where a.account_id = %(account)s and {LANES[lane]["where"]}
 """.strip()
 
 
