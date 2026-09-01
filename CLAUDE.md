@@ -549,6 +549,34 @@ The KV document copies under `jobby:doc:*` are still there and still served as
 the fallback. Retiring them is its own commit after a week of clean serving,
 and it re-does the KV write-budget math.
 
+### A page can be byte-identical and still blank, 2026-08-30
+
+**Correct markup plus a byte-identical stylesheet does not imply a rendered
+page.** v2's `/settings` route shipped with the board's own `.settings-page`
+markup and the board's own CSS, generated from `dashboard.py` and verified
+byte for byte, and it rendered nothing at all.
+
+The board is one document whose panels are toggled by a class on `<body>`:
+`.settings-page` and `.profile-page` are `display:none` until
+`body.settings-view` or `body.profile-view` is set. v2 serves them as separate
+routes, so nothing set the class and the CSS did exactly what it says.
+
+Every test passed. The markup check passed, because the markup was the board's.
+The stylesheet check passed, because the stylesheet was the board's. The
+deployed-shape check passed, because the route answered 200 with a full page of
+HTML. **The failure was in the composition of two correct halves, and nothing
+in the suite was looking at composition.**
+
+That is the same shape as the four database incidents earlier the same day: two
+things each correct on their own, and a property that only exists between them.
+It is also why the check that found it was opening the page, which is a thing
+no assertion in this repository does.
+
+Generated-from-source removes drift; it does not remove this. When a piece of
+the old board is carried across, the question "does the markup match" and the
+question "does the page render" are different questions, and only the second
+one is the one anybody cares about.
+
 ### Instrumentation on the branch tests take, 2026-09-01
 
 **A hook can be correct, exercised, and never once run in production, because

@@ -180,6 +180,63 @@ Phase 3 should not try to close it by parsing harder:
 For all of these the fallback `(source, record_id)` is the honest key, and a
 connector that knows its own board replaces it with the real one for free.
 
+## 5. An application is not linked to its posting, and Phase 3 needs it to be
+
+**`applications.posting_id` is NULL for all 224 rows.** Measured 2026-08-31.
+The column exists, the foreign key exists, and nothing has ever populated it.
+
+That does not block the v2 lanes, which read `applications.status` and the
+history events directly. It blocks three things that all arrive in Phase 3:
+
+- a Submitted card cannot link to the posting it came from, because it does
+  not know which one that is;
+- dedup against the pool has nothing to dedup on;
+- §5's connector upsert cannot reconcile a re-seen job with an application
+  already made against it, which is the case that produces a duplicate
+  application under a real name.
+
+It also explains a delta that looks like a bug and is not. The pool holds
+`passed 9` and the applications hold `dropped 57`; those are different
+populations -- a posting you pressed Pass on, versus an application you
+abandoned after it existed -- and with no link between them they can never
+agree. Anyone comparing the two counts will keep rediscovering that.
+
+The backfill has the material to do it: an application's legacy id and the
+posting's `apply_url` and `(source, board_slug, external_id)` are both in the
+store. It was not done because the board key work landed after the application
+backfill, and nothing since has needed it.
+
+## 6. The parity gate cannot see extra applications
+
+`verify_parity.compare_class_b` reports `only_in_file` for sessions and
+deliberately not `only_in_postgres`, because `roles.json` legitimately creates
+`applications` rows that the sessions directory never had. That exemption is
+correct and should stay.
+
+The cost is that **anything which appears in `applications` from nowhere is
+invisible to the gate**. Measured 2026-08-31: 27 test fixtures -- `a`, `b`,
+`c`, `nw-pm`, `criteo`, `acme-pm`, `hostile` -- sat in production for hours
+while parity read green on every run.
+
+The fix is not to remove the exemption. It is to distinguish "created by
+roles.json" from "appeared from nowhere", which the store can answer: a row
+whose legacy id is in neither `sessions/` nor `roles.json` is in the second
+category. That is a change to a gate path, so it waits for the clock.
+
+## 7. Three spellings of session status, and one is dead
+
+The status of an application exists in three places: the session files under
+`sessions/`, the `applications` table, and a `sessions` table.
+
+`sessions` is left over from `jobs_db.SCHEMA`, the pre-§3 layout. Nothing in
+the §3 path reads it -- the only reference anywhere is a table name in a counts
+helper at `jobs_db.py:307` -- and it is already wrong: 88 rows against 89
+session files, missing the Toast watch driven on 2026-08-30.
+
+**It is a deletion candidate rather than a repair.** Fixing it would mean
+maintaining a third copy that nothing consumes, which is the same argument the
+`jobby:doc:*` KV copies are retired under. Parity compares the files against
+`applications`, which is the pair that matters.
 ## 8. A session deletion is not mirrored, and it leaks
 
 A session file is deleted when its application completes; the `applications`
@@ -198,3 +255,61 @@ you when it is not. Parity does not see it, because a session absent from the
 file store is `only_in_postgres`, which is the exemption section 6 is about.
 
 The fix belongs with whatever mirrors deletions, which nothing currently does.
+
+## 9. A retitle is a false collision under a URL-derived key
+
+Bitdeer's "Operations Technician" was captured twice: the employer retitled it,
+the slug moved with the title, and the scraper took it as a new posting. The
+two records share `(breezy, bitdeer, eeab1edbc9db)`, so they collapse into one
+row and every field that moved with the title -- title, normalised title, apply
+URL -- shows up as a merged-field drop.
+
+**That is one posting merged with its own past, not two records for one job.**
+The distinction matters because the remedy is different: there is nothing to
+reconcile between two employers' listings, only a stale capture of the same one.
+
+**And it is normal traffic rather than a curiosity.** The collision count went
+2, then 5, then 7 within two days of anyone looking. §5's connector upsert will
+meet this constantly, and a connector that re-derives its key from a URL will
+keep manufacturing pairs every time a title changes.
+
+A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
+`board_slug` and `external_id` by construction and never has to look at the
+URL, so it sidesteps the whole class. That is the second argument for passing
+the key rather than re-deriving it -- section 4 gives the first, which is that
+79.2% is as far as derivation gets on the corpus that exists.
+
+## 10. §3 cannot name an application, and `roles` is not the way out
+
+`applications` holds no company and no role. An application lane rendered from
+it shows an opaque legacy id and nothing a person recognises, which is what
+Watching and Needs you looked like the first time they drew real rows.
+
+**The obvious fix is to join `roles`, and it is wrong.** That table has both,
+on the same key, for 196 rows -- and no migration creates it. It is a pre-§3
+`jobs_db` table, like `sessions` and `history`, and nothing maintains it:
+`class_b._mirror_roles` says so in its own docstring and mirrors `roles.json`
+as *applications* instead, on the grounds that inventing a `roles` table would
+be a fifth spelling of the same fact.
+
+Demonstrated rather than argued, on 2026-09-01: writing a role through
+`store.py role-put` returned `remembered: true`, the file took it, and the
+table stayed at 196.
+
+**This was written up once as "`roles` is mirrored and the parity gate cannot
+see it". That was wrong and the correction is the point.** The gate is not
+blind to a mirrored table; the table is not mirrored, and not part of the
+schema. It is the same mistake as reading `history` for the Submitted lane,
+made one function later, in the same afternoon, by someone who had just caught
+it. A join that works on this machine and returns nothing on a clean
+deployment is the launchd PATH bug's shape, and knowing the shape is evidently
+not enough to stop making it.
+
+So the lanes show the legacy id until §3 carries a name. Two ways to give it
+one, and section 5 argues for the second:
+
+- company and role on `applications`, which duplicates what the posting
+  already holds;
+- `applications.posting_id`, which is NULL for all 224 rows and which every
+  other Phase 3 item needs anyway.
+
