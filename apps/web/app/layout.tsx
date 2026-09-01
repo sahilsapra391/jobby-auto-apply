@@ -4,7 +4,8 @@ import type { Metadata } from "next";
 // look one for one identical to the board it replaces, and a hand-port
 // delivers that once and drifts from then on.
 import "./board.css";
-import { HEAD, THEME_BOOT, THEME_WIRE } from "./chrome.generated";
+import { HEAD, THEME_BOOT } from "./chrome.generated";
+import { ThemeControls } from "./_ui/ThemeControls";
 
 /**
  * The title comes out of the generated head rather than being retyped.
@@ -27,25 +28,6 @@ const HEAD_REST = HEAD
 export const metadata: Metadata = { title: BOARD_TITLE };
 export const viewport = { width: "device-width", initialScale: 1 };
 
-/**
- * Run a block of the board's own JavaScript once, after the DOM exists.
- *
- * The board runs its scripts at the end of its document and can assume the
- * markup above them. v2 cannot: React hoists script elements, so the same
- * block runs against an empty document unless it is deferred. Wrapping rather
- * than editing keeps the inner text byte-identical to what the generator
- * pulled out of `dashboard.build`.
- */
-const DEFER_UNTIL_READY = (js: string, key: string) => `(function(){
-  var k = ${JSON.stringify("__jb_ran_")} + ${JSON.stringify(key)};
-  if (window[k]) return;
-  function go(){ if (window[k]) return; window[k] = 1; ${js}
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", go);
-  } else { go(); }
-})();`;
-
 export default function RootLayout({
   children,
 }: {
@@ -62,21 +44,7 @@ export default function RootLayout({
       </head>
       <body>
         {children}
-        {/* After the controls exist, never before.
-
-            **React 19 hoists `<script>` into the head**, so placing the
-            board's own block at the end of the body is not enough: it ran
-            before any `.themebtn` was in the document, bound to an empty
-            NodeList, and left three controls that render and do nothing --
-            with `paintTheme` defined on `window`, which is what makes the
-            symptom read as "the script never ran" when it had.
-
-            The wrapper is v2's and the body inside it is the board's,
-            unedited. It defers to DOMContentLoaded when the document is still
-            parsing, and it refuses to run twice, because React emits this
-            element in both places and a second pass would bind every listener
-            again. */}
-        <script dangerouslySetInnerHTML={{ __html: DEFER_UNTIL_READY(THEME_WIRE, "theme") }} />
+        <ThemeControls />
       </body>
     </html>
   );

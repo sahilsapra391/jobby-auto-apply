@@ -1,4 +1,4 @@
-import { LOCKUP, DEFS, THEMESEG } from "../chrome.generated";
+import { LOCKUP, DEFS, THEMESEG_PROPS, THEMESEG_INNER } from "../chrome.generated";
 
 export const raw = (html: string) => ({ dangerouslySetInnerHTML: { __html: html } });
 
@@ -39,7 +39,14 @@ export function AppBar({ here }: { here: "home" | "profile" | "settings" }) {
             Settings
           </a>
         </nav>
-        <span {...raw(THEMESEG)} />
+        {/* **The element the stylesheet places must be the element React
+            renders.** `.appbar` is `grid-template-columns: 1fr auto 1fr` and
+            `.themeseg` carries `justify-self: end`, which applies to a grid
+            *item*: a `<span>` around it made the span the item, the rule
+            selected a child, and the controls sat against the nav instead of
+            the right edge. The props are generated with the markup so they
+            cannot drift from what the board emits. */}
+        <div {...THEMESEG_PROPS} {...raw(THEMESEG_INNER)} />
       </header>
     </>
   );
