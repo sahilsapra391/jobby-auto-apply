@@ -180,47 +180,6 @@ Phase 3 should not try to close it by parsing harder:
 For all of these the fallback `(source, record_id)` is the honest key, and a
 connector that knows its own board replaces it with the real one for free.
 
-## 8. A session deletion is not mirrored, and it leaks
-
-A session file is deleted when its application completes; the `applications`
-row keeps whatever status it last had, forever. Nothing clears it and nothing
-notices.
-
-Measured 2026-09-01: 108 applications have no session file. 107 carry
-`unknown` or `known`, which is `roles.json` doing its job. **One carries
-`active`** -- `actively-ai-agent-product-manager` -- so a lane reading
-`applications.status` puts it in Needs you while the old board, which buckets
-sessions, puts it nowhere.
-
-One row today, and it is a slow leak rather than a one-off: every future
-deletion adds another, and each one is a role the board says is waiting for
-you when it is not. Parity does not see it, because a session absent from the
-file store is `only_in_postgres`, which is the exemption section 6 is about.
-
-The fix belongs with whatever mirrors deletions, which nothing currently does.
-
-## 9. A retitle is a false collision under a URL-derived key
-
-Bitdeer's "Operations Technician" was captured twice: the employer retitled it,
-the slug moved with the title, and the scraper took it as a new posting. The
-two records share `(breezy, bitdeer, eeab1edbc9db)`, so they collapse into one
-row and every field that moved with the title -- title, normalised title, apply
-URL -- shows up as a merged-field drop.
-
-**That is one posting merged with its own past, not two records for one job.**
-The distinction matters because the remedy is different: there is nothing to
-reconcile between two employers' listings, only a stale capture of the same one.
-
-**And it is normal traffic rather than a curiosity.** The collision count went
-2, then 5, then 7 within two days of anyone looking. §5's connector upsert will
-meet this constantly, and a connector that re-derives its key from a URL will
-keep manufacturing pairs every time a title changes.
-
-A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
-`board_slug` and `external_id` by construction and never has to look at the
-URL, so it sidesteps the whole class. That is the second argument for passing
-the key rather than re-deriving it -- section 4 gives the first, which is that
-79.2% is as far as derivation gets on the corpus that exists.
 ## 5. An application is not linked to its posting, and Phase 3 needs it to be
 
 **`applications.posting_id` is NULL for all 224 rows.** Measured 2026-08-31.
@@ -278,3 +237,44 @@ session files, missing the Toast watch driven on 2026-08-30.
 maintaining a third copy that nothing consumes, which is the same argument the
 `jobby:doc:*` KV copies are retired under. Parity compares the files against
 `applications`, which is the pair that matters.
+## 8. A session deletion is not mirrored, and it leaks
+
+A session file is deleted when its application completes; the `applications`
+row keeps whatever status it last had, forever. Nothing clears it and nothing
+notices.
+
+Measured 2026-09-01: 108 applications have no session file. 107 carry
+`unknown` or `known`, which is `roles.json` doing its job. **One carries
+`active`** -- `actively-ai-agent-product-manager` -- so a lane reading
+`applications.status` puts it in Needs you while the old board, which buckets
+sessions, puts it nowhere.
+
+One row today, and it is a slow leak rather than a one-off: every future
+deletion adds another, and each one is a role the board says is waiting for
+you when it is not. Parity does not see it, because a session absent from the
+file store is `only_in_postgres`, which is the exemption section 6 is about.
+
+The fix belongs with whatever mirrors deletions, which nothing currently does.
+
+## 9. A retitle is a false collision under a URL-derived key
+
+Bitdeer's "Operations Technician" was captured twice: the employer retitled it,
+the slug moved with the title, and the scraper took it as a new posting. The
+two records share `(breezy, bitdeer, eeab1edbc9db)`, so they collapse into one
+row and every field that moved with the title -- title, normalised title, apply
+URL -- shows up as a merged-field drop.
+
+**That is one posting merged with its own past, not two records for one job.**
+The distinction matters because the remedy is different: there is nothing to
+reconcile between two employers' listings, only a stale capture of the same one.
+
+**And it is normal traffic rather than a curiosity.** The collision count went
+2, then 5, then 7 within two days of anyone looking. §5's connector upsert will
+meet this constantly, and a connector that re-derives its key from a URL will
+keep manufacturing pairs every time a title changes.
+
+A connector fetching `boards.greenhouse.io/<slug>` knows its `source`,
+`board_slug` and `external_id` by construction and never has to look at the
+URL, so it sidesteps the whole class. That is the second argument for passing
+the key rather than re-deriving it -- section 4 gives the first, which is that
+79.2% is as far as derivation gets on the corpus that exists.
