@@ -313,3 +313,77 @@ one, and section 5 argues for the second:
 - `applications.posting_id`, which is NULL for all 224 rows and which every
   other Phase 3 item needs anyway.
 
+
+## 5. What it would take to give an application a company and a role
+
+**Measured 2026-09-01, because this now blocks the most visible part of the
+board rather than five items in a document.** Every application lane on v2
+draws a legacy slug where the board draws a company and a role, and
+`applications.posting_id` is NULL for all 204 rows.
+
+### The frozen table names 96% and is the wrong answer
+
+`roles` has `application_id, company, role, url, record` and covers **196 of
+204**, all 196 with both fields. Per lane it would name Submitted 104 of 104,
+Dropped 57 of 57, Watching 15 of 18, Needs you 16 of 21.
+
+It is also a snapshot that no migration creates and nothing maintains, exactly
+like `history` and `jobs`. The eight it misses are the newest applications,
+which is the tell: coverage does not stay at 96%, it decays from it, and it
+decays silently because a missing name looks the same as a name that was never
+there. Reading it to fill a column is the `answers.json` join in different
+clothing -- today's snapshot presented as the record of what happened.
+
+### The honest backfill resolves 61%
+
+Resolving `posting_id` properly, against live `postings`:
+
+```
+exact roles.url -> postings.apply_url     103
+board key (slug, external id)              13
+legacy_id -> postings.legacy_id             9
+                                          ---
+                                          125 of 204   (61%)
+```
+
+The 79 that do not resolve are not a parser weakness and Phase 3 should not try
+to close them by parsing harder. They are §4's categories again plus one new
+one:
+
+- the posting is no longer in the pool, so there is nothing to point at
+- aggregator redirects (`jobviewtrack.com/v2/...`), which carry no board identity
+- employer-own domains carrying a `gh_jid` (Duolingo, Dropbox, Coupang)
+- Workable short links (`apply.workable.com/j/AA703B6828`)
+
+**A posting that has been pruned cannot be resolved to, at any coverage.** That
+is a ceiling on this approach rather than a gap in it, and it is the reason the
+answer is 61% and not 90%.
+
+### So it is two changes, and only one of them is a backfill
+
+**New applications need `posting_id` written when they are created.** The id is
+known at that moment: the click that creates an application is a click on a
+posting. Nothing has to be inferred. This is a mirror change on the promote
+path, which is a Phase 1 gate path, so it restarts the parity clock and wants
+to be taken deliberately rather than folded into UI work.
+
+**Old applications get the 61% backfill above**, and the rest keep showing what
+they have. Do not close the gap by falling back to `roles` for the remainder:
+that is the frozen snapshot again, and mixing a resolved id with a snapshot
+lookup in one column produces a display where nobody can tell which is which.
+If the remainder needs a name, it needs its own field saying where the name
+came from, the way `answer_record`'s `capture` level does.
+
+### Two ways to get this wrong, both measured
+
+**Matching on a normalised URL would collide.** `norm_url` strips queries, and
+4,202 of 14,569 pool jobs carry their identity in the query; one recorded Stripe
+role already made `seen.check` call every other Stripe job known. The 103 above
+are *exact* `apply_url` matches, which is safe. A normalised match is not.
+
+**Trying every source to parse a board key is ambiguous in principle.** It was
+measured at zero ambiguity here (0 of 196 URLs parsed under more than one
+source), but that is a property of this corpus, not of the method.
+`roles.record` carries a `source` for 172 of 196 and an `ats` for 155, so a real
+backfill should use the recorded source and treat a URL with none as
+unresolvable rather than guessing across all sixteen.
