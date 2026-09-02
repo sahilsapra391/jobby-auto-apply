@@ -252,14 +252,27 @@ export function LaneList({
       ) : null}
       <thead><tr>{table.head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
       <tbody>
-        <tr aria-hidden="true" style={{ height: above }}><td colSpan={table.head.length} /></tr>
+        {/* **The spacer only exists when it has height.** A zero-height `<tr>`
+            still draws its border and its cell padding, so the first page of
+            Watching and Submitted opened with an empty band between the header
+            and the first row. It is the windowing scaffolding showing through,
+            which is exactly what it must not do. */}
+        {above > 0 ? (
+          <tr aria-hidden="true" style={{ height: above }}>
+            <td colSpan={table.head.length} />
+          </tr>
+        ) : null}
         {slice.map((row) => <Row key={row.id} {...row} />)}
-        <tr aria-hidden="true" style={{ height: below }}><td colSpan={table.head.length} /></tr>
+        {below > 0 ? (
+          <tr aria-hidden="true" style={{ height: below }}>
+            <td colSpan={table.head.length} />
+          </tr>
+        ) : null}
       </tbody>
     </table></div></div>
   ) : (
     <>
-      <div style={{ height: above }} aria-hidden="true" />
+      {above > 0 ? <div style={{ height: above }} aria-hidden="true" /> : null}
       {shape === "found" ? (
         // **`.jb-grid` is a flex row of `.jb-col`, not of cards.** The board's
         // own script appends columns to it and puts the cards inside those;
@@ -282,7 +295,7 @@ export function LaneList({
           {slice.map((row) => <Row key={row.id} {...row} />)}
         </div>
       )}
-      <div style={{ height: below }} aria-hidden="true" />
+      {below > 0 ? <div style={{ height: below }} aria-hidden="true" /> : null}
     </>
   );
 

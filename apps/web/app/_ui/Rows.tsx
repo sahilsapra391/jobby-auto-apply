@@ -16,7 +16,7 @@
  * where it was.
  */
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
-import { Act } from "./actions";
+import { Act, ActionIcon } from "./actions";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -45,15 +45,27 @@ function initial(name: string | null) {
  * it server-side.
  */
 function CompanyMark(
-  { name, domain, logo }:
-  { name: string | null; domain: string | null; logo?: string | null },
+  { name, domain, logo, alt }:
+  { name: string | null; domain: string | null; logo?: string | null;
+    alt?: boolean },
 ) {
-  // **A feed's own logo beats a favicon guess**, and the lane already selects
-  // it. v2 read `employer_logo` out of the database and drew a monogram over
-  // it for as long as the card has existed, because nothing here asked for it.
+  // **The mirror decided this, not this component.** `company_logos` owns the
+  // policy -- which hosts are infrastructure, whether an ATS slug corroborates
+  // a company name -- and migration 0013 stores its answer per posting.
+  // Deriving it here would be a third implementation after the Python one and
+  // the board's own JavaScript half, which `LogoContractTests` already pins
+  // against each other.
+  //
+  // Measured before this: `employers.domain` covers 46.6% of open Found rows,
+  // so half the lane drew a monogram where the board it replaces resolves 891
+  // of 906. `alt` is the derived case, and it tells the route to try the
+  // label's other TLDs.
   const q = new URLSearchParams();
   if (logo) q.set("src", logo);
-  else if (domain) q.set("domain", domain);
+  else if (domain) {
+    q.set("domain", domain);
+    if (alt) q.set("alt", "1");
+  }
   return (
     <span className="company-mark" aria-hidden="true">
       <span>{initial(name)}</span>
@@ -110,6 +122,22 @@ function years(row: Row) {
 /** The When column. Same normaliser, same reason. */
 const day = (v: unknown) => isoDay(v) ?? "";
 
+/**
+ * The board's `link()`: a posting, or the words for not having one.
+ *
+ * `.go` and the north-east arrow are the board's own, and the Watching column
+ * is sized for exactly that string.
+ */
+function Posting({ url }: { url: unknown }) {
+  const href = s(url);
+  if (!href) return <span className="muted">no link</span>;
+  return (
+    <a className="go" href={href} target="_blank" rel="noopener">
+      View posting &#8599;
+    </a>
+  );
+}
+
 /* ------------------------------------------------------------------ Found */
 
 export function PostingRow(row: Row) {
@@ -125,15 +153,19 @@ export function PostingRow(row: Row) {
   chips.push(when ? [when, ""] : ["Posted date unknown", "unknown"]);
   const pay = s(row.salary_raw);
   if (pay) chips.push([pay, "pay"]);
-  chips.push([s(row.source) ?? "Unknown source", ""]);
+  // Green, like the board: the source is where the posting was found and an
+  // ATS-direct one is worth more than an aggregator, which the colour says.
+  chips.push([s(row.source) ?? "Unknown source", "boards"]);
   for (const label of gateLabels(row.score_gates)) chips.push([label, "gate"]);
 
   return (
     <article className="jb-card" data-id={row.id}>
       <div className="jb-head">
         <div className="jb-identity">
-          <CompanyMark name={employer} domain={s(row.employer_domain)}
-                       logo={s(row.employer_logo)} />
+          <CompanyMark name={employer}
+                       domain={s(row.logo_domain) ?? s(row.employer_domain)}
+                       logo={s(row.logo_src) ?? s(row.employer_logo)}
+                       alt={row.logo_alt === true} />
           <div>
             <p className="jb-co">{employer ?? "Unknown employer"}</p>
             <h3 className="jb-ti">{s(row.title)}</h3>
@@ -142,32 +174,38 @@ export function PostingRow(row: Row) {
         <Ring score={row.score} />
       </div>
       {s(row.summary) ? <p className="jb-sum">{s(row.summary)}</p> : null}
+      {/* **`jb-chip`, not `chip`.** The stylesheet colours `.jb-chip.place`
+          lavender, `.jb-chip.years` orange, `.jb-chip.pay` green,
+          `.jb-chip.gate` red and `.jb-chip.unknown` a dashed outline; `.chip`
+          is the lane pill and carries none of that. The cards rendered plain
+          bold text for every tag, which is item 23, and the fix is the class
+          name the board already emits. */}
       <div className="jb-chips">
         {chips.map(([text, kind], i) =>
-          <span className={kind ? `chip ${kind}` : "chip"} key={i}>{text}</span>)}
+          <span className={kind ? `jb-chip ${kind}` : "jb-chip"} key={i}>{text}</span>)}
       </div>
       <Facts score={row.score} parts={row.score_parts} />
       <div className="jb-acts">
         {/* The subject is the posting: nothing has an application id yet, and
             the decision is what takes the card out of Found. */}
-        <Act className="jb-btn" subject={row.id} rowId={row.id}
+        <Act className="jb-btn" subject={row.id} rowId={row.id} icon="watch"
              title="Keep this one and stop showing it in Found"
              body={{ postingId: row.id, decision: "watch" }}>
           Watch
         </Act>
-        <Act className="jb-btn primary" subject={row.id} rowId={row.id}
+        <Act className="jb-btn primary" subject={row.id} rowId={row.id} icon="apply"
              title="Start work on this one"
              body={{ postingId: row.id, decision: "apply" }}>
           Apply
         </Act>
-        <Act className="jb-btn danger" subject={row.id} rowId={row.id}
+        <Act className="jb-btn danger" subject={row.id} rowId={row.id} icon="pass"
              title="Never offer this one again"
              body={{ postingId: row.id, decision: "pass" }}>
           Pass
         </Act>
         {s(row.apply_url) ? (
           <a className="jb-btn" href={s(row.apply_url)!} target="_blank" rel="noopener">
-            <span>Posting</span>
+            <ActionIcon name="posting" /><span>Posting</span>
           </a>
         ) : null}
       </div>
@@ -261,8 +299,13 @@ export function WatchRow(row: Row) {
       <td className="note-cell">{s(row.alignment) ?? <Muted>not scored</Muted>}</td>
       <td>
         <div className="rowacts">
+          {/* The board's own row action: the posting first, then Apply and
+              the drop. `link()` renders it as `.go` with a north-east arrow,
+              and the column is sized for exactly that. */}
+          <Posting url={row.apply_url} />
           <div className="rowacts-btns">
             <Act className="btn apply" subject={row.id} rowId={row.id}
+                 title="Start work on this one"
                  body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
               Apply
             </Act>
@@ -358,7 +401,26 @@ export function ActCard(row: Row) {
     <article className="card hold" data-id={row.id} data-state="hold">
       <header>
         <CardTitle row={row} />
-        <span className="chip hold">{s(row.phase) ?? "waiting"}</span>
+        {/* **What is left to do, not where the agent stopped.** The pill drew
+            `phase`, which is the last stage the run reached -- "Filling the
+            form" on a card whose whole point is that the form is filled and
+            waiting on a person. The board writes "N to do", or "ready" when
+            nothing is pending, and `parkClass: capability` overrides both
+            because a park with no browser is Jobby's fault rather than work
+            for the reader. */}
+        {/* The board also draws a red "system fault" pill from
+            `parkClass: capability`, and that is deliberately absent here:
+            measured, 0 of 97 sessions carry `parkClass` at all, because the
+            loop that writes it only started recording on a signal and none has
+            fired since. A branch over a field nothing populates is a branch
+            that can never run, which is worse than not having it. */}
+        {(() => {
+          const held = Array.isArray(row.blockers)
+            ? (row.blockers as unknown[]) : [];
+          return held.length
+            ? <span className="chip hold">{held.length} to do</span>
+            : <span className="chip ready">ready</span>;
+        })()}
       </header>
       {/* One <li> per pending field, the board's own shape. Migration 0009
           mirrors them; before it this list said "blockers are not mirrored
@@ -471,8 +533,10 @@ function CardTitle({ row }: { row: Row }) {
   const heading = company ?? s(row.legacy_id) ?? "";
   return (
     <div className="company-title">
-      <CompanyMark name={heading} domain={s(row.employer_domain)}
-                   logo={s(row.employer_logo)} />
+      <CompanyMark name={heading}
+                   domain={s(row.logo_domain) ?? s(row.employer_domain)}
+                   logo={s(row.logo_src) ?? s(row.employer_logo)}
+                   alt={row.logo_alt === true} />
       <div>
         <h3>{heading}</h3>
         <p className="role">
@@ -497,8 +561,10 @@ function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
   const heading = company ?? s(row.legacy_id) ?? "";
   return (
     <div className="company-cell">
-      <CompanyMark name={heading} domain={s(row.employer_domain)}
-                   logo={s(row.employer_logo)} />
+      <CompanyMark name={heading}
+                   domain={s(row.logo_domain) ?? s(row.employer_domain)}
+                   logo={s(row.logo_src) ?? s(row.employer_logo)}
+                   alt={row.logo_alt === true} />
       {plain ? <span>{heading}</span> : (
         <span>
           <strong>{heading}</strong><br />

@@ -1,6 +1,30 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { ICONS } from "../icons.generated";
+
+/**
+ * One of the board's five action marks.
+ *
+ * **The board draws these because five identical pills were hard to tell
+ * apart**, which its own comment says; v2 shipped the pills without the marks.
+ * The geometry is generated from `found_lane.SCRIPT`'s `ICONS` rather than
+ * redrawn: the eye is a drawn eye because the emoji is a photoreal eyeball on
+ * macOS, and redrawing it is how two boards end up with different eyes.
+ */
+export function ActionIcon({ name }: { name: string }) {
+  const icon = ICONS[name];
+  if (!icon) return null;
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+         aria-hidden="true">
+      {icon.paths.map((d, i) => <path d={d} key={i} />)}
+      {icon.circles.map(([cx, cy, r], i) =>
+        <circle cx={cx} cy={cy} r={r} key={`c${i}`} />)}
+    </svg>
+  );
+}
 
 /**
  * The one place a row learns whether its controls do anything.
@@ -58,7 +82,7 @@ export const READ_ONLY =
  * a reader who presses it learns why instead of finding nothing there.
  */
 export function Act({
-  className, label, title, subject, rowId, body, keep, children,
+  className, label, title, subject, rowId, body, keep, icon, children,
 }: {
   className: string;
   label?: string;
@@ -70,6 +94,8 @@ export function Act({
   body: unknown;
   /** Set when the change leaves the row where it is, like a phase move. */
   keep?: boolean;
+  /** Which of the board's five marks this action carries. */
+  icon?: string;
   children: React.ReactNode;
 }) {
   const { enabled, act, busy, draw } = useActions();
@@ -86,7 +112,8 @@ export function Act({
         void act({ subject, body, undo });
       }}
     >
-      {children}
+      {icon ? <ActionIcon name={icon} /> : null}
+      <span>{children}</span>
     </button>
   );
 }

@@ -46,6 +46,8 @@ CHROME = REPO / "apps" / "web" / "app" / "chrome.generated.ts"
 LANES = REPO / "apps" / "web" / "app" / "lanes.generated.ts"
 RUBRIC = REPO / "apps" / "web" / "app" / "rubric.generated.ts"
 LOGOS = REPO / "apps" / "web" / "app" / "logos.generated.ts"
+LANE_CHROME = REPO / "apps" / "web" / "app" / "lane_chrome.generated.ts"
+ICONS = REPO / "apps" / "web" / "app" / "icons.generated.ts"
 STATIC_SRC = REPO / "deploy" / "public"
 STATIC_DST = REPO / "apps" / "web" / "public"
 
@@ -414,6 +416,101 @@ def logos_module():
             f"{json.dumps(['.com', '.io', '.ai', '.co'])} as const;\n")
 
 
+def lane_chrome_module():
+    """The lane subtitles and empty states, from the board's own dictionaries.
+
+    **Copy is data here, not decoration.** Every one of these strings names the
+    control that fills the lane -- "Press Apply on something in Watching",
+    "Press Scan now and it will go looking" -- and a blank panel saying "Nothing
+    in this lane." is the version that reads as broken. v2 shipped that version
+    for all five.
+
+    Generated because these are `dashboard.py`'s own `EMPTY` dict and the four
+    `hint` lines beside it, and a retyped copy is a copy that drifts. The hints
+    live in an f-string rather than a dict, so they are read out of the source
+    by the marker each one is written with; a marker that stops matching fails
+    here rather than silently emitting nothing.
+    """
+    import json
+    import re
+    import dashboard
+    source = (REPO / "scripts" / "dashboard.py").read_text(encoding="utf-8")
+
+    # `EMPTY` is local to `build`, so it is read out of the source rather than
+    # imported. **Parsed with `ast`, not a regex**: the values are implicitly
+    # concatenated string literals split across lines, and the regex written
+    # first matched three of the five and silently dropped two.
+    import ast
+    block = re.search(r"    EMPTY = (\{.*?\n    \})", source, re.S)
+    if not block:
+        raise SystemExit("dashboard.py's EMPTY dict could not be found; v2 "
+                         "would emit no empty states at all")
+    empty = {k: list(v) for k, v in ast.literal_eval(block.group(1)).items()}
+    if len(empty) < 5:
+        raise SystemExit(f"only {len(empty)} empty states parsed out of "
+                         f"dashboard.py; a lane with none renders the blank "
+                         f"panel this exists to replace")
+
+    hints = {}
+    for key, marker in (("act", "Each opens straight to where it is blocked."),
+                        ("done", "Already out. Check here before applying again."),
+                        ("watch", "Newest first. Search or filter to narrow.")):
+        if marker not in source:
+            raise SystemExit(f"dashboard.py no longer says {marker!r}, so v2 "
+                             f"would ship a subtitle the board does not have")
+        hints[key] = marker
+
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// The lane subtitles and empty states, from dashboard.py's own\n"
+            "// EMPTY dict and hint lines. Copy that names the control which\n"
+            "// fills a lane is data, and a retyped copy drifts.\n\n"
+            "export const LANE_HINTS: Record<string, string> = "
+            + json.dumps(hints, indent=2) + ";\n\n"
+            "export const LANE_EMPTY: Record<string, [string, string]> = "
+            + json.dumps(empty, indent=2) + ";\n\n"
+            "// The board's own placeholder, so the two searches read alike.\n"
+            "export const LANE_SEARCH_PLACEHOLDER = "
+            + json.dumps("Search company, role, skill, location...") + ";\n")
+
+
+def icons_module():
+    """The five action icons, from `found_lane.SCRIPT`'s own `ICONS`.
+
+    **Redrawing them is how two boards end up with different eyes.** The board
+    builds each with `createElementNS` inside its script; what matters is the
+    path data, which is parsed out here so v2 renders the same geometry through
+    JSX. The comments on each in `found_lane.py` say why the shape is that
+    shape -- the eye is drawn because the emoji is a photoreal eyeball on
+    macOS, the struck circle means "no, and not deleted".
+    """
+    import json
+    import re
+    source = (REPO / "scripts" / "found_lane.py").read_text(encoding="utf-8")
+    block = re.search(r"  var ICONS = \{(.*?)\n  \};", source, re.S)
+    if not block:
+        raise SystemExit("found_lane.py's ICONS block could not be found; v2 "
+                         "would ship five identical unlabelled pills")
+    icons = {}
+    for name, body in re.findall(
+            r"(\w+): function \(\) \{\s*return svg\((.*?)\);\s*\}",
+            block.group(1), re.S):
+        icons[name] = {
+            "paths": re.findall(r"'([^']*)'", body),
+            "circles": [[float(x) for x in c] for c in re.findall(
+                r"\[(\d+(?:\.\d+)?), (\d+(?:\.\d+)?), (\d+(?:\.\d+)?)\]", body)],
+        }
+    missing = {"watch", "apply", "pass", "posting", "details"} - set(icons)
+    if missing:
+        raise SystemExit(f"the board's ICONS no longer define {sorted(missing)}, "
+                         f"so v2 would ship buttons the board draws with a mark")
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// The five action icons, from found_lane.SCRIPT's own ICONS.\n"
+            "// Redrawing them is how two boards end up with different eyes.\n\n"
+            "export type Icon = { paths: string[]; circles: number[][] };\n\n"
+            "export const ICONS: Record<string, Icon> =\n"
+            + json.dumps(icons, indent=2) + ";\n")
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -481,6 +578,8 @@ def outputs():
         (LANES, lane_module),
         (RUBRIC, rubric_module),
         (LOGOS, logos_module),
+        (LANE_CHROME, lane_chrome_module),
+        (ICONS, icons_module),
     ]
 
 

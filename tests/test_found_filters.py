@@ -37,16 +37,48 @@ class FilterPredicateShapeTests(unittest.TestCase):
         self.assertEqual(sorted(v2_lanes.SORT_LABELS),
                          sorted(v for v, _ in found_lane.SORT_OPTIONS))
 
-    def test_only_found_takes_the_filters(self):
-        """An application lane has no `search_tsv` and no `sources`, and
-        quietly accepting a keyword there would return everything."""
+    def test_every_lane_takes_a_keyword_and_only_found_takes_the_rest(self):
+        """Each lane offers the search its own header offers.
+
+        **This asserted that an application lane took no keyword at all**, on
+        the grounds that it has no `search_tsv` and no `sources` so accepting
+        one would return everything. The first half of that is still true and
+        the conclusion no longer follows: the lanes now search with `ilike`
+        over the four fields their rows actually draw, which is the right tool
+        for tens of rows and the wrong one for 22,000 with a description each.
+        `within` and `direct` remain Found's alone -- they read `posted_at` and
+        `sources`, which an application row has only through a posting it may
+        not have.
+        """
         for lane in v2_lanes.LANES:
             with self.subTest(lane=lane):
                 sql = v2_lanes.page_sql(lane)
-                if lane in v2_lanes.POSTING_LANES:
-                    self.assertIn("%(q)s", sql)
-                else:
-                    self.assertNotIn("%(q)s", sql)
+                self.assertIn("%(q)s", sql, "every lane offers a search")
+                for name in ("%(within)s", "%(direct)s"):
+                    if lane in v2_lanes.POSTING_LANES:
+                        self.assertIn(name, sql)
+                    else:
+                        self.assertNotIn(name, sql)
+
+    def test_an_application_lane_searches_what_its_row_draws(self):
+        """A reader typing "toast" wants the row that says Toast."""
+        sql = v2_lanes.page_sql("watch")
+        self.assertIn("ilike", sql)
+        self.assertNotIn("search_tsv", sql,
+                         "stemming a company name is how Toast stops matching "
+                         "itself")
+        for column in ("canonical_name", "a.company", "p.title", "a.role",
+                       "location_raw", "core_skills"):
+            self.assertIn(column, sql)
+
+    def test_the_application_count_carries_the_search_too(self):
+        """Otherwise the tab badge disagrees with the lane under it, which is
+        the same fault the Found count already had."""
+        for lane in v2_lanes.LANES:
+            if lane in v2_lanes.POSTING_LANES:
+                continue
+            with self.subTest(lane=lane):
+                self.assertIn("%(q)s", v2_lanes.count_sql(lane))
 
     def test_the_count_carries_the_same_filters_as_the_page(self):
         """Otherwise the tab badge says 18,104 over a lane showing nine."""

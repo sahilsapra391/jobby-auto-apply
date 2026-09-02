@@ -451,3 +451,22 @@ verified by disabling them: it never matches a query-stripped URL (4,202 of
 made `seen.check` call every other Stripe job known), and it never guesses a
 source to derive a board key with (trying all sixteen patterns measured zero
 ambiguity on this corpus, which is a property of the corpus and not the method).
+
+
+## The three attributes nothing extracts, measured 2026-09-02
+
+`extracted.degree`, `extracted.employmentType` and `extracted.roleCategory` are
+populated in **0 of 22,762** pool records. Not a regression and not a v2 fault:
+`extract.extract()` returns `{yearsMin, yearsMax, yearsText}` and never
+attempts the other three, so the old board's Degree, Role and Job type filters
+have been decorative for as long as they have existed. It says so itself, in
+`found_lane.py`: "degree, role and job type are not extracted yet".
+
+What `extracted` does carry is the years triple, in 9,483 records, 41.7%.
+
+So the filters are honest rather than broken -- they filter the unknown bucket
+and the board's note explains that -- and the work is an ingest one: an
+extractor that reads a description for a degree requirement, an employment
+type and a role category. It belongs here rather than with the board, and
+building the pickers before it exists would ship three controls that can only
+ever match nothing.

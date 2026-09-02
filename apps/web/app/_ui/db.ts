@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
 
 /**
@@ -13,6 +13,31 @@ import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
  * connection per request would open one every time and Neon's pooler would be
  * doing the work twice.
  */
+/**
+ * A timestamp reaches the app as an ISO string, once, here.
+ *
+ * **`node-postgres` returns `timestamptz` as a `Date`, and `String(date)` is a
+ * locale string**: `String(d).slice(0, 10)` is `"Wed Sep 02"`, which then fails
+ * to parse. That is one bug and it surfaced twice. On Found it produced
+ * "Posted date unknown" over a posting dated that morning, which reads as
+ * missing data. On Submitted it produced `"Wed Aug 19"`, which reads as a date
+ * and is a truncated locale string -- the same fault wearing a plausible face,
+ * which is why the second instance survived a screen recording.
+ *
+ * Converting at each render site fixes the two that are known. Converting here
+ * means the next component to receive a timestamp cannot reintroduce it,
+ * because a `Date` never reaches one.
+ *
+ * 1114 is `timestamp`, 1184 is `timestamptz`, 1082 is `date`. The first two
+ * become full ISO strings and the third stays a plain `YYYY-MM-DD`, which is
+ * what it is.
+ */
+types.setTypeParser(1184, (value) =>
+  value === null ? null : new Date(value).toISOString());
+types.setTypeParser(1114, (value) =>
+  value === null ? null : new Date(value + "Z").toISOString());
+types.setTypeParser(1082, (value) => value);
+
 declare global {
   // eslint-disable-next-line no-var
   var __jobbyPool: Pool | undefined;
