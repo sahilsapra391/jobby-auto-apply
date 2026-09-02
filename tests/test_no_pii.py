@@ -132,5 +132,49 @@ class TrackedTextTests(unittest.TestCase):
                          + "\n".join(sorted(set(hits))))
 
 
+class TheApplicationsRuleIsAnchored(unittest.TestCase):
+    """`/applications/` protects the delivered resumes, and only those.
+
+    **Unanchored it matched any directory of that name at any depth**, which
+    silently swallowed `apps/web/app/api/applications/`. The write endpoint
+    built and answered 503 locally, where the file is on disk, and 404'd from
+    the traced bundle in CI because it had never been committed. A rule
+    protecting real personal data eating source code is the worst way round for
+    both, and the local check could not see it: it read the working tree.
+
+    Both directions, because either alone is half a check. Dropping the anchor
+    passes the first assertion and fails the second; deleting the rule passes
+    the second and fails the first.
+    """
+
+    def ignored(self, path):
+        out = subprocess.run(["git", "check-ignore", "-q", path],
+                             cwd=ROOT, capture_output=True)
+        return out.returncode == 0
+
+    def test_the_delivered_documents_are_still_ignored(self):
+        self.assertTrue(
+            self.ignored("applications"),
+            "applications/ at the repo root holds resumes carrying a real "
+            "name, phone and street address, and must never be tracked")
+
+    def test_a_nested_directory_of_that_name_is_not(self):
+        self.assertFalse(
+            self.ignored("apps/web/app/api/applications/route.ts"),
+            "the rule is anchored to the repo root; unanchored it eats source "
+            "code that happens to share the name")
+
+    def test_the_endpoint_is_actually_tracked(self):
+        """The assertion above is about the rule. This one is about the file,
+        because a route git ignores and a route nobody wrote look identical
+        from CI."""
+        out = subprocess.run(["git", "ls-files",
+                              "apps/web/app/api/applications/route.ts"],
+                             cwd=ROOT, capture_output=True, text=True)
+        self.assertTrue(out.stdout.strip(),
+                        "the write endpoint is not tracked, so it cannot be "
+                        "in any build but this working tree")
+
+
 if __name__ == "__main__":
     unittest.main()

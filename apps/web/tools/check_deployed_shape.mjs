@@ -218,6 +218,34 @@ if (chunkProbe.status !== 401) {
        `the board's own chunks.`);
 }
 
+// ------------------------------------------------- writes refuse, flag off
+
+// **The credential v2 holds can write.** It is the device's own and it owns
+// the tables, so nothing about the database stops a write reaching the user's
+// store; `accounts.flags.live_board` is the only thing that does. A route that
+// is merely unreachable is not the same as one that refuses, and the
+// difference shows up the first time somebody adds a link to it.
+//
+// Checked from the traced bundle, authenticated, with a body that would
+// otherwise be valid. The expected answer is 503 and no row.
+for (const [label, headers, body] of [
+  ["a valid mutation", { "idempotency-key": "shape-check" },
+   { applicationId: "shape-check", status: "watch" }],
+  ["a mutation with no Idempotency-Key", {}, { applicationId: "shape-check" }],
+]) {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/applications`, {
+    method: "POST",
+    headers: { authorization: CREDENTIALS, "content-type": "application/json",
+               ...headers },
+    body: JSON.stringify(body),
+  });
+  if (res.status !== 503) {
+    fail(`POST /api/applications answered ${res.status} for ${label}. With ` +
+         `live_board off it must refuse with 503 before it does anything ` +
+         `else, including validating the request.`);
+  }
+}
+
 // ---------------------------------------------------------------- check
 
 const seen = new Set();

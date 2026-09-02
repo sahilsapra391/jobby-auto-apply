@@ -18,7 +18,7 @@ declare global {
   var __jobbyPool: Pool | undefined;
 }
 
-function pool(): Pool {
+export function pool(): Pool {
   if (!global.__jobbyPool) {
     const connectionString = process.env.JOBBY_DATABASE_URL;
     if (!connectionString) {
@@ -40,7 +40,7 @@ function pool(): Pool {
 }
 
 /** The single account, until §6's multi-tenant work gives it a real one. */
-async function accountId(): Promise<string> {
+export async function accountId(): Promise<string> {
   const { rows } = await pool().query("select id from accounts order by created_at limit 1");
   if (!rows.length) throw new Error("no account row exists");
   return rows[0].id;

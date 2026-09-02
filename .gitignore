@@ -11,8 +11,14 @@ __pycache__/
 # and .vercel holds the project link
 deploy/api/_dashboard.js
 deploy/api/_documents.js
-# Delivered resumes and cover letters: real name, phone and street address
-applications/
+# Delivered resumes and cover letters: real name, phone and street address.
+#
+# **Anchored, because unanchored it matches any directory of that name at any
+# depth.** It silently swallowed apps/web/app/api/applications/, so the write
+# endpoint was never committed: it built and answered locally, where the file
+# is on disk, and 404'd from the traced bundle in CI. A rule protecting real
+# personal data eating source code is the worst way round for both.
+/applications/
 deploy/.vercel/
 # Vercel writes the blob read/write token here
 .env.local
