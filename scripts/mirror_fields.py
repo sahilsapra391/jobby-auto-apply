@@ -61,16 +61,25 @@ _INTERPOLATED = re.compile(r"\{")
 
 
 def _from_source(path):
-    """{table: {columns}} for every literal INSERT in a file."""
-    found = {}
+    """({table: {columns}}, {tables whose column list is interpolated}).
+
+    **The skipped set is returned, not swallowed.** The first version dropped
+    an interpolated INSERT silently, and the first table added after that
+    -- `provider_links`, built from `provider_row`'s keys -- was invisible to
+    discovery, uncovered by parity, and reported as fully covered. That is the
+    exact failure this module exists to end, reproduced inside it within an
+    hour. A table this cannot read has to be named, so `written` can refuse.
+    """
+    found, interpolated = {}, set()
     text = path.read_text(encoding="utf-8")
     for match in _INSERT.finditer(text):
         table, raw = match.group(1), match.group(2)
         if _INTERPOLATED.search(raw):
+            interpolated.add(table)
             continue
         columns = {c.strip() for c in raw.split(",") if c.strip()}
         found.setdefault(table, set()).update(columns)
-    return found
+    return found, interpolated
 
 
 def _posting_columns():
@@ -87,13 +96,40 @@ def _posting_columns():
     return set(row) | {"employer_id"}
 
 
+def _provider_columns():
+    """The columns `_mirror_providers` writes, from `provider_row`."""
+    import class_b
+    # `account_id` and `updated_at` are added around the row in the statement.
+    return set(class_b.provider_row("openai", {})) | {"account_id", "updated_at"}
+
+
+#: Tables whose INSERT interpolates its column list, and the function that
+#: answers for each. **Every interpolated table must appear here**; `written`
+#: refuses otherwise rather than quietly covering none of it.
+_EXPLICIT = {
+    "postings": _posting_columns,
+    "provider_links": _provider_columns,
+}
+
+
 def written():
     """{table: frozenset(columns)} the mirror writes. Never empty for a table."""
-    found = {}
+    found, interpolated = {}, set()
     for path in (CLASS_B, BACKFILL):
-        for table, columns in _from_source(path).items():
+        literal, skipped = _from_source(path)
+        for table, columns in literal.items():
             found.setdefault(table, set()).update(columns)
-    found["postings"] = _posting_columns()
+        interpolated |= skipped
+
+    unreadable = sorted(t for t in interpolated if t not in _EXPLICIT)
+    if unreadable:
+        raise RuntimeError(
+            f"the mirror writes {unreadable} with an interpolated column list, "
+            f"which this module cannot read, and no entry in _EXPLICIT answers "
+            f"for it. Add one. A table nobody can discover is a table parity "
+            f"covers none of, reported as fully covered.")
+    for table, resolve in _EXPLICIT.items():
+        found[table] = resolve()
 
     empty = sorted(t for t, c in found.items() if not c)
     if empty:
@@ -164,6 +200,16 @@ EXEMPT = {
         "file side it could disagree with.",
 
     # -- provenance the mirror invents ------------------------------------
+    ("provider_links", "account_id"):
+        "the tenant key. One reader's connections, and it is what the lookup "
+        "is scoped by rather than a field within it.",
+    ("provider_links", "updated_at"):
+        "written as now() on every mirror pass, so there is nothing on the "
+        "file side it could disagree with.",
+    ("provider_links", "provider"):
+        "the join key. Both sides are keyed on the provider id, so comparing "
+        "it is vacuous.",
+
     ("job_decisions", "decided_from"):
         "a literal the writer stamps ('backfill' from the backfill, 'v2' from "
         "the board), naming which code path wrote the row. The store has no "

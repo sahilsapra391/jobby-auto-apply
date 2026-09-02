@@ -47,6 +47,7 @@ _BY_NAME = {
     "answers.json": "answers",
     "profile.json": "profile",
     "roles.json": "roles",
+    "providers.json": "providers",
 }
 
 
@@ -76,10 +77,11 @@ def _application_id(conn, account_id, legacy_id, session=None):
     opened at 88 divergences. A row that exists keeps the status it has unless
     something with a real one says otherwise.
     """
-    status = phase = None
+    status = phase = blockers = None
     if session:
         built = session_row(session)
         status, phase = built["status"], built["phase"]
+        blockers = built["blockers"]
 
     with conn.cursor() as cur:
         if status is None:
@@ -99,8 +101,8 @@ def _application_id(conn, account_id, legacy_id, session=None):
 
         cur.execute(
             """insert into applications
-                   (account_id, legacy_id, status, phase, updated_at)
-               values (%s, %s, %s, %s, now())
+                   (account_id, legacy_id, status, phase, blockers, updated_at)
+               values (%s, %s, %s, %s, %s::jsonb, now())
                on conflict (account_id, legacy_id) do update
                  -- **Not `coalesce(excluded.phase, applications.phase)`.**
                  -- This statement is only reached when a session supplied a
@@ -114,9 +116,11 @@ def _application_id(conn, account_id, legacy_id, session=None):
                  -- history event, and it takes the `do nothing` branch above.
                  set status = excluded.status,
                      phase = excluded.phase,
+                     blockers = excluded.blockers,
                      updated_at = now()
                returning id""",
-            (account_id, legacy_id, status, phase))
+            (account_id, legacy_id, status, phase,
+             json.dumps(blockers) if blockers is not None else None))
         return cur.fetchone()[0]
 
 
@@ -136,7 +140,44 @@ def session_row(payload):
     payload = payload or {}
     status = (payload.get("status") or "").strip() or None
     phase = (payload.get("phase") or "").strip() or None
-    return {"status": status, "phase": phase}
+    # **Verbatim, and never normalised into columns.** 61 entries across eight
+    # different key shapes on the real store; picking columns would drop the
+    # keys that carry the instruction. Migration 0009 says why at length.
+    #
+    # Null and empty are one thing: nothing is blocked. An empty list stored
+    # as `[]` would be a third spelling of that, and the lane would have to
+    # know all three.
+    blocked = payload.get("pendingFields") or None
+    return {"status": status, "phase": phase, "blockers": blocked}
+
+
+#: What the board draws about a provider, and nothing else.
+#:
+#: **`connectionKey` is deliberately absent and `provider_links` has no column
+#: for it.** The schema already made this decision and it is worth not
+#: re-opening: the board needs to know a provider is connected, healthy and in
+#: what failover order, and it needs none of the credential machinery to say
+#: so. CLAUDE.md's rule is that nothing about a provider's credentials reaches
+#: the queue, Vercel or KV, and a mirror is exactly the path that would.
+PROVIDER_FIELDS = ("connected", "health", "detail", "connectionOrder",
+                   "connectedAt", "lastCheckedAt", "modelVerifiedAt")
+
+
+def provider_row(provider_id, entry):
+    """What `provider_links` holds for one connection."""
+    entry = entry or {}
+    import providers as _providers
+    return {
+        "provider": provider_id,
+        "status": "connected" if entry.get("connected") else "disconnected",
+        "model_pinned": _providers.MODEL_IDS.get(provider_id),
+        "connected_at": entry.get("connectedAt"),
+        "connection_order": entry.get("connectionOrder"),
+        "health": (entry.get("health") or "").strip() or None,
+        "detail": (entry.get("detail") or "").strip() or None,
+        "last_checked_at": entry.get("lastCheckedAt"),
+        "model_verified_at": entry.get("modelVerifiedAt"),
+    }
 
 
 def history_row(payload):
@@ -328,6 +369,55 @@ def _mirror_answers(conn, account_id, payload, force=False):
 _PROFILE_EXCLUDED = {"resumes", "writingSamples"}
 
 
+def _mirror_providers(conn, account_id, payload):
+    """`providers.json` -> `provider_links`.
+
+    **v2's Settings page showed one provider connected while all three were.**
+    It was reading a hardcoded fixture, and behind that fixture there was
+    nothing to read: `provider_links` existed, with the right columns, holding
+    zero rows, because no handler ever wrote it.
+
+    A whole replacement like `_mirror_answers`, and for the same reason: the
+    file is written whole and a disconnect has to be able to remove a row. It
+    carries the same floor -- an empty payload refuses rather than deleting
+    every connection -- because an unreadable `providers.json` is a read
+    failure far more often than it is three simultaneous disconnects. No
+    ceiling: there are three providers, so any proportion is one or two rows
+    and the ceiling would either never fire or fire on a real disconnect.
+    """
+    connections = (payload or {}).get("connections")
+    if not connections:
+        raise ClassBError(
+            "refusing to mirror an empty providers payload: that would record "
+            "every provider as disconnected, and an empty providers.json is a "
+            "read failure far more often than it is the truth")
+
+    rows = [provider_row(pid, entry) for pid, entry in sorted(connections.items())
+            if isinstance(entry, dict)]
+    if not rows:
+        raise ClassBError("no readable provider connections in the payload")
+
+    columns = list(rows[0])
+    with conn.cursor() as cur:
+        placeholders = ", ".join(
+            "(%s, " + ", ".join(["%s"] * len(columns)) + ", now())"
+            for _ in rows)
+        cur.execute(
+            f"""insert into provider_links (account_id, {', '.join(columns)},
+                                            updated_at)
+                values {placeholders}
+                on conflict (account_id, provider) do update
+                  set {', '.join(f'{c} = excluded.{c}' for c in columns
+                                 if c != 'provider')},
+                      updated_at = now()""",
+            [v for row in rows
+             for v in [account_id] + [row[c] for c in columns]])
+        cur.execute(
+            "delete from provider_links where account_id = %s "
+            "and provider <> all(%s)",
+            (account_id, [row["provider"] for row in rows]))
+
+
 def _mirror_profile(conn, account_id, payload):
     identity = profile_row(payload)["identity"]
     with conn.cursor() as cur:
@@ -361,6 +451,7 @@ _HANDLERS = {
     "answers": _mirror_answers,
     "profile": _mirror_profile,
     "roles": _mirror_roles,
+    "providers": _mirror_providers,
 }
 
 
@@ -471,7 +562,7 @@ def backfill(conn, account_id, root=None):
     base = Path(root) if root else Path(store.root_dir(None))
     paths = store.paths(base)
     report = {"sessions": 0, "history": 0, "answers": 0, "profile": 0,
-              "roles": 0}
+              "roles": 0, "providers": 0}
 
     sessions = Path(paths["sessions"])
     if sessions.is_dir():
@@ -488,6 +579,14 @@ def backfill(conn, account_id, root=None):
         mirror(conn, account_id, "roles",
                json.loads(roles.read_text(encoding="utf-8")))
         report["roles"] = 1
+
+    # The provider registry lives beside the store rather than inside it: it is
+    # `providers.py`'s file and `store.paths` deliberately has no key for it.
+    registry = base / "providers.json"
+    if registry.exists():
+        mirror(conn, account_id, "providers",
+               json.loads(registry.read_text(encoding="utf-8")))
+        report["providers"] = 1
 
     history = Path(paths["history"])
     if history.exists():

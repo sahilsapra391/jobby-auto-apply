@@ -148,6 +148,19 @@ that failure at all.
 | `store` | `_bank_write` | `write_private` | answer bank writes, including dismiss and restore |
 | `store` | `cmd_profile_replace` | `write_private` | profile writes |
 
+**`providers.json` is class B, not class C.** It was treated as class C by a
+hardcoded list in `tests/test_class_b_mirror.py` and by nothing else -- it never
+appeared in the table below. Migration 0002 creates `provider_links` for exactly
+this, so the class C test ("writes something the migrations created no table
+for") does not apply. The cost of the mistake was visible: the table held zero
+rows, v2's Settings page read a fixture instead, and it said one provider was
+connected while all three were.
+
+It mirrors the registry's state and never its credentials. `connectionKey` has
+no column and must not get one; keys live in
+`~/.job-application/provider-secrets/` and reach no queue, no Vercel
+environment and no KV, and a mirror is exactly the path that would break that.
+
 ## Class C: not dual-written, and why
 
 Each of these writes something migrations 0002 and 0003 created no table for.
