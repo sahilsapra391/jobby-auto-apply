@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { cookies } from "next/headers";
 import { MORPH } from "./chrome.generated";
 import { HeroIntro } from "./_ui/HeroIntro";
 import { LANES, SORT_LABELS, type Lane, type Sort } from "./lanes.generated";
@@ -8,6 +10,8 @@ import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
 import { accountId, boardMeta, counts, laneQuery, page } from "./_ui/db";
+import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
+import { RememberLane } from "./_ui/RememberLane";
 import { writesEnabled } from "./_ui/writes";
 
 /**
@@ -46,14 +50,37 @@ export default async function Board({
   // lane behind it.
   const filters = active === "found"
     ? { q, within, direct: direct === "1" } : undefined;
+  const jar = await cookies();
+  const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const [tally, first, writes, meta] = await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
   ]);
 
+  /**
+   * A tab's link, carrying everything the reader had set.
+   *
+   * **The filters travel or they are lost**, which is item 4: a 7-day window
+   * on Found came back as 30 days after a trip through Submitted, because the
+   * tab href was `/?lane=found` and nothing else. The sort travels for the
+   * same reason. They are only meaningful on Found, and they are carried
+   * anyway: dropping them on the way out means they cannot come back.
+   */
+  const tabHref = (lane: Lane) => {
+    const p = new URLSearchParams({ lane });
+    if (askedSort) p.set("sort", askedSort);
+    if (q) p.set("q", q);
+    if (within) p.set("within", within);
+    if (direct === "1") p.set("direct", "1");
+    return `/?${p}`;
+  };
+
   return (
     <>
-      <AppBar here="home" />
+      {/* The logo returns to the board, and the board means the lane the
+          reader was last on rather than whichever one is first. */}
+      <AppBar here="home" theme={theme} home={tabHref(active)} />
+      <RememberLane lane={active} />
       <div className="wrap">
         <div className="top">
           <div className="hero-copy">
@@ -78,17 +105,22 @@ export default async function Board({
         <div className="segwrap">
           <div className="seg" role="tablist">
             {TAB_ORDER.map((lane) => (
-              <a
+              // `Link`, not `<a>`: a tab was a full document load, so the
+              // content went blank for a second, the hero re-rendered and the
+              // mascot replayed its draw-on every time. A client navigation
+              // swaps the panel and leaves the layout mounted.
+              <Link
                 key={lane}
                 className={lane === active ? "tab on" : "tab"}
-                href={`/?lane=${lane}`}
+                href={tabHref(lane)}
                 role="tab"
                 aria-selected={lane === active}
                 aria-controls={`p-${lane}`}
+                scroll={false}
               >
                 {LANES[lane].label}
                 <span className="n">{tally[lane].toLocaleString()}</span>
-              </a>
+              </Link>
             ))}
           </div>
         </div>

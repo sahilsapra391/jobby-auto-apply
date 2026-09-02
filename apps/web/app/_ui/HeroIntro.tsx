@@ -22,9 +22,30 @@ import { HERO_INTRO } from "../chrome.generated";
  * hoisted by React 19 and a `DOMContentLoaded` deferral still fires before
  * hydration, so listeners bound either way attach to nodes that are then
  * discarded.
+ *
+ * **Once per document, not once per lane.** The hero lives inside the page, so
+ * a lane switch remounts it; while the tabs were full page loads that was one
+ * flourish per load and looked deliberate. Client-side switching makes the
+ * page remount without the document reloading, and the draw-on would replay on
+ * every tab click -- which is exactly the complaint about the old full-load
+ * behaviour, arriving by a new route.
+ *
+ * A module-level flag has the semantics wanted, precisely: it survives a client
+ * navigation because the module stays loaded, and it resets on a real reload
+ * because the module is loaded again. A ref would reset with the component and
+ * a cookie would outlive the document.
  */
+let played = false;
+
 export function HeroIntro() {
   useEffect(() => {
+    if (played) {
+      // The class the CSS gates on is added once by the layout, per document.
+      // Clearing it here is what stops a remount re-running the keyframes.
+      document.documentElement.classList.remove("jb-intro");
+      return;
+    }
+    played = true;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
       new Function(HERO_INTRO)();
