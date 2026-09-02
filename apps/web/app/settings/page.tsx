@@ -3,6 +3,7 @@ import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { SelectFace } from "../_ui/SelectFace";
 import { providers } from "../_ui/db";
+import { PROVIDER_LABELS } from "../providers.generated";
 
 /**
  * Settings. One row per provider, and the row is the board's own shape:
@@ -23,20 +24,14 @@ import { providers } from "../_ui/db";
 export const dynamic = "force-dynamic";
 
 /**
- * What each provider's agent is called, and what to call the provider.
+ * The labels come from `settings_panel.PROVIDERS`; the model does not.
  *
- * **A label, not data.** The model beside it comes from `providers.MODEL_IDS`
- * through the mirror and is never retyped here; the fixture that preceded this
- * got the tool name wrong ("agy" for the Gemini CLI) precisely because it was
- * inventing both halves.
+ * That file also carries a model string and it disagrees with the pin:
+ * `gemini-3.7-flash` there against `gemini-3.7-flash-medium` in
+ * `providers.MODEL_IDS`, which is what every agent task actually invokes. The
+ * card shows the pin, because naming a model the system does not run is worse
+ * than disagreeing with the other board.
  */
-const AGENTS: Record<string, string> = {
-  openai: "Codex", anthropic: "Claude Code", gemini: "Gemini CLI",
-};
-
-const NAMES: Record<string, string> = {
-  openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini",
-};
 
 export default async function Settings() {
   const jar = await cookies();
@@ -50,21 +45,31 @@ export default async function Settings() {
       <AppBar here="settings" theme={theme} home={home} />
       <div className="wrap">
         <section className="settings-page">
+          {/* The board's own framing, which v2 reduced to a one-line banner.
+              It explains the failover the cards then show an order for, and
+              says where credentials live -- both are the answer to "what is
+              this page for", and a page of three cards without them is a
+              list. */}
           <div className="settings-titlebar">
-            <h2>Settings</h2>
-            <p className="eyebrow">Provider connections</p>
+            <div>
+              <p className="eyebrow">Agent providers</p>
+              <h2>Choose who does the work</h2>
+              <p>
+                Jobby checks connected providers in your connection order and
+                uses the first account that can run. If its login or usage
+                fails, new work moves to the next healthy connection
+                automatically. Resume tailoring and application filling both
+                use that selected provider on Your Device.
+              </p>
+            </div>
           </div>
 
           <div className="split-note">
-            Every agent runs on your device. Keys are stored there and never
-            reach the board: this page reads which providers are connected and
-            healthy, and nothing about how they authenticate.
+            <strong>All agent work stays on Your Device.</strong>{" "}
+            Jobby creates and checks the resume and cover letter locally, then
+            uses the same connected provider to fill the application in the
+            local signed-in browser.
           </div>
-          <p className="hint">
-            New work probes connected providers in order and uses the first
-            that can invoke its pinned model. A failed login, usage or model
-            check moves the next piece of work to the next healthy connection.
-          </p>
 
           <div className="provider-grid">
             {links.length === 0 ? (
@@ -77,12 +82,15 @@ export default async function Settings() {
             {links.map((p) => {
               const connected = p.status === "connected";
               return (
-              <div className="provider-card" key={p.provider}
-                   data-provider-card={p.provider}>
+              // `article`, like the board: `.provider-grid > article` is what
+              // the stylesheet sizes, and a `div` in its place left the three
+              // cards at different heights because the descriptions wrap.
+              <article className="provider-card" key={p.provider}
+                       data-provider-card={p.provider}>
                 <div className="provider-head">
                   <div>
-                    <h3>{NAMES[p.provider] ?? p.provider}</h3>
-                    <p>{AGENTS[p.provider] ?? p.provider} &middot; {p.model}</p>
+                    <h3>{PROVIDER_LABELS[p.provider]?.name ?? p.provider}</h3>
+                    <p>{PROVIDER_LABELS[p.provider]?.agent ?? p.provider} &middot; {p.model}</p>
                   </div>
                   {/* The failover order, which the old board explains and v2
                       dropped. New work probes connected accounts in this order
@@ -121,10 +129,19 @@ export default async function Settings() {
                   {connected ? "Disconnect" : "Connect"}
                 </button>
                 <p className="provider-detail">{p.detail ?? ""}</p>
-              </div>
+              </article>
               );
             })}
           </div>
+          {/* Where credentials live, which is the one thing a reader wants
+              settled before connecting anything. v2 dropped it entirely. */}
+          <p className="credential-note">
+            Jobby stores connection order and health only in the dashboard.
+            OpenAI credentials remain in Codex. Anthropic and Gemini API keys
+            stay in owner-only files on Your Device and are removed when you
+            disconnect. No provider credential is sent to Vercel or Cloudflare.
+            Agent work uses that account&rsquo;s usage quota.
+          </p>
         </section>
       </div>
       <SelectFace />
