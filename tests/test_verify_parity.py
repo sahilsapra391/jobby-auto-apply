@@ -669,5 +669,143 @@ class TheScheduledTimerCanActuallyRun(unittest.TestCase):
         self.assertIn("exploded", line["reason"])
 
 
+class APrunedLoserIsNotADivergence(pgtest.SchemaCase):
+    """A folded legacy id that later leaves the pool has no record on either
+    side, and "does this id exist on both sides" does not apply to it.
+
+    **Found by parity going red on live data, and the cause was a change made
+    the same day.** `upsert_postings` used to replace `merged_legacy_ids` each
+    sweep; it now unions, so a fold recorded once is not forgotten by the next
+    sweep. That is right: an audit trail that forgets is worse than one that
+    outlives its subject. But the comparator expands that array and expects
+    every id in it to be in the file store, so the first pruned loser became a
+    permanent `only_in_postgres` that no correct write could clear. Seven green
+    runs, then red forever.
+
+    The exemption is for **no record on either side**, never for no record on
+    one side. A legacy id with a real posting row that is missing from the file
+    is a real divergence and still fails, and the control below is what proves
+    this did not simply stop looking.
+    """
+
+    prefix = "parityprune"
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        import tempfile
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        with self.conn.cursor() as cur:
+            cur.execute("insert into accounts (email) values ('p@example.com') "
+                        "returning id")
+            self.account = cur.fetchone()[0]
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def colliding(self):
+        return {
+            "aaa": record("aaa",
+                          canonicalUrl="https://boards.greenhouse.io/braze/jobs/8139241"),
+            "zzz": record("zzz",
+                          canonicalUrl="https://job-boards.greenhouse.io/braze/jobs/8139241"),
+        }
+
+    def report_for(self, file_records, mirror_records=None):
+        dual_write.mirror_pool(self.conn, self.account, {},
+                               mirror_records if mirror_records is not None
+                               else file_records)
+        (self.root / "jobs.json").write_text(json.dumps(file_records))
+        return verify_parity.run(self.conn, self.account, str(self.root))
+
+    # -- the exemption ----------------------------------------------------
+
+    def test_a_folded_loser_that_left_the_pool_is_not_a_divergence(self):
+        both = self.colliding()
+        self.report_for(both)                      # both present, folded
+        winner = {"aaa": both["aaa"]}              # the sweep prunes the loser
+        (self.root / "jobs.json").write_text(json.dumps(winner))
+        report = verify_parity.run(self.conn, self.account, str(self.root))
+        kinds = [f["kind"] for f in report["divergences"]]
+        self.assertNotIn("only_in_postgres", kinds,
+                         "a pruned loser has no row of its own and is not a "
+                         "Postgres-only record")
+
+    def test_it_is_reported_rather_than_silently_dropped(self):
+        """Exempt is not invisible. The same rule the merged-field drops
+        follow: recorded in their own bucket, because a filter is where
+        missing records hide."""
+        both = self.colliding()
+        self.report_for(both)
+        (self.root / "jobs.json").write_text(json.dumps({"aaa": both["aaa"]}))
+        report = verify_parity.run(self.conn, self.account, str(self.root))
+        self.assertIn("pruned_losers", report)
+        self.assertEqual([f["id"] for f in report["pruned_losers"]], ["zzz"])
+
+    def test_the_report_tracks_the_real_set_rather_than_a_count(self):
+        """`mergedFieldDropped` went 2, 5, 7 and its pinned assertion had to
+        become a derived one. These accumulate the same way, so the report
+        carries the ids and nothing pins the length."""
+        both = self.colliding()
+        self.report_for(both)
+        (self.root / "jobs.json").write_text(json.dumps({"aaa": both["aaa"]}))
+        report = verify_parity.run(self.conn, self.account, str(self.root))
+        for entry in report["pruned_losers"]:
+            self.assertIn("id", entry)
+            self.assertIn("merged_into", entry)
+
+    # -- the control ------------------------------------------------------
+
+    def test_a_real_postgres_row_missing_from_the_file_still_fails(self):
+        """**The control.** Without it the exemption is a check that passes
+        because it stopped looking."""
+        records = self.colliding()
+        self.report_for(records)
+        with self.conn.cursor() as cur:
+            cur.execute("select id from employers limit 1")
+            employer = cur.fetchone()[0]
+            cur.execute(
+                """insert into postings (employer_id, legacy_id, source,
+                        board_slug, external_id, title, apply_url,
+                        first_seen_at, last_seen_at)
+                   values (%s, 'ghost', 'greenhouse', 'other', '1', 'Ghost',
+                           'https://boards.greenhouse.io/other/jobs/1',
+                           now(), now())""", (employer,))
+        report = verify_parity.run(self.conn, self.account, str(self.root))
+        missing = [f["id"] for f in report["divergences"]
+                   if f["kind"] == "only_in_postgres"]
+        self.assertIn("ghost", missing,
+                      "a posting row with no file record is a real divergence "
+                      "and the exemption must not reach it")
+
+    def test_an_id_with_both_a_row_and_a_fold_reference_is_not_exempt(self):
+        """The clobber case. `postgres_state` writes folded entries into the
+        same dict as real rows, so an id that is both can be overwritten
+        depending on row order. A real row must always win, or the exemption
+        reaches a record that genuinely exists in Postgres.
+        """
+        records = self.colliding()
+        self.report_for(records)
+        with self.conn.cursor() as cur:
+            cur.execute("select id from employers limit 1")
+            employer = cur.fetchone()[0]
+            # 'ghost' has its own row AND is named in the winner's fold list.
+            cur.execute(
+                """insert into postings (employer_id, legacy_id, source,
+                        board_slug, external_id, title, apply_url,
+                        first_seen_at, last_seen_at)
+                   values (%s, 'ghost', 'greenhouse', 'other', '2', 'Ghost',
+                           'https://boards.greenhouse.io/other/jobs/2',
+                           now(), now())""", (employer,))
+            cur.execute("""update postings
+                              set merged_legacy_ids = merged_legacy_ids || '{ghost}'
+                            where legacy_id = 'aaa'""")
+        report = verify_parity.run(self.conn, self.account, str(self.root))
+        missing = [f["id"] for f in report["divergences"]
+                   if f["kind"] == "only_in_postgres"]
+        self.assertIn("ghost", missing,
+                      "an id with a standalone row is never a pruned loser, "
+                      "whatever else names it")
+
+
 if __name__ == "__main__":
     unittest.main()
