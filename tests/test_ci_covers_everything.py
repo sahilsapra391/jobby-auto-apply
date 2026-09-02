@@ -147,6 +147,57 @@ class TheWorkflowRunsEveryModule(unittest.TestCase):
         self.assertIn("JOBBY_TEST_DATABASE_URL", self.text)
 
 
+class TheStalenessCheckNamesEveryGeneratedFile(unittest.TestCase):
+    """CI's list and the generator's list are one list, compared.
+
+    They were three: `sync_v2_styles --check` named three of the four files it
+    wrote, and the workflow's `git status --porcelain` named three of the five.
+    `rubric.generated.ts` could be stale and both said current, which is this
+    repository's oldest shape in a new place. `--check` now walks
+    `sync_v2_styles.outputs()`, and this compares the workflow against the
+    same function rather than against a list written here.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "scripts"))
+        import sync_v2_styles
+        self.generator = sync_v2_styles
+        self.text = WORKFLOW.read_text()
+        # There are two `git status --porcelain` gates: the renderer bundle's
+        # and this one. Anchored on the step name, because taking the first
+        # match found the wrong gate and the assertion then measured a list
+        # that has nothing to do with v2.
+        step = self.text.index("The v2 stylesheet matches the board")
+        block = self.text[step:]
+        start = block.index("--porcelain")
+        self.block = block[start:start + block[start:].index(')"')]
+
+    def test_the_workflow_watches_every_file_the_generator_writes(self):
+        written = {str(path.relative_to(REPO))
+                   for path, _ in self.generator.outputs()}
+        self.assertGreater(len(written), 3, "the generator writes nothing?")
+        missing = sorted(p for p in written if p not in self.block)
+        self.assertEqual(
+            missing, [],
+            "these are regenerated on every CI run and not diffed, so a stale "
+            "one merges silently and v2 stops matching the board it replaces")
+
+    def test_the_reader_would_notice_an_empty_block(self):
+        """The control. A slice that matched nothing would pass the above."""
+        self.assertIn("board.css", self.block,
+                      "the slice above stopped containing the file list")
+        self.assertNotIn("deploy/renderer", self.block,
+                         "that is the other gate; taking the first match "
+                         "found it and measured the wrong list")
+
+    def test_the_check_flag_walks_the_same_list(self):
+        import inspect
+        source = inspect.getsource(self.generator.main)
+        self.assertIn("written = outputs()", source,
+                      "--check has to walk the generator's own list, or it "
+                      "goes back to naming a subset of what it writes")
+
+
 class DatabaseTestsRunInCI(unittest.TestCase):
     """The skip guard. On a laptop this is a no-op; in CI it is the check."""
 

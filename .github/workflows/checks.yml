@@ -138,6 +138,8 @@ jobs:
           stale="$(git status --porcelain -- apps/web/app/board.css \
                      apps/web/app/chrome.generated.ts \
                      apps/web/app/lanes.generated.ts \
+                     apps/web/app/rubric.generated.ts \
+                     apps/web/app/logos.generated.ts \
                      apps/web/public)"
           if [ -n "$stale" ]; then
             echo "$stale"

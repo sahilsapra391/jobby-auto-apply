@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LiveSession, type Envelope } from "./live";
 import { actionFor, applyRow, type Row } from "./project";
+import { mark } from "./measure";
 import type { Lane } from "../lanes.generated";
 
 /**
@@ -32,15 +33,33 @@ export type LiveState = {
   arrived: number;
   /** Refetch page one and clear the arrivals. */
   reload: () => Promise<void>;
+  /**
+   * Ask the lane about one subject and paint the answer.
+   *
+   * Exposed so the gate's stopwatch can drive the real path rather than a
+   * reconstruction of it: applying an event is exactly this call, and it
+   * writes nothing, so it can be repeated.
+   */
+  ask: (id: string) => Promise<void>;
 };
 
 export function useLive({
-  lane, query, setRows, absorbs,
+  lane, query, rows, setRows, absorbs,
 }: {
   lane: Lane;
   /** The lane, its sort and its filters, as `laneQuery` built them. One
    *  string so a caller cannot pass some of them. */
   query: string;
+  /**
+   * What the lane is showing, read through a ref rather than passed by value.
+   *
+   * **A `setRows` updater has to be pure**, and the first version of `ask`
+   * decided arrivals inside one and called `setArrived` from there. React is
+   * allowed to invoke an updater more than once, so that is a counter that can
+   * double, in a build nobody debugs. Reading the rows here keeps the decision
+   * outside and the updater a plain return.
+   */
+  rows: () => Row[];
   setRows: (fn: (held: Row[]) => Row[]) => void;
   /** Subjects this tab has already drawn optimistically. */
   absorbs: (subject: string) => boolean;
@@ -59,24 +78,32 @@ export function useLive({
   // reconnect, which looks exactly like a working live board until it misses
   // an event.
   const reload = useCallback(async () => {
+    const stop = mark("reload", lane);
     const res = await fetch(`/api/lane?${query}`);
     if (!res.ok) throw new Error(`lane reload ${res.status}`);
     const body = await res.json();
     setRows(() => body.rows);
     setArrived(0);
-  }, [query, setRows]);
+    stop();
+  }, [query, lane, setRows]);
 
   /** Ask the lane whether it still holds one subject, and act on the answer. */
   const ask = useCallback(async (id: string) => {
+    const stop = mark("apply-event", lane);
     const res = await fetch(`/api/lane/row?lane=${lane}&id=${encodeURIComponent(id)}`);
     if (!res.ok) throw new Error(`lane row ${res.status}`);
     const { row } = await res.json();
-    setRows((held) => {
-      const out = applyRow(held, id, row as Row | null);
-      if (out.arrived) setArrived((n) => n + 1);
-      return out.rows;
-    });
-  }, [lane, setRows]);
+    const out = applyRow(rows(), id, row as Row | null);
+    // **Only when something moved.** `applyRow` hands back the same array when
+    // the lane never held this row, and re-setting it would still re-render
+    // the list: measured at 50 Found cards, an event about a row not on screen
+    // cost the same repaint as one about a row that changed.
+    if (out.changed) setRows(() => out.rows);
+    if (out.arrived) setArrived((n) => n + 1);
+    // Stopped after the state update is queued, so the frame it waits for is
+    // the one that paints it.
+    stop();
+  }, [lane, rows, setRows]);
 
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_JOBBY_CHANNEL_WS;
@@ -144,5 +171,5 @@ export function useLive({
     };
   }, [lane, ask, reload, absorbs]);
 
-  return { connected, arrived, reload };
+  return { connected, arrived, reload, ask };
 }

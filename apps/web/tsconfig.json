@@ -11,6 +11,12 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // `.ts` in an import specifier, so a module the node tests import can
+    // itself import a sibling. Node's ESM resolver needs the extension and
+    // TypeScript's bundler mode does not, and the difference is invisible
+    // until a test file three levels away fails to load. Safe with `noEmit`,
+    // which is set above, and every bundler here resolves it.
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],

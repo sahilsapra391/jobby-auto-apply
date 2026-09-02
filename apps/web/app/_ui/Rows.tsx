@@ -44,13 +44,22 @@ function initial(name: string | null) {
  * aggregator favicon is never an employer mark, and the proxy is what enforces
  * it server-side.
  */
-function CompanyMark({ name, domain }: { name: string | null; domain: string | null }) {
+function CompanyMark(
+  { name, domain, logo }:
+  { name: string | null; domain: string | null; logo?: string | null },
+) {
+  // **A feed's own logo beats a favicon guess**, and the lane already selects
+  // it. v2 read `employer_logo` out of the database and drew a monogram over
+  // it for as long as the card has existed, because nothing here asked for it.
+  const q = new URLSearchParams();
+  if (logo) q.set("src", logo);
+  else if (domain) q.set("domain", domain);
   return (
     <span className="company-mark" aria-hidden="true">
       <span>{initial(name)}</span>
-      {domain ? (
-        <img src={`/api/company-logo?domain=${encodeURIComponent(domain)}`}
-             alt="" loading="lazy" data-company-logo />
+      {q.size ? (
+        <img src={`/api/company-logo?${q}`} alt="" loading="lazy"
+             data-company-logo />
       ) : null}
     </span>
   );
@@ -99,7 +108,8 @@ export function PostingRow(row: Row) {
     <article className="jb-card" data-id={row.id}>
       <div className="jb-head">
         <div className="jb-identity">
-          <CompanyMark name={employer} domain={s(row.employer_domain)} />
+          <CompanyMark name={employer} domain={s(row.employer_domain)}
+                       logo={s(row.employer_logo)} />
           <div>
             <p className="jb-co">{employer ?? "Unknown employer"}</p>
             <h3 className="jb-ti">{s(row.title)}</h3>

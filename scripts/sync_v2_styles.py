@@ -45,6 +45,7 @@ TARGET = REPO / "apps" / "web" / "app" / "board.css"
 CHROME = REPO / "apps" / "web" / "app" / "chrome.generated.ts"
 LANES = REPO / "apps" / "web" / "app" / "lanes.generated.ts"
 RUBRIC = REPO / "apps" / "web" / "app" / "rubric.generated.ts"
+LOGOS = REPO / "apps" / "web" / "app" / "logos.generated.ts"
 STATIC_SRC = REPO / "deploy" / "public"
 STATIC_DST = REPO / "apps" / "web" / "public"
 
@@ -383,6 +384,36 @@ def rubric_module():
             f"{json.dumps(dict(found_lane.MATCH_WEIGHTS))};\n")
 
 
+def logos_module():
+    """The trusted logo hosts, as TypeScript.
+
+    **The third copy of this list would have been the one that drifts.**
+    `company_logos.TRUSTED_SOURCE_HOSTS` is the source of truth and
+    `deploy/api/board.js` already restates it; v2's own proxy needs the same
+    set, and a host removed from Python and left in one of the copies is an
+    open redirect target nobody is looking at.
+
+    The candidate TLDs travel with it for the same reason. They are a constant
+    in the route because spelling them out per job put the Python board's Found
+    payload over its page-weight cap, and v2 inherits the shape rather than
+    re-deciding it.
+    """
+    import company_logos
+    import json
+    hosts = sorted(company_logos.TRUSTED_SOURCE_HOSTS)
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// The hosts a feed logo may be fetched from, from\n"
+            "// company_logos.TRUSTED_SOURCE_HOSTS. A third hand-written copy\n"
+            "// of this set is an open redirect nobody is watching.\n\n"
+            f"export const LOGO_HOSTS: ReadonlySet<string> =\n"
+            f"  new Set({json.dumps(hosts, indent=4)});\n\n"
+            "// `alt=1` means try the other TLDs of the same label. A constant\n"
+            "// here rather than in each URL, which is what kept the Python\n"
+            "// board's Found payload inside its cap.\n"
+            "export const CANDIDATE_TLDS = "
+            f"{json.dumps(['.com', '.io', '.ai', '.co'])} as const;\n")
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -434,51 +465,54 @@ def rendered():
     return HEADER + board_css()
 
 
+#: **One list, walked by the writer, the check and CI.** They were three, and
+#: the check named three of the four files this script wrote while CI's
+#: porcelain list named three of the five: `rubric.generated.ts` could be stale
+#: and both said current. That is the same shape as every other half-check in
+#: this repository, and the fix is to stop having several lists rather than to
+#: add to the shortest.
+#:
+#: `outputs()` is called rather than held, because each entry's second half is
+#: a renderer and importing this module must not run them.
+def outputs():
+    return [
+        (TARGET, rendered),
+        (CHROME, chrome_module),
+        (LANES, lane_module),
+        (RUBRIC, rubric_module),
+        (LOGOS, logos_module),
+    ]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true",
                     help="exit 1 when the file on disk is stale")
     args = ap.parse_args(argv)
 
-    fresh = rendered()
-    current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else None
+    written = outputs()
 
     if args.check:
-        lanes_now = LANES.read_text(encoding="utf-8") if LANES.exists() else None
-        if lanes_now != lane_module():
-            print(f"{LANES.relative_to(REPO)} is stale. Run "
-                  f"'python3 scripts/sync_v2_styles.py' and commit it.",
-                  file=sys.stderr)
+        stale = []
+        for path, render in written:
+            now = path.read_text(encoding="utf-8") if path.exists() else None
+            if now != render():
+                stale.append(path.relative_to(REPO))
+        if stale:
+            print("stale, run 'python3 scripts/sync_v2_styles.py' and commit: "
+                  + ", ".join(str(p) for p in stale), file=sys.stderr)
             return 1
-        chrome_now = CHROME.read_text(encoding="utf-8") if CHROME.exists() else None
-        if chrome_now != chrome_module():
-            print(f"{CHROME.relative_to(REPO)} is stale. Run "
-                  f"'python3 scripts/sync_v2_styles.py' and commit it.",
-                  file=sys.stderr)
-            return 1
-        if current == fresh:
-            print(f"{TARGET.relative_to(REPO)} is current ({len(fresh)} chars)")
-            return 0
-        print(f"{TARGET.relative_to(REPO)} is stale. Run "
-              f"'python3 scripts/sync_v2_styles.py' and commit it, or v2 stops "
-              f"matching the board it is replacing.", file=sys.stderr)
-        return 1
+        print(f"{len(written)} generated files are current")
+        return 0
 
     TARGET.parent.mkdir(parents=True, exist_ok=True)
-    TARGET.write_text(fresh, encoding="utf-8")
-    print(f"wrote {TARGET.relative_to(REPO)} ({len(fresh)} chars)")
-    chrome = chrome_module()
-    CHROME.write_text(chrome, encoding="utf-8")
-    print(f"wrote {CHROME.relative_to(REPO)} ({len(chrome)} chars)")
-    lanes = lane_module()
-    LANES.write_text(lanes, encoding="utf-8")
-    RUBRIC.write_text(rubric_module(), encoding="utf-8")
-    print(f"wrote {RUBRIC.relative_to(REPO)} "
-          f"({len(rubric_module())} chars)")
+    for path, render in written:
+        body = render()
+        path.write_text(body, encoding="utf-8")
+        print(f"wrote {path.relative_to(REPO)} ({len(body)} chars)")
     moved = sync_static()
     print(f"synced {len(STATIC_FILES)} static files into apps/web/public"
           + (f" ({', '.join(moved)} changed)" if moved else " (all current)"))
-    print(f"wrote {LANES.relative_to(REPO)} ({len(lanes)} chars)")
     return 0
 
 
