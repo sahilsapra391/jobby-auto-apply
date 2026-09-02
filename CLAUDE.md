@@ -1832,6 +1832,22 @@ testing it**. What caught it was calling it on this Mac after deploying and
 reading the number: `pool age: unknown`, beside a pool twenty-seven minutes
 old.
 
+**A check that can only fail in one direction is half a check**, and that is
+the shape all of these share. `_parses` refuses JavaScript that does not parse,
+which catches an extraction taking too *little* and is blind to one taking too
+much: a loose end marker swallowed 41 KB of the board's script, the result was
+balanced, and it parsed. It would have shipped the entire board's wiring inside
+a hero-intro effect. A comparison of production against main printed seven files
+as differing when they were merely unreadable, because its helper returned an
+error string where a hash belonged and "could not look" and "did not match" both
+came out as `DIFFERS`. And `window.__jb_ran_theme` was set to 1 by a wrapper
+whose body then bound nothing, so the flag read as "it ran", which was true and
+useless.
+
+So when writing one, ask what it says when the subject is absent, unreadable, or
+oversized, and not only what it says when the subject is wrong. If those answers
+are the same, it is not measuring the thing.
+
 So, concretely, before calling any of this done: make it fire, or read the
 value it is silent about. A silent alarm has two meanings and only one of them
 is good news. `docs/health-observed.md` records which of this repository's
