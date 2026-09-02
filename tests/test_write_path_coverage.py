@@ -12,6 +12,8 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path as _P
+ROOT = _P(__file__).resolve().parents[1]
 from pathlib import Path
 from unittest import mock
 
@@ -330,6 +332,75 @@ class TheReportAnswersTheGate(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JOB_APPLICATION_DIR": "/tmp/elsewhere"}):
             self.assertEqual(wpc.log_path(),
                              Path("/tmp/elsewhere/logs/write-paths.jsonl"))
+
+
+class TheGateCountsTheWholeLogAndExcusesWhatNobodyCanDrive(unittest.TestCase):
+    """Two corrections to the requirement, both made because meeting it as
+    written cost something it should not have.
+
+    **It counted from the clock start.** Eight gate-path changes in two days
+    each zeroed the tally while the actual coverage was complete, and each
+    reset asked for a fresh set of real actions to prove again what had already
+    been proved: another job watched, another application dropped. A counter
+    that costs a product decision every time it zeroes is a defect in the
+    requirement, not in the coverage. It counts the whole log now.
+
+    **And it demanded paths nobody can honestly drive.** The exclusions are
+    read from `docs/write-path-coverage.md` rather than held as a second copy
+    in code, because two lists would disagree silently and the gate would
+    either demand the impossible or excuse the drivable.
+    """
+
+    def test_the_default_window_is_the_whole_log(self):
+        import write_path_coverage
+        source = (ROOT / "scripts" / "write_path_coverage.py").read_text()
+        body = source[source.index("def main("):]
+        self.assertNotIn("since = args.since or clock_start()", body,
+                         "the gate must not default to the clock window")
+        self.assertIn("--since-clock", body,
+                      "the window view is kept, as an opt-in")
+
+    def test_the_exclusions_come_from_the_document(self):
+        import write_path_coverage
+        excused = write_path_coverage.uncoverable()
+        self.assertTrue(excused, "nothing was parsed; the check is vacuous")
+        doc = (ROOT / "docs" / "write-path-coverage.md").read_text()
+        for module, function, primitive in excused:
+            row, caller = f"{module}.{function} -> {primitive}", f"{module}.{function}"
+            self.assertTrue(f"`{row}`" in doc or f"`{caller}`" in doc,
+                            f"{row} is excused but the document does not name it")
+
+    def test_every_excused_path_has_a_reason_beside_it(self):
+        """An entry with no reason is a preference wearing a mechanism's
+        clothes, and the list stops being reviewable the moment one appears."""
+        doc = (ROOT / "docs" / "write-path-coverage.md").read_text()
+        for line in doc.splitlines():
+            if not line.startswith("| `") or line.startswith("| ---"):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            self.assertGreater(len(cells[1]), 40,
+                               f"this entry has no real reason: {cells[0]}")
+
+    def test_excusing_does_not_hide_a_path_nobody_listed(self):
+        """**The control.** Without it the gate passes by excusing everything.
+
+        A path the document does not name must still be required, and the way
+        to prove that is to require one that is not on the list.
+        """
+        import write_path_coverage
+        need = write_path_coverage.required()
+        excused = write_path_coverage.uncoverable()
+        self.assertTrue(need - excused,
+                        "every documented path is excused, which is not a gate")
+        # And a specific one that must never be excused: the class B answer
+        # writes are the rare paths this whole counter exists for.
+        for key in need:
+            if key[0] == "class_b":
+                self.assertNotIn(key, excused,
+                                 f"{key} is a class B mirror write and cannot "
+                                 f"be excused")
 
 
 if __name__ == "__main__":

@@ -36,7 +36,22 @@ Fixture rows have leaked into production twice.
 |---|---|
 | `jobs_store._persist_pool -> write_private` | **Only exists when the mirror is off.** With it on, `_persist_pool` calls `dual_write.persist`, which writes the file itself. On production this row is unreachable by construction, and that is the same fork that hid the coverage hook for a day -- see CLAUDE.md, "Instrumentation on the branch tests take". |
 | dismiss-then-restore of an answer | No answer in the store has a reversible round-trip. A `confirmed` answer refuses dismissal until it is forgotten first, and the five already dismissed refuse restoration. Both calls return a refusal and write nothing, so the counter correctly does not move. Coverable the moment an answer exists in a state where the round trip is a no-op overall; not worth manufacturing one. |
+| `jobs_store.main -> mark_passed` | The `pass` subcommand, which means **never offer this job again**. A lasting decision about a real posting, and nobody driving a counter has a basis for making one. Same principle as not writing a submission record for a job nobody applied to. |
+| `jobs_store.main -> save_jobs` | The `prune` subcommand. Measured in process without saving on 2026-09-02: it would delete **7 real records**, each `closed over 7 days ago`. The sweep already prunes, so running the CLI is a deletion whose only purpose is moving a counter. |
+| `promote.watch -> mark_watched`, `jobs_store.main -> mark_watched` | Drivable in principle: watching a job is a real, reversible action the user takes anyway, and the CLI is the same decision by another door. What makes them uncoverable is the *requirement*, not the path. The window used to reset on every gate-path change, and each of eight resets in two days demanded a fresh real decision about a fresh real job to prove again what had already been proved. **A counter that costs a product decision every time it zeroes is a defect in the requirement.** That is now fixed -- coverage counts over the whole log since dual-write went live -- so these are excused only until one fires organically, which a single Watch click will do. |
 | `repair_watch_drift.main`, `repair_posted_dates.main`, `backfill_watch_records.main` | Repair scripts, run when something is broken. Driving one on a healthy store is either a no-op that writes nothing, or a repair of damage that does not exist. |
+
+## The gate these feed
+
+Three consecutive green parity days, **and** every write path in
+`docs/write-paths.md` observed firing at least once **since dual-write went
+live**, minus this list.
+
+Not per clock window. Counting from the clock start zeroed the tally on every
+gate-path change, and a path that has fired since dual-write went live has been
+observed; observing it again tells nobody anything. `write_path_coverage.py`
+reads this document for the exclusions rather than holding a second copy, so
+the gate and the reasons cannot drift apart.
 
 ## What this leaves
 
