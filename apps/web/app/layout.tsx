@@ -7,6 +7,7 @@ import "./board.css";
 import { cookies } from "next/headers";
 import { HEAD } from "./chrome.generated";
 import { ThemeControls } from "./_ui/ThemeControls";
+import { CompanyLogos } from "./_ui/CompanyLogos";
 import {
   THEME_COOKIE, THEME_MIGRATION, htmlTheme, themeColorMedia, themeFrom,
 } from "./_ui/theme";
@@ -62,6 +63,9 @@ export default async function RootLayout({
       <body>
         {children}
         <ThemeControls theme={theme} />
+        {/* In the layout, not the page: every route draws marks,
+            and the observer has to outlive a lane switch. */}
+        <CompanyLogos />
       </body>
     </html>
   );

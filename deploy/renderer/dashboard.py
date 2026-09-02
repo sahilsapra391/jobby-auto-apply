@@ -1600,8 +1600,14 @@ def build(state, generated):
   paintTheme(document.documentElement.dataset.theme || 'auto');
   function prepareCompanyLogo(img) {{
     function loaded() {{
-      if (img.naturalWidth > 1 && img.naturalHeight > 1) img.classList.add('loaded');
-      else img.remove();
+      if (img.naturalWidth > 1 && img.naturalHeight > 1) {{
+        img.classList.add('loaded');
+        // The monogram leaves only once the image has proved itself: a
+        // transparent logo otherwise renders over its own letter, and hiding
+        // it any earlier turns a 404 into an empty plate.
+        var plate = img.closest('.company-mark');
+        if (plate) plate.classList.add('has-logo');
+      }} else img.remove();
     }}
     img.addEventListener('load', loaded);
     img.addEventListener('error', function () {{ img.remove(); }});
