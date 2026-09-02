@@ -65,7 +65,7 @@ revisiting every piece of in-memory state.
 **Proves:** two tabs on the same account see the same `seq` sequence, and a
 third account's channel is a different object with its own.
 
-### 3. The route publishes, the client applies
+### 3. The route publishes, the client applies (built)
 
 Step 1's route posts to the channel after its commit. The board applies events
 to the lane it is showing.
@@ -79,7 +79,49 @@ recoverable direction: log it loudly, do not retry inline, do not roll back.
 **Proves:** a click in one tab moves the card in another, and killing the
 publish leaves the row correct and the board briefly stale.
 
-### 4. Reconnect
+**What was built, and what step 4 still owes.** `live.ts` is the client half of
+the protocol and `tests/test_live_client.test.mjs` drives it against a real
+`Channel` over a wire the test can break, so both ends are shipping code rather
+than a mock of the other. That file therefore already covers what this plan
+listed under step 4: the ring overflow resyncs, a 200-event backlog replays,
+and each has a control beside it. What step 4 still owes is the *transport*.
+`NEXT_PUBLIC_JOBBY_CHANNEL_WS` is unset, no Durable Object is deployed, and the
+board says "Reading Postgres directly" rather than pretending otherwise. A
+ticket endpoint was deliberately not written: a route nothing calls is the
+artefact-with-no-consumer this repository keeps building.
+
+**Three rules the client adds to the channel's.** It verifies contiguity rather
+than trusting it, because a promise checked only by the party making it is not
+checked. A failed resync does not advance the counter, since skipping the
+events it never fetched is the one outcome nothing would ever report. And **no
+event may carry a number to accumulate**: a resync replays from the seq the
+channel held *before* the refetch, so every event is applied at least once and
+possibly twice. `pool.delta` says the pool moved, not by how much.
+
+**The board replaces rows and removes them; it does not insert.** Placing a new
+row means sorting it into an order the database chose, and a comparator in
+TypeScript is `order by <col> desc nulls last, id desc` written a second time,
+wrong first about nulls. An arrival is counted and one click fetches it.
+
+**Membership comes from the lane, never from the event.** `/api/lane/row` asks
+the lane's own `where` whether it still holds a subject; an empty answer means
+take the row out. Inferring it from `application.changed {to}` would be the
+predicate written twice and would be wrong first for Submitted, whose
+membership is two correlated subqueries over the event log.
+
+**The acknowledgement is the POST's answer, not the channel event.** The commit
+precedes the publish and a publish can fail after a commit that worked, so a
+board waiting for the event would revert a change that actually happened. Hope
+has a deadline: an unanswered request reverts after twelve seconds, because a
+change left on screen forever is indistinguishable from one that worked.
+
+Found's three controls needed a write the endpoint did not have, so it gained
+one: a decision row and an application in one transaction, publishing
+`posting.decided` and `application.changed` separately. It writes only the
+three `job_decisions` states anything writes; `queued`, `applying` and
+`needs_you` stay unwritten for the reason `v2_lanes.py` gives.
+
+### 4. Reconnect: the transport half remains
 
 `resume_from` with a replay when the ring still covers it and an explicit
 `resync` when it does not. **Never a silent gap.** The failure this prevents is

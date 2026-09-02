@@ -31,6 +31,7 @@
  *   node tools/check_deployed_shape.mjs --no-build reuse an existing build
  */
 import { spawn, execFileSync } from "node:child_process";
+import net from "node:net";
 import { existsSync, cpSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -57,6 +58,8 @@ const PORT = 3199;
  * the check supplies a password, and asserts the gate first.
  */
 const PASSWORD = "check-deployed-shape";
+/** Distinct per run, so a stored idempotent answer can never stand in for one. */
+const runId = `${process.pid}-${Date.now()}`;
 const CREDENTIALS = "Basic " + Buffer.from(":" + PASSWORD).toString("base64");
 
 const problems = [];
@@ -118,6 +121,20 @@ async function boot(port, password) {
   if (password === undefined) delete env.DASHBOARD_PASSWORD;
   else env.DASHBOARD_PASSWORD = password;
 
+  // **Refuse a port somebody else is on, rather than talk to them.**
+  // A readiness probe that fetches `/` cannot tell this server's answer from
+  // a stale one's, so a child that dies of EADDRINUSE leaves the whole check
+  // measuring a build from some earlier run -- observed on 2026-09-02, when a
+  // crash left two of these alive and three subsequent runs happily reported
+  // "deployed shape OK" against a bundle four minutes old, including one run
+  // whose whole purpose was to prove a deliberately broken build would fail.
+  if (await listening(port)) {
+    throw new Error(
+      `port ${port} is already in use, so this check would have been served ` +
+      `by a process it did not start. Kill it and run again:\n` +
+      `  lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+  }
+
   const proc = spawn(process.execPath, [join(isolated, "server.js")],
                      { cwd: isolated, env, stdio: ["ignore", "pipe", "pipe"] });
   // Never DEVNULL. The failure that matters here explains itself once, in the
@@ -129,6 +146,13 @@ async function boot(port, password) {
 
   const until = Date.now() + 30000;
   while (Date.now() < until) {
+    // **The child's own death ends the wait.** Without this the loop keeps
+    // polling a port that some other process may be answering on, and a server
+    // that never started reads as one that started fine.
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      entry.dead = true;
+      return entry;
+    }
     try {
       await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
       return entry;
@@ -140,11 +164,34 @@ async function boot(port, password) {
   return entry;
 }
 
+/** Is anything listening here? Asked before spawning, never after. */
+async function listening(port) {
+  return await new Promise((resolve) => {
+    const probe = net.connect({ host: "127.0.0.1", port });
+    const settle = (answer) => { probe.destroy(); resolve(answer); };
+    probe.once("connect", () => settle(true));
+    probe.once("error", () => settle(false));
+    probe.setTimeout(1000, () => settle(false));
+  });
+}
+
 function done(code) {
   for (const { proc } of running) proc.kill("SIGTERM");
   rmSync(isolated, { recursive: true, force: true });
   process.exit(code);
 }
+
+// **A crash must still take its servers with it.** The failure above was one
+// exception away: `Pool is not a constructor` ended the process between the
+// spawn and the cleanup, and the orphans it left silently served every later
+// run. Cleaning up on the way out costs four lines and closes the class.
+for (const signal of ["uncaughtException", "unhandledRejection"]) {
+  process.on(signal, (err) => {
+    console.error(`\n${signal}:`, err);
+    done(1);
+  });
+}
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => done(1));
 
 const server = await boot(PORT, PASSWORD);
 const serverLog = server.log;
@@ -228,21 +275,154 @@ if (chunkProbe.status !== 401) {
 //
 // Checked from the traced bundle, authenticated, with a body that would
 // otherwise be valid. The expected answer is 503 and no row.
-for (const [label, headers, body] of [
+const MUTATIONS = [
   ["a valid mutation", { "idempotency-key": "shape-check" },
    { applicationId: "shape-check", status: "watch" }],
   ["a mutation with no Idempotency-Key", {}, { applicationId: "shape-check" }],
-]) {
-  const res = await fetch(`http://127.0.0.1:${PORT}/api/applications`, {
+  // The Found path, which reaches `job_decisions` as well as `applications`
+  // and so is the one with the most to lose from an accidental write.
+  ["a posting decision", { "idempotency-key": "shape-check-2" },
+   { postingId: "00000000-0000-0000-0000-000000000000", decision: "pass" }],
+];
+
+const post = (headers, body) =>
+  fetch(`http://127.0.0.1:${PORT}/api/applications`, {
     method: "POST",
     headers: { authorization: CREDENTIALS, "content-type": "application/json",
                ...headers },
     body: JSON.stringify(body),
   });
+
+for (const [label, headers, body] of MUTATIONS) {
+  const res = await post(headers, body);
   if (res.status !== 503) {
     fail(`POST /api/applications answered ${res.status} for ${label}. With ` +
          `live_board off it must refuse with 503 before it does anything ` +
          `else, including validating the request.`);
+  }
+}
+
+// **And the other direction, because a route that 503s unconditionally would
+// pass every assertion above.** A check that can only fail one way is half a
+// check: this one would go on passing after somebody deleted the handler, or
+// broke the pool, or typoed the flag name so it never reads true.
+//
+// So the flag is turned on against the same database the server reads, one
+// request is sent, and the answer must be *anything but* 503. It is turned
+// off again in a `finally`, because leaving a write gate open is worse than
+// not having checked it.
+{
+  const url = process.env.JOBBY_DATABASE_URL || process.env.JOBBY_TEST_DATABASE_URL;
+  if (!url) {
+    note("no database, so the flag-on control did not run. The 503s above " +
+         "prove a refusal and not that the flag is what causes it.");
+  } else {
+    // `pg` is CommonJS, so the named export is not there under a dynamic
+    // import; the constructor hangs off `default`.
+    const pg = await import("pg");
+    const Pool = pg.Pool ?? pg.default.Pool;
+    const pool = new Pool({ connectionString: url, max: 1 });
+    try {
+      const { rows } = await pool.query(
+        "select id from accounts order by created_at limit 1");
+      if (!rows.length) {
+        fail("no account row, so the flag-on control could not run");
+      } else {
+        const account = rows[0].id;
+        try {
+          // **The control asserts a row, not a status.** A 200 is not evidence
+          // the route did anything: `remember` stores the first answer for a
+          // key and `replay` serves it back, so re-using a key would return
+          // 200 forever without the handler running. Measured locally, where
+          // the database survives between runs -- CI's throwaway container
+          // hides it, which is the same excuse that let a test suite write the
+          // real store for three days.
+          //
+          // So the row is cleared first, a fresh key is used, and the check is
+          // whether the row exists afterwards.
+          await pool.query("delete from applications where legacy_id = 'shape-check'");
+          await pool.query(
+            "update accounts set flags = coalesce(flags,'{}'::jsonb) || " +
+            "'{\"live_board\": true}'::jsonb where id = $1", [account]);
+          const res = await post({ "idempotency-key": `shape-check-${runId}` },
+                                 { applicationId: "shape-check", status: "watch" });
+          const after = await pool.query(
+            "select count(*) from applications where legacy_id = 'shape-check'");
+          const wrote = Number(after.rows[0].count) === 1;
+          if (res.status === 503 || !wrote) {
+            fail(`with live_board ON the route answered ${res.status} and ` +
+                 `${wrote ? "wrote" : "wrote nothing"}. The 503s above are ` +
+                 `therefore not evidence the flag gates anything: a route ` +
+                 `that always refuses passes them identically.`);
+          } else {
+            note(`flag-on control: answered ${res.status} and the row exists`);
+          }
+        } finally {
+          await pool.query(
+            "update accounts set flags = coalesce(flags,'{}'::jsonb) || " +
+            "'{\"live_board\": false}'::jsonb where id = $1", [account]);
+          const back = await post({ "idempotency-key": "shape-check-off" },
+                                  { applicationId: "shape-check", status: "watch" });
+          if (back.status !== 503) {
+            fail(`the flag was turned back off and the route answered ` +
+                 `${back.status}. It must refuse again; a check that leaves a ` +
+                 `write gate open is worse than one that never ran.`);
+          }
+          // Both, and the keys too. A key left behind is a stored answer the
+          // next run would be served instead of exercising anything.
+          await pool.query("delete from applications where legacy_id = 'shape-check'");
+          await pool.query("delete from idempotency_keys where key like 'shape-check%'");
+        }
+      }
+    } finally {
+      await pool.end();
+    }
+  }
+}
+
+// ------------------------------------------------- the lane row endpoint
+//
+// What makes an event applicable: the board asks the lane whether it still
+// holds a subject. Checked from the traced bundle because it is a new route,
+// and a route the deployment does not carry answers 404 exactly like one
+// nobody wrote.
+for (const [label, query, want] of [
+  ["an unknown lane", "lane=nope&id=00000000-0000-0000-0000-000000000000", 400],
+  ["an id that is not a uuid", "lane=found&id=nope", 400],
+  ["a well-formed ask", "lane=found&id=00000000-0000-0000-0000-000000000000", 200],
+]) {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane/row?${query}`,
+                          { headers: { authorization: CREDENTIALS } });
+  if (res.status !== want) {
+    fail(`GET /api/lane/row answered ${res.status} for ${label}, wanted ${want}`);
+  }
+  if (res.status === 200) {
+    const body = await res.json();
+    if (!("row" in body)) {
+      fail("a 200 from /api/lane/row must carry `row`, null or otherwise: " +
+           "empty is the answer 'not in this lane', not a fault");
+    }
+  }
+}
+
+// **A cursor belongs to the ordering it was cut from.** Page one of Found by
+// score ends on a number; carrying it into the date query reached Postgres as
+// a timestamp and raised, the client caught it, and the lane drew "and that is
+// all of them" over 17,341 rows.
+for (const [label, query, want] of [
+  ["a score cursor on the date sort",
+   "lane=found&sort=new&afterId=00000000-0000-0000-0000-000000000000&afterAt=93", 400],
+  ["a date cursor on the score sort",
+   "lane=found&sort=score&afterId=00000000-0000-0000-0000-000000000000" +
+   "&afterAt=2026-01-01T00:00:00Z", 400],
+  ["a date cursor on the date sort",
+   "lane=found&sort=new&afterId=00000000-0000-0000-0000-000000000000" +
+   "&afterAt=2026-01-01T00:00:00Z", 200],
+]) {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane?${query}`,
+                          { headers: { authorization: CREDENTIALS } });
+  if (res.status !== want) {
+    fail(`GET /api/lane answered ${res.status} for ${label}, wanted ${want}`);
   }
 }
 

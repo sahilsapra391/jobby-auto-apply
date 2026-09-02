@@ -36,8 +36,28 @@ export async function GET(request: NextRequest) {
   }
   const sort = asked as Sort;
   const afterId = params.get("afterId");
+  const afterAt = params.get("afterAt");
+  // **A cursor belongs to the ordering it was cut from.** A score carried into
+  // the date query reaches Postgres as `'93'::timestamptz` and raises
+  // `date/time field value out of range`; the client catches that, marks the
+  // lane exhausted, and draws "and that is all of them" over 17,341 rows.
+  // Refusing here turns a silent wrong answer into a named one.
+  if (afterAt !== null) {
+    const numeric = /^-?\d+$/.test(afterAt);
+    if (sort === "score" && !numeric) {
+      return NextResponse.json(
+        { error: "afterAt must be a number when sorting by score" },
+        { status: 400 });
+    }
+    if (sort !== "score" && (numeric || Number.isNaN(Date.parse(afterAt)))) {
+      return NextResponse.json(
+        { error: `afterAt is not a date; a cursor cut from one ordering ` +
+                 `cannot page another` },
+        { status: 400 });
+    }
+  }
   const after: Cursor = afterId
-    ? { id: afterId, at: params.get("afterAt") }
+    ? { id: afterId, at: afterAt }
     : null;
   try {
     return NextResponse.json(await page(lane as Lane, after, 50, sort, {

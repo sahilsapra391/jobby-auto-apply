@@ -267,6 +267,54 @@ select {APPLICATION_COLUMNS}
 """.strip()
 
 
+def row_sql(lane):
+    """One named row, but only if the lane still holds it.
+
+    **The lane's own predicate answers, and the client never recomputes it.**
+    A board applying an event has to know whether the subject it just heard
+    about still belongs where it is drawing. Deriving that from the event's own
+    `to` field would be a second spelling of `LANES[lane]["where"]` in another
+    language, which is the thing this module exists to prevent, and it would be
+    wrong first for `done`, whose membership is two correlated subqueries over
+    the event log and not a status at all.
+
+    An empty answer is the answer. It means "not in this lane any more", which
+    is what lets the board take the row out rather than nag the reader to
+    reload, and it is the same emptiness for a row that moved, was dropped, or
+    never existed. The board does not need those told apart; it needs to stop
+    drawing it.
+
+    Ordered and limited like a page so the row arrives shaped the same. A lane
+    keyed on an id returns one row, and the limit is belt and braces rather
+    than a bound anything relies on.
+    """
+    if lane not in LANES:
+        raise KeyError(f"no lane {lane!r}")
+    if lane in POSTING_LANES:
+        return f"""
+select {POSTING_COLUMNS}
+  from postings p
+  left join job_decisions d
+    on d.posting_id = p.id and d.account_id = %(account)s
+  left join employers e on e.id = p.employer_id
+  left join job_scores s
+    on s.posting_id = p.id and s.account_id = %(account)s
+ where {LANES[lane]["where"]}
+   and p.id = %(row_id)s::uuid
+ limit 1
+""".strip()
+    return f"""
+select {APPLICATION_COLUMNS}
+  from applications a
+  left join postings p on p.id = a.posting_id
+  left join employers e on e.id = p.employer_id
+ where a.account_id = %(account)s
+   and {LANES[lane]["where"]}
+   and a.id = %(row_id)s::uuid
+ limit 1
+""".strip()
+
+
 def count_sql(lane):
     """The lane's size. Separate from the page so a count never drags a page
     of columns across the wire with it."""
@@ -298,7 +346,8 @@ def as_typescript():
     #: Every parameter any query here can take, in a fixed order so the
     #: numbering is deterministic. Which of them a given query actually uses is
     #: read off that query, not assumed.
-    known = ["account", "after_at", "after_id", "limit", "q", "within", "direct"]
+    known = ["account", "after_at", "after_id", "limit", "q", "within",
+             "direct", "row_id"]
 
     def positional(sql):
         """`(sql, params)` with **contiguous** numbering for this query alone.
@@ -328,6 +377,7 @@ def as_typescript():
         page_text, page_params = positional(page_sql(k))
         count_text, count_params = positional(
             count_sql(k).replace("%(limit)s", ""))
+        row_text, row_params = positional(row_sql(k))
         emitted = {}
         for name in sorts:
             text, params = positional(page_sql(k, name))
@@ -338,6 +388,8 @@ def as_typescript():
             "pageParams": page_params,
             "count": count_text,
             "countParams": count_params,
+            "row": row_text,
+            "rowParams": row_params,
             "sorts": emitted,
         }
     return (
@@ -361,6 +413,7 @@ def as_typescript():
         "export type LaneQuery = { sql: string; params: string[] };\n\n"
         "export const LANES: Record<Lane, { label: string; page: string; "
         "pageParams: string[]; count: string; countParams: string[]; "
+        "row: string; rowParams: string[]; "
         "sorts: Record<string, LaneQuery> }> =\n"
         + json.dumps(lanes, indent=2) + " as const;\n")
 

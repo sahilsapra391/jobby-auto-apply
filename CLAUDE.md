@@ -746,6 +746,59 @@ A related habit that would have caught it earlier: the counter reported "4 of
 number that plausible is exactly the kind nobody questions. What broke it open
 was driving a path deliberately and watching the count not move.
 
+### The check was fine. It was pointed at the wrong server, 2026-09-02
+
+**A readiness probe that fetches `/` cannot tell this process's answer from
+somebody else's.** `check_deployed_shape.mjs` builds the app, serves the traced
+bundle on port 3199, and asserts against it. A run earlier that afternoon died
+of an uncaught `TypeError` between the spawn and the cleanup, leaving two
+`next-server` processes alive. Every run after it spawned a child that died of
+`EADDRINUSE`, polled the port, got an answer, and reported `deployed shape OK`
+against a bundle four minutes old.
+
+It was found by a mutation that should have failed and did not. `writesEnabled`
+was hardcoded to `return false`; the built output verifiably contained
+`return!1`; a hand probe of the same standalone directory answered 503; and the
+check went on saying 200. The three ways of reading the artifact all agreed and
+all were about a file nobody was serving.
+
+**This is not "a check that measures nothing". The measurement was correct and
+its subject was substituted**, which is a different failure and a worse one,
+because every artifact you would inspect to debug it is the right artifact. It
+is the same shape as the Playwright page a test had not selected, and as the
+`activity.json` two sessions each dated to their own run: provenance is the one
+property the thing itself cannot answer.
+
+Three lines close it. `boot` refuses a port already listening and names the
+`lsof` that finds the holder; the readiness loop ends when the *child* exits
+rather than when the port answers; and `uncaughtException`, `unhandledRejection`,
+SIGINT and SIGTERM all run the cleanup, because the orphans came from an
+exception one line away from it.
+
+**And the control it was hiding is worth as much as the fix.** The check
+asserted `POST /api/applications` answers 503 with `live_board` off, which a
+route that had been deleted would also satisfy. It now turns the flag on
+against the same database the server reads, sends the same request, and turns
+it off again in a `finally`, **and asserts the row exists**, not the status.
+A status is not evidence: `remember` stores the first answer for an idempotency
+key and `replay` serves it back, so a reused key returns 200 forever without
+the handler running. Measured locally, where the database survives between
+runs; CI's throwaway container hides it, which is the excuse that let a test
+suite write the real store for three days. Each half is verified by breaking
+it: `writesEnabled` always false, and `commit` replaced with `rollback`.
+
+**The lane cursor belonged to an ordering nobody carried.** `LaneList` has
+always taken `sort` and `filters`, and has always documented why they must
+travel with the cursor. `page.tsx` passed neither. Measured against the live
+database: page one of Found by Match % ends on score 93, page two asks the date
+query for rows before the timestamp "93", Postgres answers `date/time field
+value out of range`, the client catches it and draws "50 shown, and that is all
+of them" over 17,341 rows. Three optional props are three chances to pass some
+of them, so there is now one `query` string built by `laneQuery`; the route
+refuses a cursor whose type disagrees with its sort; and `done` and `failed`
+are separate states, because they shared a variable under a comment reading
+"Never silent".
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,
