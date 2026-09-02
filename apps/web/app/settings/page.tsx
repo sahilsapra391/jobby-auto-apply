@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
+import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { SelectFace } from "../_ui/SelectFace";
 import { providers } from "../_ui/db";
 
@@ -37,10 +39,15 @@ const NAMES: Record<string, string> = {
 };
 
 export default async function Settings() {
+  const jar = await cookies();
+  const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
+  // The logo returns to the lane the reader came from, which is the board's
+  // own rule and what v2 lost by always sending them to Found.
+  const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
   const links = await providers();
   return (
     <>
-      <AppBar here="settings" />
+      <AppBar here="settings" theme={theme} home={home} />
       <div className="wrap">
         <section className="settings-page">
           <div className="settings-titlebar">

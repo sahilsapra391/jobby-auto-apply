@@ -1,6 +1,30 @@
+import Link from "next/link";
 import { LOCKUP, DEFS, THEMESEG_PROPS, THEMESEG_INNER } from "../chrome.generated";
+import type { Theme } from "./theme";
+import { RouteBody } from "./RouteBody";
 
 export const raw = (html: string) => ({ dangerouslySetInnerHTML: { __html: html } });
+
+/**
+ * The board's own theme markup, with the reader's choice already marked.
+ *
+ * **Stamped into the generated string rather than retyped.** The three buttons
+ * carry the board's own icons and `data-theme-set` values; marking the active
+ * one is a one-attribute edit, and rebuilding the markup here to add a class
+ * is how two boards end up with different suns.
+ *
+ * Doing it server-side is the point: the active control was previously moved
+ * by `paintTheme` after hydration, so the first frame showed none of the three
+ * selected and then one appeared.
+ */
+function themeSegment(theme: Theme) {
+  const active = theme === "system" ? "auto" : theme;
+  return THEMESEG_INNER.replace(
+    /class="themebtn" data-theme-set="([a-z]+)" role="radio" aria-checked="false"/g,
+    (whole, mode) => (mode === active
+      ? `class="themebtn on" data-theme-set="${mode}" role="radio" aria-checked="true"`
+      : whole));
+}
 
 /**
  * The app bar: brand, the three centred nav pills, the three theme controls.
@@ -9,15 +33,22 @@ export const raw = (html: string) => ({ dangerouslySetInnerHTML: { __html: html 
  * a moon is how two boards end up with different suns, and the icons are the
  * only part of a theme control anybody looks at.
  */
-export function AppBar({ here }: { here: "home" | "profile" | "settings" }) {
+export function AppBar({ here, theme = "system", home = "/" }: {
+  here: "home" | "profile" | "settings";
+  theme?: Theme;
+  /** Where the logo and Home go. The board's rule is that the logo returns to
+   *  the board, and the board means the lane the reader was last on. */
+  home?: string;
+}) {
   return (
     <>
       {/* The board is one document whose panels are toggled by a class on
-          <body>: `.settings-page` and `.profile-page` are `display:none` until
-          `body.settings-view` or `body.profile-view` is set. v2 serves them as
-          separate routes, so each route has to declare which view it is or the
-          page renders blank -- which it did, and only a screenshot showed it.
-          Set before paint, so nothing flashes. */}
+          <body>; v2 serves them as separate routes, so each route declares
+          which view it is or the page renders blank. The inline script covers
+          a document load, before paint. `RouteBody` covers a client
+          navigation, which the script cannot: React does not execute a script
+          it inserts after hydration. Both are needed and both are idempotent.
+          See `_ui/RouteBody.tsx`. */}
       {here !== "home" ? (
         <script
           dangerouslySetInnerHTML={{
@@ -25,19 +56,25 @@ export function AppBar({ here }: { here: "home" | "profile" | "settings" }) {
           }}
         />
       ) : null}
+      <RouteBody view={here} />
       <span {...raw(DEFS)} />
       <header className="appbar">
-        <a className="brand" href="/" aria-label="Jobby home" {...raw(LOCKUP)} />
+        {/* `Link`, not `<a>`. A plain anchor is a document load: the blank
+            second, the hero re-render and the mascot replaying its draw-on
+            every time, which is items 1 and 2 together. A client navigation
+            keeps the layout mounted, so the theme is resolved once per
+            document rather than once per click. */}
+        <Link className="brand" href={home} aria-label="Jobby home" {...raw(LOCKUP)} />
         <nav className="primary-nav">
-          <a href="/" {...(here === "home" ? { "aria-current": "page" as const } : {})}>
+          <Link href={home} {...(here === "home" ? { "aria-current": "page" as const } : {})}>
             Home
-          </a>
-          <a href="/profile" {...(here === "profile" ? { "aria-current": "page" as const } : {})}>
+          </Link>
+          <Link href="/profile" {...(here === "profile" ? { "aria-current": "page" as const } : {})}>
             Profile
-          </a>
-          <a href="/settings" {...(here === "settings" ? { "aria-current": "page" as const } : {})}>
+          </Link>
+          <Link href="/settings" {...(here === "settings" ? { "aria-current": "page" as const } : {})}>
             Settings
-          </a>
+          </Link>
         </nav>
         {/* **The element the stylesheet places must be the element React
             renders.** `.appbar` is `grid-template-columns: 1fr auto 1fr` and
@@ -46,7 +83,7 @@ export function AppBar({ here }: { here: "home" | "profile" | "settings" }) {
             selected a child, and the controls sat against the nav instead of
             the right edge. The props are generated with the markup so they
             cannot drift from what the board emits. */}
-        <div {...THEMESEG_PROPS} {...raw(THEMESEG_INNER)} />
+        <div {...THEMESEG_PROPS} {...raw(themeSegment(theme))} />
       </header>
     </>
   );
