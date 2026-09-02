@@ -250,7 +250,15 @@ def history_row(payload):
 
 
 def answer_row(entry):
-    """What `answer_bank` holds for one stored answer."""
+    """What `answer_bank` holds for one stored answer.
+
+    `kind` and `category` come from `answer_categories`, which owns the
+    taxonomy and whose regexes are word-bounded for reasons its docstring
+    records at length. Storing its answer rather than recomputing it is the
+    same choice migration 0013 makes for the employer mark: one implementation,
+    in the module that knows why each pattern is shaped the way it is.
+    """
+    import answer_categories
     entry = entry or {}
     return {
         "question": entry.get("question"),
@@ -258,6 +266,28 @@ def answer_row(entry):
         "state": entry.get("state"),
         "tags": list(entry.get("tags") or []),
         "sensitive": bool(entry.get("sensitive")),
+        "kind": answer_categories.kind_of(entry),
+        "category": answer_categories.category_of(entry),
+    }
+
+
+def resume_row(entry):
+    """One base resume, as the registry describes it and no more.
+
+    **The path does not travel.** `/Users/sahilsapra/Documents/Resumes/...` is
+    device-specific, says nothing a card shows, and is the one genuinely
+    machine-local fact in the registry; the filename is what a reader reads.
+    Neither does any wording: `writingSamples` and the resume content stay
+    excluded for the reason `_PROFILE_EXCLUDED` gives.
+    """
+    entry = entry or {}
+    path = str(entry.get("path") or "")
+    return {
+        "key": entry.get("key"),
+        "appliesTo": list(entry.get("appliesTo") or []),
+        "default": bool(entry.get("default")),
+        "identity": entry.get("identity") or {},
+        "document": path.rsplit("/", 1)[-1] or None,
     }
 
 
@@ -314,9 +344,20 @@ def search_row(payload):
 
 
 def profile_row(payload):
-    """What `profiles.identity` holds, minus what the mirror strips."""
-    return {"identity": {k: v for k, v in (payload or {}).items()
-                         if k not in _PROFILE_EXCLUDED}}
+    """What `profiles` holds: the identity, and the resume registry beside it.
+
+    `writingSamples` is still excluded and the resume *content* still is: the
+    reason `_PROFILE_EXCLUDED` gives is about wording living in two places with
+    no rule about which wins, and that reason is untouched by carrying which
+    resumes exist. Migration 0014 says where the line falls and why.
+    """
+    payload = payload or {}
+    return {
+        "identity": {k: v for k, v in payload.items()
+                     if k not in _PROFILE_EXCLUDED},
+        "resumes": [resume_row(r) for r in (payload.get("resumes") or [])
+                    if isinstance(r, dict)] or None,
+    }
 
 
 def _mirror_session(conn, account_id, payload):
@@ -415,6 +456,7 @@ def _mirror_answers(conn, account_id, payload, force=False):
         rows.append((
             account_id, key, built["question"], built["value"],
             built["state"], built["tags"], built["sensitive"],
+            built["kind"], built["category"],
         ))
 
     keep = set(payload)
@@ -439,10 +481,11 @@ def _mirror_answers(conn, account_id, payload, force=False):
                     f"that far.")
 
         for chunk in _chunks(rows, 500):
-            values = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,now())"] * len(chunk))
+            values = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())"] * len(chunk))
             cur.execute(
                 f"""insert into answer_bank (account_id, key, question, value,
-                                         state, tags, sensitive, updated_at)
+                                         state, tags, sensitive, kind,
+                                         category, updated_at)
                     values {values}
                     on conflict (account_id, key) do update
                       set question = excluded.question,
@@ -450,6 +493,8 @@ def _mirror_answers(conn, account_id, payload, force=False):
                           state = excluded.state,
                           tags = excluded.tags,
                           sensitive = excluded.sensitive,
+                          kind = excluded.kind,
+                          category = excluded.category,
                           updated_at = now()""",
                 [field for row in chunk for field in row])
 
@@ -572,14 +617,16 @@ def _mirror_search(conn, account_id, payload):
 
 
 def _mirror_profile(conn, account_id, payload):
-    identity = profile_row(payload)["identity"]
+    row = profile_row(payload)
     with conn.cursor() as cur:
         cur.execute(
-            """insert into profiles (account_id, identity, updated_at)
-               values (%s, %s, now())
+            """insert into profiles (account_id, identity, resumes, updated_at)
+               values (%s, %s, %s::jsonb, now())
                on conflict (account_id) do update
-                 set identity = excluded.identity, updated_at = now()""",
-            (account_id, json.dumps(identity)))
+                 set identity = excluded.identity,
+                     resumes = excluded.resumes, updated_at = now()""",
+            (account_id, json.dumps(row["identity"]),
+             json.dumps(row["resumes"]) if row["resumes"] is not None else None))
 
 
 def _mirror_roles(conn, account_id, payload):

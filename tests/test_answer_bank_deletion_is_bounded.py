@@ -44,13 +44,15 @@ class AnswerBankCase(pgtest.SchemaCase):
         super().setUp()
         self.assert_isolated()
         with self.conn.cursor() as cur:
-            cur.execute("create table accounts "
-                        "(id uuid primary key default gen_random_uuid())")
-            cur.execute("""create table answer_bank (
-                account_id uuid not null, key text not null, question text,
-                value text, state text, tags text[], sensitive boolean,
-                updated_at timestamptz, primary key (account_id, key))""")
-            cur.execute("insert into accounts default values returning id")
+            # **The real schema, not a copy of it.** These two tables were
+            # spelled out here, and migration 0014 adding `kind` and
+            # `category` to `answer_bank` broke eight tests that were correct
+            # about the mirror and stale about the table. A fixture that
+            # restates a schema drifts from it exactly the way two
+            # implementations of one query do.
+            pgtest.apply_migrations(self.conn)
+            cur.execute("insert into accounts (email) values (%s) returning id",
+                        ("bank-test@example.com",))
             self.account = cur.fetchone()[0]
 
     def seed(self, keys=SEEDED):

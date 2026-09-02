@@ -142,6 +142,8 @@ jobs:
                      apps/web/app/logos.generated.ts \
                      apps/web/app/lane_chrome.generated.ts \
                      apps/web/app/icons.generated.ts \
+                     apps/web/app/bank.generated.ts \
+                     apps/web/app/providers.generated.ts \
                      apps/web/public)"
           if [ -n "$stale" ]; then
             echo "$stale"

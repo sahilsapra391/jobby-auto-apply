@@ -68,6 +68,24 @@ def connect_to(schema):
 
 @unittest.skipUnless(available(),
                      "needs JOBBY_TEST_DATABASE_URL and psycopg")
+def apply_migrations(conn):
+    """Build the real schema in whatever schema this connection is scoped to.
+
+    **A test that hand-writes a table's DDL is a second declaration of it.**
+    `test_answer_bank_deletion_is_bounded` spelled `answer_bank` out in a
+    fixture, migration 0014 added `kind` and `category` to the real one, and
+    eight tests then failed with "column kind does not exist" -- not because
+    the mirror was wrong but because the fixture was a copy. That is the same
+    failure `mirror_fields` exists to end, one layer down.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "schema"))
+    import migrate
+    migrate.run(conn, migrate.MIGRATIONS, False)
+    conn.commit()
+
+
 class SchemaCase(unittest.TestCase):
     """A test case owning one disposable schema.
 

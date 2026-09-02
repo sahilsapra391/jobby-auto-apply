@@ -307,3 +307,81 @@ export async function locationScope(): Promise<string | null> {
     ? `${locations[0]}`
     : `${locations.length} countries`;
 }
+
+/** One base resume, as the registry describes it. No wording, no path. */
+export type BaseResume = {
+  key: string | null;
+  appliesTo: string[];
+  isDefault: boolean;
+  location: string | null;
+  phone: string | null;
+  address: string | null;
+  document: string | null;
+};
+
+/** One Memory Bank entry, classified by `answer_categories`. */
+export type BankEntry = {
+  key: string;
+  question: string | null;
+  value: string | null;
+  state: string | null;
+  tags: string[];
+  sensitive: boolean;
+  kind: string | null;
+  category: string | null;
+  updatedAt: string | null;
+};
+
+/**
+ * The Profile page's data: the resume registry and the Memory Bank.
+ *
+ * **The answer's own value travels and is drawn plainly.** CLAUDE.md settles
+ * that: the board has one reader who knows his own salary and his own
+ * demographics, and covering them behind a tap was friction protecting nobody.
+ * `sensitive` stays on the row because it is what a second account will mask
+ * on and what Phase 5's field encryption will key on, and re-deriving it from
+ * question text alone would lose every row the answer store's own state caught.
+ */
+export async function profile(): Promise<{
+  resumes: BaseResume[]; bank: BankEntry[];
+}> {
+  const account = await accountId();
+  const [profileRows, bankRows] = await Promise.all([
+    pool().query("select resumes from profiles where account_id = $1", [account]),
+    pool().query(
+      `select key, question, value, state, tags, sensitive, kind, category,
+              updated_at
+         from answer_bank where account_id = $1
+        order by updated_at desc nulls last, key`, [account]),
+  ]);
+  const raw = (profileRows.rows[0]?.resumes ?? []) as Record<string, unknown>[];
+  return {
+    resumes: raw.map((r) => {
+      const identity = (r.identity ?? {}) as Record<string, unknown>;
+      const address = (identity.fullAddress ?? {}) as Record<string, unknown>;
+      const parts = ["line1", "line2", "city", "region", "postalCode", "country"]
+        .map((k) => (address[k] == null ? "" : String(address[k]).trim()))
+        .filter(Boolean);
+      return {
+        key: (r.key as string) ?? null,
+        appliesTo: Array.isArray(r.appliesTo) ? (r.appliesTo as string[]) : [],
+        isDefault: r.default === true,
+        location: identity.location ? String(identity.location) : null,
+        phone: identity.phone ? String(identity.phone) : null,
+        address: parts.length ? parts.join(", ") : null,
+        document: (r.document as string) ?? null,
+      };
+    }),
+    bank: bankRows.rows.map((r) => ({
+      key: r.key,
+      question: r.question ?? null,
+      value: r.value ?? null,
+      state: r.state ?? null,
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      sensitive: r.sensitive === true,
+      kind: r.kind ?? null,
+      category: r.category ?? null,
+      updatedAt: r.updated_at ?? null,
+    })),
+  };
+}

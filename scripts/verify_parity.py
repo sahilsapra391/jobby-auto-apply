@@ -613,8 +613,9 @@ def class_b_file_state(root=None):
     profile = None
     path = Path(paths["profile"])
     if path.exists():
-        profile = class_b.profile_row(
-            json.loads(path.read_text(encoding="utf-8")))["identity"]
+        built = class_b.profile_row(json.loads(path.read_text(encoding="utf-8")))
+        keep = mirror_fields.compared()["profiles"]
+        profile = {k: v for k, v in built.items() if k in keep}
 
     return {"sessions": sessions, "events": events, "answers": answers,
             "profile": profile}
@@ -627,21 +628,33 @@ def class_b_postgres_state(conn, account_id):
             f"select legacy_id, {', '.join(columns)} from applications "
             f"where account_id = %s", (account_id,))
         sessions = {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
-        cur.execute("select payload->>'eventId', kind, payload, at "
-                    "from application_events "
-                    "where account_id = %s and payload ? 'eventId'",
-                    (account_id,))
-        events = {r[0]: {"kind": r[1], "payload": r[2], "at": r[3]}
-                  for r in cur.fetchall()}
-        cur.execute("select key, question, value, state, tags, sensitive "
-                    "from answer_bank where account_id = %s", (account_id,))
-        answers = {r[0]: {"question": r[1], "value": r[2], "state": r[3],
-                          "tags": list(r[4] or []), "sensitive": r[5]}
+        # **Derived, like the applications select above.** These were
+        # hand-written column lists, and adding `kind` and `category` to
+        # `answer_row` therefore added them to the file side and not to this
+        # one: 355 rows reported as divergent with `postgres=None`, on columns
+        # Postgres actually held. That is the declared-twice bug this whole
+        # module exists to end, inside the module that ends it -- the file side
+        # was derived and the database side was not, so the two halves of one
+        # comparison drifted the moment the mirror grew.
+        event_columns = sorted(mirror_fields.compared()["application_events"])
+        cur.execute(
+            f"select payload->>'eventId', {', '.join(event_columns)} "
+            f"from application_events "
+            f"where account_id = %s and payload ? 'eventId'", (account_id,))
+        events = {r[0]: dict(zip(event_columns, r[1:])) for r in cur.fetchall()}
+
+        answer_columns = sorted(mirror_fields.compared()["answer_bank"])
+        cur.execute(
+            f"select key, {', '.join(answer_columns)} from answer_bank "
+            f"where account_id = %s", (account_id,))
+        answers = {r[0]: {c: (list(v) if c == "tags" and v is not None else v)
+                          for c, v in zip(answer_columns, r[1:])}
                    for r in cur.fetchall()}
-        cur.execute("select identity from profiles where account_id = %s",
-                    (account_id,))
+        profile_columns = sorted(mirror_fields.compared()["profiles"])
+        cur.execute(f"select {', '.join(profile_columns)} from profiles "
+                    f"where account_id = %s", (account_id,))
         row = cur.fetchone()
-        profile = row[0] if row else None
+        profile = dict(zip(profile_columns, row)) if row else None
     return {"sessions": sessions, "events": events, "answers": answers,
             "profile": profile}
 
@@ -688,11 +701,18 @@ def compare_class_b(files, database):
         if database["profile"] is None:
             findings.append({"kind": "only_in_file", "id": "profile",
                              "field": "profile"})
-        elif files["profile"] != database["profile"]:
-            findings.append({"kind": "field_mismatch", "id": "profile",
-                             "field": "profile",
-                             "file": sorted(files["profile"]),
-                             "postgres": sorted(database["profile"])})
+        else:
+            # Column by column, like every other class B comparison. It used to
+            # compare the identity blob whole and report two sorted key lists,
+            # which said "they differ" and left the reader to find out how.
+            for column in sorted(files["profile"]):
+                if same_value(files["profile"][column],
+                              database["profile"].get(column)):
+                    continue
+                findings.append({"kind": "field_mismatch", "id": "profile",
+                                 "field": f"profile.{column}",
+                                 "file": files["profile"][column],
+                                 "postgres": database["profile"].get(column)})
     return findings
 
 

@@ -48,6 +48,8 @@ RUBRIC = REPO / "apps" / "web" / "app" / "rubric.generated.ts"
 LOGOS = REPO / "apps" / "web" / "app" / "logos.generated.ts"
 LANE_CHROME = REPO / "apps" / "web" / "app" / "lane_chrome.generated.ts"
 ICONS = REPO / "apps" / "web" / "app" / "icons.generated.ts"
+BANK = REPO / "apps" / "web" / "app" / "bank.generated.ts"
+PROVIDER_LABELS = REPO / "apps" / "web" / "app" / "providers.generated.ts"
 STATIC_SRC = REPO / "deploy" / "public"
 STATIC_DST = REPO / "apps" / "web" / "public"
 
@@ -511,6 +513,69 @@ def icons_module():
             + json.dumps(icons, indent=2) + ";\n")
 
 
+def providers_module():
+    """What each provider is called, from `settings_panel.PROVIDERS`.
+
+    **The label travels and the model does not**, and the reason is a real
+    disagreement between two files. `settings_panel.PROVIDERS` says
+    `gemini-3.7-flash`; `providers.MODEL_IDS`, which is the pin every agent
+    task actually invokes and which CLAUDE.md records, says
+    `gemini-3.7-flash-medium`. The board's Settings card has been naming a
+    model it does not run.
+
+    So the display name of the tool comes from the board -- "Gemini CLI", not
+    the "agy" a fixture invented -- and the model comes through the mirror from
+    the pin, because a card that names the wrong model is worse than one that
+    disagrees with the other board.
+    """
+    import json
+    import settings_panel
+    import providers as provider_registry
+    labels = {pid: {"name": name, "agent": agent}
+              for pid, name, agent, _ in settings_panel.PROVIDERS}
+    shown = {pid: model for pid, _, _, model in settings_panel.PROVIDERS}
+    pinned = dict(provider_registry.MODEL_IDS)
+    disagree = sorted(k for k in shown if shown[k] != pinned.get(k))
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// Provider display names, from settings_panel.PROVIDERS.\n"
+            "// The model is NOT here: it comes through the mirror from\n"
+            "// providers.MODEL_IDS, which is the pin that actually runs.\n"
+            f"// The two disagree today for: {', '.join(disagree) or 'nothing'}.\n\n"
+            "export const PROVIDER_LABELS: Record<string, "
+            "{ name: string; agent: string }> =\n"
+            + json.dumps(labels, indent=2) + ";\n")
+
+
+def bank_module():
+    """The Memory Bank's taxonomy labels, from `answer_categories`.
+
+    The classification itself is stored per row by the mirror -- migration 0014
+    says why a TypeScript copy of those word-bounded regexes would be a fourth
+    chance at an afternoon this project has lost three times. What travels here
+    is only the labels and their order, so the chips read the way the module
+    names them and appear in the order it ranks them.
+
+    `other` is emitted even though it can be empty, because the module's own
+    docstring says it stays in the UI at zero: a category set that cannot miss
+    has stopped classifying.
+    """
+    import json
+    import answer_categories
+    labels = [(key, label) for key, label, _ in answer_categories.CATEGORIES]
+    labels.append(("other", "Other"))
+    kinds = [("question", "Questions"), ("policy", "Your policies"),
+             ("story", "Story bank")]
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "// The Memory Bank's category labels and order, from\n"
+            "// answer_categories.CATEGORIES. The classification itself is a\n"
+            "// stored column; only the naming travels.\n\n"
+            "export const BANK_CATEGORIES: [string, string][] = "
+            + json.dumps(labels) + ";\n\n"
+            "// The three kinds of record that share answers.json.\n"
+            "export const BANK_KINDS: [string, string][] = "
+            + json.dumps(kinds) + ";\n")
+
+
 def chrome_module():
     """A TypeScript module of raw markup strings.
 
@@ -580,6 +645,8 @@ def outputs():
         (LOGOS, logos_module),
         (LANE_CHROME, lane_chrome_module),
         (ICONS, icons_module),
+        (BANK, bank_module),
+        (PROVIDER_LABELS, providers_module),
     ]
 
 
