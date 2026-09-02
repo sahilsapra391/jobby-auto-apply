@@ -1848,6 +1848,22 @@ So when writing one, ask what it says when the subject is absent, unreadable, or
 oversized, and not only what it says when the subject is wrong. If those answers
 are the same, it is not measuring the thing.
 
+A fourth, and the clearest of them, because the failing check and the sufficient
+check sit two lines apart. `.gitignore` carried `applications/` unanchored, to
+keep the delivered resumes out of git; unanchored it matches any directory of
+that name at any depth, and it swallowed `apps/web/app/api/applications/`. The
+write endpoint answered 503 correctly on this machine, where the file is on
+disk, and 404'd from the traced bundle in CI, where it had never been committed.
+**A rule protecting real personal data ate source code**, which is the worst way
+round for both.
+
+The instructive part is what it took to pin. Asserting the endpoint answers 503
+rather than 404 catches it once and says nothing about why. Asserting the rule
+is anchored catches the rule and not the file. **A route git ignores and a route
+nobody wrote are identical from CI**, so the load-bearing test is the third one:
+that the file is actually tracked. Each of the three is blind to a different way
+of arriving at the same 404.
+
 So, concretely, before calling any of this done: make it fire, or read the
 value it is silent about. A silent alarm has two meanings and only one of them
 is good news. `docs/health-observed.md` records which of this repository's

@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
-"""Which write paths have actually fired since the parity clock started.
+"""Which write paths have actually fired since dual-write went live.
 
     python3 scripts/write_path_coverage.py            the checklist
     python3 scripts/write_path_coverage.py --json
     python3 scripts/write_path_coverage.py --unticked  just what is missing
 
-**The gate is three green days AND every write path in `docs/write-paths.md`
-observed firing at least once.** Duration alone never proved the rare ones ran:
-a week of green with a drop-from-In-flight never exercised is a week of green
+**The gate is three consecutive green days AND every write path in
+`docs/write-paths.md` observed firing at least once since dual-write went live,
+minus the uncoverable list.** Duration alone never proved the rare ones ran: a
+week of green with a drop-from-In-flight never exercised is a week of green
 about the paths that fire anyway. Class A moves on every four-hour sweep; class
 B moves only when the user acts, so the rare paths are the risk and they are
 exactly the ones a calendar cannot vouch for.
+
+**Counted over the whole log, not per clock window, and that is a correction.**
+It used to count from the clock start, which zeroed on every gate-path change.
+Eight restarts in two days each reset the count to nought while the actual
+coverage was complete, and each reset asked the user for a fresh set of real
+actions to prove again what had already been proved: another job watched,
+another application dropped. A counter that costs a product decision every time
+it zeroes is a defect in the requirement rather than in the coverage. A path
+that has fired since dual-write went live has been observed, and observing it
+again tells nobody anything.
+
+`--since` still narrows the window when the question is "what fired lately",
+which is a different question from the gate.
 
 **A sidecar, not the parity job.** `verify_parity.py` is a gate path: changing
 it restarts the clock, and a counter that resets the thing it is counting is
@@ -208,6 +222,36 @@ def observations(path=None, since=None):
     return out
 
 
+#: Where the paths nobody can honestly drive are listed, with their reasons.
+UNCOVERABLE_DOC = Path(__file__).resolve().parents[1] / "docs" / "write-path-coverage.md"
+
+
+def uncoverable(doc=None):
+    """The inventory rows the uncoverable list names, read from that document.
+
+    **Derived, not restated.** A second copy of this list in code is a place
+    for the two to disagree, and the disagreement would be silent: the gate
+    would either demand a path nobody can drive or excuse one somebody can.
+
+    Matched loosely on purpose. Some entries name a full row
+    (`jobs_store._persist_pool -> write_private`) and some name only the caller
+    (`repair_watch_drift.main`), because that script has one write and spelling
+    its callee out adds nothing. A row is excused when the document names
+    either form in a backtick.
+    """
+    path = Path(doc) if doc else UNCOVERABLE_DOC
+    if not path.exists():
+        return set()
+    quoted = set(re.findall(r"`([^`]+)`", path.read_text(encoding="utf-8")))
+    out = set()
+    for module, function, primitive in required():
+        row = f"{module}.{function} -> {primitive}"
+        caller = f"{module}.{function}"
+        if row in quoted or caller in quoted:
+            out.add((module, function, primitive))
+    return out
+
+
 def coverage(since=None, path=None, doc=None):
     need = required(doc)
     seen = {}
@@ -224,16 +268,22 @@ def coverage(since=None, path=None, doc=None):
         if not rec.get("driven"):
             entry["driven"] = False
     classes = documented(doc)
+    excused = uncoverable(doc) & need
     return {
         "since": since,
         "required": len(need),
+        "uncoverable": sorted(f"{m}.{f} -> {p}" for (m, f, p) in excused),
         "ticked": sorted(f"{m}.{f} -> {p}" for (m, f, p) in seen),
         "unticked": sorted(f"{m}.{f} -> {p}" for (m, f, p) in need - set(seen)),
         "driven": sorted(f"{m}.{f} -> {p}" for (m, f, p), v in seen.items()
                          if v["driven"]),
         "byClass": {c: sorted(f"{m}.{f} -> {p}" for (m, f, p) in need - set(seen)
                               if classes.get((m, f, p)) == c) for c in ("A", "B")},
-        "complete": not (need - set(seen)),
+        # **The gate is every coverable path, not every path.** Driving the
+        # excused ones would assert something untrue or repair damage that does
+        # not exist, and a requirement nobody can meet honestly is met
+        # dishonestly or not at all.
+        "complete": not (need - set(seen) - excused),
     }
 
 
@@ -254,11 +304,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--unticked", action="store_true")
-    ap.add_argument("--since", help="ISO stamp; defaults to the clock start")
+    ap.add_argument("--since", help="ISO stamp; the gate counts the whole log")
+    ap.add_argument("--since-clock", action="store_true",
+                    help="only what has fired since the clock last started")
     ap.add_argument("--log", type=Path)
     args = ap.parse_args(argv)
 
-    since = args.since or clock_start()
+    # The gate reads the whole log. `--since` is opt-in, and `--since-clock`
+    # is the old behaviour kept for the "what has fired lately" question.
+    since = args.since
+    if args.since_clock:
+        since = clock_start()
     result = coverage(since, args.log)
 
     if args.json:
@@ -269,19 +325,38 @@ def main(argv=None):
             print(row)
         return 0 if result["complete"] else 1
 
-    print(f"write paths, since {since or 'the beginning of the log'}")
+    print(f"write paths, since "
+          f"{since or 'dual-write went live'}")
     print(f"  ticked   {len(result['ticked'])} of {result['required']}")
     if result["driven"]:
         print(f"  driven   {len(result['driven'])} of those fired only because "
               f"they were driven deliberately")
+    if result["uncoverable"]:
+        print(f"  excused  {len(result['uncoverable'])} on the uncoverable "
+              f"list, each with a reason in docs/write-path-coverage.md")
+    excused = set(result["uncoverable"])
     for cls in ("A", "B"):
         missing = result["byClass"][cls]
-        if missing:
-            print(f"\n  class {cls}, still unticked ({len(missing)}):")
-            for row in missing:
+        # **Excused and unticked are different facts and the report used to
+        # print them as one.** It said "class A, still unticked (7)" directly
+        # above "every documented write path has fired", which contradict each
+        # other on the face of it; every one of those seven was on the
+        # uncoverable list. A reader has to be able to tell "nobody has driven
+        # this yet" from "nobody honestly can".
+        waiting = [row for row in missing if row not in excused]
+        if waiting:
+            print(f"\n  class {cls}, still unticked ({len(waiting)}):")
+            for row in waiting:
+                print(f"    {row}")
+        held = [row for row in missing if row in excused]
+        if held:
+            print(f"\n  class {cls}, excused ({len(held)}), reasons in "
+                  f"docs/write-path-coverage.md:")
+            for row in held:
                 print(f"    {row}")
     if result["complete"]:
-        print("\n  every documented write path has fired.")
+        print(f"\n  every coverable write path has fired"
+              + (f"; {len(excused)} excused." if excused else "."))
     return 0 if result["complete"] else 1
 
 
