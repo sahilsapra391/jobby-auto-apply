@@ -1015,6 +1015,39 @@ more often than not, `blog.duolingo.com` over `careers.duolingo.com` and
 `cts.businesswire.com` over `impact.com`. That count is the first real input to
 the employer-resolution work.
 
+### The instrument found its own documentation and counted it as coverage
+
+**A check for "we shipped a class we cannot activate" searched for the class
+name anywhere in the source. It passed, because `fresh`, `loaded` and `over`
+appear in the comments explaining them.** The instrument read its own
+documentation and scored it as the thing being documented.
+
+That is the eleventh check in this file that measured nothing, and it
+generalises well past CSS. Any check that asks "does this name appear
+anywhere" is asking about the *corpus*, and the corpus contains the writing
+about the thing as well as the thing. Prose, docstrings, commit messages, test
+names, variable names and log strings all mention the subject. A grep-shaped
+check cannot tell a use from a mention, and the file where the mention is
+densest is always the file where the implementation should be.
+
+The fix is not a cleverer pattern. It is to ask a question only a use can
+answer: not "is `loaded` written down" but "is `loaded` put on an element" --
+`className` attributes and `classList` calls, nothing else. Same shape as
+counting an upsert's actual column list rather than grepping for the column
+name.
+
+**The second attempt was worse and is the shape to fear.** An edit removed the
+`assertEqual` from the method, so it built its findings list and returned. A
+test that cannot go red for any input, sitting green in a passing suite. It was
+not caught by review, by the suite, or by reading the file; it was caught by
+running the three mutations it existed to detect and noticing that all three
+passed.
+
+So, for any check of this class: **write the mutation before believing the
+green.** Disable the thing the check is for and watch it fail, once per case.
+Three runs, a minute each. Both failures above were invisible to everything
+cheaper.
+
 ### A summary statistic over a non-stationary series is not a measurement
 
 **Ten of the checks written up here measured nothing. This one measured the
