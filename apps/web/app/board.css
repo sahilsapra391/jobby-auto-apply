@@ -1075,6 +1075,23 @@ line-height:1.5; }
     object-fit:cover; padding:0; background:transparent;
     opacity:0; transition:opacity .3s ease; }
   .company-mark img.loaded { opacity:1; }
+  /* **The monogram goes when a logo lands, and not a moment before.** About
+     40% of real logos carry an alpha channel -- 8 of 20 sampled from the live
+     route -- so a transparent mark sits directly over the letter and Datadog's
+     logo renders on top of a "D". `display:none` rather than a colour or an
+     opacity, because the letter has to leave rather than be painted over:
+     the plate under it is `--sunk` in both themes and a hidden letter would
+     still tint a semi-transparent logo.
+
+     The plate itself stays. A logo on a tile is the design; a logo on nothing
+     is a hole, and the border would then frame empty space.
+
+     The class is added only in the branch that has already checked
+     `naturalWidth > 1`, so a 404 or a 1x1 pixel keeps its monogram. Hiding it
+     up front is the obvious version and it turns every miss into an empty
+     circle. The board has this bug too and this rule is shared, so it is
+     fixed in both. */
+  .company-mark.has-logo > span { display:none; }
   .company-title,.company-cell { display:flex; align-items:center; gap:.72rem; min-width:0; }
   .company-title > div,.company-cell > span { min-width:0; }
   .company-cell .company-mark { width:2.15rem; height:2.15rem; border-radius:9px; }
