@@ -3,19 +3,20 @@ import { cookies } from "next/headers";
 import { MORPH } from "./chrome.generated";
 import { HeroIntro } from "./_ui/HeroIntro";
 import { LANES, SORT_LABELS, type Lane, type Sort } from "./lanes.generated";
-import { AppBar, raw } from "./_ui/Chrome";
+import { AppBar, boardStamp, raw } from "./_ui/Chrome";
 import { SelectFace } from "./_ui/SelectFace";
-import { ScanBanner, Filters } from "./_ui/FoundSurface";
+import { AddLink, ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
-  accountId, boardMeta, counts, laneQuery, locationScope, page,
+  accountId, boardMeta, counts, laneQuery, locationScope, page, readerName,
 } from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
 import { writesEnabled } from "./_ui/writes";
+import { READ_ONLY } from "./_ui/actions";
 
 /**
  * The board, reading Postgres.
@@ -63,7 +64,8 @@ export default async function Board({
     : (q ? { q } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
-  const [tally, first, writes, meta, pool, scope, archive] = await Promise.all([
+  const [tally, first, writes, meta, pool, scope, archive, reader] =
+    await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
     // The unfiltered pool, so the count can say what it matched against.
@@ -72,7 +74,9 @@ export default async function Board({
     // The archive's first page. It is a dialog on this document rather than a
     // route, so it renders with the board or not at all.
     page("dropped", null, 50, "new", q ? { q } : undefined),
+    readerName(),
   ]);
+  const stamp = boardStamp(meta?.updatedAt ?? null);
 
   /**
    * A tab's link, carrying everything the reader had set.
@@ -106,12 +110,25 @@ export default async function Board({
               {tally.act === 0 ? "Nothing blocked"
                                : `${tally.act} waiting on you`}
             </p>
-            {/* **A board that is not live has to look different from one
-                that is.** The failure mode of a silent live board is that it
-                looks exactly like a working one and is simply wrong, which is
-                this repository's oldest shape. */}
+            {/* **The board's own stamp, which is `dashboard.py:1482`.** It
+                said "Reading Postgres directly", which is a note about the
+                implementation on the line where the reader's name and the age
+                of the data belong.
+
+                **A board that is not live still has to look different from
+                one that is**, and that has not been dropped, only moved off
+                the identity line: every control on a read-only board already
+                renders disabled carrying its reason, which is a stronger
+                signal than a word in the hero, and this keeps a plain one
+                beside the stamp. The failure mode being guarded against is a
+                silent read-only board that looks exactly like a working one,
+                which is this repository's oldest shape. */}
             <p className="stamp">
-              {writes ? "Live" : "Reading Postgres directly"}
+              {reader}
+              {stamp ? <> &middot; Updated {stamp}</> : null}
+              {writes ? null : (
+                <span className="chip" title={READ_ONLY}>read only</span>
+              )}
             </p>
           </div>
           <div className="jb-morph" role="button" tabIndex={0}
@@ -142,7 +159,21 @@ export default async function Board({
           </div>
         </div>
 
-        <div className="panel on" id={`p-${active}`} role="tabpanel">
+        {/* **`watch` on the panel, and only `watch`.** Six rules in the
+            stylesheet are scoped to it -- the Watching table's cell padding,
+            `white-space:normal` on its date column, and the two columns it
+            drops on a narrow screen -- and with no lane class on the panel
+            none of them matched: `td.when` kept `nowrap` from the shared rule
+            and "posted 15 days ago" ran out of its column and across the one
+            beside it.
+
+            The board names this lane and no other (`dashboard.py:1519`), which
+            looks like an oversight and is not. `.act`, `.found` and `.done`
+            are already taken by other things -- `.act` is the row of buttons
+            on a card, `display:flex` -- so adding the lane name to every panel
+            would apply a card's layout to the Needs you panel. */}
+        <div className={active === "watch" ? "panel on watch" : "panel on"}
+             id={`p-${active}`} role="tabpanel">
           {active === "found" ? (
             <>
               <ScanBanner meta={meta} />
@@ -171,6 +202,9 @@ export default async function Board({
               writesEnabled={writes}
             />
           )}
+          {/* After the lane, where the board puts it, so it is the last thing
+              on Found rather than a control competing with the filters. */}
+          {active === "found" ? <AddLink writesEnabled={writes} /> : null}
         </div>
       </div>
 

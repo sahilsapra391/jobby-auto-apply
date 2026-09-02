@@ -1512,6 +1512,7 @@ def build(state, generated):
     {'<p class="hint">Answers opens the questions that form asked and what went into each one. Rows reading <em>not captured</em> were submitted before Jobby started writing that record down; nothing is reconstructed for them.</p>' if uncaptured else ''}
     {filter_bar("done", [(o, o.title()) for o in sub_states], len(submitted), wide=True)}
     {f'''<div class="sheet"><div class="tablewrap"><table>
+      <colgroup><col style="width:15%"><col style="width:21%"><col style="width:8%"><col style="width:9%"><col style="width:8%"><col style="width:10%"><col style="width:8%"><col style="width:10%"><col style="width:11%"></colgroup>
       <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>When</th><th>Posting</th><th>Proof</th><th>Resume</th><th>Cover letter</th><th>Answers</th></tr></thead>
       <tbody>{sub_rows}</tbody></table></div></div>''' if submitted else empty_state("done")}
   </div>

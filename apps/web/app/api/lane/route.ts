@@ -42,14 +42,25 @@ export async function GET(request: NextRequest) {
   // `date/time field value out of range`; the client catches that, marks the
   // lane exhausted, and draws "and that is all of them" over 17,341 rows.
   // Refusing here turns a silent wrong answer into a named one.
+  //
+  // **What it checks against is the query's own cursor type**, not the sort's
+  // name. This asked `sort === "score"`, which was the same question while
+  // score was the only numeric ordering and stopped being the same question
+  // when Needs you began walking a blocker rank under the sort called `new`:
+  // the guard would have refused that lane's own cursor with a 400. The
+  // ordering, the cursor key and its type are one fact, emitted together by
+  // `v2_lanes`.
+  const query = LANES[lane as Lane].sorts[sort]
+    ?? { cursorType: LANES[lane as Lane].cursorType };
   if (afterAt !== null) {
     const numeric = /^-?\d+$/.test(afterAt);
-    if (sort === "score" && !numeric) {
+    if (query.cursorType === "number" && !numeric) {
       return NextResponse.json(
-        { error: "afterAt must be a number when sorting by score" },
+        { error: `afterAt must be a number for this lane's ordering` },
         { status: 400 });
     }
-    if (sort !== "score" && (numeric || Number.isNaN(Date.parse(afterAt)))) {
+    if (query.cursorType === "date"
+        && (numeric || Number.isNaN(Date.parse(afterAt)))) {
       return NextResponse.json(
         { error: `afterAt is not a date; a cursor cut from one ordering ` +
                  `cannot page another` },

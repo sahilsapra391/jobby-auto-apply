@@ -49,6 +49,14 @@ const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
   done: {
     head: ["Company", "Role", "Status", "When", "Posting", "Proof", "Resume",
            "Cover letter", "Answers"],
+    // **Nine columns under `table-layout:fixed` and no widths is nine equal
+    // columns.** At 1377px that is 153 each, and a company cell is a 34px logo
+    // plus a name in what is left, with `overflow-wrap:anywhere` on it -- so
+    // "Justworks" renders as "Justwork / s". The board has the same defect
+    // for the same reason, which is why this is fixed in `dashboard.py` too
+    // rather than only here. Role is the widest because it is the longest
+    // string in the table; the four document columns hold "PDF" and a chip.
+    cols: ["15%", "21%", "8%", "9%", "8%", "10%", "8%", "10%", "11%"],
   },
   watch: {
     head: ["Role", "Posted", "Experience", "Location", "Core skills",

@@ -177,6 +177,12 @@ def session_row(payload):
         "alignment": text("alignment"),
         "dropped_from": text("droppedFrom"),
         "dropped_stage": text("droppedStage"),
+        # **When it was dropped, not when this row was last written.** The
+        # lane drew `updated_at`, which the mirror stamps `now()`, so all 58
+        # dropped roles read as dropped today. Same shape as `completed_at`
+        # one lane over.
+        "dropped_at": text("droppedAt"),
+        "dropped_reason": text("droppedReason"),
         "seen_on_boards": number("seenOnBoards"),
     }
 

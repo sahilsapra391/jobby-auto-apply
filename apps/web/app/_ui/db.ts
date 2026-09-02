@@ -117,22 +117,25 @@ export async function page(lane: Lane, after: Cursor, limit = 50,
   // One query per (lane, sort), all generated. Substituting an ORDER BY on
   // this side would be a second spelling of the predicate.
   const query = LANES[lane].sorts[sort]
-    ?? { sql: LANES[lane].page, params: LANES[lane].pageParams };
+    ?? { sql: LANES[lane].page, params: LANES[lane].pageParams,
+         cursor: LANES[lane].cursor };
   const { rows } = await pool().query(query.sql, argsFor(query.params, {
     account, after_at: after?.at ?? null, after_id: after?.id ?? null, limit,
     ...filterValues(filters),
   }));
-  // **The cursor column follows the sort, not the lane.** Ordering Found by
-  // match score walks `total`, and handing the next page a `posted_at` cursor
-  // would compare a date against a smallint: either an error or, worse, a
-  // silent restart at the top of the lane on every page.
+  // **The cursor column comes from the query, not from a guess about it.**
+  // This used to be inferred here -- score if the sort was score, else
+  // posted_at if the row had one, else updated_at -- which restated the
+  // ORDER BY in a second language. It happened to be right for four lanes and
+  // would have been silently wrong for Needs you the moment that lane started
+  // ordering by blocker count: a cursor naming the wrong column does not
+  // error, it compares the wrong values and restarts the lane at the top on
+  // every page. `v2_lanes` emits the key beside the SQL that orders by it.
   const last = rows[rows.length - 1];
-  const column = sort === "score" ? "score"
-    : (last !== undefined && "posted_at" in last ? "posted_at" : "updated_at");
-  const at = last === undefined ? null : (last[column] ?? null);
+  const at = last === undefined ? null : (last[query.cursor] ?? null);
   return {
     rows: rows as Row[],
-    next: last ? { at: cursorValue(at, sort), id: last.id } : null,
+    next: last ? { at: cursorValue(at), id: last.id } : null,
     done: rows.length < limit,
   };
 }
@@ -140,13 +143,20 @@ export async function page(lane: Lane, after: Cursor, limit = 50,
 /**
  * A cursor value the generated SQL can cast back.
  *
- * A date has to go out as an ISO string; a score is a number and must not be
- * put through `new Date`, which would turn 70 into 1970 and then fail the
- * `::int` cast the score query applies to it.
+ * A date has to go out as an ISO string; a number must not be put through
+ * `new Date`, which would turn 70 into 1970 and then fail the `::int` cast
+ * its query applies to it.
+ *
+ * **Keyed on what the value is, not on which sort produced it.** The first
+ * version asked `sort === "score"`, which meant every new numeric ordering had
+ * to remember to add itself here; Needs you walks a negative blocker rank and
+ * would have been silently converted to a date. A `Date` from the driver and a
+ * number from the driver are distinguishable on sight, so this asks.
  */
-function cursorValue(at: unknown, sort: Sort): string | null {
+function cursorValue(at: unknown): string | null {
   if (at === null || at === undefined) return null;
-  if (sort === "score") return String(at);
+  if (typeof at === "number") return String(at);
+  if (at instanceof Date) return at.toISOString();
   return new Date(at as string).toISOString();
 }
 
@@ -227,13 +237,23 @@ export type BoardMeta = {
   scanFinishedAt: string | null;
   blocked: string | null;
   slotsParked: string | null;
+  /**
+   * When the mirror last wrote, which is this board's "Updated".
+   *
+   * **The analogue of the old board's render time, not of `now()`.** The board
+   * is a published document, so the moment it was generated really was the age
+   * of its data. A server-rendered page has no such moment -- "rendered just
+   * now" is true on every request and says nothing -- so the honest stamp is
+   * when the store last reached Postgres.
+   */
+  updatedAt: string | null;
 };
 
 export async function boardMeta(): Promise<BoardMeta | null> {
   const account = await accountId();
   const { rows } = await pool().query(
     `select last_ingest, next_scan_at, scan_started_at, scan_finished_at,
-            blocked, slots_parked
+            blocked, slots_parked, updated_at
        from board_meta where account_id = $1`, [account]);
   if (!rows.length) return null;
   const r = rows[0];
@@ -244,7 +264,25 @@ export async function boardMeta(): Promise<BoardMeta | null> {
     scanFinishedAt: r.scan_finished_at ? new Date(r.scan_finished_at).toISOString() : null,
     blocked: r.blocked ?? null,
     slotsParked: r.slots_parked ?? null,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   };
+}
+
+/**
+ * The reader's first name, for the board's own stamp.
+ *
+ * `identity` is the profile the device keeps; the board greets from
+ * `firstName` and falls back to "there" (`dashboard.py:673`), which is carried
+ * across rather than re-decided here.
+ */
+export async function readerName(): Promise<string> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    "select identity from profiles where account_id = $1", [account]);
+  const identity = (rows[0]?.identity ?? {}) as Record<string, unknown>;
+  const first = typeof identity.firstName === "string"
+    ? identity.firstName.trim() : "";
+  return first || "there";
 }
 
 /**

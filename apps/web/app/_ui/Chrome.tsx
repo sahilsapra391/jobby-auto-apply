@@ -88,3 +88,35 @@ export function AppBar({ here, theme = "system", home = "/" }: {
     </>
   );
 }
+
+/**
+ * The board's own stamp: who this is for, and how fresh the data is.
+ *
+ * **`clock.now_label()`'s format, and its timezone.** The board writes
+ * `02 Sep 2026, 13:55 EDT` from `America/New_York`, and a stamp that renders
+ * in the viewer's zone would disagree with every other time on the page --
+ * "next run 15:45 EDT" in the scan banner is already Eastern, because the
+ * device that runs the scans is.
+ *
+ * `%Z` gives EDT or EST by the date, which is what `timeZoneName: "short"`
+ * produces; hardcoding either is wrong for half the year.
+ *
+ * **`en-US`, and that is not a default.** `en-GB` abbreviates September as
+ * "Sept" and renders the zone as "GMT-4"; `en-US` gives "Sep" and "EDT",
+ * which is what `%b` and `%Z` produce. Checked on both sides of the DST
+ * boundary, since a zone name that is right in September and wrong in January
+ * is the failure this parameter invites.
+ */
+export function boardStamp(when: string | null): string | null {
+  if (!when) return null;
+  const at = new Date(when);
+  if (Number.isNaN(at.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", day: "2-digit", month: "short",
+    year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+    timeZoneName: "short",
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("day")} ${get("month")} ${get("year")}, `
+    + `${get("hour")}:${get("minute")} ${get("timeZoneName")}`;
+}

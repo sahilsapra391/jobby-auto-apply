@@ -15,6 +15,7 @@ and a fixture with no undated rows in it would not.
 """
 
 import sys
+import json
 import re
 import unittest
 
@@ -101,19 +102,52 @@ class LaneCase(pgtest.SchemaCase):
                            values (%s, %s, 'watching', now())""",
                         (self.account, self.decided))
 
-            # The application lanes. `updated_at` is NOT NULL, so these can
-            # never have an undated row and the keyset's null branch is
-            # unreachable here -- asserted below rather than left as a gap.
+            # The application lanes, each populated in the column its own
+            # ordering walks.
+            #
+            # **This used to write `updated_at` and nothing else**, which was
+            # right while every application lane ordered by it and became a
+            # fixture that could not see the ordering the moment three of them
+            # stopped. Worse, it made the keyset's null branch unreachable for
+            # every application lane, because `updated_at` is NOT NULL -- and
+            # `dropped_at` and `posted_at` are both nullable, so that branch is
+            # now live in production and the fixture has to reach it.
             for lane, statuses in self.APP_STATUS.items():
                 rows = []
                 for i in range(self.DATED):
                     status = statuses[i % len(statuses)]
+                    # Ties on purpose in every column, so the id tie-breaker is
+                    # exercised rather than assumed.
+                    #
+                    # **Every column is a different permutation of the same
+                    # ties, and that is the load-bearing part.** The first
+                    # version derived them all from `i % 4`, so ordering by
+                    # `posted_at` and ordering by `updated_at` produced the
+                    # same sequence -- and reverting Watching, Dropped and
+                    # Submitted to `updated_at` passed every test in this file.
+                    # A fixture that makes two orderings agree cannot tell them
+                    # apart, which is the whole question here.
+                    when = NOW - timedelta(hours=i % 4)
+                    other = (i * 3) % 4                 # 0,3,2,1,0,3,2,1,0
+                    # Nullable for two lanes, and left null on a third of the
+                    # rows so "undated last" has something to order.
+                    absent = i % 3 == 2
+                    posted = None if absent else NOW - timedelta(days=other)
+                    dropped = None if absent else NOW - timedelta(hours=other)
+                    # Needs you orders on how many blockers a row has, fewest
+                    # first. Three distinct counts, so an ordering that ignored
+                    # them could not pass by luck.
+                    blockers = json.dumps([{"question": f"q{n}"}
+                                           for n in range(i % 3 + 1)])
                     cur.execute(
                         """insert into applications (account_id, legacy_id,
-                                                     status, updated_at)
-                           values (%s, %s, %s, %s) returning id, updated_at""",
-                        (self.account, f"{lane}-{i:03d}", status,
-                         NOW - timedelta(hours=i % 4)))     # ties on purpose
+                                                     status, updated_at,
+                                                     posted_at, dropped_at,
+                                                     blockers)
+                           values (%s, %s, %s, %s, %s, %s, %s)
+                           returning id, updated_at""",
+                        (self.account, f"{lane}-{i:03d}", status, when,
+                         posted, dropped, blockers))
                     rows.append(tuple(cur.fetchone()))
                 self.expected[lane] = rows
 
@@ -127,10 +161,14 @@ class LaneCase(pgtest.SchemaCase):
                        values (%s, %s, 'unknown', %s) returning id, updated_at""",
                     (self.account, f"done-{i:03d}", NOW - timedelta(hours=i % 4)))
                 row = tuple(cur.fetchone())
+                # A different permutation from `updated_at` again, so a lane
+                # reverted to `updated_at` cannot pass by producing the same
+                # sequence. See the note in the application-lane loop.
                 cur.execute("""insert into application_events
                                (account_id, application_id, kind, at, payload)
                                values (%s, %s, 'completed', %s, '{}')""",
-                            (self.account, row[0], NOW - timedelta(hours=i % 4)))
+                            (self.account, row[0],
+                             NOW - timedelta(hours=(i * 3) % 4)))
                 if i == 0:
                     # Retracted: a strictly later abandoned. Counted once
                     # before, and the role fell off the board entirely.
@@ -148,24 +186,53 @@ class LaneCase(pgtest.SchemaCase):
             self.expected["done"] = done
             self.retracted = "done-000"
 
+    def cursor_key(self, lane):
+        """The row key this lane's ordering walks, from `v2_lanes` itself.
+
+        **Asked, not counted.** This was two hardcoded column indexes -- 6 for
+        postings and 4 for applications -- which is the ORDER BY restated in a
+        second language, and it broke the moment three lanes changed what they
+        order by. It did not break usefully either: reading `updated_at` as the
+        cursor of a lane ordered by blocker count yields a walk that terminates
+        and reports a wrong set.
+        """
+        return (v2_lanes.SORTS["new"][0].split(".")[-1]
+                if lane in v2_lanes.POSTING_LANES
+                else v2_lanes.application_order(lane)[1])
+
+    def rows(self, lane, page, after_at=None, after_id=None):
+        """One page, as `(id, cursor)` pairs with the cursor found by name."""
+        with self.conn.cursor() as cur:
+            cur.execute(v2_lanes.page_sql(lane),
+                        {"account": self.account, "limit": page,
+                         "after_at": after_at, "after_id": after_id,
+                         **NO_FILTERS})
+            names = [d.name for d in cur.description]
+            batch = cur.fetchall()
+        key = self.cursor_key(lane)
+        self.assertIn(key, names,
+                      f"{lane} orders by {key} and does not return it, so no "
+                      f"cursor can be cut from its own rows")
+        at = names.index(key)
+        return [(row[0], row[at]) for row in batch]
+
+    def full(self, lane):
+        """The whole lane in one page, which is the ordering with no keyset.
+
+        The control for `walk`: both share the ORDER BY, so a disagreement
+        between them is the keyset predicate and nothing else.
+        """
+        return self.rows(lane, 10000)
+
     def walk(self, lane, page=PAGE):
         """Every row the lane yields, page by page, through the real keyset."""
-        sql = v2_lanes.page_sql(lane)
         seen, after_at, after_id = [], None, None
         for _ in range(500):                    # a bound, not an expectation
-            with self.conn.cursor() as cur:
-                cur.execute(sql, {"account": self.account, "limit": page,
-                                  "after_at": after_at, "after_id": after_id,
-                                  **NO_FILTERS})
-                batch = cur.fetchall()
+            batch = self.rows(lane, page, after_at, after_id)
             if not batch:
                 return seen
-            # The cursor column differs by lane shape: postings order on
-            # `posted_at` (index 6) and applications on `updated_at` (index 4).
-            at = 6 if lane in v2_lanes.POSTING_LANES else 4
-            for row in batch:
-                seen.append((row[0], row[at]))
-            after_id, after_at = batch[-1][0], batch[-1][at]
+            seen.extend(batch)
+            after_id, after_at = batch[-1][0], batch[-1][1]
         raise AssertionError(f"{lane} did not terminate; the keyset is not "
                              f"advancing and the walk would loop forever")
 
@@ -181,19 +248,42 @@ class EveryLaneWalksCleanly(LaneCase):
                 self.assertEqual(set(ids), {pid for pid, _ in self.expected[lane]},
                                  f"{lane} skipped or invented rows")
 
-    def test_each_lane_is_newest_first_with_undated_last(self):
+    def test_each_lane_is_highest_first_with_absent_last(self):
+        """Descending on the lane's own cursor, absent values last.
+
+        **Not "newest first", which three lanes are not.** Needs you leads with
+        the row closest to done and walks a negated blocker count; Watching and
+        Dropped walk dates that are not `updated_at`. What every lane does have
+        is one ordering, descending, `nulls last` -- that is what `order_by`
+        emits and it is the property worth asserting, because reading it as
+        "newest" is what made this test encode one lane's choice as a rule.
+        """
         for lane in v2_lanes.LANES:
             with self.subTest(lane=lane):
-                walked = self.walk(lane)
-                dates = [at for _, at in walked]
-                dated = [d for d in dates if d is not None]
-                self.assertEqual(dated, sorted(dated, reverse=True),
-                                 f"{lane} is not newest first")
-                first_undated = next((i for i, d in enumerate(dates)
-                                      if d is None), len(dates))
-                self.assertTrue(all(d is None for d in dates[first_undated:]),
-                                f"{lane} interleaves undated rows rather than "
-                                f"putting them last")
+                values = [at for _, at in self.walk(lane)]
+                present = [v for v in values if v is not None]
+                self.assertEqual(present, sorted(present, reverse=True),
+                                 f"{lane} is not ordered highest first")
+                first_absent = next((i for i, v in enumerate(values)
+                                     if v is None), len(values))
+                self.assertTrue(all(v is None for v in values[first_absent:]),
+                                f"{lane} interleaves rows with no value rather "
+                                f"than putting them last")
+
+    def test_the_keyset_walk_agrees_with_the_unpaged_ordering(self):
+        """The control the ordering assertion cannot be: a keyset that stops
+        early, or restarts, still yields a correctly ordered prefix.
+
+        Both sides share the ORDER BY, so any disagreement is the keyset
+        predicate. This is what catches a cursor cut from the wrong column: it
+        does not error, it silently walks a different sequence.
+        """
+        for lane in v2_lanes.LANES:
+            with self.subTest(lane=lane):
+                self.assertEqual([i for i, _ in self.walk(lane)],
+                                 [i for i, _ in self.full(lane)],
+                                 f"{lane} pages in a different order from the "
+                                 f"order it sorts in")
 
     def test_needs_you_contains_both_of_its_statuses(self):
         """The control for the predicate having two arms. A fixture with only
@@ -204,19 +294,25 @@ class EveryLaneWalksCleanly(LaneCase):
                         (self.account,))
             self.assertEqual({r[0] for r in cur.fetchall()}, {"review", "active"})
 
-    def test_only_posting_lanes_can_have_undated_rows(self):
-        """Why the two assertions below are scoped to Found.
+    def test_the_null_branch_is_reachable_from_more_than_one_lane(self):
+        """The keyset's null arms are live code, and which lanes reach them.
 
-        `applications.updated_at` is NOT NULL, so an application lane cannot
-        produce an undated row and the keyset's null branch is unreachable
-        there. That is a property of the schema rather than of the fixture, so
-        it is asserted: if the column ever becomes nullable, the scoping below
-        becomes a hole and this fails first."""
+        This used to assert the opposite -- that no application lane could
+        produce a null cursor, because `updated_at` is NOT NULL -- and used
+        that to scope the undated assertions to Found. Migration 0015 and the
+        Watching ordering ended it: `dropped_at` and `posted_at` are both
+        nullable, so three lanes now walk a column that can be absent and the
+        branch that used to be unreachable outside Found is the common case.
+
+        Asked of the walk rather than of a list, so a lane that stops producing
+        nulls is a failure here rather than a silently vacuous assertion
+        somewhere else."""
+        reached = {lane for lane in v2_lanes.LANES
+                   if any(v is None for _, v in self.full(lane))}
+        self.assertGreaterEqual(len(reached), 3,
+                                f"only {sorted(reached)} produce a null cursor; "
+                                f"the keyset's null arms are barely exercised")
         with self.conn.cursor() as cur:
-            cur.execute("""select is_nullable from information_schema.columns
-                            where table_name = 'applications'
-                              and column_name = 'updated_at'""")
-            self.assertEqual(cur.fetchone()[0], "NO")
             cur.execute("""select is_nullable from information_schema.columns
                             where table_name = 'postings'
                               and column_name = 'posted_at'""")
@@ -550,6 +646,72 @@ class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
                 self.assertEqual(cursor, {own},
                                  f"{lane}/{sort} walks its cursor on {cursor} "
                                  f"rather than {own!r}")
+
+
+class TheLanesOrderTheWayTheBoardDoes(LaneCase):
+    """What each lane sorts on, which the walk tests deliberately cannot say.
+
+    `test_each_lane_is_highest_first_with_absent_last` asks the query for its
+    cursor and then checks that cursor is descending, so it is true of *any*
+    ordering by construction -- revert a lane to `updated_at` and it still
+    passes. That is the right shape for the keyset, whose correctness is
+    relative to the ordering rather than to a particular one, and it means
+    nothing pins the choice. These do.
+
+    Each rule is the board's, cited, because "v2 should look like the board" is
+    the whole reason these lanes changed.
+    """
+
+    def order(self, lane, column):
+        """The lane's rows in lane order, with one column of each read back."""
+        with self.conn.cursor() as cur:
+            cur.execute(v2_lanes.page_sql(lane),
+                        {"account": self.account, "limit": 10000,
+                         "after_at": None, "after_id": None, **NO_FILTERS})
+            names = [d.name for d in cur.description]
+            at = names.index(column)
+            return [row[at] for row in cur.fetchall()]
+
+    def test_needs_you_leads_with_the_row_closest_to_done(self):
+        """`dashboard.py:645` sorts that bucket by `len(pendingFields)`
+        ascending: one blocker away is nearly finished, three is an afternoon.
+        """
+        counts = [len(b or []) for b in self.order("act", "blockers")]
+        self.assertEqual(counts, sorted(counts),
+                         "Needs you is not fewest-blockers-first")
+        self.assertGreater(len(set(counts)), 1,
+                           "every row has the same blocker count, so this "
+                           "would pass under any ordering at all")
+
+    def test_watching_is_newest_posted_first(self):
+        """`dashboard.py:951`, which sorts on the derived posting date and
+        leaves undated roles last rather than letting them look fresh."""
+        dates = self.order("watch", "posted_at")
+        present = [d for d in dates if d is not None]
+        self.assertEqual(present, sorted(present, reverse=True),
+                         "Watching is not newest-posted first")
+        self.assertTrue(present and None in dates,
+                        "the fixture has no mix of dated and undated rows, so "
+                        "this cannot see the ordering it is about")
+
+    def test_dropped_is_most_recently_dropped_first(self):
+        """`dashboard.py:652`, sorting the archive on `droppedAt`."""
+        dates = self.order("dropped", "dropped_at")
+        present = [d for d in dates if d is not None]
+        self.assertEqual(present, sorted(present, reverse=True),
+                         "Dropped is not most-recently-dropped first")
+        self.assertTrue(present, "no row carries a drop time")
+
+    def test_submitted_is_most_recently_completed_first(self):
+        """`dashboard.py:861`, sorting the history events on `at`. Not
+        `updated_at`, which differs from the completion on every one of the 104
+        real submitted applications."""
+        dates = self.order("done", "completed_at")
+        self.assertEqual(dates, sorted(dates, reverse=True),
+                         "Submitted is not most-recently-completed first")
+        self.assertGreater(len(set(dates)), 1,
+                           "every completion is at the same instant, so this "
+                           "would pass under any ordering at all")
 
 
 if __name__ == "__main__":
