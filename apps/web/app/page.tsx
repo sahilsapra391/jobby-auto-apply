@@ -9,6 +9,7 @@ import { ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
+import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
   accountId, boardMeta, counts, laneQuery, locationScope, page,
 } from "./_ui/db";
@@ -55,16 +56,22 @@ export default async function Board({
   // The filters only mean anything on Found; the other lanes ignore them, and
   // carrying them into those counts would make a tab badge disagree with the
   // lane behind it.
+  // Found takes all three; every other lane takes the keyword search only,
+  // which is what its own search row offers.
   const filters = active === "found"
-    ? { q, within, direct: direct === "1" } : undefined;
+    ? { q, within, direct: direct === "1" }
+    : (q ? { q } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
-  const [tally, first, writes, meta, pool, scope] = await Promise.all([
+  const [tally, first, writes, meta, pool, scope, archive] = await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
     // The unfiltered pool, so the count can say what it matched against.
     active === "found" && filters ? counts().then((t) => t.found) : undefined,
     active === "found" ? locationScope() : undefined,
+    // The archive's first page. It is a dialog on this document rather than a
+    // route, so it renders with the board or not at all.
+    page("dropped", null, 50, "new", q ? { q } : undefined),
   ]);
 
   /**
@@ -144,8 +151,15 @@ export default async function Board({
                        total={tally[active]} pool={pool} scope={scope ?? undefined} />
             </>
           ) : null}
+          {active !== "found" ? (
+            <>
+              <LaneHint lane={active} count={tally[active]} />
+              <LaneSearch lane={active} q={q}
+                          shown={first.rows.length} total={tally[active]} />
+            </>
+          ) : null}
           {first.rows.length === 0 ? (
-            <div className="empty">Nothing in this lane.</div>
+            <LaneEmpty lane={active} />
           ) : (
             <LaneList
               lane={active}
@@ -160,7 +174,10 @@ export default async function Board({
         </div>
       </div>
 
-      <DroppedDock count={tally.dropped} />
+      <DroppedDock count={tally.dropped} rows={archive.rows}
+                   cursor={archive.next} done={archive.done}
+                   query={`lane=dropped${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+                   writesEnabled={writes} />
       <SelectFace />
       <DroppedOpen />
     </>

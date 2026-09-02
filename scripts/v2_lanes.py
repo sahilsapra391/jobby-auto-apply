@@ -122,7 +122,8 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
              p.summary, p.source, p.salary_raw, e.canonical_name as employer,
              e.domain as employer_domain, e.logo_url as employer_logo,
              s.total as score, s.parts as score_parts, s.gates as score_gates,
-             s.unknowns as score_unknowns"""
+             s.unknowns as score_unknowns,
+             p.logo_src, p.logo_domain, p.logo_alt"""
 
 #: **The posting first, the application's own mirrored name second.** A linked
 #: application takes its title and employer from the live pool; the rest fall
@@ -181,6 +182,7 @@ APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
              p.years_min, p.years_max,
              coalesce(e.canonical_name, a.company) as company,
              e.domain as employer_domain,
+             p.logo_src, p.logo_domain, p.logo_alt,
              a.blockers, a.core_skills, a.fit_score, a.alignment,
              a.dropped_from, a.dropped_stage, a.seen_on_boards, a.ats,
              (select h.at from application_events h
@@ -317,7 +319,7 @@ select {APPLICATION_COLUMNS}
   left join employers e on e.id = p.employer_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
-   and {keyset('a.updated_at')}
+   and {keyset('a.updated_at')}{APPLICATION_SEARCH}
  {order_by('a.updated_at')}
  limit %(limit)s
 """.strip()
@@ -371,6 +373,27 @@ select {APPLICATION_COLUMNS}
 """.strip()
 
 
+#: The per-lane search, which every lane but Found offers.
+#:
+#: **`ilike` over the columns the row draws, not `search_tsv`.** Postings carry
+#: a generated tsvector because there are 22,000 of them and a description to
+#: index; an application lane holds tens of rows and its searchable text is the
+#: four fields on the card -- company, role, location and the skills. A reader
+#: typing "toast" wants the row that says Toast, and stemming a company name is
+#: how "Toast" stops matching itself.
+#:
+#: `core_skills` is joined into the haystack rather than searched as an array,
+#: because a partial word should still hit: "product" matching
+#: `product-management` is the point of a skill search.
+APPLICATION_SEARCH = """
+   and (%(q)s::text is null
+        or concat_ws(' ', coalesce(e.canonical_name, a.company),
+                          coalesce(p.title, a.role),
+                          p.location_raw, a.region,
+                          array_to_string(a.core_skills, ' '))
+            ilike '%%' || %(q)s::text || '%%')"""
+
+
 def count_sql(lane):
     """The lane's size. Separate from the page so a count never drags a page
     of columns across the wire with it."""
@@ -387,7 +410,9 @@ select count(*)
     return f"""
 select count(*)
   from applications a
- where a.account_id = %(account)s and {LANES[lane]["where"]}
+  left join postings p on p.id = a.posting_id
+  left join employers e on e.id = p.employer_id
+ where a.account_id = %(account)s and {LANES[lane]["where"]}{APPLICATION_SEARCH}
 """.strip()
 
 

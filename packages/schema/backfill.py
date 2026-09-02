@@ -164,6 +164,32 @@ def _int(value):
         return None
 
 
+def _logo_columns(record):
+    """`{logo_src, logo_domain, logo_alt}` for one record.
+
+    A trusted feed URL wins; then a known employer domain; then a derived one,
+    flagged so the route knows to try the label's other TLDs. Measured over the
+    open Found rows: 46.6% have a known domain and the derivation covers
+    almost all of the rest, so this is roughly half the lane's marks.
+    """
+    import company_logos
+    url = _text(record.get("canonicalUrl")) or ""
+    for key in company_logos.LOGO_KEYS:
+        source = company_logos.safe_http_url(record.get(key))
+        if source and company_logos._hostname(source) in company_logos.TRUSTED_SOURCE_HOSTS:
+            return {"logo_src": source, "logo_domain": None, "logo_alt": None}
+    known = company_logos._employer_domain(record, url)
+    if known:
+        return {"logo_src": None, "logo_domain": known, "logo_alt": False}
+    guesses = company_logos.candidate_domains(record, url)
+    if not guesses:
+        # A monogram is the required fallback and a wrong mark is worse than
+        # none, so an underivable company stores nothing rather than a guess
+        # the policy refused.
+        return {"logo_src": None, "logo_domain": None, "logo_alt": None}
+    return {"logo_src": None, "logo_domain": guesses[0], "logo_alt": True}
+
+
 def posting_row(record):
     """One legacy record as the columns of `postings`.
 
@@ -217,6 +243,14 @@ def posting_row(record):
         "sources": json.dumps(record.get("sources") or []),
         "sections": (json.dumps(record["sections"])
                      if record.get("sections") else None),
+        # **The employer mark, decided once by the module that owns the
+        # policy.** `company_logos` knows which hosts are infrastructure and
+        # whether an ATS slug corroborates a company name; v2 renders in Node
+        # and would otherwise need a third copy of that, after the Python one
+        # and the board's own JavaScript half that `LogoContractTests` already
+        # pins against it. Stored as the three things `proxy_url` chooses
+        # between, so the route's URL shape stays the route's business.
+        **_logo_columns(record),
     }
 
 
