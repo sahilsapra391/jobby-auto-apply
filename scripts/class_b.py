@@ -48,6 +48,7 @@ _BY_NAME = {
     "profile.json": "profile",
     "roles.json": "roles",
     "providers.json": "providers",
+    "meta.json": "meta",
 }
 
 
@@ -256,6 +257,37 @@ def answer_row(entry):
         "state": entry.get("state"),
         "tags": list(entry.get("tags") or []),
         "sensitive": bool(entry.get("sensitive")),
+    }
+
+
+def meta_row(payload):
+    """What `board_meta` holds: when the pool was last swept and what is in
+    the way.
+
+    **v2's scan banner was a hardcoded fixture** -- `next run 19:47 EDT` and
+    `11 problems`, invented values in `_ui/fixture.ts`, showing a next run in
+    the past. Behind it there was nothing to read: `board_meta` had the right
+    columns and zero rows, because nothing wrote it.
+
+    The names differ between the file and the column and that is the schema's
+    choice, not a rename to undo: the file says `nextTier1ScanAt` because tier
+    1 is the only scheduled tier, and the column says `next_scan_at` because a
+    second tier would not want a second column.
+    """
+    payload = payload or {}
+
+    def text(key):
+        return (payload.get(key) or "").strip() or None
+
+    return {
+        "last_ingest": payload.get("lastIngest") or None,
+        "next_scan_at": text("nextTier1ScanAt"),
+        "scan_requested_at": text("scanRequested"),
+        "scan_started_at": text("scanStarted"),
+        "scan_finished_at": text("scanFinished"),
+        "blocked": text("blocked"),
+        "slots_parked": text("slotsParked"),
+        "search_config": payload.get("searchConfig") or None,
     }
 
 
@@ -472,6 +504,31 @@ def _mirror_providers(conn, account_id, payload):
             (account_id, [row["provider"] for row in rows]))
 
 
+def _mirror_meta(conn, account_id, payload):
+    """`meta.json` -> `board_meta`, one row per account.
+
+    No floor like `_mirror_answers` has: this table holds one row and an empty
+    payload writes nulls into it rather than deleting anyone's answers. A stale
+    banner is a lesser fault than a stale banner that claims to be current, and
+    the columns being null is what the banner reads as "not recorded".
+    """
+    row = meta_row(payload)
+    columns = list(row)
+    jsonb = {"last_ingest", "search_config"}
+    with conn.cursor() as cur:
+        placeholders = ", ".join(
+            f"%s::jsonb" if c in jsonb else "%s" for c in columns)
+        cur.execute(
+            f"""insert into board_meta (account_id, {', '.join(columns)},
+                                        updated_at)
+                values (%s, {placeholders}, now())
+                on conflict (account_id) do update
+                  set {', '.join(f'{c} = excluded.{c}' for c in columns)},
+                      updated_at = now()""",
+            [account_id] + [json.dumps(row[c]) if c in jsonb and row[c] is not None
+                            else row[c] for c in columns])
+
+
 def _mirror_profile(conn, account_id, payload):
     identity = profile_row(payload)["identity"]
     with conn.cursor() as cur:
@@ -517,6 +574,7 @@ _HANDLERS = {
     "profile": _mirror_profile,
     "roles": _mirror_roles,
     "providers": _mirror_providers,
+    "meta": _mirror_meta,
 }
 
 
@@ -627,7 +685,7 @@ def backfill(conn, account_id, root=None):
     base = Path(root) if root else Path(store.root_dir(None))
     paths = store.paths(base)
     report = {"sessions": 0, "history": 0, "answers": 0, "profile": 0,
-              "roles": 0, "providers": 0}
+              "roles": 0, "providers": 0, "meta": 0}
 
     sessions = Path(paths["sessions"])
     if sessions.is_dir():
@@ -652,6 +710,12 @@ def backfill(conn, account_id, root=None):
         mirror(conn, account_id, "providers",
                json.loads(registry.read_text(encoding="utf-8")))
         report["providers"] = 1
+
+    meta = Path(paths["meta"])
+    if meta.exists():
+        mirror(conn, account_id, "meta",
+               json.loads(meta.read_text(encoding="utf-8")))
+        report["meta"] = 1
 
     history = Path(paths["history"])
     if history.exists():

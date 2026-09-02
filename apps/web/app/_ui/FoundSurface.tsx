@@ -1,42 +1,84 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
-import { SCAN, PROBLEMS } from "./fixture";
+import type { BoardMeta } from "./db";
 
-/** The scan banner, the ingest summary, and the problems disclosure. */
-export function ScanBanner() {
+/** Eastern, like the board: the reader is in Charlotte and so is the sweep. */
+const clock = (iso: string | null) => {
+  if (!iso) return null;
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit",
+    hour12: false,
+  }) + " EDT";
+};
+
+/**
+ * The scan banner, the ingest summary, and the problems disclosure.
+ *
+ * **Every number here was invented until 2026-09-02.** `_ui/fixture.ts` held
+ * `nextRun: "19:47 EDT"`, `lastScan: "15:51 EDT"` and five problem entries
+ * summing to 11, and a reader at 21:28 saw exactly those three values with a
+ * next run nearly two hours in the past. The fixture is deleted rather than
+ * corrected, so nothing else can quietly read invented numbers from it.
+ *
+ * **Absent is said, never substituted.** A null column renders as "not
+ * recorded"; there is no default to fall back to, because a default here is
+ * the fixture again with better manners.
+ */
+export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
+  const ingest = (meta?.lastIngest ?? {}) as Record<string, unknown>;
+  const n = (key: string) =>
+    typeof ingest[key] === "number" ? (ingest[key] as number) : null;
+  const channels = (ingest.byChannel ?? {}) as Record<string, Record<string, unknown>>;
+  const problems = Object.entries(channels)
+    .filter(([, c]) => c && (c.status === "error" || c.why))
+    .map(([source, c]) => ({ source, detail: String(c.why ?? c.status ?? "") }));
+  const version = typeof ingest.configVersion === "number"
+    ? ingest.configVersion : null;
+
   return (
     <>
-      <div className="jb-banner" data-version={SCAN.version}>
+      <div className="jb-banner" {...(version ? { "data-version": version } : {})}>
         <div>
-          <strong>Search v{SCAN.version} is live.</strong>{" "}
-          <span>{SCAN.cadence} &middot; next run {SCAN.nextRun}</span>
+          {version ? <strong>{`Search v${version} is live.`}</strong> : null}{" "}
+          <span>
+            {meta?.nextScanAt
+              ? <>Every 4 hours &middot; next run {clock(meta.nextScanAt)}</>
+              : <span className="muted">next run not recorded</span>}
+          </span>
           <span className="jb-savestate" />
         </div>
         <button className="jb-btn primary" type="button">Scan now</button>
       </div>
       <p className="jb-ingest">
-        Last scan {SCAN.lastScan} &middot; {SCAN.seen.toLocaleString()} seen
-        &middot; {SCAN.fresh} new &middot; {SCAN.merged.toLocaleString()} merged
-        &middot; {SCAN.filtered.toLocaleString()} filtered out &middot;{" "}
-        {SCAN.closed} closed by the employer
-        <br />
-        <details className="jb-errored jb-probs">
-          <summary>
-            {PROBLEMS.reduce((n, p) => n + p.times, 0)} problems:{" "}
-            {PROBLEMS.slice(0, 3)
-              .map((p) => `${p.source}${p.times > 1 ? ` ×${p.times}` : ""}: ${p.detail}`)
-              .join(" · ")}
-            {PROBLEMS.length > 3 ? ` · and ${PROBLEMS.length - 3} more` : ""}
-          </summary>
-          <ul className="jb-problist">
-            {PROBLEMS.map((p) => (
-              <li key={p.source}>
-                <b>{p.source}</b>
-                {p.times > 1 ? ` ×${p.times}` : ""}
-                <span>{p.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+        {ingest.at ? <>Last scan {clock(String(ingest.at))}</>
+                   : <span className="muted">No scan recorded</span>}
+        {n("found") != null ? <> &middot; {n("found")!.toLocaleString()} seen</> : null}
+        {n("kept") != null ? <> &middot; {n("kept")} new</> : null}
+        {n("merged") != null ? <> &middot; {n("merged")!.toLocaleString()} merged</> : null}
+        {n("gatedOut") != null
+          ? <> &middot; {n("gatedOut")!.toLocaleString()} filtered out</> : null}
+        {n("pruned") != null ? <> &middot; {n("pruned")} closed by the employer</> : null}
+        {meta?.blocked ? <> &middot; <b>{meta.blocked}</b></> : null}
+        {meta?.slotsParked ? <> &middot; <b>{meta.slotsParked}</b></> : null}
+        {problems.length ? (
+          <>
+            <br />
+            <details className="jb-errored jb-probs">
+              <summary>
+                {problems.length} problems:{" "}
+                {problems.slice(0, 3)
+                  .map((p) => `${p.source}: ${p.detail}`).join(" \u00b7 ")}
+                {problems.length > 3 ? ` \u00b7 and ${problems.length - 3} more` : ""}
+              </summary>
+              <ul className="jb-problist">
+                {problems.map((p) => (
+                  <li key={p.source}>
+                    <b>{p.source}</b><span>{p.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </>
+        ) : null}
       </p>
     </>
   );

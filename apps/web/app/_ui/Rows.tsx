@@ -223,8 +223,18 @@ export function WatchRow(row: Row) {
       <td className="when">{day(row.posted_at) || <Muted>unknown</Muted>}</td>
       <td>{years(row) ?? <Muted>not stated</Muted>}</td>
       <td className="loc">{s(row.location_raw) ?? ""}</td>
-      <td className="skills"><Muted>not captured</Muted></td>
-      <td className="note-cell"></td>
+      <td className="skills">{(() => {
+        const skills = Array.isArray(row.core_skills)
+          ? (row.core_skills as string[]) : [];
+        if (!skills.length) return <Muted>not captured</Muted>;
+        return skills.slice(0, 4).map((k, i) =>
+          <span className="chip" key={i}>{k.replace(/-/g, " ")}</span>);
+      })()}</td>
+      {/* HOW YOU LINE UP. The whole rubric sentence, which names which
+          components were unknown: "Match 89% -- title 35/35, experience
+          20/20 ... Rubric only; no fit read written yet." Migration 0012 has
+          it as its own column because it is not derivable from the score. */}
+      <td className="note-cell">{s(row.alignment) ?? <Muted>not scored</Muted>}</td>
       <td>
         <div className="rowacts">
           <div className="rowacts-btns">
@@ -257,12 +267,37 @@ export function DoneRow(row: Row) {
           of this lane already means a completed event with no later abandoned,
           so the cell says what the lane means. */}
       <td><span className="chip">submitted</span></td>
-      <td className="when">{day(row.updated_at)}</td>
-      <td><Muted>not recorded</Muted></td>
-      <td><Muted>not recorded</Muted></td>
-      <td><Muted>not recorded</Muted></td>
-      <td><Muted>not recorded</Muted></td>
-      <td><Muted>not recorded</Muted></td>
+      {/* **`completed_at`, never `updated_at`.** The mirror writes
+          `updated_at` as `now()` on every pass, so it is the backfill time:
+          measured over all 104 submitted applications it differs from the
+          completion on every one, by three days to two weeks. */}
+      <td className="when">{day(row.completed_at ?? row.updated_at)}</td>
+      <td>{s(row.apply_url)
+        ? <a href={s(row.apply_url)!} target="_blank" rel="noopener">Posting &#8599;</a>
+        : <Muted>not recorded</Muted>}</td>
+      <td>{(() => {
+        const p = (row.completed_payload ?? {}) as Record<string, unknown>;
+        const said = s(p.confirmation);
+        // The employer's own words, which is what makes this proof rather
+        // than a status. Truncated in the cell and whole in the title.
+        return said ? <span className="chip ok" title={said}>confirmed</span>
+                    : <Muted>not recorded</Muted>;
+      })()}</td>
+      <td><DocLink label="Resume"
+            value={(row.completed_payload as Record<string, unknown> | null)
+                     ?.resumeVariant} /></td>
+      <td>{(() => {
+        const p = (row.completed_payload ?? {}) as Record<string, unknown>;
+        const cover = s(p.coverLetter);
+        if (!cover) return <Muted>not recorded</Muted>;
+        // A real letter is a filename; the agent also writes a sentence here
+        // when a form had no cover-letter field, and that sentence is a fact
+        // worth showing rather than a link worth faking.
+        return cover.toLowerCase().endsWith(".pdf")
+          ? <DocLink label="Cover letter" value={cover} />
+          : <span className="muted" title={cover}>not accepted</span>;
+      })()}</td>
+      <td><Muted>not captured</Muted></td>
     </tr>
   );
 }
@@ -273,8 +308,9 @@ export function DroppedRow(row: Row) {
   return (
     <tr data-id={row.id} data-state={s(row.status) ?? ""}>
       <td><NameCell row={row} /></td>
-      <td><span className="chip lane">{s(row.status) ?? ""}</span></td>
-      <td className="note-cell"></td>
+      <td><span className="chip lane">
+        {s(row.dropped_from) ?? s(row.status) ?? ""}</span></td>
+      <td className="note-cell">{s(row.dropped_stage) ?? <Muted>not recorded</Muted>}</td>
       <td className="when">{day(row.updated_at)}</td>
       <td>
         <div className="rowacts-inline">
@@ -300,11 +336,29 @@ export function ActCard(row: Row) {
         <CardTitle row={row} />
         <span className="chip hold">{s(row.phase) ?? "waiting"}</span>
       </header>
-      {/* The board lists the blockers here, one <li> per pendingField. Those
-          live on the session and §3 does not mirror them, so the list renders
-          with the reason rather than being dropped: an absent <ul class="todo">
-          changes the card's shape, and the shape is the thing being matched. */}
-      <ul className="todo"><li><Muted>blockers are not mirrored yet</Muted></li></ul>
+      {/* One <li> per pending field, the board's own shape. Migration 0009
+          mirrors them; before it this list said "blockers are not mirrored
+          yet" on every card, which is the lane's entire purpose missing.
+
+          **These are not questions**, whatever key they arrive under: measured
+          across 29 of them, none was question-shaped and every one was a note
+          to the reader about what is in the way. So they render as prose and
+          never as something to answer. */}
+      <ul className="todo">
+        {(() => {
+          const held = Array.isArray(row.blockers)
+            ? (row.blockers as Record<string, unknown>[]) : [];
+          if (!held.length) return <li><Muted>nothing recorded</Muted></li>;
+          return held.map((b, i) => (
+            <li key={i}>
+              {s(b.question) ?? s(b.field) ?? s(b.blocker) ?? ""}
+              {s(b.reason) ?? s(b.why) ?? s(b.action) ? (
+                <span className="muted"> {s(b.reason) ?? s(b.why) ?? s(b.action)}</span>
+              ) : null}
+            </li>
+          ));
+        })()}
+      </ul>
       <div className="act">
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
              body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
@@ -386,17 +440,19 @@ const ON_DEVICE =
  */
 /** The card lanes' header, on the same rule as the table lanes' cell. */
 function CardTitle({ row }: { row: Row }) {
+  // Same split as `NameCell`: the name exists whether or not a posting is
+  // linked, and `linked` decides only whether there is a posting to open.
   const company = s(row.company);
   const role = s(row.role);
-  const linked = row.posting_id != null && company != null;
-  const heading = linked ? company! : (s(row.legacy_id) ?? "");
+  const heading = company ?? s(row.legacy_id) ?? "";
   return (
     <div className="company-title">
-      <CompanyMark name={heading} domain={linked ? s(row.employer_domain) : null} />
+      <CompanyMark name={heading} domain={s(row.employer_domain)}
+                   logo={s(row.employer_logo)} />
       <div>
         <h3>{heading}</h3>
         <p className="role">
-          {linked && role ? role : <Muted>posting not linked</Muted>}
+          {role ?? <Muted>posting not linked</Muted>}
         </p>
       </div>
     </div>
@@ -405,21 +461,42 @@ function CardTitle({ row }: { row: Row }) {
 
 
 function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
+  // **The name and the link are two different facts, and conflating them is
+  // why rows 3 and beyond rendered their session id.** `company` and `role`
+  // come from the posting when one is linked and from `applications` when it
+  // is not; both are real, and migration 0011 explains why the second is now
+  // trustworthy. `linked` says whether there is a posting to open, which is
+  // the only thing it decides.
   const company = s(row.company);
   const role = s(row.role);
-  const linked = row.posting_id != null && company != null;
-  const heading = linked ? company! : (s(row.legacy_id) ?? "");
+  const linked = row.linked === true || row.posting_id != null;
+  const heading = company ?? s(row.legacy_id) ?? "";
   return (
     <div className="company-cell">
-      <CompanyMark name={heading} domain={linked ? s(row.employer_domain) : null} />
+      <CompanyMark name={heading} domain={s(row.employer_domain)}
+                   logo={s(row.employer_logo)} />
       {plain ? <span>{heading}</span> : (
         <span>
           <strong>{heading}</strong><br />
-          {linked && role ? <span className="muted">{role}</span>
-                          : <Muted>posting not linked</Muted>}
+          {role ? <span className="muted">{role}</span>
+                : <Muted>posting not linked</Muted>}
         </span>
       )}
     </div>
+  );
+}
+
+/** A `/doc/` link for a filename the store recorded, or nothing. */
+function DocLink({ value, label }: { value: unknown; label: string }) {
+  const name = s(value);
+  if (!name) return <Muted>not recorded</Muted>;
+  // The store records some of these as a path under `applications/`. `/doc/`
+  // resolves by filename through `jobby:doc-index`, so the basename is what it
+  // wants; a path would 404 against an index keyed on names.
+  const file = name.split("/").pop()!;
+  return (
+    <a href={`/doc/${encodeURIComponent(file)}`} target="_blank"
+       rel="noopener" title={name}>{label} &#8599;</a>
   );
 }
 

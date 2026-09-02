@@ -148,6 +148,12 @@ that failure at all.
 | `store` | `_bank_write` | `write_private` | answer bank writes, including dismiss and restore |
 | `store` | `cmd_profile_replace` | `write_private` | profile writes |
 
+**`meta.json` is class B, not class C.** Migration 0008 creates `board_meta`
+for it: the scan's last run, its next run, what is blocked and how many slots
+are parked. It was class C by the same hardcoded list `providers.json` was on,
+and the cost was the same shape: v2's scan banner read invented values from a
+fixture and showed a next run nearly two hours in the past.
+
 **`providers.json` is class B, not class C.** It was treated as class C by a
 hardcoded list in `tests/test_class_b_mirror.py` and by nothing else -- it never
 appeared in the table below. Migration 0002 creates `provider_links` for exactly

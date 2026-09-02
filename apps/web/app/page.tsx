@@ -7,7 +7,7 @@ import { ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
-import { accountId, counts, laneQuery, page } from "./_ui/db";
+import { accountId, boardMeta, counts, laneQuery, page } from "./_ui/db";
 import { writesEnabled } from "./_ui/writes";
 
 /**
@@ -46,9 +46,9 @@ export default async function Board({
   // lane behind it.
   const filters = active === "found"
     ? { q, within, direct: direct === "1" } : undefined;
-  const [tally, first, writes] = await Promise.all([
+  const [tally, first, writes, meta] = await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
-    accountId().then(writesEnabled),
+    accountId().then(writesEnabled), boardMeta(),
   ]);
 
   return (
@@ -96,7 +96,7 @@ export default async function Board({
         <div className="panel on" id={`p-${active}`} role="tabpanel">
           {active === "found" ? (
             <>
-              <ScanBanner />
+              <ScanBanner meta={meta} />
               <Filters q={q} within={within} direct={direct === "1"}
                        sort={sort} shown={first.rows.length}
                        total={tally[active]} />

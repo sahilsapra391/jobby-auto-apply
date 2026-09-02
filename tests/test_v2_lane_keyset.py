@@ -469,10 +469,22 @@ class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
                 yield lane, sort, v2_lanes.page_sql(lane, sort)
 
     def identity(self, sql):
-        """The alias of the table the lane is a lane *of*, from its FROM."""
-        found = re.search(r"\bfrom\s+(\w+)\s+(\w+)", sql)
-        self.assertIsNotNone(found, "the query has no FROM clause to read")
-        return found.group(2)
+        """The alias of the table the lane is a lane *of*, from its own FROM.
+
+        **The statement's own FROM, not the first one in the text.** It was the
+        first, until the application lanes grew correlated subqueries in the
+        SELECT list: `from application_events h` then appears before
+        `from applications a`, and this read the lane's identity as `h`. It
+        failed a lane whose ordering had not changed, which is a test asserting
+        a shape the SQL is allowed to outgrow.
+
+        The statement's own FROM is the one at the start of a line with no
+        leading parenthesis in front of it; a subquery's sits inside the
+        SELECT list and is indented under one.
+        """
+        found = [m for m in re.finditer(r"(?m)^\s*from\s+(\w+)\s+(\w+)", sql)]
+        self.assertTrue(found, "the query has no FROM clause to read")
+        return found[0].group(2)
 
     def test_there_is_more_than_one_pair_to_check(self):
         """Without this the whole class passes on an empty generator."""
@@ -494,14 +506,32 @@ class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
                         "no lane sorts on a table other than its own, so the "
                         "assertion below is vacuous")
 
+    #: The statement's own ORDER BY, which is the last one and the only one at
+    #: the top level.
+    #:
+    #: **Not "the only one".** It was, until the application lanes grew
+    #: correlated subqueries for the completed event's time and payload, and
+    #: each of those carries `order by h.at desc limit 1` of its own. A count
+    #: of three then failed a lane whose ordering was untouched. A test that
+    #: assumes a shape the SQL is allowed to outgrow fails the change rather
+    #: than the fault.
+    @staticmethod
+    def top_level_order(sql):
+        clauses = [line.strip() for line in sql.splitlines()
+                   if line.strip().startswith("order by")]
+        assert clauses, "no order by at all"
+        return clauses[-1]
+
     def test_every_ordering_ties_on_the_lanes_own_row(self):
         for lane, sort, sql in self.pairs():
             with self.subTest(lane=lane, sort=sort):
                 own = self.identity(sql)
-                order = [line.strip() for line in sql.splitlines()
-                         if line.strip().startswith("order by")]
-                self.assertEqual(len(order), 1, "expected one order by clause")
-                tie = re.findall(r"\b(\w+)\.id\b", order[0])
+                clause = self.top_level_order(sql)
+                self.assertIn("limit %(limit)s", sql.split(clause)[-1],
+                              "the clause taken is not the statement's own: "
+                              "the top-level ORDER BY is the one the LIMIT "
+                              "follows")
+                tie = re.findall(r"\b(\w+)\.id\b", clause)
                 self.assertEqual(tie, [own],
                                  f"{lane}/{sort} breaks ties on {tie} rather "
                                  f"than its own row {own!r}")
@@ -513,7 +543,8 @@ class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
         for lane, sort, sql in self.pairs():
             with self.subTest(lane=lane, sort=sort):
                 own = self.identity(sql)
-                where = sql[sql.index(" where "):sql.index("order by")]
+                where = sql[sql.index(" where "):
+                            sql.rindex(self.top_level_order(sql))]
                 cursor = set(re.findall(r"\b(\w+)\.id\s*<\s*%\(after_id\)s",
                                         where))
                 self.assertEqual(cursor, {own},

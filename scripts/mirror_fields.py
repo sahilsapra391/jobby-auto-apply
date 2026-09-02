@@ -121,6 +121,12 @@ def _application_columns():
             | {"account_id", "legacy_id", "updated_at"})
 
 
+def _board_meta_columns():
+    """The columns `_mirror_meta` writes, from `meta_row`."""
+    import class_b
+    return set(class_b.meta_row({})) | {"account_id", "updated_at"}
+
+
 #: Tables whose INSERT interpolates its column list, and the function that
 #: answers for each. **Every interpolated table must appear here**; `written`
 #: refuses otherwise rather than quietly covering none of it.
@@ -128,6 +134,7 @@ _EXPLICIT = {
     "postings": _posting_columns,
     "provider_links": _provider_columns,
     "applications": _application_columns,
+    "board_meta": _board_meta_columns,
 }
 
 
@@ -228,6 +235,13 @@ EXEMPT = {
     ("provider_links", "provider"):
         "the join key. Both sides are keyed on the provider id, so comparing "
         "it is vacuous.",
+
+    ("board_meta", "account_id"):
+        "the tenant key. One board_meta row per account, and it is what the "
+        "lookup is scoped by.",
+    ("board_meta", "updated_at"):
+        "written as now() on every mirror pass, so there is nothing on the "
+        "file side it could disagree with.",
 
     ("job_decisions", "decided_from"):
         "a literal the writer stamps ('backfill' from the backfill, 'v2' from "
