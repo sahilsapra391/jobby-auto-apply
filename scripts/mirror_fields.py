@@ -103,12 +103,31 @@ def _provider_columns():
     return set(class_b.provider_row("openai", {})) | {"account_id", "updated_at"}
 
 
+def _application_columns():
+    """The columns the class B mirror writes to `applications`.
+
+    Two writers, disjoint sets: `_application_id` writes everything a session
+    is authoritative for, and `_mirror_roles` writes the six the role index
+    owns. Plus the keys and the write time, which the statements add around
+    the rows.
+
+    This entry exists because widening `session_row` turned that INSERT into an
+    interpolated one, and the refusal above fired on the very next run. That is
+    the guard working: before it, the table would have gone quietly
+    undiscovered and parity would have reported full coverage of nothing.
+    """
+    import class_b
+    return (set(class_b.session_row({})) | set(class_b.role_row({}))
+            | {"account_id", "legacy_id", "updated_at"})
+
+
 #: Tables whose INSERT interpolates its column list, and the function that
 #: answers for each. **Every interpolated table must appear here**; `written`
 #: refuses otherwise rather than quietly covering none of it.
 _EXPLICIT = {
     "postings": _posting_columns,
     "provider_links": _provider_columns,
+    "applications": _application_columns,
 }
 
 

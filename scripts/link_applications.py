@@ -87,14 +87,23 @@ def plan(conn, account_id, root):
     frozen = snapshot_urls(conn)
 
     with conn.cursor() as cur:
-        cur.execute("select id, legacy_id, posting_id from applications "
-                    "where account_id = %s order by legacy_id", (account_id,))
+        cur.execute("select id, legacy_id, posting_id, apply_url, source, ats "
+                    "from applications where account_id = %s order by legacy_id",
+                    (account_id,))
         rows = cur.fetchall()
 
     decisions = []
-    for app_id, legacy, existing in rows:
+    for app_id, legacy, existing, mirrored_url, mirrored_source, mirrored_ats in rows:
         url, source = live.get(legacy, ("", ""))
         provenance = "session"
+        if not url:
+            # **The mirrored column before the frozen table.** `applications.
+            # apply_url` is written from `roles.json` on every class B pass, so
+            # it holds 205 entries where the `roles` table is frozen at the 196
+            # a backfill left. Same field, one of them current.
+            url = (mirrored_url or "").strip()
+            source = (mirrored_source or mirrored_ats or "").strip()
+            provenance = "mirrored-role" if url else "none"
         if not url:
             url, source = frozen.get(legacy, ("", ""))
             provenance = "roles-snapshot" if url else "none"

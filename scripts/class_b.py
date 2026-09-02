@@ -77,11 +77,8 @@ def _application_id(conn, account_id, legacy_id, session=None):
     opened at 88 divergences. A row that exists keeps the status it has unless
     something with a real one says otherwise.
     """
-    status = phase = blockers = None
-    if session:
-        built = session_row(session)
-        status, phase = built["status"], built["phase"]
-        blockers = built["blockers"]
+    built = session_row(session) if session else None
+    status = built["status"] if built else None
 
     with conn.cursor() as cur:
         if status is None:
@@ -99,10 +96,18 @@ def _application_id(conn, account_id, legacy_id, session=None):
                 (account_id, legacy_id))
             return cur.fetchone()[0]
 
+        # Every column the session is authoritative for, in one statement, so
+        # a column added to `session_row` reaches the table without a second
+        # place to remember. Parity discovers the set the same way.
+        session_columns = [c for c in built if c != "status"]
+        placeholders = ", ".join(
+            "%s::jsonb" if c == "blockers" else "%s" for c in session_columns)
+        assignments = ", ".join(f"{c} = excluded.{c}" for c in session_columns)
         cur.execute(
-            """insert into applications
-                   (account_id, legacy_id, status, phase, blockers, updated_at)
-               values (%s, %s, %s, %s, %s::jsonb, now())
+            f"""insert into applications
+                   (account_id, legacy_id, status, {', '.join(session_columns)},
+                    updated_at)
+               values (%s, %s, %s, {placeholders}, now())
                on conflict (account_id, legacy_id) do update
                  -- **Not `coalesce(excluded.phase, applications.phase)`.**
                  -- This statement is only reached when a session supplied a
@@ -115,12 +120,12 @@ def _application_id(conn, account_id, legacy_id, session=None):
                  -- The caller that genuinely knows nothing about phase is a
                  -- history event, and it takes the `do nothing` branch above.
                  set status = excluded.status,
-                     phase = excluded.phase,
-                     blockers = excluded.blockers,
+                     {assignments},
                      updated_at = now()
                returning id""",
-            (account_id, legacy_id, status, phase,
-             json.dumps(blockers) if blockers is not None else None))
+            [account_id, legacy_id, status]
+            + [json.dumps(built[c]) if c == "blockers" and built[c] is not None
+               else built[c] for c in session_columns])
         return cur.fetchone()[0]
 
 
@@ -148,7 +153,56 @@ def session_row(payload):
     # as `[]` would be a third spelling of that, and the lane would have to
     # know all three.
     blocked = payload.get("pendingFields") or None
-    return {"status": status, "phase": phase, "blockers": blocked}
+
+    def text(key):
+        return (payload.get(key) or "").strip() or None
+
+    def number(key):
+        value = payload.get(key)
+        return int(value) if isinstance(value, (int, float)) else None
+
+    return {
+        "status": status, "phase": phase, "blockers": blocked,
+        # `postedDate` is a calendar date in the session and a timestamptz in
+        # the column; Postgres casts it, and the Found date contract says this
+        # is `postedAt` and never `firstSeenAt`.
+        "posted_at": text("postedDate"),
+        # What only the session carries. Migration 0012 lists what each is for
+        # and how many rows have it; every one of them is a lane currently
+        # drawing "not captured" over data that exists.
+        "core_skills": list(payload.get("coreSkills") or []) or None,
+        "fit_score": number("fitScore"),
+        "alignment": text("alignment"),
+        "dropped_from": text("droppedFrom"),
+        "dropped_stage": text("droppedStage"),
+        "seen_on_boards": number("seenOnBoards"),
+    }
+
+
+def role_row(entry):
+    """What `applications` holds from the role index.
+
+    **The role index names an application; the session says what state it is
+    in.** They write different columns of one row for that reason, and
+    `_mirror_roles` passing a status once overwrote all 88 real ones with the
+    word "known".
+
+    Measured 2026-09-02: all 204 populated `company`/`role` pairs in production
+    match `roles.json` exactly, so this is where the board's names come from.
+    """
+    entry = entry or {}
+
+    def text(key):
+        return (entry.get(key) or "").strip() or None
+
+    return {
+        "company": text("company"),
+        "role": text("role"),
+        "apply_url": text("url"),
+        "region": text("region"),
+        "source": text("source"),
+        "ats": text("ats"),
+    }
 
 
 #: What the board draws about a provider, and nothing else.
@@ -443,6 +497,17 @@ def _mirror_roles(conn, account_id, payload):
         # what state an application is in. Passing one here overwrote every
         # session's real status with the word "known".
         _application_id(conn, account_id, legacy_id)
+        row = role_row(entry)
+        # **The role index owns the name and nothing else.** A session writes
+        # status, phase, blockers and the fit fields; these six are the ones
+        # only the index has. Two writers, disjoint columns, one row.
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""update applications
+                       set {', '.join(f'{c} = %s' for c in row)},
+                           updated_at = now()
+                     where account_id = %s and legacy_id = %s""",
+                list(row.values()) + [account_id, legacy_id])
 
 
 _HANDLERS = {
