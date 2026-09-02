@@ -128,7 +128,12 @@ class TheDispatchKnowsWhatItIsLookingAt(unittest.TestCase):
         # did: `board_meta` exists for it, so "writes something the migrations
         # created no table for" does not apply. v2's scan banner was reading a
         # fixture over an empty table, showing a next run in the past.
-        for name in ("search-config.json", "resume-content.json",
+        # `search-config.json` left this list for the third time in the same
+        # way: `board_meta.search_config` exists for it. What it costs to leave
+        # a file here wrongly is now measured three times over -- the scan
+        # banner invented its numbers, Settings said one provider of three, and
+        # Found could not say what location scope it was showing.
+        for name in ("resume-content.json",
                      "companies.json", "jobs.json",
                      "browser-mcp-apply-1.json", "r2-manifest.json",
                      "passed.json", "source-cache.json"):
