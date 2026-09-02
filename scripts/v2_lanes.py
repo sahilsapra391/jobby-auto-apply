@@ -60,6 +60,17 @@ import sys
 #: already hold correctly.
 POSTING_LANES = {"found"}
 
+#: A completion that is the application's last word. **Written once**: `done`
+#: is defined by it and the working lanes are defined by its negation, and two
+#: spellings of one predicate is what the lane SQL is generated to prevent.
+SUBMITTED = """exists (
+            select 1 from application_events h
+             where h.application_id = a.id and h.kind = 'completed'
+               and not exists (
+                 select 1 from application_events r
+                  where r.application_id = a.id
+                    and r.kind = 'abandoned' and r.at > h.at))"""
+
 LANES = {
     "found": {
         "label": "Found",
@@ -68,9 +79,27 @@ LANES = {
         # materialisation. It is also why `found` is not a storable state.
         "where": "p.closed_at is null and d.posting_id is null",
     },
-    "watch":  {"label": "Watching",  "where": "a.status = 'watch'"},
-    "flight": {"label": "In flight", "where": "a.status = 'inflight'"},
-    "act":    {"label": "Needs you", "where": "a.status in ('review', 'active')"},
+    #: **A submitted application is out of the working lanes, whatever its
+    #: status says.** `applications.status` is a session's last-known state and
+    #: a completed event is a statement about the world: an employer received
+    #: this, under a real name, and it cannot be un-sent. One row had both --
+    #: `actively-ai-agent-product-manager`, status `active`, completed
+    #: 2026-08-19 with no later abandonment -- and it drew in Needs you and in
+    #: Submitted at once.
+    #:
+    #: Submitted wins because the costs are not symmetric. A submitted
+    #: application shown as needing work invites the reader to fill and send it
+    #: again, and a duplicate application under a real name cannot be recalled.
+    #: A working application shown only as submitted is a row in the wrong
+    #: place, which someone notices and nothing else follows from.
+    #:
+    #: The predicate is the same one `done` uses, and it is written once.
+    "watch":  {"label": "Watching",
+               "where": f"a.status = 'watch' and not {SUBMITTED}"},
+    "flight": {"label": "In flight",
+               "where": f"a.status = 'inflight' and not {SUBMITTED}"},
+    "act":    {"label": "Needs you",
+               "where": f"a.status in ('review', 'active') and not {SUBMITTED}"},
     "done": {
         "label": "Submitted",
         # **Read the events, not a status.** A `completed` retracted by a later
@@ -83,13 +112,7 @@ LANES = {
         # on this database and only one is part of the schema; a lane reading
         # the legacy one works today and breaks on any clean deployment, which
         # is how the first version of this was written.
-        "where": """exists (
-            select 1 from application_events h
-             where h.application_id = a.id and h.kind = 'completed'
-               and not exists (
-                 select 1 from application_events r
-                  where r.application_id = a.id
-                    and r.kind = 'abandoned' and r.at > h.at))""",
+        "where": SUBMITTED,
     },
     "dropped": {"label": "Dropped",  "where": "a.status = 'dropped'"},
 }
@@ -101,7 +124,27 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
              s.total as score, s.parts as score_parts, s.gates as score_gates,
              s.unknowns as score_unknowns"""
 
-#: An application lane has no posting to draw from, because nothing links the
+#: **The posting first, the application's own mirrored name second.** A linked
+#: application takes its title and employer from the live pool; the rest fall
+#: back to `applications.company` and `applications.role`, which migration 0011
+#: declares and `class_b._mirror_roles` keeps current from `roles.json`. Those
+#: columns existed in production undeclared and unmaintained, which is why the
+#: earlier answer here was to refuse them: a frozen index rendered as current
+#: puts confident wrong names on the most visible surface. Declared, mirrored
+#: on every class B pass and compared by parity, that objection is answered --
+#: staleness is now a divergence rather than a mystery. `linked` still travels
+#: so the Posting column can say "posting not linked" where the link is what
+#: matters rather than the name.
+#:
+#: `completed_at` is the submitted date and `updated_at` is not. Measured over
+#: all 104 submitted applications: they differ on every one, because the mirror
+#: writes `updated_at` as `now()` on every pass. v2's Submitted column drew
+#: `updated_at` and showed the backfill time against completions three days to
+#: two weeks earlier. `completed_payload` carries the confirmation text, the
+#: resume filename and the cover-letter note, which is the only record of what
+#: an employer received.
+#:
+#: An application lane has no posting to draw from when nothing links the
 #: two. `updated_at` is the ordering: it is when the work last moved, which is
 #: the question these lanes answer, and `posted_at` would be unavailable
 #: anyway.
@@ -130,9 +173,22 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: rather than a join to a table on its way out.
 APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
              a.created_at, a.posting_id,
-             p.title as role, p.apply_url, p.location_raw, p.posted_at,
+             a.posting_id is not null as linked,
+             coalesce(p.title, a.role) as role,
+             coalesce(p.apply_url, a.apply_url) as apply_url,
+             p.location_raw,
+             coalesce(p.posted_at, a.posted_at) as posted_at,
              p.years_min, p.years_max,
-             e.canonical_name as company, e.domain as employer_domain"""
+             coalesce(e.canonical_name, a.company) as company,
+             e.domain as employer_domain,
+             a.blockers, a.core_skills, a.fit_score, a.alignment,
+             a.dropped_from, a.dropped_stage, a.seen_on_boards, a.ats,
+             (select h.at from application_events h
+               where h.application_id = a.id and h.kind = 'completed'
+               order by h.at desc limit 1) as completed_at,
+             (select h.payload from application_events h
+               where h.application_id = a.id and h.kind = 'completed'
+               order by h.at desc limit 1) as completed_payload"""
 
 #: The three cases a nulls-last keyset has. `%(after_at)s` NULL means "the
 #: cursor row was undated", which is a different question from "no cursor".

@@ -182,3 +182,82 @@ export function laneQuery(lane: Lane, sort: Sort, filters?: Filters): string {
   if (filters?.direct) p.set("direct", "1");
   return p.toString();
 }
+
+/**
+ * The board's own scan state, from `board_meta`.
+ *
+ * **v2 drew a hardcoded fixture here.** `_ui/fixture.ts` carried
+ * `nextRun: "19:47 EDT"`, `lastScan: "15:51 EDT"` and five invented problem
+ * entries summing to 11, and those are exactly the three numbers a reader saw
+ * at 21:28 with a next run in the past. Behind the fixture there was nothing:
+ * the table had the right columns and zero rows until `class_b._mirror_meta`.
+ *
+ * Null when nothing has been mirrored, and the banner says so rather than
+ * inventing a substitute. That is the whole lesson of the fixture.
+ */
+export type BoardMeta = {
+  lastIngest: Record<string, unknown> | null;
+  nextScanAt: string | null;
+  scanStartedAt: string | null;
+  scanFinishedAt: string | null;
+  blocked: string | null;
+  slotsParked: string | null;
+};
+
+export async function boardMeta(): Promise<BoardMeta | null> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select last_ingest, next_scan_at, scan_started_at, scan_finished_at,
+            blocked, slots_parked
+       from board_meta where account_id = $1`, [account]);
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    lastIngest: r.last_ingest ?? null,
+    nextScanAt: r.next_scan_at ? new Date(r.next_scan_at).toISOString() : null,
+    scanStartedAt: r.scan_started_at ? new Date(r.scan_started_at).toISOString() : null,
+    scanFinishedAt: r.scan_finished_at ? new Date(r.scan_finished_at).toISOString() : null,
+    blocked: r.blocked ?? null,
+    slotsParked: r.slots_parked ?? null,
+  };
+}
+
+/**
+ * The provider connections, from `provider_links`.
+ *
+ * The same fixture said OpenAI was connected and the other two were not, while
+ * all three were connected and healthy. It also called Gemini's agent "agy"
+ * and pinned `gemini-3.7-flash-medium`; the model pin is real and comes from
+ * `providers.MODEL_IDS`, the tool label was invented.
+ *
+ * **Never a credential.** `provider_links` has no column for one and must not
+ * get one: keys live in `~/.job-application/provider-secrets/` and reach no
+ * queue, no Vercel environment and no KV.
+ */
+export type ProviderLink = {
+  provider: string;
+  status: string;
+  model: string | null;
+  health: string | null;
+  detail: string | null;
+  order: number | null;
+  connectedAt: string | null;
+};
+
+export async function providers(): Promise<ProviderLink[]> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select provider, status, model_pinned, health, detail, connection_order,
+            connected_at
+       from provider_links where account_id = $1
+      order by connection_order nulls last, provider`, [account]);
+  return rows.map((r) => ({
+    provider: r.provider,
+    status: r.status,
+    model: r.model_pinned ?? null,
+    health: r.health ?? null,
+    detail: r.detail ?? null,
+    order: r.connection_order ?? null,
+    connectedAt: r.connected_at ? new Date(r.connected_at).toISOString() : null,
+  }));
+}

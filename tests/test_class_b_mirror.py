@@ -124,7 +124,11 @@ class TheDispatchKnowsWhatItIsLookingAt(unittest.TestCase):
         # the parity field set had. v2's Settings page said one provider was
         # connected while all three were, reading a fixture over an empty
         # table, and this line is part of why the table was empty.
-        for name in ("meta.json", "search-config.json", "resume-content.json",
+        # `meta.json` left this list for the same reason `providers.json`
+        # did: `board_meta` exists for it, so "writes something the migrations
+        # created no table for" does not apply. v2's scan banner was reading a
+        # fixture over an empty table, showing a next run in the past.
+        for name in ("search-config.json", "resume-content.json",
                      "companies.json", "jobs.json",
                      "browser-mcp-apply-1.json", "r2-manifest.json",
                      "passed.json", "source-cache.json"):
@@ -135,7 +139,9 @@ class TheDispatchKnowsWhatItIsLookingAt(unittest.TestCase):
         """`sessions/meta.json` is a session called meta, not the meta file."""
         self.assertEqual(class_b.kind_of(Path("/store/sessions/meta.json")),
                          "session")
-        self.assertIsNone(class_b.kind_of(Path("/store/meta.json")))
+        self.assertEqual(class_b.kind_of(Path("/store/meta.json")), "meta",
+                         "the store's own meta.json is the board's scan "
+                         "state; a session called meta is a session")
 
     def test_an_unknown_file_maps_to_nothing_rather_than_guessing(self):
         self.assertIsNone(class_b.kind_of(Path("/store/something-new.json")))

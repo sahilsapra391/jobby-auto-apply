@@ -368,6 +368,41 @@ def providers_file_state(root=None):
     return out
 
 
+def meta_state(conn, account_id):
+    """The one board_meta row, as the columns the mirror writes."""
+    columns = sorted(mirror_fields.compared()["board_meta"])
+    with conn.cursor() as cur:
+        cur.execute(f"select {', '.join(columns)} from board_meta "
+                    f"where account_id = %s", (account_id,))
+        row = cur.fetchone()
+    return dict(zip(columns, row)) if row else {}
+
+
+def meta_file_state(root=None):
+    """What `meta.json` says, through the mirror's own builder."""
+    import store
+    path = Path(store.paths(Path(store.root_dir(root)))["meta"])
+    if not path.exists():
+        return {}
+    row = class_b.meta_row(json.loads(path.read_text(encoding="utf-8")))
+    keep = mirror_fields.compared()["board_meta"]
+    return {k: v for k, v in row.items() if k in keep}
+
+
+def compare_meta(files, database):
+    """The scan banner's numbers, which v2 was inventing."""
+    findings = []
+    if files and not database:
+        return [{"kind": "only_in_file", "id": "board_meta", "field": "meta"}]
+    for column in sorted(files):
+        if same_value(files[column], database.get(column)):
+            continue
+        findings.append({"kind": "field_mismatch", "id": "board_meta",
+                         "field": f"meta.{column}", "file": files[column],
+                         "postgres": database.get(column)})
+    return findings
+
+
 def coverage():
     """{table: {columns}} parity actually compares.
 
@@ -387,6 +422,7 @@ def coverage():
         "answer_bank": set(class_b.answer_row({})),
         "profiles": set(class_b.profile_row({})),
         "provider_links": set(mirror_fields.compared()["provider_links"]),
+        "board_meta": set(mirror_fields.compared()["board_meta"]),
     }
 
 
@@ -655,6 +691,8 @@ def run_once(conn, account_id, root=None):
     findings = compare(records, database)
     findings.extend(compare_employers(records, employers_state(conn)))
     findings.extend(compare_scores(records, scores_state(conn, account_id)))
+    findings.extend(compare_meta(meta_file_state(root),
+                                 meta_state(conn, account_id)))
     findings.extend(compare_providers(providers_file_state(root),
                                       providers_state(conn, account_id)))
     findings.extend(compare_class_b(class_b_file_state(root),
