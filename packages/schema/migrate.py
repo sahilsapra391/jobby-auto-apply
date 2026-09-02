@@ -836,9 +836,11 @@ def run(conn, directory=None, allow_contract=False):
                 with conn.cursor() as cur:
                     cur.execute(migration.sql)
                     cur.execute(
-                        "insert into schema_migrations (version, name, checksum)"
-                        " values (%s, %s, %s)",
-                        (migration.version, migration.name, migration.checksum))
+                        "insert into schema_migrations "
+                        "(version, name, checksum, applied_by)"
+                        " values (%s, %s, %s, %s)",
+                        (migration.version, migration.name, migration.checksum,
+                         actor()))
             done.append(migration)
         return done
     finally:
@@ -850,9 +852,90 @@ def run(conn, directory=None, allow_contract=False):
 
 # --------------------------------------------------------------------------
 
+def actor():
+    """Who is applying this, in a form that identifies one runner.
+
+    **`applied_by` defaulted to `current_user`, which is the database role.**
+    Every session on this project connects as `neondb_owner`, so the column
+    recorded the same eight characters for every migration and answered the
+    only question anybody asks of it -- who ran this -- with "the owner".
+
+    On 2026-09-02 two migrations landed three seconds apart from a session
+    nobody could identify, one of them a file that reached no branch, and the
+    record could not say whose they were. The advisory lock had done its job:
+    the writes were serialised and neither was lost. What was missing was not
+    exclusion, it was attribution.
+
+    `JOBBY_ACTOR` when it is set, because a runner knows its own name better
+    than this does. Otherwise user@host/pid, which at least separates two
+    processes on one machine.
+    """
+    named = (os.environ.get("JOBBY_ACTOR") or "").strip()
+    if named:
+        return named[:200]
+    import getpass
+    import socket
+    try:
+        who = getpass.getuser()
+    except Exception:            # pragma: no cover - no passwd entry
+        who = "unknown"
+    return f"{who}@{socket.gethostname()}/{os.getpid()}"[:200]
+
+
+def reconcile(conn, version, reason, migrations=None):
+    """Point a recorded migration at the file that is now on disk.
+
+    **This edits history and it is the only thing here that does.** It exists
+    for exactly one situation: a migration was applied from a file that never
+    reached the repository, so the recorded checksum names text nobody has.
+    Every later migration is then refused, correctly, and the refusal cannot be
+    cleared by adding a new migration because the block is behind the check
+    that would run it.
+
+    The alternative is deleting the row, which is worse: the row is the only
+    evidence the migration ran at all, and a clean deployment would then apply
+    it a second time.
+
+    It refuses without a reason, and it writes the reason into `applied_by`
+    alongside the actor, so the record says the checksum was reconciled rather
+    than quietly agreeing with a file it never saw.
+    """
+    if not (reason or "").strip():
+        raise MigrationError(
+            "reconcile needs --reason. Rewriting a checksum without saying why "
+            "leaves a record that looks like it was always this way.")
+    have = {m.version: m for m in (migrations if migrations is not None
+                                   else discover())}
+    migration = have.get(version)
+    if migration is None:
+        raise MigrationError(
+            f"no migration {version:04d} on disk to reconcile against")
+    with conn.cursor() as cur:
+        cur.execute("select name, checksum, applied_by from schema_migrations "
+                    "where version = %s", (version,))
+        row = cur.fetchone()
+        if row is None:
+            raise MigrationError(
+                f"migration {version:04d} is not recorded as applied, so there "
+                f"is nothing to reconcile. Apply it instead.")
+        if row[1] == migration.checksum:
+            return {"version": version, "changed": False, "was": row[1]}
+        cur.execute(
+            "update schema_migrations set checksum = %s, name = %s, "
+            "applied_by = %s where version = %s",
+            (migration.checksum, migration.name,
+             f"{actor()} reconciled: {reason.strip()}"[:200], version))
+    return {"version": version, "changed": True, "was": row[1],
+            "now": migration.checksum, "previously_by": row[2]}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("command", choices=("status", "plan", "apply"))
+    parser.add_argument("command",
+                        choices=("status", "plan", "apply", "reconcile"))
+    parser.add_argument("--version", type=int,
+                        help="reconcile: which recorded migration to repoint")
+    parser.add_argument("--reason", help="reconcile: why, recorded with it")
     parser.add_argument("--url", help="override the connection URL")
     parser.add_argument("--dir", help="override the migrations directory")
     parser.add_argument("--allow-contract", action="store_true",
@@ -874,6 +957,23 @@ def main(argv=None):
             # Pending is normal and exits 0. Drift and a missing file are the
             # database and the repository disagreeing, which is never normal.
             return 0 if agrees else 1
+
+        if args.command == "reconcile":
+            if args.version is None:
+                print("migrate: reconcile needs --version", file=sys.stderr)
+                return 2
+            outcome = reconcile(conn, args.version, args.reason or "",
+                                discover(directory))
+            if not outcome["changed"]:
+                print(f"migration {outcome['version']:04d} already agrees with "
+                      f"the file on disk; nothing to do")
+                return 0
+            conn.commit()
+            print(f"reconciled {outcome['version']:04d}")
+            print(f"  recorded checksum was {outcome['was']}")
+            print(f"  now                   {outcome['now']}")
+            print(f"  previously applied by {outcome['previously_by']}")
+            return 0
 
         if args.command == "plan":
             pending = plan(conn, directory, args.allow_contract)

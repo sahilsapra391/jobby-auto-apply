@@ -76,11 +76,10 @@ def _application_id(conn, account_id, legacy_id, session=None):
     opened at 88 divergences. A row that exists keeps the status it has unless
     something with a real one says otherwise.
     """
-    status = None
-    phase = None
+    status = phase = None
     if session:
-        status = (session.get("status") or "").strip() or None
-        phase = (session.get("phase") or "").strip() or None
+        built = session_row(session)
+        status, phase = built["status"], built["phase"]
 
     with conn.cursor() as cur:
         if status is None:
@@ -103,12 +102,72 @@ def _application_id(conn, account_id, legacy_id, session=None):
                    (account_id, legacy_id, status, phase, updated_at)
                values (%s, %s, %s, %s, now())
                on conflict (account_id, legacy_id) do update
+                 -- **Not `coalesce(excluded.phase, applications.phase)`.**
+                 -- This statement is only reached when a session supplied a
+                 -- status, and a session is the authority on its own phase
+                 -- including when it has none: the coalesce made an absent
+                 -- phase mean "keep whatever you had", so a phase could be
+                 -- written once and never cleared. Found by widening parity,
+                 -- on its first run: Harvey 17121dc2523fec5e had no `phase`
+                 -- key at all, status `dropped`, and Postgres held `Queued`.
+                 -- The caller that genuinely knows nothing about phase is a
+                 -- history event, and it takes the `do nothing` branch above.
                  set status = excluded.status,
-                     phase = coalesce(excluded.phase, applications.phase),
+                     phase = excluded.phase,
                      updated_at = now()
                returning id""",
             (account_id, legacy_id, status, phase))
         return cur.fetchone()[0]
+
+
+# --------------------------------------------------------------------------
+# What each mirrored row holds, as functions rather than as inline tuples.
+#
+# **Parity calls these, so there is one transform and not two.** The class A
+# side learned this the expensive way: `verify_parity.FIELDS` was eleven
+# lambdas reimplementing `posting_row`, it covered 11 of 28 columns, and being
+# a subset is exactly how a second implementation drifts. Extracting the row
+# here means a column added to the mirror is a column parity compares, without
+# anybody remembering to add it in two places.
+
+
+def session_row(payload):
+    """What `applications` holds for a session, from the session's own file."""
+    payload = payload or {}
+    status = (payload.get("status") or "").strip() or None
+    phase = (payload.get("phase") or "").strip() or None
+    return {"status": status, "phase": phase}
+
+
+def history_row(payload):
+    """What `application_events` holds for one history line."""
+    payload = payload or {}
+    return {
+        "kind": (payload.get("event") or "").strip() or None,
+        # The whole line, which is where the confirmation text, the resume
+        # filename and the cover-letter note live. Compared as a value: it is
+        # the only record of what an employer received.
+        "payload": payload,
+        "at": payload.get("at"),
+    }
+
+
+def answer_row(entry):
+    """What `answer_bank` holds for one stored answer."""
+    entry = entry or {}
+    return {
+        "question": entry.get("question"),
+        "value": entry.get("value"),
+        "state": entry.get("state"),
+        "tags": list(entry.get("tags") or []),
+        "sensitive": bool(entry.get("sensitive")),
+    }
+
+
+def profile_row(payload):
+    """What `profiles.identity` holds, minus what the mirror strips."""
+    return {"identity": {k: v for k, v in (payload or {}).items()
+                         if k not in _PROFILE_EXCLUDED}}
 
 
 def _mirror_session(conn, account_id, payload):
@@ -203,11 +262,10 @@ def _mirror_answers(conn, account_id, payload, force=False):
             # Skipped for the upsert, kept for the keep set below.
             unreadable.append(key)
             continue
+        built = answer_row(entry)
         rows.append((
-            account_id, key,
-            entry.get("question"), entry.get("value"), entry.get("state"),
-            list(entry.get("tags") or []),
-            bool(entry.get("sensitive")),
+            account_id, key, built["question"], built["value"],
+            built["state"], built["tags"], built["sensitive"],
         ))
 
     keep = set(payload)
@@ -271,8 +329,7 @@ _PROFILE_EXCLUDED = {"resumes", "writingSamples"}
 
 
 def _mirror_profile(conn, account_id, payload):
-    identity = {k: v for k, v in (payload or {}).items()
-                if k not in _PROFILE_EXCLUDED}
+    identity = profile_row(payload)["identity"]
     with conn.cursor() as cur:
         cur.execute(
             """insert into profiles (account_id, identity, updated_at)

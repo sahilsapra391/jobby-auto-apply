@@ -45,7 +45,15 @@ class TheComparisonIsFieldByField(unittest.TestCase):
     """`compare` needs no database: it is two dicts in and a list out."""
 
     def db_row(self, rec, **overrides):
-        row = {name: read(rec) for name, read in verify_parity.FIELDS.items()}
+        """What Postgres would hold for this record.
+
+        Built through `backfill.posting_row`, which is what the mirror writes
+        and what parity now compares against. It was built from `FIELDS`'s
+        eleven lambdas, and those were themselves a second implementation of
+        `posting_row` covering 11 of its 28 columns.
+        """
+        row = {name: backfill.posting_row(rec).get(name)
+               for name in verify_parity.FIELDS}
         row["__state__"] = rec.get("state")
         row.update(overrides)
         return row
@@ -82,14 +90,25 @@ class TheComparisonIsFieldByField(unittest.TestCase):
             {"a": rec}, {"a": self.db_row(rec, __state__="new")})
         self.assertEqual([f["field"] for f in found], ["state"])
 
-    def test_every_compared_field_has_a_file_side_expression(self):
-        """A field in the SQL and not in FIELDS would be read as None and
-        compared against None, agreeing forever."""
+    def test_every_compared_field_is_one_the_mirror_writes(self):
+        """A field parity selects and the mirror does not write would be read
+        as None on both sides and agree forever.
+
+        The inverse -- a column the mirror writes and parity does not select --
+        is the failure that ran for seven green days, and
+        `tests/test_parity_compares_what_the_mirror_writes.py` is what catches
+        that one.
+        """
         rec = record("a")
-        for name, read in verify_parity.FIELDS.items():
+        written = backfill.posting_row(rec)
+        for name in verify_parity.FIELDS:
             with self.subTest(field=name):
-                self.assertTrue(callable(read))
-                read(rec)
+                self.assertIn(name, written)
+
+    def test_it_compares_far_more_than_the_eleven_it_used_to(self):
+        self.assertGreaterEqual(len(verify_parity.FIELDS), 27)
+        for name in ("posted_at", "summary", "years_min", "sections"):
+            self.assertIn(name, verify_parity.FIELDS)
 
 
 class TheRunCannotConcludeWithoutChecking(pgtest.SchemaCase):
@@ -573,16 +592,19 @@ class TheStateExemptionIsNarrow(unittest.TestCase):
     def _pair(self, file_states, postgres_state):
         """Two legacy records folded into one posting, with the file saying
         `file_states` and Postgres holding `postgres_state`."""
+        # Real records, because `compare` runs them through
+        # `backfill.posting_row` now: the expected side is the mirror's own
+        # transform rather than eleven lambdas standing in for it, and that
+        # transform refuses a record with no id.
         records = {
-            "winner": {"state": file_states[0], "url": "https://e.com/1"},
-            "loser":  {"state": file_states[1], "url": "https://e.com/1"},
+            "winner": record("winner", state=file_states[0],
+                             canonicalUrl="https://e.com/1"),
+            "loser":  record("loser", state=file_states[1],
+                             canonicalUrl="https://e.com/1"),
         }
         row = {"__state__": postgres_state}
         for name in verify_parity.FIELDS:
             row[name] = None
-        for key in records:
-            records[key].update({k: None for k in ("company", "title")
-                                 if k not in records[key]})
         database = {
             "winner": dict(row),
             "loser": dict(row, __merged_into__="winner"),
@@ -608,7 +630,7 @@ class TheStateExemptionIsNarrow(unittest.TestCase):
         self.assertEqual({f["kind"] for f in states}, {"field_mismatch"})
 
     def test_an_unmerged_record_is_never_exempt(self):
-        records = {"solo": {"state": "new"}}
+        records = {"solo": record("solo", state="new")}
         row = {"__state__": "expired"}
         for name in verify_parity.FIELDS:
             row[name] = None

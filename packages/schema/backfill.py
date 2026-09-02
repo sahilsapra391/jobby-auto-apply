@@ -243,20 +243,12 @@ def upsert_employers(conn, records, batch=500):
     never overwritten with a blank, because the records disagree: 6,481 carry a
     website and the rest carry an empty string for the same employer.
     """
-    best = {}
-    for record in records:
-        name = (record.get("company") or "").strip()
-        norm = norm_company(name)
-        if not norm:
-            # Named rather than skipped. See UNKNOWN_EMPLOYER.
-            best.setdefault(UNKNOWN_EMPLOYER,
-                            {"name": UNKNOWN_EMPLOYER_NAME, "domain": None,
-                             "logo": None})
-            continue
-        entry = best.setdefault(norm, {"name": name, "domain": None,
-                                       "logo": None})
-        entry["domain"] = entry["domain"] or hostname(record.get("companyWebsite"))
-        entry["logo"] = entry["logo"] or _text(record.get("logoUrl"))
+    # One fold, shared with `verify_parity` through `employer_rows`, so the
+    # expected side of the comparison is this function rather than a second
+    # reading of it.
+    best = {norm: {"name": row["canonical_name"], "domain": row["domain"],
+                   "logo": row["logo_url"]}
+            for norm, row in employer_rows(records).items()}
 
     # `employers.domain` is unique per §3, and on the real corpus that
     # constraint catches something real: `sharegate.com` is claimed by both
@@ -531,6 +523,56 @@ def upsert_postings(conn, records, employers, batch=500):
     return mapping, merged
 
 
+def score_row(record):
+    """What `job_scores` holds for one record, or None if it carries no score.
+
+    Extracted so `verify_parity` compares the mirror's own transform instead of
+    a second reading of it. The class A posting fields were eleven such second
+    readings and covered 11 of 28 columns; the lesson generalises to every
+    table the mirror writes.
+    """
+    score = record.get("score")
+    if not isinstance(score, dict):
+        return None
+    total = score.get("total")
+    if not isinstance(total, (int, float)):
+        return None
+    return {
+        "total": int(total),
+        "parts": score.get("parts") or {},
+        "why": score.get("why") or {},
+        "gates": score.get("gates") or [],
+        "unknowns": score.get("unknowns") or [],
+        "config_version": score.get("configVersion"),
+    }
+
+
+def employer_rows(records):
+    """{norm_name: {canonical_name, norm_name, domain, logo_url}}.
+
+    The fold `upsert_employers` performs, as a function both it and parity can
+    call. `domain` and `logo_url` take the first non-blank any record offers,
+    because the records disagree: 6,481 carry a website and the rest carry an
+    empty string for the same employer.
+    """
+    best = {}
+    for record in records:
+        name = (record.get("company") or "").strip()
+        norm = norm_company(name)
+        if not norm:
+            best.setdefault(UNKNOWN_EMPLOYER, {
+                "canonical_name": UNKNOWN_EMPLOYER_NAME,
+                "norm_name": UNKNOWN_EMPLOYER, "domain": None,
+                "logo_url": None})
+            continue
+        entry = best.setdefault(norm, {"canonical_name": name,
+                                       "norm_name": norm, "domain": None,
+                                       "logo_url": None})
+        entry["domain"] = entry["domain"] or hostname(record.get("companyWebsite"))
+        entry["logo_url"] = entry["logo_url"] or _text(record.get("logoUrl"))
+    return best
+
+
 def upsert_scores(conn, records, postings, account_id, batch=500):
     """Mirror the match score for every record that carries one.
 
@@ -552,23 +594,18 @@ def upsert_scores(conn, records, postings, account_id, batch=500):
 
     rows = []
     for record in records:
-        score = record.get("score")
-        if not isinstance(score, dict):
-            continue
-        total = score.get("total")
-        if not isinstance(total, (int, float)):
+        built = score_row(record)
+        if built is None:
             continue
         posting_id = postings.get(record.get("id"))
         if posting_id is None:
             # A folded loser has no row of its own; its winner carries the key
             # and will bring its own score.
             continue
-        rows.append((account_id, posting_id, int(total),
-                     _json.dumps(score.get("parts") or {}),
-                     _json.dumps(score.get("why") or {}),
-                     _json.dumps(score.get("gates") or []),
-                     _json.dumps(score.get("unknowns") or []),
-                     score.get("configVersion")))
+        rows.append((account_id, posting_id, built["total"],
+                     _json.dumps(built["parts"]), _json.dumps(built["why"]),
+                     _json.dumps(built["gates"]), _json.dumps(built["unknowns"]),
+                     built["config_version"]))
 
     if not rows:
         return 0
