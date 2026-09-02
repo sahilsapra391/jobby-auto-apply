@@ -379,12 +379,24 @@ def meta_state(conn, account_id):
 
 
 def meta_file_state(root=None):
-    """What `meta.json` says, through the mirror's own builder."""
+    """The `board_meta` row's file side, from both the files that write it.
+
+    `meta.json` owns the scan columns and `search-config.json` owns
+    `search_config`. Disjoint writers on one row, the same shape sessions and
+    roles have on `applications`; comparing only the first would leave the
+    saved search unchecked, which is how `applications.company` came to exist
+    unmaintained.
+    """
     import store
-    path = Path(store.paths(Path(store.root_dir(root)))["meta"])
-    if not path.exists():
-        return {}
-    row = class_b.meta_row(json.loads(path.read_text(encoding="utf-8")))
+    base = Path(store.root_dir(root))
+    row = {}
+    path = Path(store.paths(base)["meta"])
+    if path.exists():
+        row.update(class_b.meta_row(json.loads(path.read_text(encoding="utf-8"))))
+    saved = base / "search-config.json"
+    if saved.exists():
+        row.update(class_b.search_row(
+            json.loads(saved.read_text(encoding="utf-8"))))
     keep = mirror_fields.compared()["board_meta"]
     return {k: v for k, v in row.items() if k in keep}
 

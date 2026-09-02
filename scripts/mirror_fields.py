@@ -122,9 +122,20 @@ def _application_columns():
 
 
 def _board_meta_columns():
-    """The columns `_mirror_meta` writes, from `meta_row`."""
+    """The columns written to `board_meta`, from both its writers.
+
+    `_mirror_meta` owns the scan columns and `_mirror_search` owns
+    `search_config`. Disjoint by construction: a column in both would be nulled
+    by whichever ran last.
+    """
     import class_b
-    return set(class_b.meta_row({})) | {"account_id", "updated_at"}
+    scan, saved = set(class_b.meta_row({})), set(class_b.search_row({}))
+    overlap = scan & saved
+    if overlap:
+        raise RuntimeError(
+            f"two writers claim {sorted(overlap)} on board_meta. Whichever "
+            f"runs last wins and the other's value is lost every pass.")
+    return scan | saved | {"account_id", "updated_at"}
 
 
 #: Tables whose INSERT interpolates its column list, and the function that

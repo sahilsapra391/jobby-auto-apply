@@ -9,7 +9,9 @@ import { ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
-import { accountId, boardMeta, counts, laneQuery, page } from "./_ui/db";
+import {
+  accountId, boardMeta, counts, laneQuery, locationScope, page,
+} from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
 import { writesEnabled } from "./_ui/writes";
@@ -43,8 +45,13 @@ export default async function Board({
     ? (asked as Lane)
     : "found";
 
+  // **Match %, not Newest.** The old board leads with Okta 97, Axon 96,
+  // Cohere 96; v2 led with whatever a sweep found in the last hour, which on a
+  // corpus that ingests everything is warehouse shifts and accountancy. The
+  // ordering by date is still one click away and still puts undated postings
+  // last, which `nulls last` in the generated SQL already guarantees.
   const sort: Sort = (askedSort ?? "") in SORT_LABELS
-    ? (askedSort as Sort) : "new";
+    ? (askedSort as Sort) : "score";
   // The filters only mean anything on Found; the other lanes ignore them, and
   // carrying them into those counts would make a tab badge disagree with the
   // lane behind it.
@@ -52,9 +59,12 @@ export default async function Board({
     ? { q, within, direct: direct === "1" } : undefined;
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
-  const [tally, first, writes, meta] = await Promise.all([
+  const [tally, first, writes, meta, pool, scope] = await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
+    // The unfiltered pool, so the count can say what it matched against.
+    active === "found" && filters ? counts().then((t) => t.found) : undefined,
+    active === "found" ? locationScope() : undefined,
   ]);
 
   /**
@@ -131,7 +141,7 @@ export default async function Board({
               <ScanBanner meta={meta} />
               <Filters q={q} within={within} direct={direct === "1"}
                        sort={sort} shown={first.rows.length}
-                       total={tally[active]} />
+                       total={tally[active]} pool={pool} scope={scope ?? undefined} />
             </>
           ) : null}
           {first.rows.length === 0 ? (

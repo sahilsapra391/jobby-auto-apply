@@ -67,10 +67,33 @@ function CompanyMark(
 
 /** `posted <n> days ago`, or nothing. Calendar days in UTC, like the board:
  *  comparing against a local clock made a morning posting say "yesterday". */
+/**
+ * A calendar date, whatever shape the value arrived in.
+ *
+ * **`node-postgres` returns a `timestamptz` as a `Date`, and `String(date)` is
+ * a locale string.** `String(d).slice(0, 10)` on one is `"Wed Sep 02"`, which
+ * then fails to parse, so `ago()` returned null and every Found card said
+ * "Posted date unknown" over a posting dated that morning. The Submitted
+ * column had the same fault wearing a plausible face: it drew `"Wed Aug 19"`
+ * and looked like a date because a truncated locale string does.
+ *
+ * UTC on purpose. The Found date contract compares calendar days, and reading
+ * a timestamp through a local clock made a morning posting say "yesterday".
+ */
+function isoDay(value: unknown): string | null {
+  if (value == null) return null;
+  const when = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(when.getTime())) {
+    // A string that is already a plain date, which the store also produces.
+    const text = String(value).trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null;
+  }
+  return when.toISOString().slice(0, 10);
+}
+
 function ago(posted: unknown) {
-  const when = s(posted);
-  if (!when) return null;
-  const day = when.slice(0, 10);
+  const day = isoDay(posted);
+  if (!day) return null;
   const days = Math.round(
     (Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z")
       - Date.parse(day + "T00:00:00Z")) / 86400000);
@@ -84,7 +107,8 @@ function years(row: Row) {
   return hi != null && hi !== lo ? `${lo}–${hi} years` : `${lo}+ years`;
 }
 
-const day = (v: unknown) => (s(v) ?? "").slice(0, 10);
+/** The When column. Same normaliser, same reason. */
+const day = (v: unknown) => isoDay(v) ?? "";
 
 /* ------------------------------------------------------------------ Found */
 

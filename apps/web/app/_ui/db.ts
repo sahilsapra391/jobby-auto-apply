@@ -261,3 +261,24 @@ export async function providers(): Promise<ProviderLink[]> {
     connectedAt: r.connected_at ? new Date(r.connected_at).toISOString() : null,
   }));
 }
+
+/**
+ * The saved search's location scope, in the words the board uses.
+ *
+ * **An empty `locations` is Worldwide**, which is the storage contract, not an
+ * absence. v2 displayed neither, so a page led by UK listings read as a fault
+ * when it was the scope working exactly as saved. The picker that changes it
+ * is a separate piece of work; saying what it currently is costs one line.
+ */
+export async function locationScope(): Promise<string | null> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    "select search_config from board_meta where account_id = $1", [account]);
+  const config = rows[0]?.search_config as Record<string, unknown> | null;
+  if (!config) return null;
+  const locations = Array.isArray(config.locations) ? config.locations : [];
+  if (!locations.length) return "Worldwide";
+  return locations.length === 1
+    ? `${locations[0]}`
+    : `${locations.length} countries`;
+}

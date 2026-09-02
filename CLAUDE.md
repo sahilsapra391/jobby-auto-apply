@@ -1002,6 +1002,35 @@ The rig keeps both populations now, `apply-event-cold` and `apply-event`, and
 gates on the warm one with the cold one recorded beside it, because a reader
 really does meet the cold board once per page load.
 
+### A constant imported across the client boundary is not the constant, 2026-09-02
+
+**`export const LANE_COOKIE = "jobby.lane"` lived in a `"use client"` file. A
+server component importing it got a client reference, so `cookies().get(...)`
+was called with `undefined` and returned nothing.** No throw, no warning, no
+type error: `jar.get(undefined)` is a miss like any other, and a miss is what
+an absent cookie looks like.
+
+What made it hard to see is that **the theme cookie beside it worked
+perfectly**. `THEME_COOKIE` is declared in `_ui/theme.ts`, which is not a client
+module, so it resolved to the string. Two cookies read from the same jar, three
+lines apart, one right and one silently empty. The symptom was a logo that
+ignored the remembered lane while the theme was flawless, which reads as a bug
+in the lane feature and is a bug in an import.
+
+`tsc` cannot catch it: the type is `string` on both sides of the boundary,
+because the boundary is a bundler transform rather than a type-level one. Nor
+would a unit test on either module, since each is correct in isolation. **A
+test that would plausibly have caught it does not obviously exist** -- the only
+thing that found it was reading the rendered href, seeing `/?lane=found` where
+the cookie said `done`, and asking the server directly with a hand-written
+`Cookie:` header. That is worth admitting rather than inventing a guard that
+would not have fired.
+
+The rule is small and absolute: **a value a server component reads must be
+declared in a module that is not `"use client"`.** Constants shared across the
+boundary belong in a plain module both sides import, never in the client file
+that happens to use them most.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

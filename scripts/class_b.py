@@ -49,6 +49,7 @@ _BY_NAME = {
     "roles.json": "roles",
     "providers.json": "providers",
     "meta.json": "meta",
+    "search-config.json": "search",
 }
 
 
@@ -287,8 +288,29 @@ def meta_row(payload):
         "scan_finished_at": text("scanFinished"),
         "blocked": text("blocked"),
         "slots_parked": text("slotsParked"),
-        "search_config": payload.get("searchConfig") or None,
+        # **`search_config` is not here.** `meta.json` carries a `searchConfig`
+        # key and it is null on the real store; the saved search lives in
+        # `search-config.json` and `_mirror_search` owns that column. Two
+        # writers on one column means whichever ran last wins, and this one
+        # would have nulled it on every scan. `mirror_fields` refuses the
+        # overlap rather than trusting either of us to remember.
     }
+
+
+def search_row(payload):
+    """What `board_meta.search_config` holds: the saved search, as saved.
+
+    Stored whole rather than picked apart. It is one document the device owns
+    and the board reads, and `search_config.py` is the only thing that decides
+    its shape; a column per field here would be a second declaration of that
+    shape, kept in step by hand.
+
+    **The board needs it to say what it is showing.** An empty `locations` is
+    Worldwide by the storage contract, and v2 displayed nothing at all, so UK
+    listings leading the page read as a fault rather than as the scope working
+    exactly as saved.
+    """
+    return {"search_config": payload or None}
 
 
 def profile_row(payload):
@@ -514,7 +536,7 @@ def _mirror_meta(conn, account_id, payload):
     """
     row = meta_row(payload)
     columns = list(row)
-    jsonb = {"last_ingest", "search_config"}
+    jsonb = {"last_ingest"}
     with conn.cursor() as cur:
         placeholders = ", ".join(
             f"%s::jsonb" if c in jsonb else "%s" for c in columns)
@@ -527,6 +549,26 @@ def _mirror_meta(conn, account_id, payload):
                       updated_at = now()""",
             [account_id] + [json.dumps(row[c]) if c in jsonb and row[c] is not None
                             else row[c] for c in columns])
+
+
+def _mirror_search(conn, account_id, payload):
+    """`search-config.json` -> `board_meta.search_config`.
+
+    A second writer on the `board_meta` row, disjoint from `_mirror_meta`'s
+    columns: the same shape sessions and roles have on `applications`. The row
+    is created if the scan meta has not been mirrored yet, so neither writer
+    depends on the other having run.
+    """
+    row = search_row(payload)
+    with conn.cursor() as cur:
+        cur.execute(
+            """insert into board_meta (account_id, search_config, updated_at)
+               values (%s, %s::jsonb, now())
+               on conflict (account_id) do update
+                 set search_config = excluded.search_config,
+                     updated_at = now()""",
+            (account_id, json.dumps(row["search_config"])
+             if row["search_config"] is not None else None))
 
 
 def _mirror_profile(conn, account_id, payload):
@@ -575,6 +617,7 @@ _HANDLERS = {
     "roles": _mirror_roles,
     "providers": _mirror_providers,
     "meta": _mirror_meta,
+    "search": _mirror_search,
 }
 
 
@@ -685,7 +728,7 @@ def backfill(conn, account_id, root=None):
     base = Path(root) if root else Path(store.root_dir(None))
     paths = store.paths(base)
     report = {"sessions": 0, "history": 0, "answers": 0, "profile": 0,
-              "roles": 0, "providers": 0, "meta": 0}
+              "roles": 0, "providers": 0, "meta": 0, "search": 0}
 
     sessions = Path(paths["sessions"])
     if sessions.is_dir():
@@ -716,6 +759,12 @@ def backfill(conn, account_id, root=None):
         mirror(conn, account_id, "meta",
                json.loads(meta.read_text(encoding="utf-8")))
         report["meta"] = 1
+
+    saved = base / "search-config.json"
+    if saved.exists():
+        mirror(conn, account_id, "search",
+               json.loads(saved.read_text(encoding="utf-8")))
+        report["search"] = 1
 
     history = Path(paths["history"])
     if history.exists():

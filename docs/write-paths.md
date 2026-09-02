@@ -145,8 +145,20 @@ that failure at all.
 | `store` | `cmd_role_put` | `remember_role` | a role record |
 | `store` | `remember_role` | `write_private` | the shared writer for the three above |
 | `store` | `cmd_answer_put` | `write_private` | answer writes |
+| `search_config` | `save` | `write_private` | the saved search, into `board_meta.search_config` |
 | `store` | `_bank_write` | `write_private` | answer bank writes, including dismiss and restore |
 | `store` | `cmd_profile_replace` | `write_private` | profile writes |
+
+**`search-config.json` is class B, not class C.** `board_meta.search_config`
+holds it. The board has to be able to say what it is showing: an empty
+`locations` is Worldwide by the storage contract, and Found displayed neither
+the scope nor a picker, so a page led by UK listings read as a fault rather
+than as the saved search working exactly as saved.
+
+Two writers share the `board_meta` row and their columns are disjoint:
+`_mirror_meta` owns the scan columns, `_mirror_search` owns `search_config`.
+`mirror_fields._board_meta_columns` refuses an overlap rather than trusting
+either to remember, and it fired the first time this was wired.
 
 **`meta.json` is class B, not class C.** Migration 0008 creates `board_meta`
 for it: the scan's last run, its next run, what is blocked and how many slots
@@ -183,7 +195,6 @@ thought about.
 | `store` | `cmd_resume_remove` | `write_private` | removes an entry from that same unmodelled registry |
 | `store` | `cmd_resume_default` | `write_private` | marks a default in that same unmodelled registry |
 | `store` | `cmd_resume_content_put` | `write_private` | the Profile page's wording; travels in the job bundle, not the board |
-| `search_config` | `save` | `write_private` | saved searches; §3 has `preferences`, which Phase 6 fills |
 | `document_job` | `_save_state` | `write_private` | document-job state; the KV transport owns it and Phase 4 replaces it |
 | `document_job` | `_archive_failure` | `write_private` | archives a failed document job, same transport and same Phase 4 replacement |
 | `seed_companies` | `main` | `save_companies` | a one-off seeding script, not a runtime path |
