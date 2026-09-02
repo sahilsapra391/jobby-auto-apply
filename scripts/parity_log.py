@@ -27,6 +27,11 @@ def summarise(raw, code, at=None):
             "divergences": divergences,
             "transient": len(report.get("transient", [])),
             "mergedFieldDropped": len(report.get("merged_field_dropped", [])),
+            # Both asides are logged, or the log cannot show one accumulating.
+            # `mergedFieldDropped` went 2, 5, 7 and every reading of it came
+            # from this line; pruned losers grow the same way, one per folded
+            # record that later leaves the pool.
+            "prunedLosers": len(report.get("pruned_losers", [])),
             "reread": bool(report.get("reread")),
             "exit": code}
 

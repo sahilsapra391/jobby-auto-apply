@@ -807,5 +807,40 @@ class APrunedLoserIsNotADivergence(pgtest.SchemaCase):
                       "whatever else names it")
 
 
+class TheLoggedSummaryCarriesBothAsides(unittest.TestCase):
+    """The 30-minute log line is the only reading anyone takes of these.
+
+    `mergedFieldDropped` went 2, 5, 7 across three days and every one of those
+    numbers came from this line. Pruned losers accumulate the same way, one per
+    folded record that later leaves the pool, and a bucket the log does not
+    carry is a bucket nobody watches grow.
+    """
+
+    def summary(self, **report):
+        import parity_log
+        base = {"divergences": [], "transient": [], "merged_field_dropped": [],
+                "pruned_losers": [], "reread": False}
+        base.update(report)
+        return parity_log.summarise(json.dumps(base), 0)
+
+    def test_both_asides_are_in_the_line(self):
+        line = self.summary(merged_field_dropped=[1, 2],
+                            pruned_losers=[{"id": "x"}])
+        self.assertEqual(line["mergedFieldDropped"], 2)
+        self.assertEqual(line["prunedLosers"], 1)
+
+    def test_neither_aside_makes_the_run_red(self):
+        line = self.summary(merged_field_dropped=[1], pruned_losers=[{"id": "x"}])
+        self.assertTrue(line["ok"],
+                        "a recorded fact is not a difference between the stores")
+
+    def test_a_divergence_still_does(self):
+        """The control. Without it the two assertions above are satisfied by a
+        summary that calls everything green."""
+        line = self.summary(divergences=[{"kind": "only_in_postgres", "id": "y"}])
+        self.assertFalse(line["ok"])
+        self.assertEqual(line["divergences"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
