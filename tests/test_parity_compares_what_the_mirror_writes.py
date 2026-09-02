@@ -182,15 +182,46 @@ class OneTransformNotTwo(unittest.TestCase):
         self.assertIn("built = score_row(record)", source)
         self.assertIn("employer_rows(records).items()", source)
 
-    def test_the_session_builder_reads_both_fields(self):
-        built = class_b.session_row({"status": " watch ", "phase": " Queued "})
-        self.assertEqual(built, {"status": "watch", "phase": "Queued",
-                                 "blockers": None})
-        self.assertEqual(class_b.session_row({"status": "x"}),
-                         {"status": "x", "phase": None, "blockers": None},
-                         "an absent phase is None, not a missing key: the "
-                         "session file is the authority on its own phase, "
-                         "including when it does not have one")
+    def test_the_session_builder_reads_every_field_it_owns(self):
+        built = class_b.session_row({
+            "status": " watch ", "phase": " Queued ", "fitScore": 89,
+            "coreSkills": ["product-management"], "alignment": "Match 89% ...",
+            "droppedFrom": "Watching", "droppedStage": "not started",
+            "seenOnBoards": 2, "postedDate": "2026-08-19",
+            "pendingFields": [{"question": "code?"}]})
+        self.assertEqual(built["status"], "watch")
+        self.assertEqual(built["phase"], "Queued")
+        self.assertEqual(built["fit_score"], 89)
+        self.assertEqual(built["core_skills"], ["product-management"])
+        self.assertEqual(built["dropped_from"], "Watching")
+        self.assertEqual(built["seen_on_boards"], 2)
+        self.assertEqual(built["posted_at"], "2026-08-19")
+        self.assertEqual(len(built["blockers"]), 1)
+
+    def test_an_absent_field_is_none_not_a_missing_key(self):
+        """The session file is the authority on its own state, including when
+        it says nothing: a missing key has to reach the column as NULL, or a
+        cleared value is kept forever. That is the Harvey phase bug."""
+        built = class_b.session_row({"status": "x"})
+        self.assertEqual(set(built), set(class_b.session_row({})),
+                         "the key set must not depend on what the file has")
+        for name, value in built.items():
+            if name == "status":
+                continue
+            self.assertIsNone(value, f"{name} should be None, got {value!r}")
+
+    def test_the_role_builder_owns_the_name_and_nothing_else(self):
+        built = class_b.role_row({"company": " Hex ", "role": "PM",
+                                  "url": "https://x/1", "region": "US",
+                                  "source": "greenhouse", "ats": "greenhouse",
+                                  "status": "watch"})
+        self.assertEqual(built["company"], "Hex")
+        self.assertNotIn("status", built,
+                         "roles.json is an index of roles seen, not a record "
+                         "of state: passing a status from here once overwrote "
+                         "all 88 real ones with the word 'known'")
+        self.assertEqual(set(built) & set(class_b.session_row({})), set(),
+                         "two writers, disjoint columns, one row")
 
 
 class ValuesAreComparedNotReprs(unittest.TestCase):

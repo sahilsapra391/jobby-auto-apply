@@ -185,6 +185,24 @@ jobs:
           npm ci
           node tools/check_deployed_shape.mjs
 
+      - name: The migrations can rebuild the schema
+        # **`migrate.py status` answers an adjacent question and reads as
+        # coverage.** It compares the migrations *table* against the migrations
+        # *directory*, so it says whether every file has been applied and is
+        # silent about whether applying them produces what is actually there.
+        # Production had 25 drifts across 23 tables against the 17 the
+        # migrations build, and status was green throughout.
+        #
+        # Here this catches a migration that will not apply cleanly, and any
+        # table a test creates outside the migration system. It runs after the
+        # Python tests for that second reason.
+        #
+        # **It does not catch production's drift**, because CI has a container
+        # built from these same migrations. Run it against production before a
+        # deploy; that is the reading that matters and it is not automatable
+        # from here.
+        run: python3 scripts/schema_drift.py --url "$JOBBY_TEST_DATABASE_URL"
+
       - name: Syntax
         run: |
           python3 -m py_compile scripts/*.py deploy/api/page.py \

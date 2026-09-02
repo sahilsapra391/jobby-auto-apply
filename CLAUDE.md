@@ -935,6 +935,23 @@ supplied a status, and a session is the authority on its own phase including
 when it has none, so the coalesce could only ever be wrong. It is also v2's
 stale "Filling the form" pill.
 
+**And `migrate.py status` is the same shape one layer down.** It compares the
+migrations *table* against the migrations *directory*, so it answers "has every
+file been applied" and is silent about whether applying them produces what is
+there. It was green while production carried 25 drifts across 23 live tables
+against the 17 the migrations build: a recorded migration with no file, a
+`board_meta` nobody declared, five `provider_links` columns added outside the
+system, and nine on `applications` holding real data. Three of those were found
+by tripping over them one at a time, which is what made each look isolated.
+`scripts/schema_drift.py` applies every migration into a scratch schema and
+diffs the catalogs, and it is in CI. **That is GATE_PATHS again: a check
+answering an adjacent question and reading as coverage.**
+
+`applied_by` is the same family in miniature. It defaults to `current_user`, and
+every runner on this project connects as `neondb_owner`, so a column that looks
+like attribution carried none: eight migrations, one value, and no way to say
+whose the two unexplained ones were.
+
 `scripts/mirror_fields.py` discovers the field set from the mirror: `postings`
 by calling `posting_row`, everything else by reading its INSERT. Parity's
 expected side is now the mirror's own transform -- `posting_row`, `score_row`,

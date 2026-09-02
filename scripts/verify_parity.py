@@ -381,7 +381,8 @@ def coverage():
         "job_decisions": {"state"},
         "employers": set(mirror_fields.compared()["employers"]),
         "job_scores": set(mirror_fields.compared()["job_scores"]),
-        "applications": set(class_b.session_row({})),
+        "applications": (set(class_b.session_row({}))
+                         | set(class_b.role_row({}))),
         "application_events": set(class_b.history_row({})),
         "answer_bank": set(class_b.answer_row({})),
         "profiles": set(class_b.profile_row({})),
@@ -521,6 +522,25 @@ def class_b_file_state(root=None):
             # compared across seven green runs while `phase` went unchecked.
             sessions[key] = class_b.session_row(payload)
 
+    # **The row has two writers, so the expected row is both.** A session says
+    # what state an application is in; `roles.json` names it, and it names 205
+    # where there are 97 session files. Comparing only the sessions would leave
+    # `company` and `role` unchecked on more than half the table -- which is
+    # how they came to be populated in production by code that is not in this
+    # repository, unmaintained and invisible.
+    roles_path = Path(paths["roles"])
+    if roles_path.exists():
+        index = json.loads(roles_path.read_text(encoding="utf-8"))
+        for key, entry in (index or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            key = (entry.get("applicationId") or key).strip()
+            row = dict(class_b.role_row(entry))
+            if key in sessions:
+                sessions[key] = {**sessions[key], **row}
+            else:
+                sessions[key] = row
+
     events = {}
     history = Path(paths["history"])
     if history.exists():
@@ -554,10 +574,11 @@ def class_b_file_state(root=None):
 
 def class_b_postgres_state(conn, account_id):
     with conn.cursor() as cur:
-        cur.execute("select legacy_id, status, phase from applications "
-                    "where account_id = %s", (account_id,))
-        sessions = {r[0]: {"status": r[1], "phase": r[2]}
-                    for r in cur.fetchall()}
+        columns = sorted(mirror_fields.compared()["applications"])
+        cur.execute(
+            f"select legacy_id, {', '.join(columns)} from applications "
+            f"where account_id = %s", (account_id,))
+        sessions = {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
         cur.execute("select payload->>'eventId', kind, payload, at "
                     "from application_events "
                     "where account_id = %s and payload ? 'eventId'",
@@ -596,7 +617,11 @@ def compare_class_b(files, database):
             # Each side is now a dict of the columns the mirror writes, so the
             # finding names which column disagreed rather than saying the
             # session differs and leaving the reader to guess which of four.
-            for column in sorted(set(mine) | set(yours)):
+            # The file side of a row is whatever wrote it: a session file, a
+            # roles.json entry, or both. A column neither supplied is not a
+            # claim, so it is not a divergence -- an application with no
+            # session file has no `phase` to disagree about.
+            for column in sorted(set(mine)):
                 if same_value(mine.get(column), yours.get(column)):
                     continue
                 findings.append({"kind": "field_mismatch", "id": name,
