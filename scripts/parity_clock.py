@@ -245,6 +245,10 @@ def assess(entries, now=None, gate_change=None):
     # Covered time: the sum of the gaps between consecutive green runs, each
     # capped at MAX_COVERED_GAP. A longer gap contributes its cap and the rest
     # is counted as inconclusive rather than as agreement.
+    # The newest run's own reading, carried out so the caller can show what
+    # the streak is actually made of.
+    newest_coverage = (stamped[-1].get("coverage") or {}) if stamped else {}
+
     covered = 0.0
     inconclusive = 0.0
     gaps = []
@@ -268,6 +272,7 @@ def assess(entries, now=None, gate_change=None):
         "state": "running" if covered < gate_seconds else "gate open",
         "day": int(covered // 86400),
         "required": REQUIRED_DAYS,
+        "coverage": newest_coverage,
         "coveredDays": round(covered / 86400, 2),
         "elapsedDays": round(elapsed / 86400, 2),
         "inconclusiveHours": round(inconclusive / 3600, 2),
@@ -323,6 +328,19 @@ def main(argv=None):
             print(f"  UNPARSEABLE  {result['unparseable']} line(s)")
         print(f"  widest gap   {result['widestGapHours']}h "
               f"from {result['widestGapFrom']}")
+        # **What the newest run looked at, next to what it found.** The gate
+        # is a count of green days, and a green day is only worth what the
+        # checker that produced it compared -- 34 of them once measured twelve
+        # posting fields against a mirror writing thirty. Printed here because
+        # this is the command people already run.
+        cover = result.get("coverage") or {}
+        if cover:
+            print(f"  coverage     {cover.get('compared')} columns compared, "
+                  f"{cover.get('exempt')} exempt with a reason, "
+                  f"{cover.get('unseen')} unseen")
+            for short in cover.get("belowMark") or []:
+                print(f"  BELOW MARK   {short['table']} {short['mark']} -> "
+                      f"{short['now']}; this run does not count")
         print(f"  newest run   {result['newestRunAt']} "
               f"({result['sinceNewestHours']}h ago)")
         if result.get("stale"):

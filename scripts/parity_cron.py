@@ -55,6 +55,24 @@ def main(argv=None):
         code, raw = 1, f"{type(exc).__name__}: {exc}"
 
     line = parity_log.summarise(raw, code)
+
+    # **What this run looked at, recorded beside what it found.** A run that
+    # compares less does not fail, it succeeds faster, so the count is the only
+    # thing that can tell a thorough green from a shallow one. Best-effort and
+    # never fatal: a coverage read that cannot reach the database must not turn
+    # a working parity check into a missing one.
+    try:
+        import parity_coverage
+        import migrate
+        counts, _ = parity_coverage.summary(migrate.connect(announce=False))
+        line["coverage"] = counts
+        line = parity_log.with_coverage(line)
+    except Exception as exc:                        # noqa: BLE001
+        # Kept rather than swallowed: "coverage unknown" and "coverage fine"
+        # are different, and only one of them is good news.
+        line["coverageError"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+        sys.stderr.write(f"parity_cron: coverage unreadable: "
+                         f"{line['coverageError']}\n")
     with log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(line) + "\n")
     print(json.dumps(line))

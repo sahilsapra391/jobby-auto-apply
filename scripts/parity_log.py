@@ -36,6 +36,37 @@ def summarise(raw, code, at=None):
             "exit": code}
 
 
+def with_coverage(entry):
+    """Downgrade a run that looked at less than this device has already seen.
+
+    **A shallow green is the failure this exists for**, and it is not a
+    divergence: on 2026-09-02, 34 runs reported `divergences: 0` while
+    comparing twelve posting fields against a mirror writing thirty, because
+    the timer runs the deployed checker and production was 17 hours behind. All
+    34 were true. None measured what the clock counted them for.
+
+    **Inconclusive rather than red, deliberately.** A deploy lag is an absence
+    of evidence, not evidence of disagreement, and resetting the streak on it
+    would charge three fresh days for somebody being slow to pull. Absent
+    contributes nothing and costs nothing, which is the honest reading.
+
+    A line with no `coverage` key is judged exactly as before. Every entry
+    written before this shipped is one, and inventing readings for them
+    retroactively is the fabricated-audit-trail shape this repository already
+    refuses elsewhere.
+    """
+    short = (entry.get("coverage") or {}).get("belowMark") or []
+    if not short:
+        return entry
+    lost = ", ".join(f"{s['table']} {s['mark']}->{s['now']}" for s in short[:3])
+    entry["ok"] = False
+    entry["inconclusive"] = True
+    entry["reason"] = (f"the checker compared less than this device has seen: "
+                       f"{lost}. Nothing is known to disagree; nothing was "
+                       f"fully checked either.")
+    return entry
+
+
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     raw = open(argv[0], encoding="utf-8").read() if argv else ""
