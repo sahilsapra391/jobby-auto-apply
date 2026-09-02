@@ -799,6 +799,90 @@ refuses a cursor whose type disagrees with its sort; and `done` and `failed`
 are separate states, because they shared a variable under a comment reading
 "Never silent".
 
+### A stopwatch reports whatever it is pointed at, 2026-09-02
+
+**The gate is "p95 click-to-visible under 250 ms across all lanes, on a real
+device over a real network, recorded", and every clause of it turned out to be
+load-bearing.** Building the rig produced three wrong numbers before a right
+one, and none of the three looked wrong.
+
+**A hidden tab does not paint.** Browsers pause `requestAnimationFrame` for a
+backgrounded page and resume it whenever the tab returns, which could be
+minutes, so the double-rAF that approximates "the frame that painted" simply
+never fires. The first run recorded zero samples out of thirty and the drive
+call hung. Recording those frames when they eventually arrive would have been
+worse than the hang: a fabricated number, larger than any real one, failing the
+gate for a reason nobody would look for. `mark` now drops a sample taken while
+`document.hidden` and counts what it dropped.
+
+**Warm-up is not steady state, and pooling them describes neither.** The
+per-iteration series on Found ran 735, 44, 154, 248, 115, 228, 238, 243, 244,
+250, 141, 131, 133 and then a flat 33 for the remaining twenty-seven. Reported
+as one number that is a p95 of 244 and a lane over budget. Reported as two it
+is a cold board around 250 and a warm one at 33. Both are real and a reader
+meets both, so the warm-up is relabelled `apply-event-cold` rather than
+discarded, recorded and not gated on.
+
+**And the first reading sent the fix in the wrong direction.** Found at p95 244
+against a six-row lane at 34 looked exactly like fifty cards re-rendering for
+one changed row, which is a familiar and plausible React fault with a familiar
+fix. `memo` on every row component moved it to 296, which is noise. What
+settled it was printing the series instead of another summary statistic. **A
+p95 is a summary, and a summary of the wrong thing is still a summary**: the
+shape was in the data the whole time and no percentile could show it.
+
+The consequence for anything else measured here: **print the series before
+believing the statistic**, and separate the phases before pooling them. Two
+lines of output would have saved a build, a measurement and a revert.
+
+Three more properties the rig holds, each verified by breaking it. The
+percentile is written twice, in TypeScript for the browser and Python for the
+recorder, and comparing them over all 19,800 (p, n) pairs below 200 samples
+found 27 disagreements: `(p / 100) * n` makes `0.07 * 100` into
+7.000000000000001 and `Math.ceil` takes it to 8. Multiply before dividing on
+both sides. Lanes are never pooled, because "across all lanes" is a
+requirement on the worst of them: a quiet lane contributing under five percent
+of the samples can be entirely over budget and leave the pooled number
+untouched, and the quiet lanes are exactly the ones a reader clicks least. And
+a run missing a kind is `incomplete` with the missing kinds named, never a
+pass, which is the same rule `answer_record.py` applies to a salvaged question.
+
+**A literal NUL byte reached a source file and nothing noticed for an hour.**
+`measure.ts` grouped its samples on one, between the kind and the lane. Both
+halves used the same byte so the code was correct and every test passed; it
+surfaced only because `grep` refused the file as binary in the middle of a
+mutation run. An editor draws nothing and a review sees nothing. It is written
+as `\u0000` now, and `tests/test_gate_latency.py` walks the v2 source tree for
+any control character outside tab, newline and carriage return.
+
+### v2 asked for a route it never had, on every card, 2026-09-02
+
+**`/api/company-logo` came across in the markup and not in the code.** Fifty
+Found cards requested it per page load, every one 404ed, the CSS took the
+failed `<img>` to `opacity: 0`, and the monogram underneath showed. It looked
+like a design choice. Measured on the Python board the same day, 891 of 906
+rendered records resolve to a real logo, so v2 was drawing a monogram for every
+company where the board it replaces draws one for about one in six.
+
+It was found by the latency rig, not by a test, and only because the rig needed
+a database with postings in it: CI's container has none, so the board emits no
+logo URLs there and the deployed-shape crawl had nothing to fail on. **An empty
+fixture hides a whole class of missing route**, which is the same excuse that
+let a test suite write the real store for three days.
+
+The route is ported rather than redesigned, and its allowlist is now generated
+from `company_logos.TRUSTED_SOURCE_HOSTS`. There were already two hand-written
+copies; a third would have been the one that drifts, and drift in that set is
+an open redirect nobody is watching. `tests/test_company_logo_route.test.mjs`
+compares all three, including `deploy/api/board.js`'s.
+
+**And the crawl could not tell a missing route from a missing logo.** Both
+answer 404. That is the `.gitignore` finding's shape exactly, one directory
+over: a route git ignores and a route nobody wrote look identical from CI. The
+crawl now reads the body, because this route's 404 says "No company logo." and
+Next's router 404 is HTML, and it was verified by deleting the route and
+watching the check quote the HTML back.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

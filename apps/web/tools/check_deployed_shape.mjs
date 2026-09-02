@@ -456,11 +456,51 @@ for (const route of ROUTES) {
 }
 
 // Every referenced asset actually answers, from the isolated tree.
-for (const url of [...seen].sort()) {
+//
+// **A route that says "not found" and a route that is not there both answer
+// 404**, and only one of them is a fault. The board asks
+// `/api/company-logo?domain=` for every card, and a favicon endpoint answers
+// nothing for a domain it does not know, which is the designed outcome: a
+// wrong guess costs a monogram rather than a stranger's mark. So a 404 from
+// that route is read by its body, which is the route's own words, and a 404
+// from Next's router is HTML. That distinction is the same one the
+// `.gitignore` finding turned on: a route git ignores and a route nobody
+// wrote look identical from the outside.
+//
+// One probe covers it, not fifty. Fifty identical-shaped misses is a slow
+// crawl asserting one thing.
+const logoUrls = [...seen].filter((u) => u.startsWith("/api/company-logo"));
+const assets = [...seen].filter((u) => !u.startsWith("/api/company-logo")).sort();
+
+for (const url of assets) {
   const res = await fetch(`http://127.0.0.1:${PORT}${url}`,
                           { redirect: "follow", headers: { authorization: CREDENTIALS } });
   if (!res.ok) {
     fail(`${url} answered ${res.status} from the traced bundle`);
+  }
+}
+
+if (logoUrls.length) {
+  const url = logoUrls.sort()[0];
+  const res = await fetch(`http://127.0.0.1:${PORT}${url}`,
+                          { redirect: "follow", headers: { authorization: CREDENTIALS } });
+  const body = res.ok ? "" : await res.text();
+  if (res.ok) {
+    const type = res.headers.get("content-type") || "";
+    if (!type.startsWith("image/")) {
+      fail(`${url} answered 200 with content-type ${type}. The logo proxy may ` +
+           `only return an image; anything else is a page it fetched and did ` +
+           `not check.`);
+    }
+  } else if (res.status === 404 && body.includes("No company logo")) {
+    note(`the logo proxy answered its own 404 for ${logoUrls.length} card` +
+         `${logoUrls.length === 1 ? "" : "s"}, which is a miss and not a ` +
+         `missing route`);
+  } else {
+    fail(`${url} answered ${res.status} and the body was not the route's own ` +
+         `("${body.slice(0, 60).replace(/\s+/g, " ")}"). The route is absent ` +
+         `from the traced bundle, which is what happened when the Soft ` +
+         `Premium port carried the markup and left the handler behind.`);
   }
 }
 

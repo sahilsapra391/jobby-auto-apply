@@ -138,7 +138,7 @@ Kill the socket mid-session and assert the client resyncs rather than diverging.
 Publish 200 events while disconnected and assert either a full replay or an
 explicit resync, never a gap.
 
-## The gate
+## The gate (rig built, the run still owed)
 
 > Measured p95 click-to-visible **under 250 ms** across all lanes, on a real
 > device over a real network, recorded.
@@ -158,6 +158,45 @@ A third test worth adding, from Phase 1's experience: assert the Found lane puts
 an undated posting last, against a seeded database, **through the real API
 rather than the SQL**. The SQL is pinned already; the lane is what the reader
 sees, and the two can drift.
+
+### What the rig is, and what it still owes
+
+`apps/web/app/_ui/measure.ts` starts the clock in the click handler and stops
+it at the frame that paints the change, behind `?measure`, and
+`scripts/gate_latency.py record` turns a run into `docs/gate-latency.md`.
+`window.__jobbyMeasure.drive()` runs the real apply path, which writes nothing
+and is therefore repeatable.
+
+**A run that has not measured the write path has not measured the gate**, and
+the recorder says `incomplete` and names what is missing rather than reporting
+the half it could take. Today that is `write-optimistic` and `write-ack`, which
+need `live_board` on, and the `dropped` lane, which is still the placeholder
+dialog reading "Rows arrive with Postgres in the next piece."
+
+Three things the rig learned by being wrong:
+
+**A hidden tab does not paint, so there is nothing to time.** Browsers pause
+`requestAnimationFrame` for a backgrounded page and resume it whenever the tab
+returns, which could be minutes. The first run recorded nothing at all and hung
+waiting for a frame. It now refuses rather than inventing a number that would
+fail the gate for a reason nobody would find.
+
+**Warm-up is not steady state.** The per-iteration series on Found ran 735, 44,
+154, 248, 115, 228, 238, 243, 244, 250, 141, 131, 133 and then a flat 33 for
+the remaining twenty-seven. Pooled that is a p95 of 244 which describes
+neither. The warm-up is kept and relabelled `apply-event-cold`, recorded
+because a reader meets it once per page and not gated on because the gate asks
+whether the board feels live in use.
+
+**The first reading sent the fix in the wrong direction.** Found at p95 244
+against a six-row lane at 34 looked exactly like fifty cards re-rendering for
+one changed row. `memo` on every row component moved it to 296, which is noise.
+The series is what settled it, and the memo was reverted.
+
+The floor, taken on a localhost Next standalone against a localhost Postgres
+with 300 seeded postings: warm `apply-event` is 34 to 99 ms p95 across the five
+lanes, `reload` 35 to 38, `load-more` 44. Neither Vercel's function nor Neon is
+in those numbers, so they bound the real one from below and nothing more.
 
 ## What this half must not do
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mutations, type Outcome } from "./optimistic";
+import { mark } from "./measure";
 
 /**
  * A click that changes something, drawn before the server agrees and put back
@@ -34,7 +35,7 @@ export type WriteState = {
   clear: () => void;
 };
 
-export function useWrites(): WriteState {
+export function useWrites(lane: string): WriteState {
   const ledger = useRef<Mutations | null>(null);
   if (!ledger.current) ledger.current = new Mutations();
   const [refused, setRefused] = useState<string | null>(null);
@@ -55,7 +56,15 @@ export function useWrites(): WriteState {
   const act = useCallback(async (change: {
     subject: string; body: unknown; undo: () => void;
   }) => {
+    // **The optimistic draw is what the gate measures**, not the round trip.
+    // `begin` has already run the caller's own change by the time this stops,
+    // so the sample is click to the frame showing it, which is the number the
+    // reader experiences. The server's answer arrives later and is measured
+    // separately as `write-ack`.
+    const drawn = mark("write-optimistic", lane);
+    const acked = mark("write-ack", lane);
     const { key, body } = ledger.current!.begin(change);
+    drawn();
     let outcome: Outcome;
     try {
       const res = await fetch("/api/applications", {
@@ -86,6 +95,7 @@ export function useWrites(): WriteState {
       };
       console.error("write failed", err);
     }
+    acked();
     let settled;
     try {
       settled = ledger.current!.settle(key, outcome);
@@ -101,7 +111,7 @@ export function useWrites(): WriteState {
       window.dispatchEvent(
         new CustomEvent("jobby:refetch", { detail: { subject: change.subject } }));
     }
-  }, []);
+  }, [lane]);
 
   // **Stable identities, or the socket reopens on every render.** `useLive`
   // takes `absorbs` in a dependency array; a fresh closure each render makes

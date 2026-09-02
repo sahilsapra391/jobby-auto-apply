@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Lane } from "../lanes.generated";
 import {
   PostingRow, WatchRow, DoneRow, DroppedRow, ActCard, FlightCard,
@@ -8,6 +8,7 @@ import {
 import { ActionsContext, type Actions } from "./actions";
 import { useLive } from "./useLive";
 import { useWrites } from "./useWrite";
+import { drive, forget, mark, measuring, summarise, taken } from "./measure";
 
 type Row = Record<string, unknown> & { id: string };
 type Cursor = { at: string | null; id: string } | null;
@@ -19,8 +20,20 @@ const WINDOW = 60;
 const OVERSCAN = 12;
 const ROW_PX = 132;
 
-/** Which component draws one row of each lane. */
-const ROWS: Record<Lane, (row: Row) => React.ReactElement> = {
+/**
+ * Which component draws one row of each lane.
+ *
+ * **Not memoised, and that is a measurement rather than an oversight.** The
+ * rig first read Found at p95 244 ms against a six-row lane's 34 ms, which
+ * looked exactly like fifty cards re-rendering for one changed row. `memo` on
+ * every row component moved it to 296 ms, which is noise. The per-iteration
+ * series then showed why: both lanes start high and settle to a flat 33 ms,
+ * Found by its fourteenth call and Watching by its twenty-second. It was page
+ * warm-up being measured as steady state, and the row count had nothing to do
+ * with it. Rendering as elements would be the prerequisite for memoising, so
+ * it is left as it is until something measured asks for it.
+ */
+const ROWS: Record<Lane, React.ComponentType<Row>> = {
   found: PostingRow, watch: WatchRow, done: DoneRow,
   dropped: DroppedRow, act: ActCard, flight: FlightCard,
 };
@@ -98,7 +111,7 @@ export function LaneList({
    */
   writesEnabled?: boolean;
 }) {
-  const render = ROWS[shape];
+  const Row = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
   const [cursor, setCursor] = useState<Cursor>(initialCursor);
   const [done, setDone] = useState(initiallyDone);
@@ -111,8 +124,15 @@ export function LaneList({
   const [first, setFirst] = useState(0);
   const holder = useRef<HTMLDivElement>(null);
 
-  const writes = useWrites();
-  const live = useLive({ lane, query, setRows, absorbs: writes.absorbs });
+  const writes = useWrites(lane);
+  // A ref that trails the state, so `useLive` can read the rows without
+  // depending on them and without deciding anything inside an updater.
+  const held = useRef(rows);
+  held.current = rows;
+  const readRows = useCallback(() => held.current, []);
+  const live = useLive({
+    lane, query, rows: readRows, setRows, absorbs: writes.absorbs,
+  });
 
   /**
    * Take a row out now, and hand back how to put it back.
@@ -140,6 +160,23 @@ export function LaneList({
       });
     };
   }, []);
+
+  // **The gate's stopwatch, reachable from the console on the deployed
+  // board.** Behind `?measure`, because instrumentation nobody asked for is
+  // overhead on every reader. `drive` runs the real apply path over the real
+  // network and writes nothing, so it is repeatable.
+  useEffect(() => {
+    if (!measuring()) return;
+    window.__jobbyMeasure = {
+      samples: taken,
+      summary: () => summarise(),
+      forget,
+      drive: ({ n = 20 } = {}) =>
+        drive({ lane, n, ids: rows.slice(0, 10).map((r) => r.id), apply: live.ask }),
+      reload: live.reload,
+    };
+    return () => { delete window.__jobbyMeasure; };
+  }, [lane, rows, live.ask, live.reload]);
 
   const actions: Actions = useMemo(() => ({
     enabled: writesEnabled,
@@ -170,6 +207,7 @@ export function LaneList({
   const more = useCallback(async () => {
     if (loading || done) return;
     setLoading(true);
+    const stop = mark("load-more", lane);
     try {
       // The sort and the filters travel with the cursor: the next page is a
       // keyset on whichever column this lane is ordered by, and page two of a
@@ -187,6 +225,7 @@ export function LaneList({
       setCursor(body.next);
       setDone(body.done);
       setFailed(null);
+      stop();
     } catch (err) {
       console.error("could not load more of this lane", err);
       // Not `done`. An exhausted lane and a failed fetch look identical from
@@ -195,7 +234,7 @@ export function LaneList({
     } finally {
       setLoading(false);
     }
-  }, [query, cursor, done, loading]);
+  }, [query, lane, cursor, done, loading]);
 
   const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
   const slice = rows.slice(first, last);
@@ -214,7 +253,7 @@ export function LaneList({
       <thead><tr>{table.head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
       <tbody>
         <tr aria-hidden="true" style={{ height: above }}><td colSpan={table.head.length} /></tr>
-        {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+        {slice.map((row) => <Row key={row.id} {...row} />)}
         <tr aria-hidden="true" style={{ height: below }}><td colSpan={table.head.length} /></tr>
       </tbody>
     </table></div></div>
@@ -233,14 +272,14 @@ export function LaneList({
         // itself builds here.
         <div className="jb-grid">
           <div className="jb-col">
-            {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+            {slice.map((row) => <Row key={row.id} {...row} />)}
           </div>
         </div>
       ) : (
         // The card lanes put their articles straight into `.grid`, which is
         // what the board does for Needs you and In flight.
         <div className="grid">
-          {slice.map((row) => <Fragment key={row.id}>{render(row)}</Fragment>)}
+          {slice.map((row) => <Row key={row.id} {...row} />)}
         </div>
       )}
       <div style={{ height: below }} aria-hidden="true" />
