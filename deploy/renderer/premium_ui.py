@@ -96,8 +96,23 @@ CSS = r"""
   .jb-morph { width:139px; height:153px; margin:0; }
   .jb-mascot2 { height:111px; }
 
-  .segwrap { position:sticky; top:.7rem; margin:0 auto 1.6rem; z-index:20;
-    width:100%; max-width:1360px; }
+  /* The tab strip is sticky, and a sticky bar with no ground under it is a
+     row of cards sliding through the gap above it and past both its sides.
+     Measured on the board itself: at `top:.7rem` a `.jb-card` sits 4px above
+     the bar, and the strip is 1360 wide inside a 1459 wrap over a lane that
+     breaks out to 1800, so content passes either side of it as well.
+
+     `top:0` with the old offset moved into padding keeps the bar exactly
+     where it looked before and gives it an opaque band to sit in. The band
+     has to be wider than the strip: the spread shadow paints one out to the
+     viewport in both directions and `clip-path` trims it back to this
+     element's own top and bottom, so it reads as a full-width ground rather
+     than a shadow. It is static -- nothing animates it -- so the layer it
+     promotes is composited once. */
+  .segwrap { position:sticky; top:0; margin:0 auto 1.6rem; z-index:20;
+    width:100%; max-width:1360px; padding:.7rem 0;
+    background:var(--bg); box-shadow:0 0 0 100vmax var(--bg);
+    clip-path:inset(0 -100vmax); }
   .seg { width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr));
     padding:0; gap:0; overflow:visible; border:1px solid var(--hair);
     border-radius:var(--radius); background:var(--card); box-shadow:var(--sh); }

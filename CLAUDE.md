@@ -959,6 +959,46 @@ expected side is now the mirror's own transform -- `posting_row`, `score_row`,
 so a column added to the writer is compared without anybody adding it twice.
 Exemptions carry a reason each and a test asserts they do.
 
+#### Why the module that derives one side kept a list for the other
+
+**`mirror_fields` was written to end the declared-twice class and had an
+instance of it inside itself.** It derived what the mirror *writes*, and
+`class_b_postgres_state` next door hand-wrote the columns to *read back*. The
+two lists drifted, and the symptom was 355 rows reported divergent with
+`postgres=None` on columns Postgres was holding perfectly well. Fifth instance
+of the class in this file, and the second inside the module built to end it.
+
+The question worth sitting with is not how the list got out of date. It is why
+anybody wrote a list there at all, in the one module whose entire premise is
+that lists of fields go stale. Three things made it invisible, and none of them
+is carelessness:
+
+**The two sides did not look like the same fact.** "What the mirror writes" is
+plainly a property of the writer, so deriving it is the obvious move. "Which
+columns to select" reads as a query detail, a local decision about a SELECT,
+and its being the same field set is a coincidence you have to notice rather
+than a shape you can see. The duplication is only visible from outside both.
+
+**The derivation went where the duplication was already painful.** There were
+two writers disagreeing, that was the reported bug, and deriving the write side
+fixed it. Nothing about fixing a live fault prompts you to audit the module you
+are fixing it in for the same fault in a different direction. The fix's success
+is what closes the search.
+
+**A read-back list fails silently by construction.** A missing column in a
+write is a missing value someone eventually sees. A missing column in the
+comparison's read is a `None`, and `None` compares unequal to a real value, so
+the check does not go quiet -- it goes *loud*, in the safe-looking direction,
+and 355 false positives read as "parity is doing its job" rather than "parity
+is broken". Compare the write-path counter, which read 4 of 27 and looked
+plausible. Both numbers were wrong and neither was suspicious.
+
+So the rule is narrower than "derive everything", which nobody can act on:
+**when a module derives one side of a comparison, ask what the other side is
+made of before trusting the comparison.** A derived expectation checked against
+a hand-written observation is half-derived, and the half that is written down
+decides what the check can see.
+
 **Widening a comparison is where false positives come from, and two arrived.**
 22,001 findings on `job_scores.config_version`, which is `text` in Postgres and
 an int in the pool: 23 against '23'. And 19 on `employers.domain`, which the

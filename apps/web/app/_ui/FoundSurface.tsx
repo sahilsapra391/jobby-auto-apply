@@ -1,6 +1,7 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
+import { READ_ONLY } from "./actions";
 
 /** Eastern, like the board: the reader is in Charlotte and so is the sweep. */
 const clock = (iso: string | null) => {
@@ -103,7 +104,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope }: 
   const terms = (q ?? "").split(/\s+/).filter(Boolean);
   const filtered = !!(q || within || direct);
   return (
-    <>
+    // **`.jb-filters` is the surface, and it was missing.** The board wraps
+    // this whole block -- the row, the keyword chips and Advanced search -- in
+    // one card: `background:var(--card)`, the shared 1px hair border and the
+    // shared shadow. v2 emitted the three as siblings of the page, so the
+    // controls floated on the page ground with no card under them, which is
+    // the one measured background difference between the two boards on Found.
+    <div className="jb-filters">
       {/* **A plain GET form, no client JavaScript.** The board filters an
           embedded payload in the browser; v2 pages from Postgres, so a filter
           is a predicate on a query and the honest way to carry one is the URL.
@@ -207,6 +214,33 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope }: 
           </div>
         </div>
       </details>
-    </>
+    </div>
+  );
+}
+
+/**
+ * Paste a posting the sweep did not find.
+ *
+ * The board's `found_lane.add_link_card()`, structure for structure, sitting
+ * where it sits there: after the lane, not inside the filter card.
+ *
+ * **The control is a write, so it renders disabled carrying its reason.**
+ * Adding a link enqueues a sweep, which is exactly the class `live_board`
+ * gates. Absent, the reader would think the board cannot do it; dark, they can
+ * see what is coming and why it is not here yet.
+ */
+export function AddLink({ writesEnabled }: { writesEnabled: boolean }) {
+  return (
+    <div className="jb-addlink">
+      <h4>Found something yourself?</h4>
+      <p>Paste a posting and the next sweep starts there.</p>
+      <div className="jb-row">
+        <input type="url" placeholder="https://…" aria-label="Posting link"
+               disabled={!writesEnabled}
+               title={writesEnabled ? undefined : READ_ONLY} />
+        <button className="jb-btn" type="button" disabled={!writesEnabled}
+                title={writesEnabled ? undefined : READ_ONLY}>Add</button>
+      </div>
+    </div>
   );
 }

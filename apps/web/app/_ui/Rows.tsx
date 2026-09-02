@@ -104,12 +104,8 @@ function isoDay(value: unknown): string | null {
 }
 
 function ago(posted: unknown) {
-  const day = isoDay(posted);
-  if (!day) return null;
-  const days = Math.round(
-    (Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z")
-      - Date.parse(day + "T00:00:00Z")) / 86400000);
-  if (Number.isNaN(days)) return null;
+  const days = daysOld(posted);
+  if (days === null) return null;
   return "posted " + (days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`);
 }
 
@@ -117,6 +113,58 @@ function years(row: Row) {
   const lo = row.years_min as number | null, hi = row.years_max as number | null;
   if (lo == null) return null;
   return hi != null && hi !== lo ? `${lo}–${hi} years` : `${lo}+ years`;
+}
+
+/** How many days ago, or null when there is no date to count from. */
+function daysOld(posted: unknown): number | null {
+  const on = isoDay(posted);
+  if (!on) return null;
+  const days = Math.round(
+    (Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z")
+      - Date.parse(on + "T00:00:00Z")) / 86400000);
+  return Number.isNaN(days) ? null : days;
+}
+
+/**
+ * The Watching table's date cell, which is `dashboard.py`'s `posted_cell`.
+ *
+ * **Three days is fresh and it is green.** `.posted.fresh` has been in the
+ * stylesheet the whole time -- `color:var(--green); font-weight:590` -- and
+ * nothing in v2 ever put the class on, so the freshest role in the lane looked
+ * exactly like the oldest. The threshold is the board's; its `data-fresh`
+ * filter uses seven, and those are deliberately different numbers there too.
+ *
+ * **The date alone, which is what the board actually renders here.** Its
+ * `posted_cell` puts a second line under the date only when the sweep left a
+ * free-text note ("~23 hours", "22 days (released)"), and v2 does not mirror
+ * that field, so all 18 rows on the board show the bare date. A derived
+ * "posted 15 days ago" was tried and is worse than not having it twice over:
+ * it repeats the column heading, and it is long enough to force the cell to
+ * wrap, which broke the ISO date across two lines.
+ */
+function PostedCell({ posted }: { posted: unknown }) {
+  const on = isoDay(posted);
+  if (!on) return <Muted>unknown</Muted>;
+  const days = daysOld(posted);
+  const fresh = days !== null && days <= 3;
+  return <span className={fresh ? "posted fresh" : "posted"}>{on}</span>;
+}
+
+/**
+ * The experience cell, which is `dashboard.py`'s `years_cell`.
+ *
+ * **Above five years is worth seeing at a glance**, which is what `.yrs.over`
+ * is for and what nothing was setting. The board reads `yearsMin` from the
+ * session; v2 reads the posting's own `years_min`, which is the fuller of the
+ * two -- measured 2026-09-02, CoreWeave and Turing both carry `5+ years` on
+ * the posting and nothing at all on the session, so the board says "not
+ * stated" for two roles whose descriptions state it.
+ */
+function YearsCell({ row }: { row: Row }) {
+  const text = years(row);
+  if (!text) return <Muted>not stated</Muted>;
+  const lo = row.years_min as number | null;
+  return <span className={lo != null && lo > 5 ? "yrs over" : "yrs"}>{text}</span>;
 }
 
 /** The When column. Same normaliser, same reason. */
@@ -282,8 +330,8 @@ export function WatchRow(row: Row) {
   return (
     <tr data-id={row.id}>
       <td><NameCell row={row} /></td>
-      <td className="when">{day(row.posted_at) || <Muted>unknown</Muted>}</td>
-      <td>{years(row) ?? <Muted>not stated</Muted>}</td>
+      <td className="when"><PostedCell posted={row.posted_at} /></td>
+      <td><YearsCell row={row} /></td>
       <td className="loc">{s(row.location_raw) ?? ""}</td>
       <td className="skills">{(() => {
         const skills = Array.isArray(row.core_skills)
@@ -347,8 +395,16 @@ export function DoneRow(row: Row) {
         const said = s(p.confirmation);
         // The employer's own words, which is what makes this proof rather
         // than a status. Truncated in the cell and whole in the title.
-        return said ? <span className="chip ok" title={said}>confirmed</span>
-                    : <Muted>not recorded</Muted>;
+        // `.chip.ready` is the green one and is what `proof_cell` uses;
+        // `.chip.ok` is not a class the stylesheet defines, so this drew as a
+        // plain grey chip. `unverified` is the board's `.chip.hold`, and it is
+        // a chip rather than muted text because "no confirmation was recorded"
+        // is a finding about the application, not an empty cell.
+        return said ? <span className="chip ready" title={said}>confirmed</span>
+                    : <span className="chip hold"
+                            title="No confirmation was recorded for this application">
+                        unverified
+                      </span>;
       })()}</td>
       <td><DocLink label="Resume"
             value={(row.completed_payload as Record<string, unknown> | null)
@@ -377,8 +433,22 @@ export function DroppedRow(row: Row) {
       <td><NameCell row={row} /></td>
       <td><span className="chip lane">
         {s(row.dropped_from) ?? s(row.status) ?? ""}</span></td>
-      <td className="note-cell">{s(row.dropped_stage) ?? <Muted>not recorded</Muted>}</td>
-      <td className="when">{day(row.updated_at)}</td>
+      {/* The stage, and under it the reason when one was given -- which is
+          how the board draws this cell. Only 2 of 58 dropped roles carry a
+          reason, and those two are the ones worth being able to look up. */}
+      <td className="note-cell">
+        {s(row.dropped_stage) ?? <Muted>not recorded</Muted>}
+        {s(row.dropped_reason) ? (
+          // The board puts a `<br>` here. Without it the two run together as
+          // "not startedposting closed by the employer".
+          <><br /><span className="muted">{s(row.dropped_reason)}</span></>
+        ) : null}
+      </td>
+      {/* **`dropped_at`, not `updated_at`.** The mirror stamps `updated_at`
+          `now()` on every pass, so this column read as today on all 58 rows
+          whatever the real date was. Migration 0015 carries the store's own
+          `droppedAt`, which it has for every one of them. */}
+      <td className="when">{day(row.dropped_at) || <Muted>not recorded</Muted>}</td>
       <td>
         <div className="rowacts-inline">
           <Act className="btn ghost undrop" subject={row.id} rowId={row.id}
@@ -584,9 +654,16 @@ function DocLink({ value, label }: { value: unknown; label: string }) {
   // resolves by filename through `jobby:doc-index`, so the basename is what it
   // wants; a path would 404 against an index keyed on names.
   const file = name.split("/").pop()!;
+  // **"PDF", and the class the board gives it.** `doc_cell` labels every one
+  // of these `PDF` under a column already headed Resume or Cover letter, and
+  // renders it `.go`, which is what makes it the blue arrow link rather than a
+  // default underlined anchor. The `label` is the accessible name instead, so
+  // the two links in a row are still told apart by a screen reader.
   return (
-    <a href={`/doc/${encodeURIComponent(file)}`} target="_blank"
-       rel="noopener" title={name}>{label} &#8599;</a>
+    <a className="go" href={`/doc/${encodeURIComponent(file)}`} target="_blank"
+       rel="noopener" title={name} aria-label={`${label}: ${file}`}>
+      PDF &#8599;
+    </a>
   );
 }
 

@@ -172,7 +172,17 @@ POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
 #: name -- either company and role on `applications`, or the posting link of
 #: section 5 -- the lanes show the legacy id, and that is the honest answer
 #: rather than a join to a table on its way out.
-APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
+#: The application's own completion time, named once.
+#:
+#: **The lane orders by it and the row displays it, so it has to be one
+#: expression.** Written twice, an ordering that drifts from the date on screen
+#: sorts a table by a column the reader cannot see, which is indistinguishable
+#: from a table that is not sorted.
+COMPLETED_AT = """(select h.at from application_events h
+               where h.application_id = a.id and h.kind = 'completed'
+               order by h.at desc limit 1)"""
+
+APPLICATION_COLUMNS = f"""a.id, a.legacy_id, a.status, a.phase, a.updated_at,
              a.created_at, a.posting_id,
              a.posting_id is not null as linked,
              coalesce(p.title, a.role) as role,
@@ -185,9 +195,8 @@ APPLICATION_COLUMNS = """a.id, a.legacy_id, a.status, a.phase, a.updated_at,
              p.logo_src, p.logo_domain, p.logo_alt,
              a.blockers, a.core_skills, a.fit_score, a.alignment,
              a.dropped_from, a.dropped_stage, a.seen_on_boards, a.ats,
-             (select h.at from application_events h
-               where h.application_id = a.id and h.kind = 'completed'
-               order by h.at desc limit 1) as completed_at,
+             a.dropped_at, a.dropped_reason,
+             {COMPLETED_AT} as completed_at,
              (select h.payload from application_events h
                where h.application_id = a.id and h.kind = 'completed'
                order by h.at desc limit 1) as completed_payload"""
@@ -257,6 +266,69 @@ SORTS = {
     "score": ("s.total", "int"),
 }
 
+#: How a lane of applications is ordered, and the row key its cursor walks.
+#:
+#: **Needs you leads with the card closest to done, which is the board's rule
+#: and not a new one.** `dashboard.py:645` sorts that bucket by
+#: `len(pendingFields)` ascending: one blocker away is nearly finished, three
+#: is an afternoon. v2 ordered every application lane by `updated_at`, which
+#: the mirror stamps `now()` on every pass -- measured 2026-09-02, all 21 rows
+#: carried the same 17:18 backfill time, so the order was decided entirely by
+#: the `a.id desc` tie-breaker and meant nothing.
+#:
+#: **The rank is negated so one keyset serves every lane.** `keyset` and
+#: `order_by` are written once, highest-first, and that is deliberate: their
+#: own docstring records that a second copy for the application lanes hid an
+#: unreachable null arm from every test. Ascending by blocker count is
+#: descending by its negation, which costs one expression and no second
+#: implementation.
+#:
+#: The expression is selected as `blocker_rank` as well as ordered on, because
+#: a cursor can only carry a value the row actually returned.
+BLOCKER_RANK = "(0 - coalesce(jsonb_array_length(a.blockers), 0))"
+
+APPLICATION_ORDER = {
+    "act": (BLOCKER_RANK, "blocker_rank", "int"),
+    #: **Watching is ordered by when the role was posted, newest first.** That
+    #: is `dashboard.py:951`, which sorts the bucket on the derived posting
+    #: date and puts undated roles last rather than letting them pretend to be
+    #: fresh -- `nulls last` in `order_by` is the same statement. The lane's own
+    #: hint has said "Newest first" the whole time while the SQL ordered by
+    #: `updated_at`, which the mirror stamps `now()`; the hint was right and the
+    #: query was not.
+    "watch": ("coalesce(p.posted_at, a.posted_at)", "posted_at", "timestamptz"),
+    #: **Dropped is ordered by when it was dropped** (`dashboard.py:652`), not
+    #: by when the mirror last wrote the row. Migration 0015 is what made that
+    #: possible; before it the column did not exist and all 58 rows carried the
+    #: backfill time.
+    "dropped": ("a.dropped_at", "dropped_at", "timestamptz"),
+    #: **Submitted is ordered by the completion** (`dashboard.py:861`, sorting
+    #: history on `at`). It is the same subselect the row already carries, so
+    #: the ordering and the date the reader sees are one value; `updated_at`
+    #: differs from it on every one of the 104 submitted applications, by three
+    #: days to two weeks.
+    "done": (COMPLETED_AT, "completed_at", "timestamptz"),
+}
+
+#: What every other application lane uses: most recently touched first.
+DEFAULT_ORDER = ("a.updated_at", "updated_at", "timestamptz")
+
+#: What the API route has to check an arriving cursor against.
+#:
+#: **The check belongs to the ordering, not to the sort's name.** `/api/lane`
+#: asked "is the sort `score`?" to decide whether a cursor should be a number,
+#: which was true while `score` was the only numeric ordering and became false
+#: the moment Needs you began walking a blocker rank under the sort called
+#: `new`. A cursor cut from one ordering and fed to another does not error
+#: usefully: `'-1'::timestamptz` raises, the client reads the failure as
+#: exhaustion, and the lane draws "that is all of them" over the rest.
+CURSOR_TYPES = {"timestamptz": "date", "int": "number"}
+
+
+def application_order(lane):
+    """The (column, cursor key, cast) an application lane is ordered by."""
+    return APPLICATION_ORDER.get(lane, DEFAULT_ORDER)
+
 #: The board's own wording for them, from `found_lane.SORT_OPTIONS`.
 SORT_LABELS = {"new": "Newest", "score": "Match %"}
 
@@ -312,15 +384,19 @@ select {POSTING_COLUMNS}
  {order_by(column, "p")}
  limit %(limit)s
 """.strip()
+    column, key, cast = application_order(lane)
+    # Selected under the name its cursor uses, so `page()` can read the value
+    # it has to send back without knowing how the ordering is spelled.
+    extra = f",\n             {column} as {key}" if column != DEFAULT_ORDER[0] else ""
     return f"""
-select {APPLICATION_COLUMNS}
+select {APPLICATION_COLUMNS}{extra}
   from applications a
   left join postings p on p.id = a.posting_id
   left join employers e on e.id = p.employer_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
-   and {keyset('a.updated_at')}{APPLICATION_SEARCH}
- {order_by('a.updated_at')}
+   and {keyset(column, cast, "a")}{APPLICATION_SEARCH}
+ {order_by(column, "a")}
  limit %(limit)s
 """.strip()
 
@@ -462,7 +538,19 @@ def as_typescript():
         emitted = {}
         for name in sorts:
             text, params = positional(page_sql(k, name))
-            emitted[name] = {"sql": text, "params": params}
+            # **The cursor's column travels with the query that orders by it.**
+            # The client used to derive this -- score if the sort was score,
+            # else posted_at if the row had one, else updated_at -- which is
+            # the ordering restated in a second language, and it silently
+            # stopped being true the moment a lane ordered by anything else.
+            # A cursor naming the wrong column does not error: it compares the
+            # wrong values and restarts the lane at the top on every page.
+            column, key, cast = (
+                (*[SORTS[name][0], SORTS[name][0].split(".")[-1]],
+                 SORTS[name][1]) if k in POSTING_LANES
+                else application_order(k))
+            emitted[name] = {"sql": text, "params": params, "cursor": key,
+                             "cursorType": CURSOR_TYPES[cast]}
         lanes[k] = {
             "label": v["label"],
             "page": page_text,
@@ -472,6 +560,10 @@ def as_typescript():
             "row": row_text,
             "rowParams": row_params,
             "sorts": emitted,
+            "cursor": (SORTS["new"][0].split(".")[-1] if k in POSTING_LANES
+                       else application_order(k)[1]),
+            "cursorType": CURSOR_TYPES[SORTS["new"][1] if k in POSTING_LANES
+                                       else application_order(k)[2]],
         }
     return (
         "// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
@@ -491,10 +583,17 @@ def as_typescript():
         + json.dumps(SORT_LABELS) + ";\n\n"
         "// Each query carries the parameters it takes, in order. Numbering is\n"
         "// contiguous per query: a shared map leaves gaps Postgres cannot type.\n"
-        "export type LaneQuery = { sql: string; params: string[] };\n\n"
+        "//\n"
+        "// `cursor` is the row key the query's ordering walks. It is emitted\n"
+        "// beside the SQL rather than worked out on this side, because the\n"
+        "// two are one fact and a client that re-derives it is wrong the\n"
+        "// moment a lane changes what it orders by.\n"
+        "export type LaneQuery = { sql: string; params: string[]; "
+        "cursor: string; cursorType: \"date\" | \"number\" };\n\n"
         "export const LANES: Record<Lane, { label: string; page: string; "
         "pageParams: string[]; count: string; countParams: string[]; "
-        "row: string; rowParams: string[]; "
+        "row: string; rowParams: string[]; cursor: string; "
+        "cursorType: \"date\" | \"number\"; "
         "sorts: Record<string, LaneQuery> }> =\n"
         + json.dumps(lanes, indent=2) + " as const;\n")
 
