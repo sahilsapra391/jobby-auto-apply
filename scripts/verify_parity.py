@@ -92,18 +92,29 @@ def postgres_state(conn, account_id):
             (account_id,))
         rows = cur.fetchall()
 
-    state = {}
+    state, real, folded_into = {}, set(), {}
     for row in rows:
         legacy_id, closed_at, decision, folded = row[0], row[1], row[2], row[3]
         values = dict(zip(FIELDS, row[4:]))
         values["__state__"] = backfill.legacy_state(closed_at, decision)
         state[legacy_id] = values
+        real.add(legacy_id)
         # A legacy record folded into this posting by the board key has no row
         # of its own, and it is still represented here. Resolving it through
         # the winner is a recorded fact; skipping it would be a filter, and a
         # filter is where the missing records hid.
         for other in (folded or []):
-            state[other] = dict(values, __merged_into__=legacy_id)
+            folded_into.setdefault(other, legacy_id)
+
+    # **A real row always wins over a fold reference, whatever the row order
+    # was.** Both used to be written into one dict as the rows were read, so an
+    # id with its own row that is *also* named in another row's
+    # `merged_legacy_ids` took whichever came last. That id genuinely exists in
+    # Postgres, and letting the fold entry win would hand it to the
+    # pruned-loser exemption below.
+    for other, winner in folded_into.items():
+        if other not in real:
+            state[other] = dict(state[winner], __merged_into__=winner)
     return state
 
 
@@ -150,7 +161,20 @@ def compare(records, database):
     for legacy_id in sorted(set(records) - set(database)):
         findings.append({"kind": "only_in_file", "id": legacy_id})
     for legacy_id in sorted(set(database) - set(records)):
-        findings.append({"kind": "only_in_postgres", "id": legacy_id})
+        winner = database[legacy_id].get("__merged_into__")
+        if winner:
+            # **No record on either side.** This id has no posting row: it is a
+            # string in the winner's `merged_legacy_ids`, recording that it once
+            # folded there, and a sweep has since pruned it from the pool. The
+            # question "does this exist on both sides" does not apply to it.
+            #
+            # Exactly that and no wider. An id with its own row never reaches
+            # here, because `postgres_state` refuses to overwrite a real row
+            # with a fold reference.
+            findings.append({"kind": "pruned_loser", "id": legacy_id,
+                             "merged_into": winner})
+        else:
+            findings.append({"kind": "only_in_postgres", "id": legacy_id})
 
     for legacy_id in sorted(set(records) & set(database)):
         record, row = records[legacy_id], database[legacy_id]
@@ -335,16 +359,23 @@ def run(conn, account_id, root=None, on_note=None):
 
     first, first_mtime = run_once(conn, account_id, root)
     report = {"checked": True, "divergences": [], "transient": [],
-              "merged_field_dropped": [], "first_count": len(first),
+              "merged_field_dropped": [], "pruned_losers": [],
+              "first_count": len(first),
               "reread": False, "first_mtime": first_mtime,
               "second_mtime": None}
 
     # A merge discarding the loser's own field values is a recorded design
     # decision, not a difference between the stores. Split out before the
     # re-read so a corpus with merges does not re-read on every clean run.
+    #: Both are recorded facts rather than differences between the stores, and
+    #: both accumulate: `mergedFieldDropped` went 2, 5, 7 and its pinned
+    #: assertion had to become a derived one. The report carries the ids and
+    #: nothing pins a length.
+    ASIDES = ("merged_field_dropped", "pruned_loser")
     report["merged_field_dropped"] = [f for f in first
                                       if f["kind"] == "merged_field_dropped"]
-    first = [f for f in first if f["kind"] != "merged_field_dropped"]
+    report["pruned_losers"] = [f for f in first if f["kind"] == "pruned_loser"]
+    first = [f for f in first if f["kind"] not in ASIDES]
 
     if not first:
         return report
@@ -353,7 +384,7 @@ def run(conn, account_id, root=None, on_note=None):
     note(f"parity: {len(first)} differences on the first reading, re-reading")
     report["reread"] = True
     second, second_mtime = run_once(conn, account_id, root)
-    second = [f for f in second if f["kind"] != "merged_field_dropped"]
+    second = [f for f in second if f["kind"] not in ASIDES]
     report["second_mtime"] = second_mtime
 
     def key(finding):
@@ -433,7 +464,8 @@ def main(argv=None):
         print()
         print(f"divergences {len(report['divergences'])}, "
               f"transient {len(report['transient'])}, "
-              f"merged-field drops {len(report['merged_field_dropped'])}")
+              f"merged-field drops {len(report['merged_field_dropped'])}, "
+              f"pruned losers {len(report['pruned_losers'])}")
 
     return 1 if report["divergences"] else 0
 
