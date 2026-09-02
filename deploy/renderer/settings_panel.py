@@ -7,7 +7,12 @@ import json
 PROVIDERS = (
     ("openai", "OpenAI", "Codex", "gpt-5.6-luna"),
     ("anthropic", "Anthropic", "Claude Code", "claude-sonnet-5"),
-    ("gemini", "Gemini", "Gemini CLI", "gemini-3.7-flash"),
+    # **Antigravity, not "Gemini CLI".** The provider is Gemini and the
+    # product Jobby drives is Antigravity, whose binary is `agy` and whose logs
+    # live under `~/.gemini/antigravity-cli/`. `_gemini_reason` reads that
+    # directory by name, so the runner has always known which tool this is; the
+    # card was the only place saying otherwise.
+    ("gemini", "Gemini", "Antigravity", "gemini-3.7-flash"),
 )
 
 
