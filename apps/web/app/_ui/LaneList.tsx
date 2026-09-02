@@ -1,11 +1,13 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import type { Lane, Sort } from "../lanes.generated";
-import type { Filters } from "./db";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Lane } from "../lanes.generated";
 import {
   PostingRow, WatchRow, DoneRow, DroppedRow, ActCard, FlightCard,
 } from "./Rows";
+import { ActionsContext, type Actions } from "./actions";
+import { useLive } from "./useLive";
+import { useWrites } from "./useWrite";
 
 type Row = Record<string, unknown> & { id: string };
 type Cursor = { at: string | null; id: string } | null;
@@ -60,7 +62,8 @@ const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
  * height and the browser's own find-in-page still lands somewhere sensible.
  */
 export function LaneList({
-  lane, initial, initialCursor, done: initiallyDone, shape, sort = "new", filters,
+  lane, initial, initialCursor, done: initiallyDone, shape, query,
+  writesEnabled = false,
 }: {
   lane: Lane;
   initial: Row[];
@@ -75,22 +78,81 @@ export function LaneList({
   // draws five shapes across six lanes and collapsing them to two is what made
   // Watching and Submitted render as cards where the board renders tables.
   shape: Lane;
-  sort?: Sort;
-  filters?: Filters;
+  /**
+   * Everything identifying this lane view, as one string: the lane, the sort
+   * and any filters.
+   *
+   * **One prop, because three were forgettable and were forgotten.** This
+   * component has always taken `sort` and `filters` and has always documented
+   * why they must travel with the cursor; the page passed neither, so page two
+   * of a Match %-sorted Found lane asked the date query for rows before the
+   * timestamp "93" and the reader was told 17,341 rows were 50.
+   */
+  query: string;
+  /**
+   * The account's `live_board` flag, read on the server.
+   *
+   * **Offered, not authorised.** The route reads the same flag against the
+   * same database before it touches anything, so a client that ignores this
+   * gets a 503 and a card that goes back where it was.
+   */
+  writesEnabled?: boolean;
 }) {
   const render = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
   const [cursor, setCursor] = useState<Cursor>(initialCursor);
   const [done, setDone] = useState(initiallyDone);
   const [loading, setLoading] = useState(false);
+  // **Exhausted and failed are different facts.** They were one before: a
+  // failed page set `done`, and the lane drew "and that is all of them" over
+  // whatever it had not fetched. The comment above that line already said
+  // "Never silent"; it was, because the two states shared a variable.
+  const [failed, setFailed] = useState<string | null>(null);
   const [first, setFirst] = useState(0);
   const holder = useRef<HTMLDivElement>(null);
+
+  const writes = useWrites();
+  const live = useLive({ lane, query, setRows, absorbs: writes.absorbs });
+
+  /**
+   * Take a row out now, and hand back how to put it back.
+   *
+   * The whole row and its index, not just the id: a card put back at the
+   * bottom of a lane it was at the top of is a different wrong answer from the
+   * one the revert exists to prevent.
+   */
+  const draw = useCallback((id: string) => {
+    let removed: { row: Row; at: number } | null = null;
+    setRows((held) => {
+      const at = held.findIndex((r) => r.id === id);
+      if (at < 0) return held;
+      removed = { row: held[at], at };
+      return held.filter((r) => r.id !== id);
+    });
+    return () => {
+      if (!removed) return;
+      const { row, at } = removed;
+      setRows((held) => {
+        if (held.some((r) => r.id === row.id)) return held;
+        const back = held.slice();
+        back.splice(Math.min(at, back.length), 0, row);
+        return back;
+      });
+    };
+  }, []);
+
+  const actions: Actions = useMemo(() => ({
+    enabled: writesEnabled,
+    act: writes.act,
+    busy: writes.pending,
+    draw,
+  }), [writesEnabled, writes.act, writes.pending, draw]);
 
   // Re-seed when the lane changes: the server sent a different lane's page and
   // keeping the old rows would show one lane's contents under another's tab.
   useEffect(() => {
     setRows(initial); setCursor(initialCursor);
-    setDone(initiallyDone); setFirst(0);
+    setDone(initiallyDone); setFirst(0); setFailed(null);
   }, [lane, initial, initialCursor, initiallyDone]);
 
   const onScroll = useCallback(() => {
@@ -109,15 +171,11 @@ export function LaneList({
     if (loading || done) return;
     setLoading(true);
     try {
-      // The sort has to travel with the cursor: the next page is a keyset on
-      // whichever column this lane is ordered by, and asking for page two of a
-      // different ordering restarts at the top.
-      const params = new URLSearchParams({ lane, sort });
-      // The filters travel with the cursor for the same reason the sort does:
-      // page two of a different predicate is a different lane.
-      if (filters?.q) params.set("q", filters.q);
-      if (filters?.within) params.set("within", filters.within);
-      if (filters?.direct) params.set("direct", "1");
+      // The sort and the filters travel with the cursor: the next page is a
+      // keyset on whichever column this lane is ordered by, and page two of a
+      // different ordering or a different predicate is a different lane. They
+      // arrive together in `query` so a caller cannot supply one of them.
+      const params = new URLSearchParams(query);
       if (cursor) {
         params.set("afterId", cursor.id);
         if (cursor.at) params.set("afterAt", cursor.at);
@@ -128,15 +186,16 @@ export function LaneList({
       setRows((held) => held.concat(body.rows));
       setCursor(body.next);
       setDone(body.done);
+      setFailed(null);
     } catch (err) {
-      // Never silent: an exhausted lane and a failed fetch look identical from
-      // the reader's chair, and one of them is a bug.
       console.error("could not load more of this lane", err);
-      setDone(true);
+      // Not `done`. An exhausted lane and a failed fetch look identical from
+      // the reader's chair, and one of them is a bug.
+      setFailed("That page did not load.");
     } finally {
       setLoading(false);
     }
-  }, [lane, cursor, done, loading, sort, filters]);
+  }, [query, cursor, done, loading]);
 
   const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
   const slice = rows.slice(first, last);
@@ -189,9 +248,36 @@ export function LaneList({
   );
 
   return (
+    <ActionsContext.Provider value={actions}>
     <div ref={holder}>
+      {live.connected === false ? (
+        <p className="hint" role="status">
+          The live connection dropped. Reconnecting; this lane is as of the
+          last update it received.
+        </p>
+      ) : null}
+      {writes.refused ? (
+        <p className="hint" role="alert">
+          {writes.refused}{" "}
+          <button className="btn ghost" type="button" onClick={writes.clear}>
+            Dismiss
+          </button>
+        </p>
+      ) : null}
+      {live.arrived > 0 ? (
+        <button className="btn" type="button" onClick={() => void live.reload()}>
+          {live.arrived === 1 ? "1 new row" : `${live.arrived} new rows`}
+        </button>
+      ) : null}
       {body}
-      {done ? (
+      {failed ? (
+        <p className="hint" role="alert">
+          {failed}{" "}
+          <button className="btn" type="button" onClick={more} disabled={loading}>
+            {loading ? "Loading…" : "Try again"}
+          </button>
+        </p>
+      ) : done ? (
         <p className="hint">
           {rows.length.toLocaleString()} shown, and that is all of them.
         </p>
@@ -201,5 +287,6 @@ export function LaneList({
         </button>
       )}
     </div>
+    </ActionsContext.Provider>
   );
 }

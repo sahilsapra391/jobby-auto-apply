@@ -7,14 +7,17 @@ import { ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
-import { counts, page } from "./_ui/db";
+import { accountId, counts, laneQuery, page } from "./_ui/db";
+import { writesEnabled } from "./_ui/writes";
 
 /**
  * The board, reading Postgres.
  *
- * **Read-only.** Nothing on this route writes, and nothing will until the
- * parity gate closes: a new write path is one parity does not know about, and
- * the file store would fall behind on exactly the records it touched.
+ * **The render is read-only, and the controls are dark until `live_board`
+ * says otherwise.** The flag is read here, on the server, and travels down as
+ * a prop. It decides whether a control is *offered*: the write route reads the
+ * same flag against the same database before it touches anything, so a client
+ * that ignores this prop gets a 503 and a card that goes back where it was.
  *
  * The first page is server-rendered so the lane is there on first paint; the
  * rest arrives through /api/lane on the same keyset. `LaneList` then windows
@@ -43,8 +46,9 @@ export default async function Board({
   // lane behind it.
   const filters = active === "found"
     ? { q, within, direct: direct === "1" } : undefined;
-  const [tally, first] = await Promise.all([
+  const [tally, first, writes] = await Promise.all([
     counts(filters), page(active, null, 50, sort, filters),
+    accountId().then(writesEnabled),
   ]);
 
   return (
@@ -58,7 +62,13 @@ export default async function Board({
               {tally.act === 0 ? "Nothing blocked"
                                : `${tally.act} waiting on you`}
             </p>
-            <p className="stamp">Reading Postgres directly</p>
+            {/* **A board that is not live has to look different from one
+                that is.** The failure mode of a silent live board is that it
+                looks exactly like a working one and is simply wrong, which is
+                this repository's oldest shape. */}
+            <p className="stamp">
+              {writes ? "Live" : "Reading Postgres directly"}
+            </p>
           </div>
           <div className="jb-morph" role="button" tabIndex={0}
                aria-label="Replay the Jobby mark" {...raw(MORPH)} />
@@ -101,6 +111,8 @@ export default async function Board({
               initialCursor={first.next}
               done={first.done}
               shape={active}
+              query={laneQuery(active, sort, filters)}
+              writesEnabled={writes}
             />
           )}
         </div>

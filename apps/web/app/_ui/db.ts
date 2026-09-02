@@ -140,3 +140,45 @@ export async function counts(filters?: Filters): Promise<Record<Lane, number>> {
   );
   return out;
 }
+
+/**
+ * One row of a lane, if the lane still holds it.
+ *
+ * **The answer to "is this still here" comes from the lane's own predicate.**
+ * A board applying an event could infer it from the event's `to` field
+ * instead, and that inference is a second spelling of the `where` clause in
+ * another language: it would be wrong first for Submitted, whose membership is
+ * two correlated subqueries over the event log rather than a status.
+ *
+ * `null` means gone from this lane. Not an error, and deliberately not told
+ * apart from moved, dropped or never-existed: the board's next act is the same
+ * in every case, which is to stop drawing it.
+ */
+export async function row(lane: Lane, id: string): Promise<Row | null> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    LANES[lane].row, argsFor(LANES[lane].rowParams, { account, row_id: id }));
+  return (rows[0] as Row) ?? null;
+}
+
+/**
+ * Everything that identifies a lane view, as one string.
+ *
+ * **One prop, because three were forgettable and were forgotten.** `LaneList`
+ * has always taken `sort` and `filters` and has always documented why they
+ * must travel with the cursor; `page.tsx` passed neither. Measured against the
+ * live database on 2026-09-02: page one of Found by Match % ends on score 93,
+ * page two asks the date query for rows before the timestamp "93", Postgres
+ * answers `date/time field value out of range`, and the lane draws "50 shown,
+ * and that is all of them" over 17,341 rows.
+ *
+ * Splitting a view across several optional props means a caller can supply
+ * some of them. Splitting it across one means it cannot.
+ */
+export function laneQuery(lane: Lane, sort: Sort, filters?: Filters): string {
+  const p = new URLSearchParams({ lane, sort });
+  if (filters?.q) p.set("q", filters.q);
+  if (filters?.within) p.set("within", filters.within);
+  if (filters?.direct) p.set("direct", "1");
+  return p.toString();
+}

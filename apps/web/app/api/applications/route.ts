@@ -22,11 +22,39 @@ type Body = {
   status?: string;
   phase?: string;
   event?: string;
+  /** The Found path: a posting the reader decided about. */
+  postingId?: string;
+  decision?: string;
 };
 
 /** What a client may set, named rather than passed through. */
 const STATUSES = new Set(["watch", "review", "active", "inflight", "dropped"]);
 const EVENTS = new Set(["submitting", "completed", "abandoned", "needs_you"]);
+
+/**
+ * What a Found card can be decided: the state to store, and the lane the work
+ * goes to.
+ *
+ * **`found` is not among them and cannot be.** Found is the absence of a
+ * decision row, so there is no state to write. `scripts/v2_lanes.py` says the
+ * same of the lane and migration 0002's check constraint refuses the value.
+ *
+ * **The three states nothing writes are still not written here.** `queued`,
+ * `applying` and `needs_you` are legal in the constraint and are stages of
+ * work rather than opinions about a posting, and `v2_lanes.py` says why
+ * nothing should start writing them: it would be a second copy of something
+ * `applications` already holds correctly, on a parity gate path. So Apply
+ * records the opinion `watching` and puts the *work* in `applications` as
+ * `inflight`, which is the split the schema already assumes.
+ *
+ * `pass` writes the decision and no application: never offer this again is not
+ * the start of work on it.
+ */
+const DECISIONS: Record<string, { state: string; status: string | null }> = {
+  watch: { state: "watching", status: "watch" },
+  apply: { state: "watching", status: "inflight" },
+  pass:  { state: "dropped",  status: null },
+};
 
 export async function POST(request: NextRequest) {
   let account: string;
@@ -66,10 +94,12 @@ export async function POST(request: NextRequest) {
     throw err;
   }
 
+  if (body.postingId) return decide(account, key, body);
+
   const legacyId = (body.applicationId ?? "").trim();
   if (!legacyId) {
     return NextResponse.json(
-      { error: "applicationId is required" }, { status: 400 });
+      { error: "applicationId or postingId is required" }, { status: 400 });
   }
   if (body.status && !STATUSES.has(body.status)) {
     return NextResponse.json(
@@ -128,6 +158,87 @@ export async function POST(request: NextRequest) {
   });
 
   const answer = { applicationId, kind, published };
+  await remember(account, key, body, 200, answer);
+  return NextResponse.json(answer);
+}
+
+/** A uuid, checked before it reaches a cast that would 500 on it. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The Found path: a reader decided about a posting.
+ *
+ * **The decision row and the application are one transaction.** A decision
+ * without an application takes the card out of Found and puts it nowhere,
+ * which is a role that has left the board entirely; an application without a
+ * decision leaves the same card sitting in Found under a role already being
+ * worked. Either half alone is worse than neither.
+ *
+ * Two events come out of it, not one. Found's membership is the decision and
+ * the lane's is the application; they are different objects, and an event that
+ * tried to be both would need a `from: "found"` the design refuses.
+ */
+async function decide(account: string, key: string, body: Body) {
+  const postingId = (body.postingId ?? "").trim();
+  if (!UUID.test(postingId)) {
+    return NextResponse.json({ error: "postingId must be a uuid" }, { status: 400 });
+  }
+  const decision = body.decision ?? "";
+  if (!(decision in DECISIONS)) {
+    return NextResponse.json(
+      { error: `unknown decision ${decision}`, decisions: Object.keys(DECISIONS) },
+      { status: 400 });
+  }
+  const { state, status } = DECISIONS[decision];
+
+  const client = await pool().connect();
+  let applicationId: string | null = null;
+  try {
+    await client.query("begin");
+    await client.query("select set_config('app.account_id', $1, true)", [account]);
+    const posting = await client.query(
+      "select legacy_id from postings where id = $1", [postingId]);
+    if (!posting.rows.length) {
+      await client.query("rollback");
+      return NextResponse.json({ error: "no such posting" }, { status: 404 });
+    }
+    await client.query(
+      `insert into job_decisions
+         (account_id, posting_id, state, decided_at, decided_from)
+       values ($1, $2, $3, now(), 'v2')
+       on conflict (account_id, posting_id) do update
+         set state = $3, decided_at = now(), decided_from = 'v2'`,
+      [account, postingId, state]);
+    if (status) {
+      // `legacy_id` carries the posting's, so the device store and this row
+      // name the same job when Phase 3 reconciles them. Inventing an id here
+      // would make that reconciliation a guess.
+      const { rows } = await client.query(
+        `insert into applications
+           (account_id, legacy_id, status, posting_id, created_at, updated_at)
+         values ($1, $2, $3, $4, now(), now())
+         on conflict (account_id, legacy_id) do update
+           set status = $3, posting_id = $4, updated_at = now()
+         returning id`,
+        [account, posting.rows[0].legacy_id, status, postingId]);
+      applicationId = rows[0].id;
+    }
+    await client.query("commit");
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  const published = await publish(account, "posting.decided",
+    { posting_id: postingId, decision, state });
+  if (applicationId) {
+    await publish(account, "application.changed",
+      { application_id: applicationId, to: status });
+  }
+
+  const answer = { postingId, applicationId, decision, state, published };
   await remember(account, key, body, 200, answer);
   return NextResponse.json(answer);
 }

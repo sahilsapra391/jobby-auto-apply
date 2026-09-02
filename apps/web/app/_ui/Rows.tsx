@@ -8,12 +8,15 @@
  * here is taken from a real `dashboard.build` render, and
  * `tests/test_v2_lane_shapes.py` compares the two rather than restating them.
  *
- * **No control here does anything.** Watch, Apply, Pass, Retry, Stop, Restore
- * and Confirm submitted are all writes, and v2 writes nothing until the parity
- * gate closes. They render disabled rather than absent so the card is the
- * right shape and the wiring is one step later, not two.
+ * **Every control here goes through `<Act>`, and `<Act>` is dark while
+ * `live_board` is off.** The flag is read on the server and travels down; it
+ * decides whether a control is *offered*. It is not authorisation, because the
+ * route reads the same flag against the same database before it touches
+ * anything, so a client that ignores this gets a 503 and a card that goes back
+ * where it was.
  */
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
+import { Act } from "./actions";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -111,18 +114,23 @@ export function PostingRow(row: Row) {
       </div>
       <Facts score={row.score} parts={row.score_parts} />
       <div className="jb-acts">
-        <button className="jb-btn" type="button" disabled
-                title="Watching is a write. v2 is read-only until the parity gate closes.">
+        {/* The subject is the posting: nothing has an application id yet, and
+            the decision is what takes the card out of Found. */}
+        <Act className="jb-btn" subject={row.id} rowId={row.id}
+             title="Keep this one and stop showing it in Found"
+             body={{ postingId: row.id, decision: "watch" }}>
           Watch
-        </button>
-        <button className="jb-btn primary" type="button" disabled
-                title="Applying is a write. v2 is read-only until the parity gate closes.">
+        </Act>
+        <Act className="jb-btn primary" subject={row.id} rowId={row.id}
+             title="Start work on this one"
+             body={{ postingId: row.id, decision: "apply" }}>
           Apply
-        </button>
-        <button className="jb-btn danger" type="button" disabled
-                title="Passing is a write. v2 is read-only until the parity gate closes.">
+        </Act>
+        <Act className="jb-btn danger" subject={row.id} rowId={row.id}
+             title="Never offer this one again"
+             body={{ postingId: row.id, decision: "pass" }}>
           Pass
-        </button>
+        </Act>
         {s(row.apply_url) ? (
           <a className="jb-btn" href={s(row.apply_url)!} target="_blank" rel="noopener">
             <span>Posting</span>
@@ -210,9 +218,15 @@ export function WatchRow(row: Row) {
       <td>
         <div className="rowacts">
           <div className="rowacts-btns">
-            <button className="btn apply" type="button" disabled title={READ_ONLY}>Apply</button>
-            <button className="xbtn drop" type="button" disabled title={READ_ONLY}
-                    aria-label="Drop this role">&#215;</button>
+            <Act className="btn apply" subject={row.id} rowId={row.id}
+                 body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+              Apply
+            </Act>
+            <Act className="xbtn drop" subject={row.id} rowId={row.id}
+                 label="Drop this role"
+                 body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
+              &#215;
+            </Act>
           </div>
         </div>
       </td>
@@ -254,9 +268,10 @@ export function DroppedRow(row: Row) {
       <td className="when">{day(row.updated_at)}</td>
       <td>
         <div className="rowacts-inline">
-          <button className="btn ghost undrop" type="button" disabled title={READ_ONLY}>
+          <Act className="btn ghost undrop" subject={row.id} rowId={row.id}
+               body={{ applicationId: s(row.legacy_id), status: "watch" }}>
             Restore
-          </button>
+          </Act>
         </div>
       </td>
     </tr>
@@ -281,14 +296,27 @@ export function ActCard(row: Row) {
           changes the card's shape, and the shape is the thing being matched. */}
       <ul className="todo"><li><Muted>blockers are not mirrored yet</Muted></li></ul>
       <div className="act">
-        <button className="btn retry" type="button" disabled title={READ_ONLY}>Retry</button>
-        <button className="btn ghost finish" type="button" disabled title={READ_ONLY}>
+        <Act className="btn retry" subject={row.id} rowId={row.id} keep
+             body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+          Retry
+        </Act>
+        {/* **Not a write, and not something v2 can do.** This opens the
+            application in the device's own Chrome slot, which is a runner
+            action; Phase 4 moves the runner and this control with it. Dark
+            with a reason beats a control that posts something else. */}
+        <button className="btn ghost finish" type="button" disabled
+                title={ON_DEVICE}>
           Open &amp; finish
         </button>
-        <button className="btn mark" type="button" disabled title={READ_ONLY}>
+        <Act className="btn mark" subject={row.id} rowId={row.id}
+             title="Record that this one went in"
+             body={{ applicationId: s(row.legacy_id), event: "completed" }}>
           Confirm submitted
-        </button>
-        <button className="btn drop" type="button" disabled title={READ_ONLY}>Drop</button>
+        </Act>
+        <Act className="btn drop" subject={row.id} rowId={row.id}
+             body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
+          Drop
+        </Act>
         <span className="ats"></span>
       </div>
     </article>
@@ -309,8 +337,14 @@ export function FlightCard(row: Row) {
       </div>
       <p className="phase">{s(row.phase) ?? ""}</p>
       <div className="act">
-        <button className="btn retry" type="button" disabled title={READ_ONLY}>Retry</button>
-        <button className="btn drop" type="button" disabled title={READ_ONLY}>Stop</button>
+        <Act className="btn retry" subject={row.id} rowId={row.id} keep
+             body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+          Retry
+        </Act>
+        <Act className="btn drop" subject={row.id} rowId={row.id}
+             body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
+          Stop
+        </Act>
         <span className="ats"></span>
       </div>
     </article>
@@ -319,8 +353,10 @@ export function FlightCard(row: Row) {
 
 /* ------------------------------------------------------------------ shared */
 
-const READ_ONLY =
-  "v2 is read-only until the parity gate closes. Use the board at jobby.fyi.";
+/** Controls that drive the device rather than the database. */
+const ON_DEVICE =
+  "This opens a browser on your Mac. The runner moves in Phase 4 and this " +
+  "control moves with it.";
 
 /**
  * The company cell both table lanes share.
