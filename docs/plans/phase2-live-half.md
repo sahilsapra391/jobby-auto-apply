@@ -198,6 +198,28 @@ with 300 seeded postings: warm `apply-event` is 34 to 99 ms p95 across the five
 lanes, `reload` 35 to 38, `load-more` 44. Neither Vercel's function nor Neon is
 in those numbers, so they bound the real one from below and nothing more.
 
+## Before `live_board` can be turned on
+
+Three things, each of which would surface as a failure on the first real click
+rather than as a warning beforehand.
+
+**Migration 0007 is not applied to production.** Measured 2026-09-02: the
+database has 1 through 6, and `idempotency_keys` does not exist. The write
+route reads the flag before it touches that table, so today it 503s cleanly and
+nothing is wrong; the moment the flag flips, every mutation 500s inside
+`replay`. Applying it is a `create table if not exists` and additive, but it is
+a production database change and belongs to whoever owns the deploy.
+
+**The parity clock has to have closed**, which is what the whole gate is for. A
+v2 write is a second writer to a store parity is measuring, and turning the
+flag on before the clock closes means the clock was measuring the wrong thing
+for however long it ran.
+
+**The Dropped dialog is still a placeholder.** It draws "Rows arrive with
+Postgres in the next piece." over a count pill showing the real number, so the
+lane the archive control opens is the one lane v2 has never wired. The latency
+rig reports it missing for that reason and will keep doing so.
+
 ## What this half must not do
 
 - **Not enable RLS.** Phase 5, and the non-owner role goes in before the
