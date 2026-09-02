@@ -116,8 +116,16 @@ class TheDispatchKnowsWhatItIsLookingAt(unittest.TestCase):
     def test_class_c_files_map_to_nothing(self):
         """docs/write-paths.md lists these as deliberately unmirrored. A
         dispatch that fell through to a default would mirror them anyway."""
+        # `providers.json` was here and is not class C: migration 0002
+        # creates `provider_links` for exactly this, so the class C test --
+        # "writes something the migrations created no table for" -- does not
+        # apply to it. It was never in `docs/write-paths.md`'s class C table
+        # either; it was only in this list, which is the restatement problem
+        # the parity field set had. v2's Settings page said one provider was
+        # connected while all three were, reading a fixture over an empty
+        # table, and this line is part of why the table was empty.
         for name in ("meta.json", "search-config.json", "resume-content.json",
-                     "providers.json", "companies.json", "jobs.json",
+                     "companies.json", "jobs.json",
                      "browser-mcp-apply-1.json", "r2-manifest.json",
                      "passed.json", "source-cache.json"):
             with self.subTest(name=name):

@@ -308,6 +308,66 @@ def compare_scores(records, database):
     return findings
 
 
+def providers_state(conn, account_id):
+    """provider -> the columns the provider mirror writes."""
+    columns = sorted(mirror_fields.compared()["provider_links"])
+    with conn.cursor() as cur:
+        cur.execute(
+            f"select provider, {', '.join(columns)} from provider_links "
+            f"where account_id = %s", (account_id,))
+        return {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
+
+
+def compare_providers(files, database):
+    """**Which providers are connected is a fact the board draws.**
+
+    v2's Settings page said one of three, from a fixture, while all three were
+    connected and healthy. Behind the fixture there was nothing: the table
+    existed with the right columns and held zero rows, because no handler ever
+    wrote it. Nothing compared it either, which is why nobody found out from
+    the clock.
+    """
+    findings = []
+    for name in sorted(set(files) - set(database)):
+        findings.append({"kind": "only_in_file", "id": name,
+                         "field": "provider"})
+    for name in sorted(set(database) - set(files)):
+        findings.append({"kind": "only_in_postgres", "id": name,
+                         "field": "provider"})
+    for name in sorted(set(files) & set(database)):
+        mine, yours = files[name], database[name]
+        for column in sorted(set(mine) & set(yours)):
+            if same_value(mine.get(column), yours.get(column)):
+                continue
+            findings.append({"kind": "field_mismatch", "id": name,
+                             "field": f"provider.{column}",
+                             "file": mine.get(column),
+                             "postgres": yours.get(column)})
+    return findings
+
+
+def providers_file_state(root=None):
+    """provider -> the row the mirror would write, from providers.json."""
+    # `store.paths` has no `providers` key: the registry is `providers.py`'s
+    # file rather than the application store's, and it sits beside them in the
+    # same directory. Named here rather than added there, because giving the
+    # store a key for a file it does not own is how two owners of one path
+    # start.
+    import store
+    path = Path(store.root_dir(root)) / "providers.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    compared_columns = mirror_fields.compared()["provider_links"]
+    out = {}
+    for pid, entry in (payload.get("connections") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        row = class_b.provider_row(pid, entry)
+        out[pid] = {k: v for k, v in row.items() if k in compared_columns}
+    return out
+
+
 def coverage():
     """{table: {columns}} parity actually compares.
 
@@ -325,6 +385,7 @@ def coverage():
         "application_events": set(class_b.history_row({})),
         "answer_bank": set(class_b.answer_row({})),
         "profiles": set(class_b.profile_row({})),
+        "provider_links": set(mirror_fields.compared()["provider_links"]),
     }
 
 
@@ -569,6 +630,8 @@ def run_once(conn, account_id, root=None):
     findings = compare(records, database)
     findings.extend(compare_employers(records, employers_state(conn)))
     findings.extend(compare_scores(records, scores_state(conn, account_id)))
+    findings.extend(compare_providers(providers_file_state(root),
+                                      providers_state(conn, account_id)))
     findings.extend(compare_class_b(class_b_file_state(root),
                                     class_b_postgres_state(conn, account_id)))
     return findings, mtime

@@ -184,9 +184,10 @@ class OneTransformNotTwo(unittest.TestCase):
 
     def test_the_session_builder_reads_both_fields(self):
         built = class_b.session_row({"status": " watch ", "phase": " Queued "})
-        self.assertEqual(built, {"status": "watch", "phase": "Queued"})
+        self.assertEqual(built, {"status": "watch", "phase": "Queued",
+                                 "blockers": None})
         self.assertEqual(class_b.session_row({"status": "x"}),
-                         {"status": "x", "phase": None},
+                         {"status": "x", "phase": None, "blockers": None},
                          "an absent phase is None, not a missing key: the "
                          "session file is the authority on its own phase, "
                          "including when it does not have one")
