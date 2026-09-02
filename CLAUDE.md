@@ -883,6 +883,108 @@ crawl now reads the body, because this route's 404 says "No company logo." and
 Next's router 404 is HTML, and it was verified by deleting the route and
 watching the check quote the HTML back.
 
+### Parity guarantees agreement, not correctness, 2026-09-02
+
+**Both stores agreeing on a wrong value is a green parity run.** 122 postings
+are filed under the employer `Appcast Enterprise`, which is the feed publisher
+and not the employer: the descriptions are Johnson Controls, Tyco, Hologic,
+Pfizer. Postgres holds 122 and the file store holds 122. Parity is green and
+correct to be green. The fault is upstream of both, in ingest, and no
+comparison of two mirrors can ever see it.
+
+The same publisher is stored under two spellings, `Appcast Enterprise` (64 reed
+rows) and `Appcastenterprise` (58), so employer dedup misses it as well. That
+is the first real test case for the employer-resolution work rather than a
+display bug to patch over.
+
+So parity answers exactly one question: has the mirror lost or altered anything
+on its way across. It is silent about whether what crossed was right. Reaching
+for it as evidence of correctness is how a green clock ends up standing behind
+a board showing a stranger's name on 122 roles.
+
+### Parity was comparing a subset nobody had written down, 2026-09-02
+
+**Seven consecutive green runs compared 11 of the 28 columns the class A mirror
+writes, and one of the four the class B mirror writes.** A session was
+`applications.status`, one string. `phase` was never looked at. Neither was
+`posted_at`, `summary`, `years_min`, `sections`, `remote`, `tags`, `closed_at`,
+`employers` in its entirety, `job_scores` in its entirety, or
+`application_events.payload`, which is the only record of what an employer
+received.
+
+`verify_parity.FIELDS` was eleven lambdas, and they were a second
+implementation of `backfill.posting_row`. **Being a subset is how a second
+implementation drifts**: nobody deletes a field from a comparison, they add one
+to the writer and forget the reader. Same shape as the migration table list,
+`GATE_PATHS`, and the generated-file list `sync_v2_styles --check` walked.
+Fourth instance, and the first where the drifting copy was a *behaviour*
+rather than a list of names.
+
+**Nothing was diverging, and that is the point.** Measured over all 22,019
+records the two stores share, every one of the 28 columns agreed once
+str-vs-timestamptz and str-vs-jsonb were compared as values. This was not a
+latent divergence, it was a latent blindness: an entire class of field could
+have gone wrong with the clock green by construction.
+
+**The first run that did look found one.** Harvey `17121dc2523fec5e` held
+`phase = 'Queued'` in Postgres against a session file with no `phase` key at
+all, because `_application_id` wrote
+`phase = coalesce(excluded.phase, applications.phase)` and a NULL therefore
+meant "keep whatever you had". That branch is only reachable when a session
+supplied a status, and a session is the authority on its own phase including
+when it has none, so the coalesce could only ever be wrong. It is also v2's
+stale "Filling the form" pill.
+
+`scripts/mirror_fields.py` discovers the field set from the mirror: `postings`
+by calling `posting_row`, everything else by reading its INSERT. Parity's
+expected side is now the mirror's own transform -- `posting_row`, `score_row`,
+`employer_rows`, `session_row`, `history_row`, `answer_row`, `profile_row` --
+so a column added to the writer is compared without anybody adding it twice.
+Exemptions carry a reason each and a test asserts they do.
+
+**Widening a comparison is where false positives come from, and two arrived.**
+22,001 findings on `job_scores.config_version`, which is `text` in Postgres and
+an int in the pool: 23 against '23'. And 19 on `employers.domain`, which the
+mirror writes as `coalesce(employers.domain, excluded.domain)` so that a domain
+learned once is never overwritten with a blank -- making a stored employer row
+a running union across every sweep rather than a function of today's pool. A
+check that cries wolf on 22,000 rows is a check nobody reads, so both are
+handled: the comparator compares values rather than reprs, and the employer
+comparison applies the mirror's own update rule.
+
+Eleven employers do still disagree, and they are reported as
+`employer_field_pinned` rather than hidden: the pinned value is the worse one
+more often than not, `blog.duolingo.com` over `careers.duolingo.com` and
+`cts.businesswire.com` over `impact.com`. That count is the first real input to
+the employer-resolution work.
+
+### A summary statistic over a non-stationary series is not a measurement
+
+**Ten of the checks written up here measured nothing. This one measured the
+wrong thing and produced a confident number**, which is a different failure and
+a worse one, because there is a number to act on and it is precise.
+
+The gate's stopwatch read Found at p95 244 ms against a six-row lane at 34 ms.
+That is exactly what fifty cards re-rendering for one changed row looks like,
+so `memo` went on every row component. It moved to 296 ms, which is noise. What
+settled it was printing the series instead of another statistic:
+
+    735 44 154 248 115 228 238 243 244 250 141 131 133 | 33 33 33 ... (x27)
+
+Page warm-up, ending by the fourteenth call. The row count had nothing to do
+with it, the p95 was a summary of two different populations, and no percentile
+of that series could have shown it. The memo was reverted.
+
+So: **print the series before believing the statistic, and separate the phases
+before pooling them.** A percentile assumes the samples come from one process.
+When they do not, every summary of them describes a population that does not
+exist, and it will be precise about it. Two lines of output would have saved a
+build, a measurement and a revert.
+
+The rig keeps both populations now, `apply-event-cold` and `apply-event`, and
+gates on the warm one with the cold one recorded beside it, because a reader
+really does meet the cold board once per page load.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

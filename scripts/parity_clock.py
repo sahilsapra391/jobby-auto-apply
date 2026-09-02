@@ -90,6 +90,10 @@ GATE_PATHS = (
     "scripts/jobs_store.py",
     "packages/schema/backfill.py",
     "packages/schema/board_key.py",
+    # What parity compares is now derived here, so a change to the discovery
+    # or to an exemption changes what the gate measures. It is as load-bearing
+    # as the comparison itself.
+    "scripts/mirror_fields.py",
 )
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.

@@ -37,6 +37,7 @@ what that reasoning buys.
 """
 
 import argparse
+import datetime as _dt
 import json
 import sys
 from pathlib import Path
@@ -49,23 +50,101 @@ sys.path.insert(0, str(REPO / "packages" / "schema"))
 import backfill  # noqa: E402
 import dual_write  # noqa: E402
 import jobs_store  # noqa: E402
+import class_b  # noqa: E402
+import mirror_fields  # noqa: E402
 
 # The fields compared, and the file-store expression for each. Anything not
 # here is either dropped by BACKFILL.md with a reason or is a container whose
 # parts are compared individually.
-FIELDS = {
-    "title": lambda r: (r.get("title") or "").strip() or "(untitled)",
-    "source": lambda r: (r.get("canonicalSource") or "").strip() or None,
-    "apply_url": lambda r: (r.get("canonicalUrl") or "").strip() or None,
-    "norm_title": lambda r: (r.get("normTitle") or "").strip() or None,
-    "location_raw": lambda r: ((r.get("location") or {}).get("raw") or "").strip() or None,
-    "city": lambda r: ((r.get("location") or {}).get("city") or "").strip() or None,
-    "region": lambda r: ((r.get("location") or {}).get("region") or "").strip() or None,
-    "workplace": lambda r: (r.get("workplace") or "").strip() or None,
-    "desc_fingerprint": lambda r: (r.get("descFingerprint") or "").strip() or None,
-    "lang": lambda r: (r.get("lang") or "").strip() or None,
-    "salary_raw": lambda r: (r.get("salary") or "").strip() or None,
-}
+#: The posting columns parity compares, discovered from the mirror.
+#:
+#: **This used to be eleven lambdas, and being a subset is how they drifted.**
+#: They were a second implementation of `backfill.posting_row`, and they
+#: covered 11 of the 28 columns it writes: `posted_at`, `summary`, `years_min`,
+#: `sections`, `remote`, `tags` and eleven more were never compared, through
+#: seven consecutive green runs. Nothing was diverging -- measured over all
+#: 22,019 shared records, every column agreed -- but a whole class of field
+#: could have gone wrong with the clock green by construction.
+#:
+#: So the expected side is now the mirror's own transform, called rather than
+#: reimplemented, and the field set is derived. `mirror_fields` explains why
+#: neither is written down twice.
+FIELDS = sorted(mirror_fields.compared()["postings"])
+
+
+def same_value(want, got):
+    """Is this the same value in two representations?
+
+    **The store speaks JSON and Postgres speaks its own types**, so a naive
+    comparison calls every timestamp and every jsonb column a divergence. The
+    first run of the widened comparison reported `first_seen_at` and
+    `last_seen_at` differing on 100% of records, `posted_at` on 90% and
+    `sources` on 76%, and every one of them was `2026-08-11T17:58:07Z` against
+    `datetime(2026, 8, 11, 17, 58, 7, tzinfo=utc)`. Reporting those as
+    divergences would have been worse than not comparing at all: a check that
+    cries wolf on 22,000 rows is a check nobody reads.
+
+    Emptiness is one value. The store writes `""` where Postgres holds NULL,
+    and neither is a statement about the field.
+    """
+    empty = (None, "", [], {})
+    if want in empty and got in empty:
+        return True
+    if isinstance(got, str):
+        got = got.strip() or None
+    if isinstance(want, str):
+        want = want.strip() or None
+    if want in empty and got in empty:
+        return True
+    if want == got:
+        return True
+
+    if isinstance(got, _dt.datetime) or isinstance(want, _dt.datetime):
+        a, b = _as_instant(want), _as_instant(got)
+        return a is not None and a == b
+
+    # jsonb comes back parsed; the mirror hands psycopg a JSON string.
+    if isinstance(got, (dict, list)) or isinstance(want, (dict, list)):
+        return _as_json(want) == _as_json(got)
+
+    # A number written into a text column. `job_scores.config_version` is
+    # `text` and the pool carries an int, so the mirror's own transform
+    # produces 23 and the stored value is '23'. That is one value in two
+    # representations, and reading it as a divergence produced 22,001 findings
+    # on the first widened run, which is the shape of a check nobody reads.
+    #
+    # Narrow on purpose: only when one side is a number and the other is a
+    # string. It does not coerce two strings, so '1' and '1.0' stay different.
+    if isinstance(want, (int, float)) and isinstance(got, str):
+        return str(want) == got
+    if isinstance(got, (int, float)) and isinstance(want, str):
+        return want == str(got)
+
+    return False
+
+
+def _as_instant(value):
+    """A timezone-aware datetime, or None if this is not one."""
+    if isinstance(value, _dt.datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=_dt.timezone.utc))
+    if isinstance(value, str):
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = _dt.datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=_dt.timezone.utc)
+    return None
+
+
+def _as_json(value):
+    """Whatever this is, as comparable Python."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
 
 
 class ParityError(Exception):
@@ -116,6 +195,137 @@ def postgres_state(conn, account_id):
         if other not in real:
             state[other] = dict(state[winner], __merged_into__=winner)
     return state
+
+
+def employers_state(conn):
+    """norm_name -> the columns the employer mirror writes."""
+    columns = sorted(mirror_fields.compared()["employers"])
+    with conn.cursor() as cur:
+        cur.execute(f"select norm_name, {', '.join(columns)} from employers")
+        return {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
+
+
+def scores_state(conn, account_id):
+    """legacy_id -> the columns the score mirror writes."""
+    columns = sorted(mirror_fields.compared()["job_scores"])
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""select p.legacy_id, {', '.join('s.' + c for c in columns)}
+                  from job_scores s join postings p on p.id = s.posting_id
+                 where s.account_id = %s""", (account_id,))
+        return {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
+
+
+def compare_employers(records, database):
+    """**The employer is how a posting is named, so it is compared.**
+
+    It went unchecked entirely until 2026-09-02: parity read `postings` and
+    nothing else on the class A side, so a company could lose its domain or
+    acquire another's logo without the clock noticing.
+
+    **The comparison applies the mirror's own update rule, and that is not a
+    softening.** `upsert_employers` writes
+    `domain = coalesce(employers.domain, excluded.domain)`, deliberately, so a
+    domain learned once is never overwritten with a blank: the records
+    disagree, and 6,481 carry a website where the rest carry an empty string
+    for the same employer. A stored row is therefore a running union across
+    every sweep, not a function of today's pool, and comparing it as though it
+    were reports 19 divergences that are the mirror working. What is still a
+    divergence, and still caught: a column NULL in Postgres while the pool
+    offers a value, or a stored value the pool contradicts with a *different*
+    non-blank one.
+
+    `canonical_name` is compared through `norm_company`, which is the identity
+    the row is keyed on. The display name is whichever record the fold met
+    first and the pool's order changes between sweeps, so 'Akamai' and 'Akamai
+    Technologies' alternate for one employer. **That non-determinism is a real
+    defect and it is not this function's to hide**: it belongs with the
+    employer-resolution work that item 27's `Appcast Enterprise` / `Appcastenterprise`
+    split also belongs to. Comparing the normalised form keeps the check that
+    matters, which is that two different employers never collapse into one row.
+    """
+    findings = []
+    expected = backfill.employer_rows(list(records.values()))
+    for norm in sorted(set(expected) - set(database)):
+        findings.append({"kind": "only_in_file", "id": norm,
+                         "field": "employer"})
+    for norm in sorted(set(expected) & set(database)):
+        want, got = expected[norm], database[norm]
+        for column in sorted(want):
+            if column not in got:
+                continue
+            mine, yours = want[column], got[column]
+            if column == "canonical_name":
+                mine, yours = backfill.norm_company(mine or ""), backfill.norm_company(yours or "")
+            elif column in ("domain", "logo_url") and yours:
+                # Kept by the mirror's coalesce. A different non-blank value in
+                # the pool is still reported; a blank one is not a claim.
+                if not mine or same_value(mine, yours):
+                    continue
+            if same_value(mine, yours):
+                continue
+            # **A pinned field is a recorded decision, not a fault**, and it
+            # gets its own kind for the same reason `merged_field_dropped`
+            # does. `domain` and `logo_url` take the first non-blank the
+            # mirror ever saw and never move, so when the pool later offers a
+            # different one the two stores disagree permanently and no correct
+            # write resolves it. Measured 2026-09-02: 11 employers, and the
+            # stored value is the worse one more often than not --
+            # `blog.duolingo.com` over `careers.duolingo.com`,
+            # `cts.businesswire.com` over `impact.com`,
+            # `descriptinc.github.io` over `descript.com`.
+            #
+            # **Reported and counted rather than hidden.** A growing count is
+            # the signal that the pin is costing more than it saves, and these
+            # eleven are the first real input to the employer-resolution work
+            # item 27 opens. `canonical_name` is never pinned, so it is never
+            # excused here: two employers collapsing into one row still fails.
+            kind = ("employer_field_pinned"
+                    if column in ("domain", "logo_url") else "field_mismatch")
+            findings.append({"kind": kind, "id": norm,
+                             "field": f"employer.{column}",
+                             "file": want[column], "postgres": got[column]})
+    return findings
+
+
+def compare_scores(records, database):
+    """The Found lane's ordering, which nothing was comparing either."""
+    findings = []
+    for legacy_id, record in sorted(records.items()):
+        want = backfill.score_row(record)
+        got = database.get(legacy_id)
+        if want is None or got is None:
+            # A record with no score is not mirrored, and a folded loser has
+            # no posting row to hang one on. Neither is a divergence; the
+            # posting comparison already covers whether the row should exist.
+            continue
+        for column in sorted(want):
+            if same_value(want[column], got.get(column)):
+                continue
+            findings.append({"kind": "field_mismatch", "id": legacy_id,
+                             "field": f"score.{column}",
+                             "file": want[column], "postgres": got.get(column)})
+    return findings
+
+
+def coverage():
+    """{table: {columns}} parity actually compares.
+
+    Read by `tests/test_parity_compares_what_the_mirror_writes.py`, which fails
+    when the mirror gains a column absent from here. Written as a function
+    rather than a constant so it reports what the code above uses: `FIELDS` is
+    itself derived, so a column added to `posting_row` arrives here on its own.
+    """
+    return {
+        "postings": set(FIELDS),
+        "job_decisions": {"state"},
+        "employers": set(mirror_fields.compared()["employers"]),
+        "job_scores": set(mirror_fields.compared()["job_scores"]),
+        "applications": set(class_b.session_row({})),
+        "application_events": set(class_b.history_row({})),
+        "answer_bank": set(class_b.answer_row({})),
+        "profiles": set(class_b.profile_row({})),
+    }
 
 
 def merge_groups(database):
@@ -198,11 +408,10 @@ def compare(records, database):
                                  "field": "state", "file": expected_state,
                                  "postgres": row["__state__"]})
 
-        for name, read in FIELDS.items():
-            want, got = read(record), row[name]
-            if isinstance(got, str):
-                got = got.strip() or None
-            if want == got:
+        expected = backfill.posting_row(record)
+        for name in FIELDS:
+            want, got = expected.get(name), row[name]
+            if same_value(want, got):
                 continue
             if winner:
                 # A folded record's own values were discarded by the merge,
@@ -246,7 +455,10 @@ def class_b_file_state(root=None):
             except (OSError, ValueError) as exc:
                 raise ParityError(f"{path.name} could not be read: {exc}")
             key = (payload.get("applicationId") or path.stem).strip()
-            sessions[key] = (payload.get("status") or "unknown").strip()
+            # **Every column the mirror writes, through the mirror's own
+            # builder.** This was `status` alone: one string per session,
+            # compared across seven green runs while `phase` went unchecked.
+            sessions[key] = class_b.session_row(payload)
 
     events = {}
     history = Path(paths["history"])
@@ -260,21 +472,20 @@ def class_b_file_state(root=None):
             except ValueError as exc:
                 raise ParityError(f"applications.jsonl unreadable: {exc}")
             if event.get("eventId"):
-                events[event["eventId"]] = event.get("event")
+                events[event["eventId"]] = class_b.history_row(event)
 
     answers = {}
     path = Path(paths["answers"])
     if path.exists():
         for key, entry in json.loads(path.read_text(encoding="utf-8")).items():
             if isinstance(entry, dict):
-                answers[key] = (entry.get("value"), bool(entry.get("sensitive")))
+                answers[key] = class_b.answer_row(entry)
 
     profile = None
     path = Path(paths["profile"])
     if path.exists():
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        profile = {k: v for k, v in raw.items()
-                   if k not in ("resumes", "writingSamples")}
+        profile = class_b.profile_row(
+            json.loads(path.read_text(encoding="utf-8")))["identity"]
 
     return {"sessions": sessions, "events": events, "answers": answers,
             "profile": profile}
@@ -282,16 +493,21 @@ def class_b_file_state(root=None):
 
 def class_b_postgres_state(conn, account_id):
     with conn.cursor() as cur:
-        cur.execute("select legacy_id, status from applications "
+        cur.execute("select legacy_id, status, phase from applications "
                     "where account_id = %s", (account_id,))
-        sessions = dict(cur.fetchall())
-        cur.execute("select payload->>'eventId', kind from application_events "
+        sessions = {r[0]: {"status": r[1], "phase": r[2]}
+                    for r in cur.fetchall()}
+        cur.execute("select payload->>'eventId', kind, payload, at "
+                    "from application_events "
                     "where account_id = %s and payload ? 'eventId'",
                     (account_id,))
-        events = dict(cur.fetchall())
-        cur.execute("select key, value, sensitive from answer_bank "
-                    "where account_id = %s", (account_id,))
-        answers = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+        events = {r[0]: {"kind": r[1], "payload": r[2], "at": r[3]}
+                  for r in cur.fetchall()}
+        cur.execute("select key, question, value, state, tags, sensitive "
+                    "from answer_bank where account_id = %s", (account_id,))
+        answers = {r[0]: {"question": r[1], "value": r[2], "state": r[3],
+                          "tags": list(r[4] or []), "sensitive": r[5]}
+                   for r in cur.fetchall()}
         cur.execute("select identity from profiles where account_id = %s",
                     (account_id,))
         row = cur.fetchone()
@@ -315,10 +531,17 @@ def compare_class_b(files, database):
             findings.append({"kind": f"only_in_file", "id": name,
                              "field": key})
         for name in sorted(set(ours) & set(theirs)):
-            if ours[name] != theirs[name]:
+            mine, yours = ours[name], theirs[name]
+            # Each side is now a dict of the columns the mirror writes, so the
+            # finding names which column disagreed rather than saying the
+            # session differs and leaving the reader to guess which of four.
+            for column in sorted(set(mine) | set(yours)):
+                if same_value(mine.get(column), yours.get(column)):
+                    continue
                 findings.append({"kind": "field_mismatch", "id": name,
-                                 "field": key, "file": ours[name],
-                                 "postgres": theirs[name]})
+                                 "field": f"{key}.{column}",
+                                 "file": mine.get(column),
+                                 "postgres": yours.get(column)})
 
     for name in sorted(set(database["events"]) - set(files["events"])):
         findings.append({"kind": "only_in_postgres", "id": name,
@@ -344,6 +567,8 @@ def run_once(conn, account_id, root=None):
     records, mtime = file_state(root)
     database = postgres_state(conn, account_id)
     findings = compare(records, database)
+    findings.extend(compare_employers(records, employers_state(conn)))
+    findings.extend(compare_scores(records, scores_state(conn, account_id)))
     findings.extend(compare_class_b(class_b_file_state(root),
                                     class_b_postgres_state(conn, account_id)))
     return findings, mtime
@@ -371,10 +596,12 @@ def run(conn, account_id, root=None, on_note=None):
     #: both accumulate: `mergedFieldDropped` went 2, 5, 7 and its pinned
     #: assertion had to become a derived one. The report carries the ids and
     #: nothing pins a length.
-    ASIDES = ("merged_field_dropped", "pruned_loser")
+    ASIDES = ("merged_field_dropped", "pruned_loser", "employer_field_pinned")
     report["merged_field_dropped"] = [f for f in first
                                       if f["kind"] == "merged_field_dropped"]
     report["pruned_losers"] = [f for f in first if f["kind"] == "pruned_loser"]
+    report["employer_field_pinned"] = [f for f in first
+                                       if f["kind"] == "employer_field_pinned"]
     first = [f for f in first if f["kind"] not in ASIDES]
 
     if not first:
@@ -465,7 +692,9 @@ def main(argv=None):
         print(f"divergences {len(report['divergences'])}, "
               f"transient {len(report['transient'])}, "
               f"merged-field drops {len(report['merged_field_dropped'])}, "
-              f"pruned losers {len(report['pruned_losers'])}")
+              f"pruned losers {len(report['pruned_losers'])}, "
+              f"pinned employer fields "
+              f"{len(report.get('employer_field_pinned') or [])}")
 
     return 1 if report["divergences"] else 0
 
