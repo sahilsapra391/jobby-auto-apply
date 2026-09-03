@@ -19,6 +19,7 @@ Rebuild it the same way. It goes stale the moment a guard's wording changes.
 | `mcp_preflight` refusal | 2 lines in an apply run log |
 | firewall activity counter | real `browserCalls` in apply logs: 10, 28, 59, 62 |
 | `close_missing` share brake | 22 firings in `ingest-runs.log`, read 2026-09-03 -- see below |
+| `run_apply` staged-file cleanup on a signal | driven 2026-09-03: real SIGTERM, both PDFs gone from disk, `activity.json` kept, exit 143. Verified by removing the handler and watching all three survive |
 
 ## Never observed here
 
