@@ -469,14 +469,25 @@ export function DoneRow(row: Row) {
         // stay exactly what they were: making every row a button would put an
         // affordance on 87 applications that have nothing behind it, which is
         // the hardcoded "not captured" again wearing a nicer control.
+        // **A link, not a button, and its href is the record itself.** Two
+        // checks caught the button and both were right. `answers-open` was a
+        // class the board's stylesheet does not define, which is a second
+        // design system starting; and every `<button>` in a lane must carry
+        // `disabled` while writes are gated, which is a rule about controls
+        // that a modal-opening button has no honest way to satisfy.
+        //
+        // An anchor answers both and is better than either fix: the hook is a
+        // `data-` attribute rather than a class, `go` is the board's own link
+        // treatment, and with no JavaScript the href still opens the record.
         return has ? (
-          <button className="go answers-open" type="button"
-                  data-app={row.id} data-company={s(row.company) ?? ""}
-                  data-role={s(row.role) ?? ""}
-                  aria-haspopup="dialog" aria-controls="p-answers"
-                  aria-label="Answers: what this form asked and what went into it">
+          <a className="go" data-answers=""
+             href={`/api/artifact?app=${encodeURIComponent(row.id)}&kind=answers`}
+             data-app={row.id} data-company={s(row.company) ?? ""}
+             data-role={s(row.role) ?? ""}
+             aria-haspopup="dialog" aria-controls="p-answers"
+             aria-label="Answers: what this form asked and what went into it">
             record &#8599;
-          </button>
+          </a>
         ) : (
           <Muted>not captured</Muted>
         );
