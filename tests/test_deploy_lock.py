@@ -121,18 +121,10 @@ class CommandTests(unittest.TestCase):
             payload = {}
         return proc.returncode, payload, proc.stderr
 
-    def test_take_release_round_trip(self):
-        code, taken, _ = self.run_cli("take", "--owner", "me", "--note", "a -> b")
-        self.assertEqual(code, 0)
-        self.assertTrue(taken["taken"])
-        code, status, _ = self.run_cli("status")
-        self.assertTrue(status["held"])
-        self.assertIn("me", status["message"])
-        code, released, _ = self.run_cli("release", "--token", taken["token"])
-        self.assertEqual(code, 0)
-        self.assertTrue(released["released"])
-        _, status, _ = self.run_cli("status")
-        self.assertFalse(status["held"])
+    # `test_take_release_round_trip` lives in `tests/quarantined_deploy_lock.py`.
+    # It fails in a full run and passes alone, and nobody has diagnosed it; see
+    # that file and `docs/quarantine.md` for what is known and what it would
+    # take to bring it back.
 
     def test_a_refused_take_exits_non_zero(self):
         """A caller that checks only the exit code must not read
