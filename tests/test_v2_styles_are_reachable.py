@@ -65,10 +65,6 @@ ALLOWED = {
         "which is item 21 and behind the write gate.",
     "lost":
         "the same control's failure state. Item 21.",
-    "profile-message":
-        "Profile's inline save feedback. The restyle that renders it is the "
-        "next step in this sequence, and `test_no_allowance_is_stale` deletes "
-        "this entry the moment the markup arrives.",
 }
 
 CLASS = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
