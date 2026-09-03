@@ -5,8 +5,12 @@ parity gate path: the clock started 2026-09-02T22:58:53Z and opens
 2026-09-05T22:58Z.
 
 Three things: what has gone stale in `phase3-inputs.md`, the employer resolver
-sketched against the two real cases rather than a hypothetical, and what the
+sketched against the real cases rather than a hypothetical, and what the
 `sweep_runs` gate actually needs.
+
+Every number here was read off the live database or the sweep log on
+2026-09-03. Two of the previous draft's own rules were refuted by that reading
+and are marked where they failed rather than quietly replaced.
 
 ## 1. What is stale in `phase3-inputs.md`
 
@@ -15,7 +19,7 @@ and some of it was written before things it assumes changed.
 
 | claim | as written | measured now | verdict |
 |---|---|---|---|
-| §3 employers | 1,934, one domain collision | **2,818**, zero unmerged domain collisions | numbers stale, conclusion intact |
+| §3 employers | 1,934, one domain collision | **2,855**, 2,504 with no domain; 1 `merged_into` set and never applied | numbers stale, conclusion understated |
 | §5 `posting_id` | NULL for all 224 rows | 205 applications, **103 linked** | superseded, and see below |
 | §5b backfill | 121 of 204 linked | 103 of 205 | **the link decays** |
 | §6 fixtures | 27 in production | **none** | done |
@@ -26,23 +30,62 @@ and some of it was written before things it assumes changed.
 
 Four of those are worth more than a row.
 
-### §5 is not just stale, it describes a decay nobody has named
+### §5 is not stale, it describes a decay -- and the decay is pointing at the wrong field
 
 The doc treats "a pruned posting cannot be resolved to" as a **ceiling on the
-backfill**. It is worse than that: `applications.posting_id` carries
-`ON DELETE SET NULL`, so pruning a posting **destroys a link that was already
-resolved**. Measured: the backfill wrote 121 on 2026-09-01 and 103 remain,
-**18 lost in two days** with nothing recording that they ever existed.
+backfill**. It is worse: `applications.posting_id` carries `ON DELETE SET NULL`
+(`confdeltype = 'n'`), so pruning a posting **destroys a link that was already
+resolved**. The backfill wrote 121 on 2026-09-01; **103 remain**, 18 lost in two
+days with nothing recording they existed. `applications.posting_id` has gone
+from 59% to 50%, and it is the first thing the population ratchet would have
+caught had it existed a day earlier.
 
-That changes the design input. `posting_id` alone cannot be how an application
-knows its own name, because it evaporates on a schedule. Either the application
-keeps a copy of the company and role at link time -- with a field saying where
-they came from, the way `answer_record`'s `capture` level does -- or postings
-that an application points at are exempt from pruning. The second is cleaner and
-cheaper: 103 rows out of 23,141 postings.
+**But an application does not need `posting_id` to name itself, and measuring
+that is what changes the design.** Over all 205 applications:
 
-This is also the first thing the population ratchet would have caught, and it
-predates it. `applications.posting_id` sat at 59% and is at 50%.
+```
+company      205   100%      role        205   100%
+apply_url    205   100%      legacy_id   205   100%
+ats          155    76%      source      181    88%
+posted_at     80    39%      posting_id  103    50%
+```
+
+102 applications have no `posting_id` and a complete company, role and URL.
+Zero `posting_id` values point at a row that is missing -- the cascade is doing
+its job, not leaving dangling pointers. **So the name is already self-sufficient
+and no field needs adding for it.**
+
+What the cascade actually destroys is the **join to what the posting knew**, and
+that splits into four things with four different right answers:
+
+```
+the employer identity   -> the real gap. Add `applications.employer_id`.
+the posting body        -> already safe. Class 1 artifact in R2, survives.
+posted_at               -> freeze it at link time, do not re-derive it.
+"is this still listed"  -> genuinely expires. Let it.
+```
+
+**`posting_id` was carrying two meanings and only one of them should decay.**
+"Which posting this was" and "which employer this is" are different facts with
+different lifetimes, and the employer outlives the listing. `employers` is not
+pruned, so an `employer_id` on the application survives everything that removes
+a posting, and it follows a merge through `merged_into` -- which is exactly what
+the board needs for a logo and a company view, and what it silently loses today
+on half the applications.
+
+That also reframes the cascade itself: **`ON DELETE SET NULL` is correct.** The
+posting is gone and nulling the pointer is honest. Exempting linked postings
+from pruning -- the previous draft's preference -- buys the right answer by
+fighting the retention policy forever, and the carve-out only grows.
+
+Two measurements make the shape concrete. `posted_at` is on 39% of applications
+against 100% of the identity fields, which is the one field the link was
+genuinely supplying and the one to copy down at link time so it freezes rather
+than evaporates. And **5 of the 103 linked applications hold a `company` string
+that disagrees with their resolved employer's canonical name** -- the frozen
+string is what the employer's form actually saw, so those are a review queue and
+not an overwrite. Same rule as a salvaged answer record: two claims, two fields,
+never blended.
 
 ### §8's leak is still there, but its stated consequence is not
 
@@ -64,11 +107,12 @@ finding stands and only the instance is closed. Worth keeping as written.
 88 table rows against 97 files, where the doc recorded 88 against 89. The table
 is a deletion candidate and eight more rows of evidence have arrived for that.
 
-## 2. The employer resolver, against the two cases that exist
+## 2. The employer resolver, against the three cases that exist
 
 `docs/employer-identity.md` has the policy. This is the resolver sketched
-against real rows, because the two cases that exist need different mechanisms
-and a design written against one of them fails the other.
+against real rows, because the cases that exist need different mechanisms and a
+design written against one of them fails the others. The brief named two. There
+are three, and the third one's fix is not in the resolver at all.
 
 ### Case A: ShareGate. A domain collision, already detected, never applied
 
@@ -94,50 +138,139 @@ That is the whole of it for this case, and it is a read the upsert does before
 it writes. `merged_into` must never be followed more than a bounded number of
 hops, and a cycle is a data fault worth failing loudly on rather than looping.
 
-### Case B: Appcast. Two employers, no domain on either, 137 postings split
+### Case B: Appcast. Two employers, no domain on either, 140 postings split
 
 ```
-Appcast Enterprise    norm_name "appcast enterprise"   domain (none)   79 postings
-Appcastenterprise     norm_name "appcastenterprise"    domain (none)   58 postings
+Appcast Enterprise    norm_name "appcast enterprise"   domain (none)   80 postings
+Appcastenterprise     norm_name "appcastenterprise"    domain (none)   60 postings
 ```
 
-Domain equality cannot merge these -- neither has one. The names differ by a
-single space. This is a **normalisation** failure, not a collision the current
-detector can see, and it is why case A's mechanism is not sufficient.
+Domain equality cannot merge these, because neither has one. The names differ
+by a single space. It is a **normalisation** failure rather than a collision the
+current detector can see, and that is why case A's mechanism is not sufficient.
 
-Measured across all 2,818 employers, collapsing spaces and punctuation finds
-**10 such groups**:
+Measured 2026-09-03 over all **2,855** employers, of which **2,504 (87.7%) have
+no domain at all** -- that is the population case B operates on. Collapsing
+spaces and punctuation on the canonical name finds **13 groups**:
 
 ```
-advancedrecoverysystems   Advanced Recovery Systems / Advancedrecoverysystems
-appcastenterprise         Appcast Enterprise / Appcastenterprise
-jpmorganchase             JPMorgan Chase / JPMorganChase
-michaelpage               Michael Page Technology / Michaelpage
-nomadfoods                Nomad Foods / Nomadfoods
-publicisgroupe            Publicis Groupe / Publicisgroupe
-rcmhealthcareservices     RCM Health Care Services / RCM Healthcare Services
-soprasteria               Sopra Steria / Soprasteria
+                          promote?  members (postings)
+advancedrecoverysystems   yes       Advancedrecoverysystems(3) | Advanced Recovery Systems(2)
+appcastenterprise         yes       Appcastenterprise(60) | Appcast Enterprise(80)
+colibrigroup              yes       ColibriGroup(11) | Colibri Group(1)
+jpmorganchase             yes       JPMorganChase(3393) | JPMorgan Chase(5)
+nomadfoods                yes       Nomadfoods(3) | Nomad Foods(3)
+planettechnologies        yes       Planettechnologies(6) | Planet Technologies(1)
+publicisgroupe            yes       Publicisgroupe(3) | Publicis Groupe(1)
+rcmhealthcareservices     yes       RCM Healthcare Services(1) | RCM Health Care Services(1)
+soprasteria               yes       Soprasteria(3) | Sopra Steria(0)
+telusdigital              NO        TelusDigital(55) | TELUS Digital(12)
+tigeranalytics            yes       TigerAnalytics(44) | Tiger Analytics(2)
+vastspace                 yes       Vastspace(3) | Vast Space(1)
+vsgbusinesssolutions      yes       VSG Business Solutions(4) | Vsgbusinesssolutions(2)
 ```
 
-Eight of those are obviously one company each. **`michaelpage` is the warning
-in the same list**: "Michael Page Technology" and "Michaelpage" squash together,
-and so would "Michael Page Legal" and "Michael Page Finance". A rule that merges
-on the squashed name would fold three business units into one, which is the
-stranger's-logo failure at lane scale -- the thing `phase3-inputs.md` §3 says to
-prefer a missed merge over.
+**Scale first, because it is smaller than it looks.** Those groups touch 3,696
+postings, but a merge only moves the smaller side of each pair: **79 postings
+change employer**, and 60 of the 79 are Appcast. JPMorgan Chase is the biggest
+group at 3,398 postings and moves 5 of them. This is a correctness fix, not a
+volume one, and it should be argued as such.
 
-So the squash is a **candidate generator, not a decision**. What promotes a
-candidate:
+### `michaelpage` is the reason for the whole design, and my first rule failed on it
 
-- both rows have no domain, **and** their squashed names are equal, **and**
-  neither name is a proper prefix of the other with the remainder being a word.
-  That last clause is what separates Appcast (`appcastenterprise` ==
-  `appcastenterprise`) from Michael Page (`michaelpage` is a prefix of
-  `michaelpagetechnology`, remainder `technology`, a word).
-- or the domains are equal, which is case A and already detected.
+**The refusal I wrote into the previous draft did not fire against the real
+corpus. It passed Michael Page -- the single case it was written to catch.**
 
-Everything else is recorded as a candidate and merged by nobody. A queue a human
-reads is the right answer for a decision whose wrong direction is unrecoverable.
+The rule was: refuse when one squashed name is a proper prefix of the other and
+the remainder is a word. Against the corpus it returns PROMOTE for
+`michaelpage`, and the reason is a use-versus-mention slip one layer down.
+
+```
+Michael Page Technology   canonical "Michael Page Technology"   norm_name "michael page"
+Michaelpage               canonical "Michaelpage"               norm_name "michaelpage"
+```
+
+`Michael Page Technology`'s **`norm_name` has already had "Technology" eaten**
+by the existing normaliser -- alone among eleven Michael Page rows, which keep
+Finance, Legal, Digital, Sales, Marketing, Australia, Business Support,
+Engineering & Manufacturing and Procurement & Supply Chain intact. So grouping
+on `norm_name` puts the two in a group whose members squash *equal*, and a
+prefix test on equal strings has nothing to refuse. Written against
+`canonical_name` in my head, applied to `norm_name` in the query. Twelfth
+instance of that shape in this repository, first one in a design doc.
+
+Eleven Michael Page rows, 41 postings. That is the scale of the wrong
+direction, and it is the reason the resolver is a candidate generator rather
+than a decision.
+
+**The fix is the grouping key, and it makes the refusal unnecessary.** Group on
+the squashed `canonical_name` and a prefix pair can never group at all, because
+`michaelpagetechnology` and `michaelpage` are not equal. The guard becomes dead
+code by construction rather than by being correct. Measured, the two designs
+give 13 groups each and *not the same 13*:
+
+```
+group on norm_name       finds michaelpage and tenthrevolution (both refused),
+                         misses colibrigroup and planettechnologies
+group on canonical_name  never proposes michaelpage or tenthrevolution,
+                         finds colibrigroup and planettechnologies
+```
+
+Canonical-name grouping promotes a superset of what norm-name grouping
+promotes, and needs no prefix clause. Take it. It carries one dependency worth
+writing down: it only works while `canonical_name` holds the employer's raw
+string. If a connector ever normalises before storing it, this design silently
+degrades to the other one, and Michael Page comes back as a candidate.
+
+`tigeranalytics` is the corpus's second warning and it argues the same way.
+`Tiger Analytics` and `TigerAnalytics` are one company, and `Tiger Recruitment`
+and `Tigera` sit right beside them and are not. Any rule looser than exact
+equality of the squashed canonical name reaches them.
+
+### Case C: TELUS. Both rows have a domain, and they disagree
+
+```
+TelusDigital    telusdigital.com        55 postings
+TELUS Digital   jobs.telusdigital.com   12 postings
+```
+
+Case A cannot see it: the domains differ, so domain equality finds nothing.
+Case B excludes it: its precondition is that neither row has a domain. It is a
+**third mechanism** and the only one of the 13 groups the rule refuses.
+
+**The resolver is the wrong place to fix it.** `jobs.telusdigital.com` should
+never have been recorded as an employer domain -- it is the careers host, the
+same shape as `blog.duolingo.com` beating `careers.duolingo.com` among the
+eleven `employer_field_pinned` disagreements parity already reports. Strip
+known careers-host labels before recording a domain and this group stops
+existing. A registrable-domain comparison in the resolver would also merge it,
+and would be the wrong repair in the right place.
+
+### The promotion rule, corrected against the corpus
+
+The previous draft's domain test was binary and the corpus refuted it.
+`ColibriGroup` has `colibrigroup.com` and `Colibri Group` has nothing; that is
+not a conflict, it is a merge where one side knows the answer. Three tiers:
+
+```
+neither has a domain     promote; merged row has no domain
+exactly one has one      promote; merged row keeps the known domain
+                         (the coalesce rule the mirror already applies, so
+                          parity does not start reporting the merge)
+both have one, different REFUSE -- and look upstream, because it is TELUS
+```
+
+Against the corpus: **12 promote, 1 refuse, 79 postings move.** Every promotion
+is exact equality of the squashed canonical name. Everything else is written to
+a queue and merged by nobody, because a decision whose wrong direction is
+unrecoverable belongs to a person.
+
+The false negatives are accepted and named rather than argued away.
+`Tenthrevolution` / `Tenth Revolution Group` are one company and this rule will
+never merge them. `Vast`(61) sits next to `Vast Space`(1) and `Vastspace`(3),
+and the rule merges the small pair and leaves the 61 alone with no opinion.
+`phase3-inputs.md` §3 already prefers a missed merge to a wrong one; these are
+what that preference costs.
 
 ### Where it runs, and the ordering that matters
 
@@ -152,52 +285,132 @@ whether two names are one employer.
 
 ### What to measure before building it
 
-- how many of the 2,818 employers have no domain at all (the population case B
-  operates on),
-- what the prefix-plus-word rule refuses, listed by name, so the refusals can be
-  read rather than trusted,
-- whether any `merged_into` chain is longer than one hop today.
+Three of the previous draft's four are now measured and above. What is left:
 
-## 3. The closure sweep, and what `sweep_runs` actually needs
+- what the resolver does to `norm_name`, since the merge target needs one and
+  the existing normaliser has demonstrably eaten a business unit from at least
+  one row,
+- whether the 128 employers holding zero postings are merge residue, feed
+  artefacts, or something else, before a merge adds more of them,
+- `merged_into` carries exactly **1** row today (ShareGate, case A, still
+  unapplied), so there is no chain longer than one hop and the follow step can
+  be written without a cycle guard -- but it needs one anyway before the
+  resolver starts writing them.
 
-The highest-consequence thing in Phase 3, and the existing file-store
-implementation is better defended than the plan's one-line description suggests.
-Read `jobs_store.close_missing` before designing anything: it already has four
-brakes.
+## 3. The closure sweep. Read the warning before the table
 
-```
-1  a board key absent from `seen` is untouched -- a board that errored, 304'd
-   or was not fetched contributes nothing, and silence never reads as closure
-2  `applied` and `passed` are terminal and are never closed
-3  only jobs whose best sighting is an employer board are eligible; an
-   aggregator result page is partial by construction
-4  MAX_CLOSED_SHARE -- no single board may close more than a share of what is
-   held for it
-```
+**The empty-response case the plan is written against is already safe, and it
+is safe by structure rather than by a check. A Phase 3 closure step that
+reconstructs "what was seen" from the `postings` table would lose that
+protection while looking equivalent.**
 
-**And there is a fifth, structural one that is easy to lose in the port.** The
-`seen` key is created *by a posting arriving*:
+That is the headline because it is the way this port goes wrong. The key in
+`seen` is created *by a posting arriving*:
 
 ```python
 seen_by_board.setdefault((source, company), set()).add(match_id)
 ```
 
-A channel that returns `ok` with zero postings therefore never creates its key,
-and brake 1 covers it. **The empty-response case is already safe, and it is safe
-by accident of structure rather than by a check.** A Phase 3 closure step that
-reconstructs "what was seen" from the `postings` table instead would lose that
-property silently, because it would be asking a different question: not "did a
-posting arrive under this key" but "what does the table hold".
+A connector that returns `ok` with zero postings therefore never creates its
+key, brake 1 below never sees it, and nothing closes. There is no check
+performing that. It falls out of the data structure. Ask the `postings` table
+"what does this board hold" instead of asking the sweep "did a posting arrive
+under this key" and the two agree on every healthy sweep and disagree on
+exactly the one that matters.
+
+This is not hypothetical. On **2026-08-30T01:02Z** the `smartrecruiters`
+channel returned **0 postings with status `ok`**, and closed nothing, because
+of that line.
+
+### The four brakes, and what each one catches
+
+`jobs_store.close_missing` has four. Its own docstring says "Three brakes" and
+then lists four, so a porter reading the prose gets three; fix that wording
+while porting.
+
+```
+1  a board key absent from `seen` is untouched
+   catches  a board that 304'd, errored, timed out, or was not scheduled this
+            run -- silence must never read as closure. Structurally it also
+            catches the empty-response case above.
+
+2  only `new` and `watched` records are eligible
+   catches  a user's decision outliving the employer's listing. `applied` and
+            `passed` are terminal, so Submitted, In flight and Needs you
+            cannot lose a row because a board stopped advertising it.
+            Measured over 75 sweeps: 4,424 `new` closed, 23 `watched`, 0
+            `applied` or `passed`.
+
+3  only jobs whose best sighting is an employer board (`ats`, `careers`)
+   catches  an aggregator result page read as a catalogue. A search result is
+            paginated and ranked; absence from it is absence from one page.
+
+4  MAX_CLOSED_SHARE = 0.7, per board, once a board holds
+   MIN_BOARD_FOR_SHARE_CHECK = 5
+   catches  a truncated fetch that returned success. The only brake that has
+            ever actually fired here.
+```
+
+### `closureRefused`, read for the first time
+
+75 sweeps, 2026-08-20 to 2026-09-03. **It fired 22 times, all in one
+contiguous window, all for one board.**
+
+```
+2026-08-25T23:31Z .. 2026-08-29T16:59Z   22 consecutive sweeps
+rippling / astra    held 33, wouldClose 32, every single time
+```
+
+Four things follow, and only the first is reassuring.
+
+**It was right.** All 34 Astra records are `new` today with `lastSeenAt`
+2026-09-03T04:11Z. The board returned 1 of 33 for very nearly four days and
+then came back whole. Without brake 4, 32 live postings would have been closed
+on the first of those sweeps and stayed closed.
+
+**It has no memory, so it cannot tell a bad fetch from a board that emptied.**
+The refusal reason says "treating this as a bad fetch rather than a mass
+closure", which is a defensible reading of one sweep and an increasingly poor
+one by the twenty-second. Had Astra genuinely closed 32 of 33 roles, the brake
+would have refused identically and forever, and the records would have left the
+pool by ageing out of `prune` rather than being marked expired -- disappearing
+rather than showing as closed, which is the worse of the two for a reader.
+
+**It is silent.** `closureRefused` is written into the report, the report goes
+to `lastIngest` and `ingest-runs.log`, and `grep` finds no other reader in the
+repository. Twenty-two identical refusals over four days is precisely the
+signal that says "this has stopped being a bad fetch, come and look", and this
+is the first time anyone has looked.
+
+**It is per-board, so a pool-wide event trips nothing.** On 2026-08-30T01:02Z
+the sweep closed **1,860 records with zero refusals** -- 11.5% of a 16,123
+pool, no config change (version 23 either side). The closures were 1,358
+`oracle_orc` and 435 `greenhouse`, spread thin enough across boards that no
+single board crossed 70%.
+
+### The measured half-complete sweep
+
+That same sweep is the case `sweep_runs` exists for, and it is on the disk
+rather than in anyone's imagination:
+
+```
+channel           found before   found after   status after
+greenhouse               5,909         3,209   ok
+smartrecruiters            996             0   ok
+oracle_orc               9,357         9,356   ok
+```
+
+Greenhouse returned 54% of its previous yield and reported success. Every
+Greenhouse board that came back short had its missing postings evaluated, and
+only the boards past 70% were spared. 435 closed. Nothing in the report can say
+whether those were real closures or a truncated fetch, and nothing could,
+because the sweep never recorded what a complete fetch of that board looks
+like.
 
 ### So what `sweep_runs` is actually for
 
-Not the empty response. The case the current design cannot see is the
-**half-complete** one: a connector that fetched page 1 of 5, wrote 40 of 200
-postings, and returned success. The key exists, 160 postings look absent, and
-only `MAX_CLOSED_SHARE` stands between that and closing four fifths of an
-employer's catalogue.
-
-`sweep_runs` replaces an inference with a declaration.
+Not the empty response. The half-complete one. It replaces an inference with a
+declaration.
 
 ```
 sweep_runs
@@ -213,43 +426,52 @@ sweep_runs
   reason          text        -- why it failed, kept rather than dropped
 ```
 
-Four things it needs, and each has a failure it prevents:
+Four requirements, each with the failure it prevents:
 
-**`complete` is written by the worker after the postings are committed, never
-before.** A status written first is a lie the moment the write fails, and
-closure would then read a partial sweep as whole. Same ordering argument as
-`writes.ts`: commit, then publish.
+**`complete` is written after the postings are committed, never before.** A
+status written first is a lie the moment the write fails, and closure would
+then read a partial sweep as whole. Same ordering as `writes.ts`: commit, then
+publish.
 
 **A run that never finishes must not stay `running` forever.** A crashed worker
-leaves `running`, and if closure ignores `running` rows then one crash disables
-closure for that board permanently -- which is the safe direction but silently.
-A lease with an expiry, swept to `abandoned`, keeps it visible. `runlock`'s
-lease is the precedent and its docstring already argues why a pid check is wrong
-for work spanning processes.
+leaves `running`; if closure ignores `running` rows, one crash disables closure
+for that board permanently. That is the safe direction and a silent one, which
+this repository has been bitten by four times. A lease with an expiry, swept to
+`abandoned`, keeps it visible. `runlock`'s docstring already argues why a pid
+check is wrong for work spanning processes.
 
-**`job_count` is the evidence, and it wants the same ratchet as everything
-else.** A complete run returning 40 where the last complete run for that board
-returned 200 is a truncation wearing a success. Held against the board's own
-previous complete run, with a tolerance, and a fall is a refusal to close rather
-than a closure. This is `population.py` pointed at a third thing, and by then
-the shape will have earned being factored out.
+**`job_count` is the evidence and it wants a ratchet.** A `complete` run
+returning 3,209 where that board's last complete run returned 5,909 is a
+truncation wearing a success, and that is the 2026-08-30 sweep exactly. Held
+against the board's own previous complete run with a tolerance; a fall refuses
+closure rather than performing it. This is `population.py` pointed at a third
+thing, and by then the shape has earned being factored out.
 
-**Closure reads only `complete` runs from this sweep window**, and the window
-has to be explicit. "The latest complete run per board" is not the same as "a
-complete run in this sweep", and a board last swept successfully a week ago must
-not have its absences read as closures today.
+**Closure reads only `complete` runs from this sweep window, and the window is
+explicit.** "The latest complete run per board" is not "a complete run in this
+sweep", and a board last swept successfully a week ago must not have its
+absences read as closures today.
 
 ### What must not change in the port
 
-The four existing brakes are not superseded by `sweep_runs` and should survive
-it. `MAX_CLOSED_SHARE` in particular is the last line when every other signal
-says the sweep was fine, and it is the one that has actually fired.
+The four brakes are not superseded by `sweep_runs` and all four survive it.
+Brake 4 in particular is the last line when every other signal says the sweep
+was fine, and it is the only one with a firing record. Brake 1's structural
+half is the one to write a test for, because it is the one that disappears
+without anybody deleting anything.
+
+And `closureRefused` needs a reader. It is already computed, already carries
+the board and the counts, and has been sitting unread through the one window it
+had something to say. A repeat count -- the same board refused N sweeps running
+-- is the number worth alarming on, because one refusal is a bad fetch and
+twenty-two is a question.
 
 ### What to measure before building it
 
-- how often `closureRefused` fires today, and for which boards -- the report
-  already carries it and nobody has read it,
 - the distribution of postings per board, so `MAX_CLOSED_SHARE` and any
-  `job_count` tolerance are set from the corpus rather than guessed,
-- how many boards are reached through more than one channel, since the comment
-  in `ingest.py` says a board reached twice must not look half-empty in either.
+  `job_count` tolerance come from the corpus rather than a guess,
+- how many boards are reached through more than one channel, since `ingest.py`
+  already warns that a board reached twice must not look half-empty in either,
+- what the 1,358 `oracle_orc` closures of 2026-08-30 actually were, since that
+  is the largest closure event on record and the only reason it looks benign is
+  that the channel's total yield held steady.
