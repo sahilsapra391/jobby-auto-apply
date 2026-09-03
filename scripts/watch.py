@@ -53,6 +53,7 @@ import browser  # noqa: E402
 import deploy_lock  # noqa: E402
 import document_job  # noqa: E402
 import browser_identity
+import corpus_check
 import provider_login  # noqa: E402
 import providers  # noqa: E402
 import toolpath  # noqa: E402
@@ -2741,6 +2742,26 @@ def tick(force_publish=False):
     return changed
 
 
+def unhealthy_reason():
+    """Every reason the dead-man ping should be red, joined, or "".
+
+    One alarm with several reasons rather than several alarms, which is the
+    shape `parked_slot_warning` established and the shape that gets read.
+
+    It is a function rather than four lines inside the loop because the loop
+    is the only place it was ever composed and a loop cannot be run for one
+    iteration. A composition nothing can call is a composition nobody
+    verifies, which is how this file's own guards keep turning out to measure
+    nothing. Adding a fifth reason was the moment that stopped being free.
+    """
+    return "; ".join(
+        message for message in
+        (stale_board_warning(), stale_sweep_warning(), parked_slot_warning(),
+         chrome_flag_warning(), corpus_check.warning())
+        if message
+    )
+
+
 def heartbeat_due(line, last_line, since_last_ping):
     """Should this tick ping healthchecks?
 
@@ -3074,12 +3095,19 @@ def main():
             if line and line != prev_line:
                 print(f"{now_stamp()} {line}", flush=True)
             last_line = line
-            stale = "; ".join(
-                message for message in
-                (stale_board_warning(), stale_sweep_warning(),
-                 parked_slot_warning(), chrome_flag_warning())
-                if message
-            )
+            # The tests CI cannot run, on the machine that can. Detached and
+            # never waited on, like every other runner here; a run that dies
+            # therefore reports nothing, which is why `corpus_check.warning`
+            # treats a result that has stopped arriving as the fault rather
+            # than as quiet. Held off while an agent is filling a form, since
+            # it is a minute of CPU and a headless Chrome, and the staleness
+            # limit is six hours precisely so a busy afternoon does not ring.
+            if (corpus_check.due() and not lock_holder("corpus")
+                    and not running_applications()):
+                spawn("corpus", [sys.executable, str(REPO / "scripts" /
+                                                     "corpus_check.py"), "--run"],
+                      "corpus-check.log", note="corpus tests")
+            stale = unhealthy_reason()
             if stale:
                 # Fails the dead-man check rather than pinging healthy. A quiet
                 # tick over a day-old board is the exact shape of the outage

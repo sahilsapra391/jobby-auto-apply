@@ -2425,6 +2425,47 @@ bug -- and the caller has to render it differently, because a reader who is
 told "not captured" behaves differently from one told "storage could not be
 read".
 
+## A scanner's input is text, and text about a thing looks like the thing
+
+**Any check that reads source has to know which regions are code. Comments and
+docstrings are the region that always lies, because their entire purpose is to
+contain a description of the thing being scanned for.**
+
+Three instances, and the shape only became visible on the third:
+
+- `"india" in "Indiana"` filed a US state under India.
+- `("race", "gender", "veteran")` flagged "Do you embrace ambiguity?" as a
+  demographic question.
+- The v2 control scan, which requires every `<button>` in a lane to carry
+  `disabled` while writes are gated, failed on a `<button>` inside a comment
+  **explaining that rule**.
+
+The first two are written up above as a word-boundary problem and that is the
+right fix for them. The third is not a boundary problem at all: `<button>` was
+a whole token, correctly matched, in a region that was never code. Same
+symptom, different cause, and a `\b` would not have touched it.
+
+**The general fix is to parse rather than to grep.** An AST never yields a
+comment or a docstring, so a call written in prose is not a call and cannot be
+mistaken for one; `tests/test_corpus_check.py` derives its module set by
+walking `ast.Call` nodes for exactly this reason, and pins the property with
+two tests that feed it a skip written inside a comment and inside a docstring.
+Where a regex is genuinely the tool -- a scan for a CSS class, a token in
+markup -- strip the comment regions first and say in the test that you did,
+because the next person will read the pattern and not the preprocessing.
+
+**The mirror-image fault is a scanner that reads code correctly and asserts its
+shape rather than its behaviour.** `test_it_is_actually_wired_into_the_dead_man_ping`
+found the dead-man composition by `SOURCE.index('stale = "; ".join(')` and
+checked the warning appeared before `if message`. Its intent was exactly right
+-- a warning function nothing calls is the `activity.json` counter again -- and
+it broke the moment that composition was lifted into `unhealthy_reason()` so it
+could be called at all. A check that fails on the refactor that improves the
+thing it guards is the `GATE_PATHS` equality test in a new costume: its subject
+is the arrangement of the code rather than the property the arrangement is for.
+It calls the function now, silencing four warnings and asserting the fifth
+comes out, and it covers all five rather than the one it was written for.
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on

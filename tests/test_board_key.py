@@ -263,14 +263,47 @@ class MeasuredAgainstTheRealPool(unittest.TestCase):
 
         The assertion is that every collision looks like that, because a
         collision between two *different* postings would mean the key is wrong
-        and the backfill would silently drop a real job."""
+        and the backfill would silently drop a real job.
+
+        **Title is part of identity here and title is the thing that changes.**
+        Measured 2026-09-03, three collisions and all three the same shape: an
+        employer edits a posting, Breezy keeps the id and rewrites the slug,
+        the URL-keyed sighting misses it, the sweep expires the old record and
+        ingests the new slug as a new one five or six minutes later.
+
+            breezy/bitdeer/eeab1edbc9db    closed 07-47, next seen 19-47
+            breezy/surge/f8b44d25ba27      closed 15-47, next seen 15-52
+            breezy/nationsbenefits/8afada1bbe99  closed 19-43, next seen 19-48
+
+        The key is right about those: one posting. So the discriminator is not
+        the title, it is whether the records were ever live at the same time.
+        A retitle is a handoff and the lifetimes are disjoint. Two genuinely
+        different postings sharing one key would be open together, and that is
+        what the key being wrong would look like.
+
+        **This test passing is not the fold being right.** The mirror keeps the
+        *expired* record of each pair and files the live one under it, so
+        Postgres holds "Operations Manager, $65,000-$85,000, closed" where the
+        live posting is "3rd Shift Electronics Operations Supervisor,
+        $50,000-$55,000". That is a defect in winner selection, recorded in
+        `docs/plans/phase3-inputs.md` and deliberately not fixed here: this
+        test's subject is the key, and turning a red test green over a bug that
+        still stands is worse than either."""
         for key, group in self.collisions().items():
             with self.subTest(key=key):
                 identities = {(j["company"].strip().lower(),
                                j["title"].strip().lower()) for j in group}
+                if len(identities) == 1:
+                    continue
+                order = sorted(group, key=lambda j: j.get("firstSeenAt") or "")
+                overlapping = [
+                    (a["id"], b["id"]) for a, b in zip(order, order[1:])
+                    if not (a.get("lastSeenAt") and b.get("firstSeenAt")
+                            and a["lastSeenAt"] < b["firstSeenAt"])]
                 self.assertEqual(
-                    len(identities), 1,
-                    f"{key} collides across different postings: {identities}")
+                    overlapping, [],
+                    f"{key} collides across postings that were live at the "
+                    f"same time, which a retitle cannot explain: {identities}")
 
     def test_collisions_are_rare_enough_to_be_worth_looking_at(self):
         """A floor under the previous test. If this ever climbs, the key is

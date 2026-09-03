@@ -110,12 +110,47 @@ class SweepStalenessTests(unittest.TestCase):
     def test_it_is_actually_wired_into_the_dead_man_ping(self):
         """**The half that matters.** A warning function nothing calls is the
         `activity.json` counter again: correct, exercised, and never once run.
+
+        **And it used to check that by reading the source**, anchored on the
+        literal `stale = "; ".join(` inside the tick loop, because the
+        composition lived in the loop and a loop cannot be run for one
+        iteration. That anchor broke the moment the composition was lifted
+        into `unhealthy_reason` to make it callable -- a scanner failing on
+        the refactor that improved the thing it guards, which is the same
+        shape as a check whose subject is the configuration rather than the
+        property.
+
+        This calls it instead. Each warning is silenced but one, and the
+        surviving message has to come out the other side.
         """
-        composition = SOURCE[SOURCE.index('stale = "; ".join('):]
-        composition = composition[:composition.index("if message")]
-        self.assertIn("stale_sweep_warning()", composition,
-                      "stale_sweep_warning is not in the dead-man composition, "
-                      "so it can never fire")
+        quiet = {name: (lambda: "") for name in
+                 ("stale_board_warning", "parked_slot_warning",
+                  "chrome_flag_warning")}
+        with mock.patch.multiple(watch, **quiet), \
+                mock.patch.object(watch.corpus_check, "warning", lambda: ""), \
+                mock.patch.object(watch, "stale_sweep_warning",
+                                  lambda: "THE POOL IS OLD"):
+            self.assertEqual(watch.unhealthy_reason(), "THE POOL IS OLD")
+
+    def test_every_warning_reaches_the_ping_not_just_this_one(self):
+        """Five reasons on one alarm, and each is checked by silencing the
+        other four. A reason that is composed but never joined is the
+        `activity.json` counter again: correct, exercised, never once run."""
+        names = ("stale_board_warning", "stale_sweep_warning",
+                 "parked_slot_warning", "chrome_flag_warning")
+        for speaking in names:
+            with self.subTest(warning=speaking):
+                quiet = {n: (lambda: "") for n in names if n != speaking}
+                with mock.patch.multiple(watch, **quiet), \
+                        mock.patch.object(watch.corpus_check, "warning",
+                                          lambda: ""), \
+                        mock.patch.object(watch, speaking, lambda: "HEARD"):
+                    self.assertEqual(watch.unhealthy_reason(), "HEARD")
+        quiet = {n: (lambda: "") for n in names}
+        with mock.patch.multiple(watch, **quiet), \
+                mock.patch.object(watch.corpus_check, "warning",
+                                  lambda: "CORPUS"):
+            self.assertEqual(watch.unhealthy_reason(), "CORPUS")
 
     def test_the_publish_check_and_this_one_measure_different_things(self):
         """They are two reasons on one alarm, not one reason twice. Merging
