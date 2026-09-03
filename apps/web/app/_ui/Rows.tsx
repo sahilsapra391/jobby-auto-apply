@@ -16,6 +16,7 @@
  * where it was.
  */
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
+import { CardDetails } from "./CardDetails";
 import { Act, ActionIcon } from "./actions";
 
 type Row = Record<string, unknown> & { id: string };
@@ -257,6 +258,13 @@ export function PostingRow(row: Row) {
           </a>
         ) : null}
       </div>
+      {/* **Item 22, and it goes after the actions rather than inside them.**
+          The board puts `details` in the action row as a sixth pill, which is
+          what made it read as an afterthought there; here the grid already
+          gives `.jb-det` its own row and `.jb-slot` the full width beneath it
+          (`board.css` rows 3 and 4 of the card grid), so the markup lands
+          where the stylesheet has been expecting it since the day it arrived. */}
+      <CardDetails id={row.id} unknowns={row.score_unknowns} />
     </article>
   );
 }

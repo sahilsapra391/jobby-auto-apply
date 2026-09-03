@@ -117,12 +117,12 @@ OBSERVED_ON_THE_PAGE = frozenset({
 #: it started from classes v2 emits, so a class v2 never emits was outside its
 #: subject entirely. 13 of these 20 `jb-*` names are that one feature.
 UNRENDERED = {
-    "the card disclosure, item 22: hover-preview and click-pin, the two-column "
-    "responsibilities and requirements list, the score breakdown and where "
-    "else it was seen": {
-        "jb-det", "jb-caret", "jb-slot", "jb-panel", "jb-sections",
-        "jb-section", "jb-excerpt", "jb-bars", "jb-bar", "jb-sight",
-        "jb-more", "jb-skipped", "jb-footer",
+    "what is left of the card disclosure after item 22: the score breakdown "
+    "bars, and the row of other places a posting was sighted. Both need "
+    "columns the Found query does not select -- `job_scores.parts` is "
+    "already there and `postings.sources` is not -- so they are a change to "
+    "the generated SQL rather than to the card": {
+        "jb-bars", "jb-bar", "jb-sight", "jb-more", "jb-skipped", "jb-footer",
     },
     "the answer record modal: what an employer's form asked and what went "
     "into it, with its source and sensitivity badges": {
@@ -147,8 +147,7 @@ UNRENDERED = {
     },
     "board-only affordances with no v2 equivalent yet": {
         "ago", "applymsg", "aside", "chip-sm", "contact", "direct",
-        "dropping", "err", "fault-note", "jb-decidefail", "jb-linkmsg",
-        "jb-loading", "jb-out", "jb-pill", "jb-vt", "jb-wide", "msg",
+        "dropping", "err", "fault-note", "jb-decidefail", "jb-linkmsg", "jb-out", "jb-pill", "jb-vt", "jb-wide", "msg",
         "nav-n", "note", "ok", "pill", "stub", "ui-separator", "undo", "why",
     },
     "states whose base class v2 does render, already carried by ALLOWED with "

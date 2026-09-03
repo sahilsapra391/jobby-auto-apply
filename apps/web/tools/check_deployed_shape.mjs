@@ -426,6 +426,35 @@ for (const [label, query, want] of [
   }
 }
 
+// **`/api/posting` is checked here because its absence is what item 22 was.**
+// The card disclosure's whole stylesheet came across and this route did not,
+// and the crawl below could not have caught it: a route nobody wrote and a
+// route git ignores both answer 404, which is the `.gitignore` finding one
+// directory over. So the checks are on the refusals, which only a route that
+// exists can produce, and on the body rather than the status.
+for (const [label, query, want] of [
+  ["no id at all", "", 400],
+  ["an id that is not a uuid", "id=not-a-uuid", 400],
+  ["a well-formed id for a posting that is gone",
+   "id=00000000-0000-0000-0000-000000000000", 404],
+]) {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/posting?${query}`,
+                          { headers: { authorization: CREDENTIALS } });
+  if (res.status !== want) {
+    fail(`GET /api/posting answered ${res.status} for ${label}, wanted ${want}`);
+    continue;
+  }
+  // Next's own 404 is HTML. This route's is JSON naming the fault, and reading
+  // the body is what tells the two apart -- the same control the company-logo
+  // crawl needed for the same reason.
+  const body = await res.text();
+  if (!body.trimStart().startsWith("{")) {
+    fail(`GET /api/posting answered ${res.status} for ${label} with HTML, ` +
+         `which is the router's 404 rather than this route's: ` +
+         `${body.slice(0, 120)}`);
+  }
+}
+
 // ---------------------------------------------------------------- check
 
 const seen = new Set();
