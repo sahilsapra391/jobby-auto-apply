@@ -57,9 +57,6 @@ ALLOWED = {
     "done":
         "the board ticks off individual blockers within a Needs you card. v2 "
         "renders the list and the count and has no per-item done state.",
-    "open":
-        "the board expands a Found card by toggling a class. v2 uses a native "
-        "`<details>`, so its open state is an attribute rather than a class.",
     "wide":
         "the board widens the filter row inside a table lane. v2's table lanes "
         "carry their own `LaneSearch` row instead.",
@@ -68,15 +65,10 @@ ALLOWED = {
         "which is item 21 and behind the write gate.",
     "lost":
         "the same control's failure state. Item 21.",
-    "aside":
-        "the board sets its Dropped tab aside the five workflow tabs. v2 draws "
-        "Dropped as a dock and a dialog rather than a sixth tab.",
     "profile-message":
         "Profile's inline save feedback. The restyle that renders it is the "
         "next step in this sequence, and `test_no_allowance_is_stale` deletes "
         "this entry the moment the markup arrives.",
-    "bank-a":
-        "the answer link inside a Memory Bank row. Same restyle, same step.",
 }
 
 CLASS = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
@@ -203,7 +195,40 @@ def styled_rules():
     return out
 
 
+def _scan(rendered, dynamic, allowed):
+    """Every (state, example) this configuration would report."""
+    out = []
+    for subject, others, tag, example in styled_rules():
+        missing = sorted(subject - rendered)
+        if not missing:
+            continue
+        if not (bool(tag) or bool((subject - set(missing)) & rendered)):
+            continue
+        if not ((subject | others) & rendered):
+            continue
+        if subject & dynamic:
+            continue
+        for state in missing:
+            if state in allowed:
+                continue
+            out.append((state, example))
+    return out
+
+
+def _new_findings(case, dropped):
+    """What deleting one allowance would surface."""
+    rendered, dynamic = rendered_classes(), dynamic_bases()
+    without = {k: v for k, v in ALLOWED.items() if k != dropped}
+    return [f for f in _scan(rendered, dynamic, without)
+            if f not in _scan(rendered, dynamic, ALLOWED)]
+
+
 class EveryStyledStateIsReachable(unittest.TestCase):
+    def findings(self, allowed=ALLOWED):
+        """Every rule v2 renders markup for and cannot activate."""
+        rendered, dynamic = rendered_classes(), dynamic_bases()
+        return _scan(rendered, dynamic, allowed)
+
     def test_no_class_v2_emits_is_styled_only_in_a_state_it_cannot_set(self):
         rendered, dynamic = rendered_classes(), dynamic_bases()
         findings = []
@@ -252,19 +277,22 @@ class EveryStyledStateIsReachable(unittest.TestCase):
                                f"{key}'s reason is too short to check")
 
     def test_no_allowance_is_stale(self):
-        """An allowance for a state v2 now sets is a stale exemption, and a
-        stale exemption is how the next real one gets waved through."""
-        # `rendered_classes`, not `mentioned_names`: the question is whether
-        # v2 now puts the state on an element, and "the word appears in a
-        # comment" is not that. Asking the broad set called six live
-        # allowances stale because `scan`, `marked` and `wide` occur as
-        # ordinary English in the prose around them.
-        emitted = rendered_classes()
-        stale = sorted(f".{name}" for name in ALLOWED if name in emitted)
-        self.assertEqual(stale, [],
-                         f"these states are now set by v2 and their ALLOWED "
-                         f"entries should go: {stale}")
+        """An allowance that suppresses nothing is a stale exemption, and a
+        stale exemption is how the next real one gets waved through.
 
+        **Asked by removing it and looking, not by checking whether the name
+        appears.** The name is the wrong question for the same reason it was
+        the wrong question in the main check: `open` styles both `.jb-card`
+        and `.bank-row`, so the moment Profile started rendering
+        `bank-row open` a name-based test called the allowance stale while
+        `.jb-card.open` was still unreachable. An entry earns its place if
+        deleting it produces a finding.
+        """
+        stale = sorted(name for name in ALLOWED
+                       if not _new_findings(self, name))
+        self.assertEqual(stale, [],
+                         f"these allowances suppress nothing any more and "
+                         f"should be deleted: {stale}")
     def test_the_scan_actually_reads_the_stylesheet(self):
         """The control. A regex that quietly stops matching reports success."""
         rules = styled_rules()
