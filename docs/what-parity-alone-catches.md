@@ -68,6 +68,18 @@ written as `active` when it should be `submitted` keeps the column just as
 populated. What it catches is the disappearance of a field, which is the shape
 every real divergence so far has had.
 
+**Built and validated against the real database while the file store was still
+there to check it against** (`scripts/population.py`, 119 columns across 10
+tables):
+
+    today, against marks set from today          nothing below
+    3,000 postings suddenly blank                FELL logo_domain 97.6% -> 84.6%
+    100 fewer (ordinary corpus turnover)         silent, correctly
+
+The tolerance is one point, which is well inside the real fault and outside the
+noise: a share wanders by tenths as postings close and new feeds arrive, and an
+alarm that fires on that is an alarm nobody keeps.
+
 `parity_coverage.py` already has the machinery -- device-local high-water
 marks, observation that only ever raises, and a two-halves way down carrying a
 reason -- so this is that file pointed at a different measurement rather than a
