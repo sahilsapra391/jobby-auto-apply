@@ -218,85 +218,105 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           did not turn because nothing toggled a class and the rule was written
           for the attribute. Nothing to add here beyond letting the element be
           what it is -- the marker rotates on `details[open] > summary`. */}
-      {/* **The board's advanced body, four rows of it.** v2 had one row with
-          two controls against the board's three inputs, seven selects and six
-          labels, which is most of what made this block read as unfinished.
+      {/* **The board's advanced body, and it is not drawn while writes are
+          gated.** It was built present-and-disabled, on the rule that a
+          control absent from the page cannot be reasoned about while a dark
+          one says what is coming. That rule was written for a handful of
+          buttons and this block is not a handful: measured on the deployed
+          board, 433 of the 497 controls in this card were disabled, around 9
+          live ones, every one of them looking the same apart from the cursor.
+          At that ratio "present and disabled" stops describing the feature and
+          starts describing the card, and the working filters -- the date
+          window, direct listings, the sort -- read as broken because they are
+          nine controls inside four hundred that do nothing.
 
-          **Present and disabled rather than absent, and the reason differs by
-          control.** Save search writes `board_meta.search_config`, so it is
-          behind `live_board` like every other write. The rest are reads, and
-          they are dark for a different reason worth stating rather than
-          hiding: `extracted.degree`, `roleCategory` and `employmentType` are
-          populated on 0 of 22,762 postings, so a working filter on them would
-          return nothing and look broken. The board says so out loud in the note
-          below and v2 keeps its wording. */}
+          So the summary names what is inside and when it arrives, and the
+          controls themselves appear with the writes they need. The note about
+          degree, role and job type stays either way, because it is a fact
+          about the data rather than about the gate: all three are populated on
+          0 of 22,762 postings, so a working filter on them would return
+          nothing and look broken. */}
       <details className="jb-adv">
         <summary>Advanced search</summary>
         <div className="jb-advbody">
-          <div className="jb-row">
-            <input type="search" placeholder="Hide jobs mentioning…"
-                   aria-label="Hide jobs mentioning"
-                   disabled={!writesEnabled} title={dark} />
-            <select aria-label="Where to search" defaultValue={searchScope}
-                    disabled={!writesEnabled} title={dark}>
-              {SCOPE_OPTIONS.map(([v, label]) => (
-                <option value={v} key={v}>{label}</option>))}
-            </select>
-            <select aria-label="Companies" disabled={!writesEnabled} title={dark}>
-              <option value="all">All companies</option>
-              <option value="only">Only these companies</option>
-              <option value="hide">Hide these companies</option>
-            </select>
-            <input type="search" placeholder="Company names, comma separated"
-                   aria-label="Company names"
-                   disabled={!writesEnabled} title={dark} />
-          </div>
-          <div className="jb-row">
-            <div className="jb-location-field">
-              <span className="jb-location-label">Locations</span>
-              <LocationPicker selected={locations} writesEnabled={writesEnabled}
-                              extra={extraLocations} />
-            </div>
-            <div className="jb-stack">
-              <label className="jb-check">
-                <input type="checkbox" defaultChecked
-                       disabled={!writesEnabled} title={dark} />
-                <span>include remote for this selection</span>
-              </label>
-              <div className="jb-checks">
-                {WORKPLACES.map(([v, label]) => (
-                  <label className="jb-check" key={v}>
-                    <input type="checkbox" defaultChecked
-                           disabled={!writesEnabled} title={dark} />
-                    <span>{label}</span>
-                  </label>))}
+          {writesEnabled ? (
+            <>
+              <div className="jb-row">
+                <input type="search" placeholder="Hide jobs mentioning…"
+                       aria-label="Hide jobs mentioning" />
+                <select aria-label="Where to search" defaultValue={searchScope}>
+                  {SCOPE_OPTIONS.map(([v, label]) => (
+                    <option value={v} key={v}>{label}</option>))}
+                </select>
+                <select aria-label="Companies">
+                  <option value="all">All companies</option>
+                  <option value="only">Only these companies</option>
+                  <option value="hide">Hide these companies</option>
+                </select>
+                <input type="search" placeholder="Company names, comma separated"
+                       aria-label="Company names" />
               </div>
+              <div className="jb-row">
+                <div className="jb-location-field">
+                  <span className="jb-location-label">Locations</span>
+                  <LocationPicker selected={locations} writesEnabled={writesEnabled}
+                                  extra={extraLocations} />
+                </div>
+                <div className="jb-stack">
+                  <label className="jb-check">
+                    <input type="checkbox" defaultChecked />
+                    <span>include remote for this selection</span>
+                  </label>
+                  <div className="jb-checks">
+                    {WORKPLACES.map(([v, label]) => (
+                      <label className="jb-check" key={v}>
+                        <input type="checkbox" defaultChecked />
+                        <span>{label}</span>
+                      </label>))}
+                  </div>
+                </div>
+              </div>
+              <div className="jb-row">
+                {([["Max experience", EXPERIENCE_OPTIONS],
+                   ["Degree", DEGREE_OPTIONS],
+                   ["Role", ROLE_CATEGORIES],
+                   ["Employment", EMPLOYMENT_TYPES],
+                   ["Job type", JOB_TYPES]] as [string, Option[]][])
+                  .map(([label, options]) => (
+                    <label className="jb-lab" key={label}>{label}
+                      <select>
+                        {options.map(([v, text]) => (
+                          <option value={v} key={v}>{text}</option>))}
+                      </select>
+                    </label>))}
+              </div>
+              <div className="jb-row jb-checks">
+                {UNKNOWN_TOGGLES.map(([key, label]) => (
+                  <label className="jb-check" key={key}>
+                    <input type="checkbox" defaultChecked />
+                    <span>unknown {label}</span>
+                  </label>))}
+                <span className="jb-note">degree, role and job type are not
+                  extracted yet, so they filter the unknown bucket honestly</span>
+              </div>
+            </>
+          ) : (
+            <div className="jb-row">
+              <p className="jb-note">
+                Keyword scope, company include and exclude lists, the
+                199-country picker with its workplace and remote toggles,
+                experience, degree, role, employment and job type, and the
+                unknown-bucket switches. Every one of them narrows a saved
+                search, which is a write, so they arrive when the parity gate
+                closes and v2 stops being read-only. The date window, direct
+                listings and the sort above work now, and they filter the whole
+                pool rather than this page.
+              </p>
+              <p className="jb-note">degree, role and job type are not extracted
+                yet, so those three will filter the unknown bucket honestly
+                rather than return nothing</p>
             </div>
-          </div>
-          <div className="jb-row">
-            {([["Max experience", EXPERIENCE_OPTIONS],
-               ["Degree", DEGREE_OPTIONS],
-               ["Role", ROLE_CATEGORIES],
-               ["Employment", EMPLOYMENT_TYPES],
-               ["Job type", JOB_TYPES]] as [string, Option[]][])
-              .map(([label, options]) => (
-                <label className="jb-lab" key={label}>{label}
-                  <select disabled={!writesEnabled} title={dark}>
-                    {options.map(([v, text]) => (
-                      <option value={v} key={v}>{text}</option>))}
-                  </select>
-                </label>))}
-          </div>
-          <div className="jb-row jb-checks">
-            {UNKNOWN_TOGGLES.map(([key, label]) => (
-              <label className="jb-check" key={key}>
-                <input type="checkbox" defaultChecked
-                       disabled={!writesEnabled} title={dark} />
-                <span>unknown {label}</span>
-              </label>))}
-            <span className="jb-note">degree, role and job type are not
-              extracted yet, so they filter the unknown bucket honestly</span>
-          </div>
+          )}
         </div>
       </details>
       {/* The board's own actions row, which v2 had not at all. Save search is
