@@ -2355,6 +2355,47 @@ What caught it was reading the function to see which name was bound. What
 here twice. When a compile step is the only check between an edit and a commit,
 it has told you about syntax and nothing else.
 
+### "Could not look" is never "is not there", 2026-09-03
+
+**A check that cannot read its subject must say so in its own vocabulary. It
+must never return the shape of an empty answer.** Absence and inability are
+different facts, they lead to different actions, and only one of them is about
+the thing being asked about.
+
+Five instances, three of them from one week, and the earlier two are the
+expensive ones:
+
+```
+ping_health        network error -> None, and every caller ignored it, so a
+                   misconfigured alarm was indistinguishable from a healthy
+                   system
+pool_staleness     raised, a broad except returned None, and None reads as
+                   "nothing to say" -- an alarm that could not fire on any
+                   machine, shipped as the fix for an outage nothing alerted on
+deploy_verify      an unreadable start time or reflog is a failure naming
+                   which, not a pass; a file written inside the second `ps`
+                   reports is INDETERMINATE, not fresh
+/api/artifact      a missing credential is a 503 naming the four variables,
+                   never a 404 -- "no such document" for "this deployment
+                   cannot reach the bucket" sends the reader hunting a file
+                   that is sitting there
+storedArtifacts    returns null when the listing fails, never an empty set. An
+                   empty set would have made all 104 Submitted rows say their
+                   document could not be attributed: a claim about 104
+                   applications drawn from a claim about one environment
+```
+
+The tell is that the empty answer is always the convenient one. `None`, `[]`,
+`{}` and 404 all flow through the rest of the code without special handling,
+which is exactly why they get reached for, and the cost is that the failure
+becomes invisible at the point where it is cheapest to see.
+
+So when writing anything that reads: **name the third state.** Not found,
+found, and could not look. If the return type has no room for it, that is the
+bug -- and the caller has to render it differently, because a reader who is
+told "not captured" behaves differently from one told "storage could not be
+read".
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on
