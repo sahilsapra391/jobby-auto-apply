@@ -414,7 +414,7 @@ export function DoneRow(row: Row) {
                         unverified
                       </span>;
       })()}</td>
-      <td><DocLink label="Resume"
+      <td><DocLink app={row.id} kind="resume" label="Resume"
             value={(row.completed_payload as Record<string, unknown> | null)
                      ?.resumeVariant} /></td>
       <td>{(() => {
@@ -425,7 +425,7 @@ export function DoneRow(row: Row) {
         // when a form had no cover-letter field, and that sentence is a fact
         // worth showing rather than a link worth faking.
         return cover.toLowerCase().endsWith(".pdf")
-          ? <DocLink label="Cover letter" value={cover} />
+          ? <DocLink app={row.id} kind="cover" label="Cover letter" value={cover} />
           : <span className="muted" title={cover}>not accepted</span>;
       })()}</td>
       <td><Muted>not captured</Muted></td>
@@ -655,21 +655,26 @@ function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
 }
 
 /** A `/doc/` link for a filename the store recorded, or nothing. */
-function DocLink({ value, label }: { value: unknown; label: string }) {
+function DocLink({ app, kind, label, value }: {
+  app: string; kind: "resume" | "cover"; label: string; value: unknown;
+}) {
   const name = s(value);
   if (!name) return <Muted>not recorded</Muted>;
-  // The store records some of these as a path under `applications/`. `/doc/`
-  // resolves by filename through `jobby:doc-index`, so the basename is what it
-  // wants; a path would 404 against an index keyed on names.
-  const file = name.split("/").pop()!;
-  // **"PDF", and the class the board gives it.** `doc_cell` labels every one
-  // of these `PDF` under a column already headed Resume or Cover letter, and
-  // renders it `.go`, which is what makes it the blue arrow link rather than a
-  // default underlined anchor. The `label` is the accessible name instead, so
-  // the two links in a row are still told apart by a screen reader.
+  // **The link is keyed on the application and the kind, not the filename.**
+  // It used to be `/doc/<basename>`, which is the board's shape and needs the
+  // board's `jobby:doc-index` in KV to turn a name into an R2 key. v2 reads
+  // Postgres, Postgres has no such mapping, and it needs none: the key is
+  // `u/{user}/app/{legacy_id}/{kind}.pdf` and the route derives it. Measured
+  // 2026-09-03, 129 of the 129 application ids in the bucket match
+  // `applications.legacy_id` and 0 match `applications.id`.
+  //
+  // The recorded name survives as the title, because it is what the employer
+  // received and worth being able to read, and it is not the link, because 32
+  // of 107 cover-letter values are a sentence rather than a name.
   return (
-    <a className="go" href={`/doc/${encodeURIComponent(file)}`} target="_blank"
-       rel="noopener" title={name} aria-label={`${label}: ${file}`}>
+    <a className="go" href={`/api/artifact?app=${encodeURIComponent(app)}&kind=${kind}`}
+       target="_blank" rel="noopener" title={name}
+       aria-label={`${label}: ${name}`}>
       PDF &#8599;
     </a>
   );

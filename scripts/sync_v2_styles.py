@@ -691,6 +691,39 @@ def rendered():
 #:
 #: `outputs()` is called rather than held, because each entry's second half is
 #: a renderer and importing this module must not run them.
+R2_SOURCE = REPO / "deploy" / "r2.mjs"
+R2_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "r2.generated.mjs"
+
+
+def r2_module():
+    """`deploy/r2.mjs` verbatim, so v2 does not become the third SigV4.
+
+    **It is already written twice on purpose and that is the ceiling.**
+    `scripts/r2.py` signs for the device and `deploy/r2.mjs` signs for the
+    board's function, and `tests/test_r2_contract.py` compares complete URLs
+    across twelve cases because they are one contract in two languages. A third
+    hand-written copy in `apps/web` would be the one that drifts, and drift in
+    a signer is a request that fails with no explanation of which half was
+    wrong.
+
+    v2 is a separate Next project rooted at `apps/web`, so a file outside it is
+    not in the traced bundle -- the same reason a renderer reading `public/`
+    took the board down until 2026-08-25. Copying it through the generator is
+    what makes it present at build time and stale-detectable at check time: one
+    source, one signer, and `--check` fails the PR when they part.
+    """
+    body = R2_SOURCE.read_text(encoding="utf-8")
+    return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            "//\n"
+            "// Copied verbatim from deploy/r2.mjs. Change that file.\n"
+            "//\n"
+            "// SigV4 is written twice, for the device and for the board's\n"
+            "// function, and tests/test_r2_contract.py holds those two to one\n"
+            "// contract. This is a copy rather than a third implementation so\n"
+            "// that stays true.\n"
+            + body)
+
+
 def outputs():
     return [
         (TARGET, rendered),
@@ -703,6 +736,7 @@ def outputs():
         (BANK, bank_module),
         (SEARCH, search_module),
         (PROVIDER_LABELS, providers_module),
+        (R2_TARGET, r2_module),
     ]
 
 
