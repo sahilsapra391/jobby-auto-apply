@@ -408,13 +408,28 @@ export function DoneRow(row: Row) {
         // plain grey chip. `unverified` is the board's `.chip.hold`, and it is
         // a chip rather than muted text because "no confirmation was recorded"
         // is a finding about the application, not an empty cell.
+        // **`confirmationUrl` is on 4 rows and nothing read it.** A column
+        // nobody reads is how several of the last things hid, and a page the
+        // employer served saying the application arrived is the strongest
+        // proof this lane can carry -- stronger than the text, which is the
+        // agent's transcription of it. So when there is a URL the chip is a
+        // link to it, and the employer's own words stay in the title.
+        const proofUrl = s(p.confirmationUrl);
+        if (said && proofUrl) {
+          return (
+            <a className="chip ready" href={proofUrl} target="_blank"
+               rel="noopener" title={`${said}\n\nOpens the page the employer served`}>
+              confirmed &#8599;
+            </a>
+          );
+        }
         return said ? <span className="chip ready" title={said}>confirmed</span>
                     : <span className="chip hold"
                             title="No confirmation was recorded for this application">
                         unverified
                       </span>;
       })()}</td>
-      <td><DocLink app={row.id} kind="resume" label="Resume"
+      <td><DocLink row={row} kind="resume" label="Resume"
             value={(row.completed_payload as Record<string, unknown> | null)
                      ?.resumeVariant} /></td>
       <td>{(() => {
@@ -425,10 +440,41 @@ export function DoneRow(row: Row) {
         // when a form had no cover-letter field, and that sentence is a fact
         // worth showing rather than a link worth faking.
         return cover.toLowerCase().endsWith(".pdf")
-          ? <DocLink app={row.id} kind="cover" label="Cover letter" value={cover} />
+          ? <DocLink row={row} kind="cover" label="Cover letter" value={cover} />
           : <span className="muted" title={cover}>not accepted</span>;
       })()}</td>
-      <td><Muted>not captured</Muted></td>
+      {/* **Items 36/37, still live on the column beside the ones they fixed.**
+          This was a hardcoded `not captured` for all 104, which is true of 87
+          of them and a lie about the other 17. The record exists in R2 at
+          `app/<legacy_id>/answers.json`; whether it exists is what the one
+          prefix listing already answered for the two columns to the left.
+
+          87 of 104 genuinely have none, and that is the documented state
+          rather than a gap: no answers survive from before capture existed and
+          none are invented, so the salvage recovered 16 of 102 and nothing
+          else has a record. Measured 2026-09-03, 17 local record files and 0
+          of them missing from the bucket -- the number is low because few
+          applications have one, not because the upload is unreliable. */}
+      <td>{(() => {
+        const list = row.stored_artifacts as string[] | null | undefined;
+        const lid = s(row.legacy_id);
+        if (list === null || list === undefined) {
+          return <span className="muted"
+                       title="Artifact storage could not be read, so whether a record exists is unknown">
+                   unknown
+                 </span>;
+        }
+        const has = lid && list.includes(`u/account-1/app/${lid}/answers.json`);
+        return has ? (
+          <a className="go" href={`/api/artifact?app=${encodeURIComponent(row.id)}&kind=answers`}
+             target="_blank" rel="noopener"
+             aria-label="Answers: what this form asked and what went into it">
+            record &#8599;
+          </a>
+        ) : (
+          <Muted>not captured</Muted>
+        );
+      })()}</td>
     </tr>
   );
 }
@@ -655,29 +701,64 @@ function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
 }
 
 /** A `/doc/` link for a filename the store recorded, or nothing. */
-function DocLink({ app, kind, label, value }: {
-  app: string; kind: "resume" | "cover"; label: string; value: unknown;
+function DocLink({ row, kind, label, value }: {
+  row: Row; kind: "resume" | "cover"; label: string; value: unknown;
 }) {
+  const app = row.id;
+  const legacy = row.legacy_id;
+  const list = row.stored_artifacts as string[] | null | undefined;
+  const stored = list === null || list === undefined ? null : new Set(list);
+  const siblings = new Map<string, number>(
+    Object.entries((row.document_siblings ?? {}) as Record<string, number>));
   const name = s(value);
-  if (!name) return <Muted>not recorded</Muted>;
-  // **The link is keyed on the application and the kind, not the filename.**
-  // It used to be `/doc/<basename>`, which is the board's shape and needs the
-  // board's `jobby:doc-index` in KV to turn a name into an R2 key. v2 reads
-  // Postgres, Postgres has no such mapping, and it needs none: the key is
-  // `u/{user}/app/{legacy_id}/{kind}.pdf` and the route derives it. Measured
-  // 2026-09-03, 129 of the 129 application ids in the bucket match
-  // `applications.legacy_id` and 0 match `applications.id`.
+  // **Four states, and they are four different facts.** The column used to
+  // have two, one of which was a link that 404ed and the other a grey "not
+  // recorded" doing duty for all of it.
   //
-  // The recorded name survives as the title, because it is what the employer
-  // received and worth being able to read, and it is not the link, because 32
-  // of 107 cover-letter values are a sentence rather than a name.
-  return (
-    <a className="go" href={`/api/artifact?app=${encodeURIComponent(app)}&kind=${kind}`}
-       target="_blank" rel="noopener" title={name}
-       aria-label={`${label}: ${name}`}>
-      PDF &#8599;
-    </a>
-  );
+  //   never recorded    the agent wrote no filename. 4 of 104. The document
+  //                     was not made, so nothing was lost.
+  //   unknown           this deployment cannot read the bucket. Says nothing
+  //                     about the document.
+  //   not attributable  the filename is real and so is the file, and more than
+  //                     one application claims that name, so which of them
+  //                     received it is not knowable. 14 of 104.
+  //   the link          the object is there under this application's own key.
+  if (!name) {
+    return <span className="muted"
+                 title="No document filename was recorded for this application, so nothing was made and nothing is missing">
+             never recorded
+           </span>;
+  }
+
+  const object = kind === "resume" ? "resume.pdf" : "cover.pdf";
+  const lid = s(legacy);
+  const key = lid ? `u/account-1/app/${lid}/${object}` : null;
+
+  if (stored === null) {
+    return <span className="muted" title={`${name} — artifact storage could not be read, so whether this document is stored is unknown`}>unknown</span>;
+  }
+  if (key && stored.has(key)) {
+    // Keyed on the application and the kind, never the filename. Measured
+    // 2026-09-03: 129 of the 129 application ids in the bucket match
+    // `applications.legacy_id` and 0 match `applications.id`.
+    return (
+      <a className="go" href={`/api/artifact?app=${encodeURIComponent(app)}&kind=${kind}`}
+         target="_blank" rel="noopener" title={name}
+         aria-label={`${label}: ${name}`}>
+        PDF &#8599;
+      </a>
+    );
+  }
+  const shared = siblings.get(name.toLowerCase()) ?? 1;
+  if (shared > 1) {
+    return (
+      <span className="chip hold"
+            title={`${name} is recorded by ${shared} applications to different roles at this company. One file exists under that name and nothing records which application received it, so it is not shown against any of them.`}>
+        not attributable
+      </span>
+    );
+  }
+  return <span className="muted" title={`${name} — recorded, but no stored copy`}>not stored</span>;
 }
 
 /** Kept so an older import does not break; every lane now names its shape. */

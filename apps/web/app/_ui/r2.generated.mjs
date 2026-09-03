@@ -108,9 +108,31 @@ export async function presignGet(env, key, expires = DEFAULT_EXPIRY_SECONDS, now
                                  responseHeaders = null) {
   const c = conf(env);
   if (!c) throw new Error('R2 is not configured: need R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY');
+  const canonicalPath = `/${uriEncode(c.bucket, false)}/${uriEncode(key, true)}`;
+  // response-content-* overrides, signed like everything else so nobody can
+  // rewrite the filename on a URL we minted. Without them a redirected PDF
+  // arrives named after its key, and a phone offers to save "resume.pdf" from
+  // an application id it has never heard of.
+  const extra = Object.entries(responseHeaders || {}).map(([k, v]) => [k, String(v)]);
+  return presign(c, canonicalPath, extra, expires, now);
+}
+
+/**
+ * The signing every presigned URL shares.
+ *
+ * Factored out when `listKeys` arrived, and factored rather than copied for the
+ * reason this file exists in two languages at all: SigV4 is already written
+ * twice and `tests/test_r2_contract.py` holds those two to one behaviour across
+ * twelve complete URLs. A third copy inside this same file, differing only in
+ * its canonical path, would be the one that drifts and the contract test would
+ * not be looking at it.
+ *
+ * `presignGet`'s output is unchanged by the extraction, which that test is what
+ * proves.
+ */
+async function presign(c, canonicalPath, extraQuery, expires, now) {
   const { amzDate, datestamp } = stamps(now);
   const credential = `${c.accessKeyId}/${datestamp}/${REGION}/${SERVICE}/aws4_request`;
-  const canonicalPath = `/${uriEncode(c.bucket, false)}/${uriEncode(key, true)}`;
 
   const query = [
     ['X-Amz-Algorithm', ALGORITHM],
@@ -118,12 +140,8 @@ export async function presignGet(env, key, expires = DEFAULT_EXPIRY_SECONDS, now
     ['X-Amz-Date', amzDate],
     ['X-Amz-Expires', String(Math.trunc(expires))],
     ['X-Amz-SignedHeaders', 'host'],
+    ...(extraQuery || []),
   ];
-  // response-content-* overrides, signed like everything else so nobody can
-  // rewrite the filename on a URL we minted. Without them a redirected PDF
-  // arrives named after its key, and a phone offers to save "resume.pdf" from
-  // an application id it has never heard of.
-  for (const [k, v] of Object.entries(responseHeaders || {})) query.push([k, String(v)]);
   // Canonical query strings sort by encoded name, then encoded value.
   const canonicalQuery = query
     .map(([k, v]) => [uriEncode(k, false), uriEncode(v, false)])
@@ -140,6 +158,50 @@ export async function presignGet(env, key, expires = DEFAULT_EXPIRY_SECONDS, now
     .map((b) => b.toString(16).padStart(2, '0')).join('');
 
   return `https://${c.host}${canonicalPath}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+/**
+ * Every key under one prefix, paged to the end.
+ *
+ * **One call answers a whole page of rows, which is the point.** The Submitted
+ * lane needs to know which of fifty applications have a stored answer record,
+ * and asking per row is fifty round trips for one column -- the shape that put
+ * fifty failing `/api/company-logo` requests on every Found page load. A prefix
+ * listing is one request for the lot.
+ *
+ * Keys only. The caller wants existence, and parsing sizes and timestamps out
+ * of the XML would be three more things to get wrong for nobody's benefit.
+ */
+export async function listKeys(env, prefix, limit = 1000) {
+  const c = conf(env);
+  if (!c) throw new Error('R2 is not configured: need R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY');
+  const bucketPath = `/${uriEncode(c.bucket, false)}`;
+  const keys = [];
+  let token = null;
+  // Bounded rather than `while (true)`: a truncation flag that never clears is
+  // an infinite loop against somebody's bucket, and this repo has a rule about
+  // loops nobody is watching.
+  for (let page = 0; page < 100; page += 1) {
+    const extra = [['list-type', '2'], ['prefix', prefix],
+                   ['max-keys', String(Math.trunc(limit))]];
+    if (token) extra.push(['continuation-token', token]);
+    const url = await presign(c, bucketPath, extra, 60, Date.now());
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`R2 list answered ${res.status} for prefix ${prefix}`);
+    }
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Key>([^<]*)<\/Key>/g)) {
+      keys.push(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'"));
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    const next = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/);
+    if (!truncated || !next) return keys;
+    token = next[1];
+  }
+  return keys;
 }
 
 /**
