@@ -265,8 +265,15 @@ CSS = r"""
   .bank-search { flex:1 1 18rem; min-width:0; max-width:100%; }
   .bank-filters { display:flex; gap:.25rem; padding:3px; border:1px solid var(--hair);
     border-radius:13px; background:var(--seg); }
+  /* `text-decoration:none` is a no-op on this board, where every bank chip is
+     a <button>. It is here for the same reason `.tab` carries it in
+     premium_ui: v2 serves these filters as links, because a server-rendered
+     page filters by navigating rather than by script, and an anchor arrives
+     underlined and in link blue. One line in the source of truth beats a
+     v2-only override, which is where two design systems start. */
   .bank-chip { border-radius:10px; padding:.46rem .8rem; font-size:.86rem; font-weight:600;
     color:var(--ink-2); background:transparent; border:0; cursor:pointer;
+    text-decoration:none;
     display:inline-flex; align-items:center; gap:.4rem;
     transition:background-color .28s var(--ease),color .24s; }
   /* An unselected chip washes toward the selected chip's own treatment at about
@@ -283,6 +290,7 @@ CSS = r"""
   .bank-cats { display:flex; flex-wrap:wrap; gap:.35rem; margin:-.4rem 0 1rem; }
   .bank-cat { border:1px solid var(--hair); border-radius:999px; padding:.3rem .7rem;
     font-size:.8rem; font-weight:600; color:var(--ink-2); background:var(--card);
+    text-decoration:none;
     cursor:pointer; display:inline-flex; align-items:center; gap:.35rem;
     transition:border-color .24s var(--ease),background-color .24s var(--ease),color .2s; }
   .bank-cat:hover { border-color:var(--hair-strong); color:var(--ink); }

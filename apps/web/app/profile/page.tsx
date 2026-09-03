@@ -8,13 +8,21 @@ import { READ_ONLY } from "../_ui/actions";
 /**
  * Profile: what every tailored resume starts from, and what Jobby answers with.
  *
- * **The read half.** Make default, Remove, Add a base resume and Edit on every
- * Memory Bank answer are all writes, and writes are behind `live_board`. They
- * render disabled with the reason rather than absent, so the shape is the
- * board's and wiring them is one step rather than two.
+ * **Built out of the board's own components, which were shipping unused.**
+ * `board.css` is generated from the board, so 37 rules across 16 classes --
+ * `profile-block`, `block-head`, `identity-grid`, `identity-card`,
+ * `bank-tools`, `bank-search`, `bank-filters`, `bank-chip`, `chip-n`,
+ * `bank-cats`, `bank-cat`, `bank-groups`, `bank-row`, `bank-q`, `bank-a`,
+ * `bank-count` -- were in v2's stylesheet from the day it was generated. The
+ * first version of this page used Settings' `provider-card` and the lane tab
+ * strip instead, which is why it looked substantially different from the board
+ * while being made of the board's CSS.
  *
- * The page was a single sentence before this, against a registry of two base
- * resumes and a bank of 195 entries that were already mirrored.
+ * **The write half is deliberately absent, not forgotten.** `details.wording`
+ * (edit the resume in place) and `div.base-form` (add a base resume) are both
+ * writes and both go behind `live_board` with item 21. The button that opens
+ * the form renders disabled carrying its reason, rather than as a control with
+ * nothing behind it.
  */
 export const dynamic = "force-dynamic";
 
@@ -31,6 +39,12 @@ const TABS: [string, string][] = [
   ["dismissed", "Dismissed"],
 ];
 
+/** The board's own wording for a base's claim, from `claimText`. */
+function claim(countries: string[]) {
+  if (!countries.length) return "the fallback for every other country";
+  return `for ${countries.join(", ")}`;
+}
+
 export default async function Profile({ searchParams }: {
   searchParams: Promise<{ tab?: string; cat?: string; q?: string }>;
 }) {
@@ -42,18 +56,25 @@ export default async function Profile({ searchParams }: {
 
   const tab = TABS.some(([k]) => k === askedTab) ? askedTab! : "question";
   const inTab = bank.filter((e) => tabOf(e) === tab);
-  // **Counted over the tab, not the whole bank.** A chip saying 28 that
-  // filters to nothing is worse than no chip: the categories only classify
-  // questions, so a count taken across all 195 would promise policies and
-  // story entries a category filter cannot reach.
+  // **Only the categories that exist, commonest first**, which is the board's
+  // rule (`profile_panel.py:1302`). The first version drew all fourteen
+  // including empty ones; the board counts what is in the tab, sorts by count
+  // and leads with All.
   const counts = new Map<string, number>();
   for (const entry of inTab) {
-    const key = entry.category ?? "other";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (!entry.category) continue;
+    counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1);
   }
+  const cats = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const catLabel = (slug: string) =>
+    BANK_CATEGORIES.find(([k]) => k === slug)?.[1] ?? slug;
+  // Categories only classify questions, so the strip is absent on the tabs
+  // where every chip would read zero.
+  const showCats = ["question", "needs", "dismissed"].includes(tab);
+
   const needle = (q ?? "").trim().toLowerCase();
   const rows = inTab.filter((e) =>
-    (!cat || (e.category ?? "other") === cat)
+    (!cat || e.category === cat)
     && (!needle
         || `${e.question ?? ""} ${e.value ?? ""} ${e.tags.join(" ")}`
              .toLowerCase().includes(needle)));
@@ -74,163 +95,208 @@ export default async function Profile({ searchParams }: {
       <AppBar here="profile" theme={theme} home={home} />
       <div className="wrap">
         <section className="profile-page">
+          {/* **Eyebrow then title, in that order.** v2 had them swapped: an
+              `h2` reading "Profile" over an eyebrow reading "What Jobby
+              answers with". The board names the page in the eyebrow and says
+              what it is for in the heading. */}
           <div className="settings-titlebar">
-            <h2>Profile</h2>
-            <p className="eyebrow">What Jobby answers with</p>
-          </div>
-
-          <h3>Base resumes</h3>
-          <div className="provider-grid">
-            {resumes.map((r) => (
-              <div className="provider-card" key={r.key ?? r.document}>
-                <div className="provider-head">
-                  <div>
-                    <h3>{(r.key ?? "").toUpperCase() || "Base resume"}</h3>
-                    <p>{r.appliesTo.join(", ") || "no countries listed"}</p>
-                  </div>
-                  {r.isDefault ? <span className="chip ready">Default</span> : null}
-                </div>
-                <div className="host-row">
-                  <div>
-                    <strong>{r.location ?? "no location"}</strong>
-                    <span>{r.address ?? "no address recorded"}</span>
-                    <span>{r.phone ?? "no phone recorded"}</span>
-                  </div>
-                </div>
-                <p className="provider-detail">
-                  {r.document
-                    ? <>Document: {r.document}</>
-                    : <span className="muted">no document recorded</span>}
-                </p>
-                <div className="rowacts-btns">
-                  {/* Writes. Dark with the reason, and the shape is the
-                      board's, so wiring them is one step. */}
-                  <button className="btn" type="button" disabled
-                          title={READ_ONLY}>Make default</button>
-                  <button className="btn ghost" type="button" disabled
-                          title={READ_ONLY}>Remove</button>
-                </div>
-              </div>
-            ))}
-            {resumes.length === 0 ? (
-              <p className="empty">
-                <strong>No base resumes recorded.</strong>
-                <span>Add one on your device; the board reads what it mirrors.</span>
+            <div>
+              <p className="eyebrow">Your profile</p>
+              <h2>What Jobby answers with</h2>
+              <p>
+                Your base resumes and every answer Jobby has learned. Nothing on
+                this page is stored in the page itself; it is read from Postgres
+                when you open it, behind the same password.
               </p>
-            ) : null}
-          </div>
-          <div className="rowacts-btns">
-            <button className="btn" type="button" disabled title={READ_ONLY}>
-              Add a base resume
-            </button>
-          </div>
-
-          <h3>Memory Bank</h3>
-          <p className="hint">
-            {bank.length.toLocaleString()} stored.{" "}
-            {/* The three kinds are a real distinction and the board's own:
-                121 questions an employer asked, the user's standing policies,
-                and prepared story material nobody asked for. A reader hunting
-                a question should not scroll past the third. */}
-            What an employer asked, what you have decided to answer, and what
-            you prepared in advance.
-          </p>
-
-          <div className="seg" role="tablist">
-            {TABS.map(([key, label]) => {
-              const n = bank.filter((e) => tabOf(e) === key).length;
-              return (
-                <a key={key} className={key === tab ? "tab on" : "tab"}
-                   href={href({ tab: key, cat: "" })} role="tab"
-                   aria-selected={key === tab}>
-                  {label}<span className="n">{n}</span>
-                </a>
-              );
-            })}
-          </div>
-
-          <form className="filters" method="get" action="/profile">
-            {tab !== "question" ? <input type="hidden" name="tab" value={tab} /> : null}
-            {cat ? <input type="hidden" name="cat" value={cat} /> : null}
-            <input type="search" name="q" defaultValue={q ?? ""}
-                   placeholder="Search the bank…" aria-label="Search the bank" />
-            {q ? <a className="btn ghost" href={href({ q: "" })}>Clear</a> : null}
-            <span className="fcount">
-              {rows.length === inTab.length
-                ? `${rows.length} shown`
-                : `${rows.length} of ${inTab.length} shown`}
-            </span>
-          </form>
-
-          {/* Category chips, for the tab that has categories. `other` shows at
-              zero on purpose: a category set that cannot miss has stopped
-              classifying, and the next corpus will not be this one. */}
-          {tab === "question" ? (
-            <div className="jb-pills">
-              {BANK_CATEGORIES.map(([key, label]) => (
-                <a key={key} href={href({ cat: key === cat ? "" : key })}
-                   className={key === cat ? "chip lane" : "chip"}>
-                  {label} <b>{counts.get(key) ?? 0}</b>
-                </a>
-              ))}
             </div>
-          ) : null}
+          </div>
 
-          <div className="grid">
-            {rows.map((entry) => (
-              <article className="card" key={entry.key}>
-                <header>
-                  <div>
-                    <h3>{entry.question ?? entry.key}</h3>
-                  </div>
-                  {entry.state ? (
-                    <span className={entry.state === "dismissed"
-                            ? "chip" : "chip ready"}>{entry.state}</span>
-                  ) : null}
-                </header>
-                {/* **Drawn plainly, including the sensitive ones.** CLAUDE.md
-                    settles this: one reader, who knows his own salary and his
-                    own demographics, and a tap to reveal was friction
-                    protecting nobody. The flag stays on the row because it is
-                    what a second account will mask on. */}
-                <p className="jb-sum">
-                  {entry.value ?? <span className="muted">no answer stored</span>}
+          <section className="profile-block" aria-labelledby="bases-title">
+            <header className="block-head">
+              <div>
+                <h3 id="bases-title">Base resumes</h3>
+                <p>
+                  One per right to work. The default is what a posting falls
+                  back to when its country matches none of them.
                 </p>
-                <div className="jb-chips">
-                  {entry.sensitive
-                    ? <span className="jb-chip gate">sensitive</span> : null}
-                  {entry.category && entry.kind === "question" ? (
-                    <span className="jb-chip">
-                      {BANK_CATEGORIES.find(([k]) => k === entry.category)?.[1]
-                        ?? entry.category}
-                    </span>
+              </div>
+            </header>
+
+            <div className="identity-grid">
+              {resumes.map((r) => (
+                <article className="identity-card" key={r.key ?? r.document}>
+                  <div className="identity-head">
+                    <div>
+                      <h4>{(r.key ?? "").toUpperCase() || "Base"}</h4>
+                      <p className="identity-scope">{claim(r.appliesTo)}</p>
+                    </div>
+                    {r.isDefault
+                      ? <span className="identity-default">Default</span> : null}
+                  </div>
+                  {/* A definition list, which is what these are: a label and
+                      the value it names. Rows with nothing in them are left
+                      out rather than drawn empty, as the board does. */}
+                  <dl className="identity-rows">
+                    {([["Location", r.location], ["Phone", r.phone],
+                       ["Address", r.address], ["Document", r.document]] as
+                       [string, string | null][])
+                      .filter(([, v]) => v)
+                      .map(([label, value]) => (
+                        <div className="identity-row" key={label}>
+                          <dt>{label}</dt><dd>{value}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                  {!r.isDefault ? (
+                    <div className="identity-act">
+                      <button className="btn ghost" type="button" disabled
+                              title={READ_ONLY}>Make default</button>
+                    </div>
                   ) : null}
-                  {entry.tags.map((t) => (
-                    <span className="jb-chip" key={t}>{t}</span>
-                  ))}
-                  {entry.updatedAt ? (
-                    <span className="jb-chip">
-                      Updated {String(entry.updatedAt).slice(0, 10)}
+                </article>
+              ))}
+              {resumes.length === 0 ? (
+                <p className="bank-note">No base resumes recorded.</p>
+              ) : null}
+            </div>
+
+            <div className="identity-add">
+              {/* The form behind this is a write and goes with item 21. Dark
+                  with the reason beats a button that opens nothing. */}
+              <button className="btn ghost" type="button" disabled
+                      title={READ_ONLY}>Add a base resume</button>
+            </div>
+          </section>
+
+          <section className="profile-block" aria-labelledby="bank-title">
+            <header className="block-head">
+              <div>
+                <h3 id="bank-title">Memory Bank</h3>
+                <p>
+                  Every question answered once, kept for the next form.{" "}
+                  <span className="bank-count">
+                    {bank.length.toLocaleString()} stored
+                  </span>
+                </p>
+              </div>
+            </header>
+
+            <div className="bank-tools">
+              <form className="bank-search" method="get" action="/profile">
+                {tab !== "question"
+                  ? <input type="hidden" name="tab" value={tab} /> : null}
+                {cat ? <input type="hidden" name="cat" value={cat} /> : null}
+                <span className="vh">Search the Memory Bank</span>
+                <input type="search" name="q" defaultValue={q ?? ""}
+                       placeholder="Search questions and answers"
+                       autoComplete="off" spellCheck={false} />
+              </form>
+              <div className="bank-filters" role="group"
+                   aria-label="Which kind of record">
+                {TABS.map(([key, label]) => {
+                  const n = bank.filter((e) => tabOf(e) === key).length;
+                  // The board hides a filter whose set is empty: "a filter for
+                  // an empty set is an invitation to wonder what is missing."
+                  if (n === 0 && key !== tab) return null;
+                  return (
+                    <a key={key} href={href({ tab: key, cat: "" })}
+                       className={key === tab ? "bank-chip on" : "bank-chip"}>
+                      {label}<span className="chip-n">{n}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+
+            {showCats && cats.length ? (
+              <div className="bank-cats" role="group"
+                   aria-label="Filter by category">
+                <a className={cat ? "bank-cat" : "bank-cat on"}
+                   href={href({ cat: "" })}>All</a>
+                {cats.map(([slug, n]) => (
+                  <a key={slug} href={href({ cat: slug === cat ? "" : slug })}
+                     className={slug === cat ? "bank-cat on" : "bank-cat"}>
+                    {catLabel(slug)}<span className="chip-n">{n}</span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="bank-groups">
+              {/* Whole class strings below, for the reason the state chip
+                  gives: a name assembled with `+` exists only after the
+                  expression runs, and both guards read the source. `state`
+                  holds one value, so these are exclusive rather than
+                  combinable. */}
+              {rows.map((entry) => (
+                <article key={entry.key}
+                         className={entry.state === "needs-you" ? "bank-row open"
+                           : entry.state === "dismissed" ? "bank-row struck"
+                           : "bank-row"}>
+                  <p className="bank-q">{entry.question ?? entry.key}</p>
+                  {/* **Drawn plainly, including the sensitive ones.**
+                      CLAUDE.md settles this: one reader, who knows his own
+                      salary and his own demographics, and a tap to reveal was
+                      friction protecting nobody. The flag stays on the row
+                      because it is what a second account will mask on. */}
+                  {entry.value ? (
+                    <p className="bank-a">{entry.value}</p>
+                  ) : (
+                    <p className="bank-a none">
+                      {entry.state === "dismissed"
+                        ? "You dismissed this. Jobby will not ask again."
+                        : "No answer yet."}
+                    </p>
+                  )}
+                  <p className="bank-meta">
+                    {/* **The three states written out, not composed.**
+                        `"bank-tag state-" + state` reads the same and is
+                        invisible to both guards: `test_v2_matches_the_board`
+                        proves no class is invented and
+                        `test_v2_styles_are_reachable` proves none is
+                        unreachable, and neither can resolve a name that only
+                        exists once the expression has run. Concatenating it
+                        made all three `state-*` rules look dead. These are
+                        also exactly the three the stylesheet defines. */}
+                    <span className={
+                      entry.state === "sensitive" ? "bank-tag state-sensitive"
+                      : entry.state === "dismissed" ? "bank-tag state-dismissed"
+                      : entry.state === "missing" ? "bank-tag state-missing"
+                      : "bank-tag"}>
+                      {entry.state === "needs-you"
+                        ? "needs you" : (entry.state ?? "confirmed")}
                     </span>
-                  ) : null}
-                </div>
-                <div className="act">
-                  <button className="btn" type="button" disabled
-                          title={READ_ONLY}>Edit</button>
-                </div>
-              </article>
-            ))}
-            {rows.length === 0 ? (
-              <p className="empty">
-                <strong>Nothing here.</strong>
-                <span>
+                    {entry.category && entry.kind === "question" ? (
+                      <span className="bank-tag">{catLabel(entry.category)}</span>
+                    ) : null}
+                    {entry.tags.map((t) => (
+                      <span className="bank-tag" key={t}>{t}</span>
+                    ))}
+                    {entry.updatedAt ? (
+                      <span className="bank-tag">
+                        Updated {String(entry.updatedAt).slice(0, 10)}
+                      </span>
+                    ) : null}
+                  </p>
+                </article>
+              ))}
+              {rows.length === 0 ? (
+                <p className="bank-note">
                   {needle || cat
                     ? "No entry in this tab matches. Clear the filter to see the rest."
                     : "Answers arrive as employers ask them."}
-                </span>
-              </p>
-            ) : null}
-          </div>
+                </p>
+              ) : null}
+            </div>
+          </section>
+
+          <p className="credential-note">
+            Answers are stored on Your Device and mirrored to the board behind
+            this password so you can read them here, including compensation and
+            demographics: this is your board and your data. That changes when a
+            second account exists, and the per-user encryption in the
+            multi-tenant plan is what changes it.
+          </p>
         </section>
       </div>
     </>
