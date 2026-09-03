@@ -251,7 +251,7 @@ CSS = r"""
     transition:border-color .24s var(--ease),background-color .3s; }
   .provider-card:hover { border-color:var(--hair-strong); }
 
-  .dropped-dock { position:fixed; left:1rem; bottom:1rem; z-index:45; height:2.8rem;
+  .dropped-dock { position:fixed; right:1rem; bottom:1rem; z-index:45; height:2.8rem;
     max-width:3rem; padding:0 .76rem; border:1px solid var(--hair); border-radius:12px;
     display:flex; align-items:center; gap:.5rem; overflow:hidden; background:var(--card);
     color:var(--ink-2); box-shadow:var(--sh); cursor:pointer; white-space:nowrap;
@@ -260,7 +260,11 @@ CSS = r"""
   .dropped-dock:hover,.dropped-dock:focus-visible { max-width:10.5rem; transform:translateY(-3px);
     box-shadow:var(--sh-hover); color:var(--red-ink); }
   .dropped-dock svg { width:1.25rem; height:1.25rem; flex:none; }
-  .dropped-label { opacity:0; transform:translateX(-5px); transition:opacity .2s ease .05s,transform .3s var(--ease); }
+  /* The dock is anchored right and grows leftward, so the label is uncovered
+     from the right and arrives from that side. Mirrored with the anchor: a
+     -5px entrance here reads as the label sliding against the direction the
+     box is opening. */
+  .dropped-label { opacity:0; transform:translateX(5px); transition:opacity .2s ease .05s,transform .3s var(--ease); }
   .dropped-dock:hover .dropped-label,.dropped-dock:focus-visible .dropped-label { opacity:1; transform:none; }
   .dropped-count { min-width:1.3rem; height:1.3rem; padding:0 .3rem; border-radius:999px;
     display:grid; place-items:center; background:var(--t-red); color:var(--red-ink);
@@ -435,7 +439,7 @@ CSS = r"""
     .jb-acts { justify-content:flex-start; padding-top:.75rem; border-top:1px solid var(--hair); }
     .jb-det { order:8; }
     .jb-slot { order:9; }
-    .dropped-dock { left:.75rem; bottom:.75rem; }
+    .dropped-dock { right:.75rem; bottom:.75rem; }
   }
   @media (max-width:520px) {
     .appbar { grid-template-columns:1fr auto; }
