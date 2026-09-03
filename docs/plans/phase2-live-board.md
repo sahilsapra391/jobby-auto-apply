@@ -404,6 +404,10 @@ Two more things this phase must not let become permanent:
 - **"No writes from v2" is enforced by discipline, not by the credential.**
   Against a read-only role an accidental write fails loudly; against this one it
   succeeds and the file store falls behind on exactly the rows it touched.
+  **This is also why `live_board` cannot flip when the parity clock closes:**
+  the first v2 write is a divergence parity is right to report, so the flip is
+  gated on the file store being deleted rather than on the clock. The order,
+  and why writeback must not be built to bridge it, is in `docs/post-gate.md`.
 - **The production checkout sits under `~/Documents`**, where macOS Privacy
   controls can deny access after an OS update: on 2026-09-01 they denied git
   access to a worktree there mid-session, and all four launchd plists execute

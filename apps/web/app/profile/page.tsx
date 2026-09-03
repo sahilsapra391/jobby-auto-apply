@@ -161,11 +161,95 @@ export default async function Profile({ searchParams }: {
             </div>
 
             <div className="identity-add">
-              {/* The form behind this is a write and goes with item 21. Dark
-                  with the reason beats a button that opens nothing. */}
               <button className="btn ghost" type="button" disabled
                       title={READ_ONLY}>Add a base resume</button>
+              {/* **The form the button opens, rendered dark rather than
+                  absent.** Creating a base writes `profiles.resumes`, which is
+                  a write, so it is behind `live_board`. Present because a
+                  button that opens nothing is worse than a form you can see and
+                  cannot submit: the reader learns what the board will ask for,
+                  and wiring it later is one step rather than two. */}
+              <div className="base-form">
+                <label>Name
+                  <input type="text" placeholder="Europe" disabled
+                         title={READ_ONLY} /></label>
+                <label>Key
+                  <input type="text" placeholder="eu" disabled
+                         title={READ_ONLY} /></label>
+                <label>Countries
+                  <input type="text" placeholder="GB, DE, FR, NL" disabled
+                         title={READ_ONLY} /></label>
+                <label>Copy from<span className="vh"> an existing base</span>
+                  <select disabled title={READ_ONLY}>
+                    {resumes.map((r) => (
+                      <option key={r.key ?? ""} value={r.key ?? ""}>
+                        {(r.key ?? "").toUpperCase() || "Base"}
+                      </option>))}
+                  </select></label>
+                <label>Document
+                  <span className="base-file">
+                    <input type="file" accept="application/pdf,.pdf" disabled
+                           title={READ_ONLY} />
+                    <span className="bank-note">
+                      Using the copied base&apos;s PDF. Choose a file to use
+                      your own instead.
+                    </span>
+                  </span></label>
+                <div className="bank-act">
+                  <button className="btn" type="button" disabled
+                          title={READ_ONLY}>Create</button>
+                  <button className="btn ghost" type="button" disabled
+                          title={READ_ONLY}>Cancel</button>
+                </div>
+                <p className="bank-note">
+                  Contact details always come from the base you copy. A PDF you
+                  upload becomes what this base is <em>based on</em>: the text a
+                  tailored resume is written against. The wording itself still
+                  starts from the copied base, because the layout a resume
+                  renders through is the template&apos;s, not the uploaded
+                  file&apos;s.
+                </p>
+                <span className="profile-message">{READ_ONLY}</span>
+              </div>
             </div>
+
+            {/* **The resume editor, open and read-only.** Editing the wording
+                writes it, so the controls are dark; the document itself is a
+                read and v2 does not carry it yet, which the stage says rather
+                than pretending to load forever. */}
+            <details className="wording">
+              <summary>
+                <span>Edit your resume</span>
+                <span className="wording-hint">
+                  The document itself. Click any line and type.
+                </span>
+              </summary>
+              <div className="wording-body">
+                <div className="split-note">
+                  <strong>The words are yours, the layout is the
+                    template&apos;s.</strong> You are editing the real document,
+                  so what you see is what the PDF will be. Lines can say
+                  anything; there is always the same number of them, because the
+                  layout is what the page-fit check measures against.
+                </div>
+                <div className="resume-stage">
+                  <p className="bank-note">
+                    The wording is on your device. v2 reads what the mirror
+                    carries, and the resume text is not mirrored yet, so there
+                    is nothing here to edit.
+                  </p>
+                </div>
+                <div className="wording-act">
+                  <button className="btn" type="button" disabled
+                          title={READ_ONLY}>Save resume</button>
+                  <button className="btn ghost" type="button" disabled
+                          title={READ_ONLY}>Revert</button>
+                  <span className="profile-message" role="status">
+                    {READ_ONLY}
+                  </span>
+                </div>
+              </div>
+            </details>
           </section>
 
           <section className="profile-block" aria-labelledby="bank-title">

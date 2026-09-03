@@ -1,5 +1,6 @@
 import { Pool, types } from "pg";
 import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
+import { COUNTRY_NAMES } from "../search.generated";
 
 /**
  * Read-only access to the board's Postgres.
@@ -334,16 +335,46 @@ export async function providers(): Promise<ProviderLink[]> {
  * is a separate piece of work; saying what it currently is costs one line.
  */
 export async function locationScope(): Promise<string | null> {
+  const { words } = await savedSearch();
+  return words;
+}
+
+/**
+ * The saved search, as both the sentence Found shows and the raw selection the
+ * picker needs.
+ *
+ * **One read, because they are one fact.** The chip saying "Worldwide" and the
+ * picker's 199 checkboxes both come from `search_config.locations`, and asking
+ * twice invites them to disagree about the same row -- which for this field
+ * would be visible, since an empty list means Worldwide rather than nothing.
+ */
+export async function savedSearch(): Promise<{
+  words: string | null; locations: string[]; scope: string; extra: string[];
+}> {
   const account = await accountId();
-  const { rows } = await pool().query(
-    "select search_config from board_meta where account_id = $1", [account]);
+  const [{ rows }, unplaced] = await Promise.all([
+    pool().query(
+      "select search_config from board_meta where account_id = $1", [account]),
+    // The picker's "Other locations" group: codes the pool holds that the
+    // taxonomy does not place. Derived rather than listed, for the reason
+    // `LocationPicker` gives.
+    pool().query(
+      `select distinct country from postings
+        where country is not null and country <> '' and closed_at is null`),
+  ]);
+  const known = new Set(Object.keys(COUNTRY_NAMES));
+  const extra = unplaced.rows.map((r) => String(r.country))
+    .filter((c) => !known.has(c)).sort();
   const config = rows[0]?.search_config as Record<string, unknown> | null;
-  if (!config) return null;
-  const locations = Array.isArray(config.locations) ? config.locations : [];
-  if (!locations.length) return "Worldwide";
-  return locations.length === 1
-    ? `${locations[0]}`
+  const locations = Array.isArray(config?.locations)
+    ? (config!.locations as unknown[]).map(String) : [];
+  const scope = typeof config?.searchScope === "string"
+    ? (config!.searchScope as string) : "title";
+  if (!config) return { words: null, locations, scope, extra };
+  const words = !locations.length ? "Worldwide"
+    : locations.length === 1 ? `${locations[0]}`
     : `${locations.length} countries`;
+  return { words, locations, scope, extra };
 }
 
 /** One base resume, as the registry describes it. No wording, no path. */

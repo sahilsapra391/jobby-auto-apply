@@ -91,7 +91,17 @@ def board_markup():
     return dashboard.build(sync_v2_styles.SYNTHETIC_STATE, "2026-01-01T00:00:00Z")
 
 
-def board_classes():
+def hollow(state):
+    """The same state with every collection emptied.
+
+    What "the fixture populated nothing" renders as, computed rather than
+    guessed, so the floor below it moves when the board does.
+    """
+    return {k: ({} if isinstance(v, dict) else [] if isinstance(v, list) else v)
+            for k, v in state.items()}
+
+
+def board_classes(state=None):
     """Every class the board itself puts on an element.
 
     **A class the board emits is not an invented one, even when no rule
@@ -105,7 +115,7 @@ def board_classes():
     table renders `empty_state(...)` and this set silently loses them.
     """
     from test_v2_lane_shapes import ROW_BEARING_STATE
-    html = dashboard.build(ROW_BEARING_STATE, "2026-01-01T00:00:00Z")
+    html = dashboard.build(state or ROW_BEARING_STATE, "2026-01-01T00:00:00Z")
     return {c for m in re.findall(r'class=["\']([^"\']+)["\']', html)
             for c in m.split()}
 
@@ -117,8 +127,29 @@ class EveryClassV2UsesIsOneTheBoardStyles(unittest.TestCase):
     def test_no_class_is_invented(self):
         css = sync_v2_styles.TARGET.read_text(encoding="utf-8")
         selectors = set(re.findall(r"\.([A-Za-z][\w-]*)", css))
+        from test_v2_lane_shapes import ROW_BEARING_STATE
         emitted = board_classes()
+        # **"Not zero" is not "complete", and that distinction cost this
+        # check two thirds of its subject.** The guard here used to be
+        # `assertTrue(emitted)`, which is the anti-vacuity check this
+        # repository prescribes, set to a threshold nothing could fail: the
+        # fixture carried `jobs: []`, Found drew `empty_state`, and the entire
+        # filter block -- date chips, Advanced search, the 199-country picker,
+        # the actions row -- never reached the HTML. 99 classes for a wholly
+        # empty state, 132 for one with rows but no pool, 164 with one job.
+        # All three are non-empty.
+        #
+        # The floor is derived rather than a literal, so it cannot rot the way
+        # a number would: rendering the same state with every collection
+        # emptied is what "the fixture populated nothing" looks like, and the
+        # real fixture has to beat it by a margin.
         self.assertTrue(emitted, "the board rendered no classes; the check is vacuous")
+        self.assertGreater(
+            len(emitted), len(board_classes(hollow(ROW_BEARING_STATE))) + 40,
+            "the fixture renders barely more than an empty board, so this "
+            "scan is running against a fraction of the markup it claims to "
+            "check. The usual cause is a collection left empty, which makes a "
+            "lane draw its empty state and takes the panel above it too.")
         _, used = v2_markup()
         allowed = selectors | emitted
         invented = sorted(c for c in used if c not in allowed)

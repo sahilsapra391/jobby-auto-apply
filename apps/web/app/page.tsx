@@ -11,7 +11,7 @@ import { DroppedOpen } from "./_ui/DroppedOpen";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
-  accountId, boardMeta, counts, laneQuery, locationScope, page, readerName,
+  accountId, boardMeta, counts, laneQuery, page, readerName, savedSearch,
 } from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
@@ -70,7 +70,7 @@ export default async function Board({
     accountId().then(writesEnabled), boardMeta(),
     // The unfiltered pool, so the count can say what it matched against.
     active === "found" && filters ? counts().then((t) => t.found) : undefined,
-    active === "found" ? locationScope() : undefined,
+    active === "found" ? savedSearch() : undefined,
     // The archive's first page. It is a dialog on this document rather than a
     // route, so it renders with the board or not at all.
     page("dropped", null, 50, "new", q ? { q } : undefined),
@@ -179,7 +179,12 @@ export default async function Board({
               <ScanBanner meta={meta} />
               <Filters q={q} within={within} direct={direct === "1"}
                        sort={sort} shown={first.rows.length}
-                       total={tally[active]} pool={pool} scope={scope ?? undefined} />
+                       total={tally[active]} pool={pool}
+                       scope={scope?.words ?? undefined}
+                       locations={scope?.locations ?? []}
+                       searchScope={scope?.scope ?? "title"}
+                       extraLocations={scope?.extra ?? []}
+                       writesEnabled={writes} />
             </>
           ) : null}
           {active !== "found" ? (
