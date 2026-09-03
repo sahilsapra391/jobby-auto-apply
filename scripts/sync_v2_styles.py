@@ -50,6 +50,7 @@ LANE_CHROME = REPO / "apps" / "web" / "app" / "lane_chrome.generated.ts"
 ICONS = REPO / "apps" / "web" / "app" / "icons.generated.ts"
 BANK = REPO / "apps" / "web" / "app" / "bank.generated.ts"
 PROVIDER_LABELS = REPO / "apps" / "web" / "app" / "providers.generated.ts"
+SEARCH = REPO / "apps" / "web" / "app" / "search.generated.ts"
 STATIC_SRC = REPO / "deploy" / "public"
 STATIC_DST = REPO / "apps" / "web" / "public"
 
@@ -546,6 +547,60 @@ def providers_module():
             + json.dumps(labels, indent=2) + ";\n")
 
 
+def search_module():
+    """Advanced search's option lists and the location taxonomy.
+
+    **199 countries in six groups, and not a line of it retyped.** The board's
+    picker is the storage contract as much as it is a control -- CLAUDE.md:
+    empty saved `locations` means Worldwide, a partial selection stores explicit
+    country codes, and `CONTINENT_COUNTRIES` assigns each of the 199 to exactly
+    one display group. A second copy of that in TypeScript is a second answer to
+    "which continent is Turkey in", and the two would part on the first edit.
+
+    The select options come across for the same reason. `EXPERIENCE_OPTIONS`,
+    `DEGREE_OPTIONS`, `ROLE_CATEGORIES`, `EMPLOYMENT_TYPES` and `JOB_TYPES` are
+    the board's own wording and order; v2 renders the same controls and must not
+    invent a seventh way to spell "Full time".
+    """
+    import json
+    import found_lane
+    lists = {
+        "SCOPE_OPTIONS": found_lane.SCOPE_OPTIONS,
+        "WORKPLACES": found_lane.WORKPLACES,
+        "EXPERIENCE_OPTIONS": found_lane.EXPERIENCE_OPTIONS,
+        "DEGREE_OPTIONS": found_lane.DEGREE_OPTIONS,
+        "ROLE_CATEGORIES": found_lane.ROLE_CATEGORIES,
+        "EMPLOYMENT_TYPES": found_lane.EMPLOYMENT_TYPES,
+        "JOB_TYPES": found_lane.JOB_TYPES,
+        "UNKNOWN_TOGGLES": found_lane.UNKNOWN_TOGGLES,
+    }
+    body = ["// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.",
+            "//",
+            "// Advanced search's options and the location taxonomy, from",
+            "// scripts/found_lane.py. The picker is the storage contract as",
+            "// much as a control: empty `locations` means Worldwide and a",
+            "// partial selection stores explicit country codes.",
+            "",
+            "export type Option = [string, string];", ""]
+    for name, value in lists.items():
+        body.append(f"export const {name}: Option[] = "
+                    + json.dumps([list(v) for v in value]) + ";")
+    body.append("")
+    body.append("/** Every selectable country, by code. */")
+    body.append("export const COUNTRY_NAMES: Record<string, string> = "
+                + json.dumps(found_lane.COUNTRY_NAMES, sort_keys=True) + ";")
+    body.append("")
+    body.append("/** Each of the 199 in exactly one display group:")
+    body.append("    `[slug, visible name, country codes]`. */")
+    body.append("export const CONTINENT_COUNTRIES: [string, string, string[]][] = "
+                + json.dumps([[slug, name, list(codes)]
+                              for slug, name, codes
+                              in found_lane.CONTINENT_COUNTRIES])
+                + ";")
+    body.append("")
+    return "\n".join(body)
+
+
 def bank_module():
     """The Memory Bank's taxonomy labels, from `answer_categories`.
 
@@ -646,6 +701,7 @@ def outputs():
         (LANE_CHROME, lane_chrome_module),
         (ICONS, icons_module),
         (BANK, bank_module),
+        (SEARCH, search_module),
         (PROVIDER_LABELS, providers_module),
     ]
 

@@ -38,7 +38,20 @@ def _session(key, **kw):
 
 ROW_BEARING_STATE = {
     "userId": "sync", "profile": {}, "memoryBank": {}, "searchConfig": {},
-    "providers": {}, "meta": {}, "jobs": [],
+    "providers": {}, "meta": {},
+    # **One found job, so the Found panel renders at all.** With `jobs: []` the
+    # lane draws `empty_state` and the entire filter block above it -- the date
+    # chips, Advanced search, the location picker and the Save search row --
+    # never reaches the HTML. `board_classes()` reads this render to decide
+    # which classes the board emits, so an empty pool silently narrowed it to
+    # the table lanes and reported `jb-actions` as a class v2 had invented.
+    # `state: "new"` is what `found_lane.select` filters on. Without it the
+    # job is in the pool and not in the lane, which is the same empty Found
+    # panel by a subtler route.
+    "jobs": {"j1": {"id": "j1", "company": "CoJ1", "role": "Role j1",
+                    "url": "https://example.com/j1", "postedAt": "2026-08-30",
+                    "location": {"country": "US", "text": "Remote"},
+                    "fitScore": 70, "state": "new"}},
     "sessions": [
         _session("w1", status="watch"),
         _session("a1", status="review", pendingFields=[{"question": "Q?"}]),

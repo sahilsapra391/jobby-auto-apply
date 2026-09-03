@@ -1,6 +1,11 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
+import { LocationPicker } from "./LocationPicker";
+import {
+  DEGREE_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_OPTIONS, JOB_TYPES,
+  ROLE_CATEGORIES, SCOPE_OPTIONS, UNKNOWN_TOGGLES, WORKPLACES, type Option,
+} from "../search.generated";
 import { READ_ONLY } from "./actions";
 
 /** Eastern, like the board: the reader is in Charlotte and so is the sweep. */
@@ -93,14 +98,26 @@ export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
  * them; `SelectFace` runs premium_ui.SCRIPT afterwards to put the styled face
  * over them. Nothing here draws a listbox.
  */
-export function Filters({ q, within, direct, sort, shown, total, pool, scope }: {
+export function Filters({ q, within, direct, sort, shown, total, pool, scope,
+                         locations = [], writesEnabled = false,
+                         searchScope = "title", extraLocations = [] }: {
   q?: string; within?: string; direct?: boolean; sort?: Sort;
   shown?: number; total?: number;
   /** Every open posting, before any filter. */
   pool?: number;
   /** The saved search's location scope, in words. */
   scope?: string;
+  /** Country codes off the saved search; empty is Worldwide by contract. */
+  locations?: string[];
+  writesEnabled?: boolean;
+  /** The saved `searchScope`, so the select opens on what is stored. */
+  searchScope?: string;
+  /** Codes the pool holds that the taxonomy does not place. */
+  extraLocations?: string[];
 } = {}) {
+  // Every advanced control carries the same reason when it is dark, so it is
+  // named once.
+  const dark = writesEnabled ? undefined : READ_ONLY;
   const terms = (q ?? "").split(/\s+/).filter(Boolean);
   const filtered = !!(q || within || direct);
   return (
@@ -201,19 +218,97 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope }: 
           did not turn because nothing toggled a class and the rule was written
           for the attribute. Nothing to add here beyond letting the element be
           what it is -- the marker rotates on `details[open] > summary`. */}
+      {/* **The board's advanced body, four rows of it.** v2 had one row with
+          two controls against the board's three inputs, seven selects and six
+          labels, which is most of what made this block read as unfinished.
+
+          **Present and disabled rather than absent, and the reason differs by
+          control.** Save search writes `board_meta.search_config`, so it is
+          behind `live_board` like every other write. The rest are reads, and
+          they are dark for a different reason worth stating rather than
+          hiding: `extracted.degree`, `roleCategory` and `employmentType` are
+          populated on 0 of 22,762 postings, so a working filter on them would
+          return nothing and look broken. The board says so out loud in the note
+          below and v2 keeps its wording. */}
       <details className="jb-adv">
         <summary>Advanced search</summary>
         <div className="jb-advbody">
           <div className="jb-row">
             <input type="search" placeholder="Hide jobs mentioning…"
-                   aria-label="Hide jobs mentioning" />
-            <select aria-label="Where to search" defaultValue="title">
-              <option value="title">Title only</option>
-              <option value="title+desc">Title and description</option>
+                   aria-label="Hide jobs mentioning"
+                   disabled={!writesEnabled} title={dark} />
+            <select aria-label="Where to search" defaultValue={searchScope}
+                    disabled={!writesEnabled} title={dark}>
+              {SCOPE_OPTIONS.map(([v, label]) => (
+                <option value={v} key={v}>{label}</option>))}
             </select>
+            <select aria-label="Companies" disabled={!writesEnabled} title={dark}>
+              <option value="all">All companies</option>
+              <option value="only">Only these companies</option>
+              <option value="hide">Hide these companies</option>
+            </select>
+            <input type="search" placeholder="Company names, comma separated"
+                   aria-label="Company names"
+                   disabled={!writesEnabled} title={dark} />
+          </div>
+          <div className="jb-row">
+            <div className="jb-location-field">
+              <span className="jb-location-label">Locations</span>
+              <LocationPicker selected={locations} writesEnabled={writesEnabled}
+                              extra={extraLocations} />
+            </div>
+            <div className="jb-stack">
+              <label className="jb-check">
+                <input type="checkbox" defaultChecked
+                       disabled={!writesEnabled} title={dark} />
+                <span>include remote for this selection</span>
+              </label>
+              <div className="jb-checks">
+                {WORKPLACES.map(([v, label]) => (
+                  <label className="jb-check" key={v}>
+                    <input type="checkbox" defaultChecked
+                           disabled={!writesEnabled} title={dark} />
+                    <span>{label}</span>
+                  </label>))}
+              </div>
+            </div>
+          </div>
+          <div className="jb-row">
+            {([["Max experience", EXPERIENCE_OPTIONS],
+               ["Degree", DEGREE_OPTIONS],
+               ["Role", ROLE_CATEGORIES],
+               ["Employment", EMPLOYMENT_TYPES],
+               ["Job type", JOB_TYPES]] as [string, Option[]][])
+              .map(([label, options]) => (
+                <label className="jb-lab" key={label}>{label}
+                  <select disabled={!writesEnabled} title={dark}>
+                    {options.map(([v, text]) => (
+                      <option value={v} key={v}>{text}</option>))}
+                  </select>
+                </label>))}
+          </div>
+          <div className="jb-row jb-checks">
+            {UNKNOWN_TOGGLES.map(([key, label]) => (
+              <label className="jb-check" key={key}>
+                <input type="checkbox" defaultChecked
+                       disabled={!writesEnabled} title={dark} />
+                <span>unknown {label}</span>
+              </label>))}
+            <span className="jb-note">degree, role and job type are not
+              extracted yet, so they filter the unknown bucket honestly</span>
           </div>
         </div>
       </details>
+      {/* The board's own actions row, which v2 had not at all. Save search is
+          the write; Clear is a link because a reset would restore the form's
+          defaults and leave the URL filtered, so the count would not move. */}
+      <div className="jb-row jb-actions">
+        <button className="jb-btn primary" type="button"
+                disabled={!writesEnabled} title={dark}>Save search</button>
+        {filtered
+          ? <a className="jb-btn" href="/?lane=found">Clear</a>
+          : <button className="jb-btn" type="button" disabled>Clear</button>}
+      </div>
     </div>
   );
 }
