@@ -1057,6 +1057,56 @@ it was the check disagreeing with a change that should not have moved it. A
 lesson written down is not a lesson applied, and the second instance is always
 somewhere adjacent to the first.
 
+### A fixture with an empty collection under-renders, and nothing looks wrong
+
+**A check that renders a fixture and inspects the output is only as complete as
+the fixture, and an empty collection is the most likely way to under-render.**
+
+`test_v2_matches_the_board` proves v2 invents no class the board does not emit.
+It builds the board from `ROW_BEARING_STATE` and collects every class in the
+HTML. That state carried `jobs: []`, so `found_lane.select` returned nothing,
+Found drew `empty_state`, and **the entire filter block above the lane** -- the
+date chips, Advanced search, the 199-country picker, the actions row -- never
+reached the markup. The check ran against roughly two thirds of the board for as
+long as it has existed, and reported `jb-actions` as a class v2 had invented
+while the board emits it on every real render.
+
+Measured, one job added:
+
+    a wholly empty state          99 classes
+    rows but an empty pool       132
+    one job with state "new"     164
+
+**This is not another check that measured nothing.** It measured something, and
+what it measured was correct. Its *subject* was two thirds the size it appeared
+to be, which is a different failure and a harder one to see: nothing is wrong
+with the assertion, the fixture, or the code under test, only with how much of
+the subject the fixture reaches.
+
+**The anti-vacuity guard was already there, set to a threshold nothing could
+fail.** The file asserted `assertTrue(emitted, "the board rendered no classes;
+the check is vacuous")` -- exactly the precaution this file prescribes -- and 99,
+132 and 164 all pass it. **"Not zero" is not "complete."** A guard against a
+vacuous check has to be calibrated against the size of the real subject, not
+against emptiness, or it certifies the under-rendered case as healthy.
+
+The fix is a floor derived from the same render: the fixture must beat the same
+state with every collection emptied, by a margin. It moves when the board moves,
+where a literal count would rot.
+
+**The audit, because one instance implies others.** Six tests here render a
+fixture and scan the output, and the other five are safe for a reason worth
+stating rather than assuming: `test_v2_head_parity` scans the `<head>`,
+`test_found_script` scans `found_lane.SCRIPT` as source text, and
+`test_answers_viewer` and `test_dashboard` scan markup they build in the same
+test. **The hole needs a scan whose subject is "the whole rendered page"** rather
+than a named part of it, and only the class check had that shape.
+
+So when writing a check that renders and scans, ask what the fixture does *not*
+contain, and what the renderer does when a collection is empty. A lane that
+draws an empty state usually takes its whole panel with it, and the output is
+still perfectly valid markup.
+
 ### A name assembled at runtime is invisible to every check that reads the source
 
 **Two guards disagreed about one file, both were wrong, and they were wrong in
