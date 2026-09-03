@@ -10,6 +10,31 @@ Add to this list rather than taking three days off the clock for a change that
 can wait. Take the whole list in one change when the gate opens, for the same
 reason: one reset, not five.
 
+## The flag flip is gated on the deletion, not on the clock
+
+**Order matters and getting it backwards costs the three days twice.**
+
+    gate closes  ->  file store deleted  ->  parity retires  ->  live_board flips
+
+Not `gate closes -> flag flips`. v2 writes Postgres and nothing pushes a v2
+write back to the device's file store, which the phase-2 plan already names:
+"against this one it succeeds and the file store falls behind on exactly the
+rows it touched." Parity compares the file store against Postgres, so **the
+first v2 write after the flag goes on is a real divergence, correctly reported,
+and it resets the clock.** Item 21's own Save search is the sharpest case:
+`board_meta.search_config` is a compared field, so a search saved from v2
+disagrees with `search-config.json` the moment it is written. Profile's write
+half is the same against `answer_bank` (`value`, `state`, `tags`, `category`)
+and `profiles` (`identity`, `resumes`).
+
+**Writeback is not the answer and should not be built.** A bridge to a store
+that is about to be deleted is work that exists only to be thrown away, and it
+would make the divergence invisible rather than absent. The divergence stops
+mattering when there is no second store, which is what the three days are for.
+
+So the precondition on flipping `live_board` is the deletion, and the clock is
+only the precondition on the deletion.
+
 ## Split the 16 unseen columns into exempt and defect
 
 `scripts/parity_coverage.py` reports three states -- compared, exempt with a
