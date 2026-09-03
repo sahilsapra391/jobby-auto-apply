@@ -115,46 +115,106 @@ OBSERVED_ON_THE_PAGE = frozenset({
 #: Item 22 is the cautionary entry. It was closed as "already matching" because
 #: the stylesheet arrived, and the check that should have caught that could not:
 #: it started from classes v2 emits, so a class v2 never emits was outside its
-#: subject entirely. 13 of these 20 `jb-*` names are that one feature.
+#: subject entirely.
+#:
+#: **Each group declares what it is waiting on, because that is what makes the
+#: list a sequence rather than an inventory.** Three states, and the third is
+#: not a smaller version of the second:
+#:
+#:   "gated"        needs writes. Cannot be built until the parity gate closes,
+#:                  the file store is deleted and `live_board` flips.
+#:   "buildable"    reads only. Nothing is stopping it now.
+#:   "architectural" v2 does this another way and the class will never be
+#:                  rendered. **Not a gap**, and counting it as one overstates
+#:                  the remaining work permanently.
+STATES = ("gated", "buildable", "architectural")
+
 UNRENDERED = {
     "what is left of the card disclosure after item 22: the score breakdown "
-    "bars, and the row of other places a posting was sighted. Both need "
-    "columns the Found query does not select -- `job_scores.parts` is "
-    "already there and `postings.sources` is not -- so they are a change to "
-    "the generated SQL rather than to the card": {
-        "jb-bars", "jb-bar", "jb-sight", "jb-more", "jb-skipped", "jb-footer",
+    "bars, and the row of other places a posting was sighted": {
+        "state": "buildable",
+        "why": "both need columns the Found query does not select. "
+               "`job_scores.parts` is already selected and `postings.sources` "
+               "is not, so this is a change to the generated SQL in "
+               "`scripts/v2_lanes.py` and then markup, with no write in it.",
+        "classes": {"jb-bars", "jb-bar", "jb-sight", "jb-more", "jb-skipped",
+                    "jb-footer"},
     },
     "the answer record modal: what an employer's form asked and what went "
     "into it, with its source and sensitivity badges": {
-        "ans-a", "ans-badge", "ans-differs", "ans-list", "ans-meta",
-        "ans-note", "ans-q", "ans-row", "ans-salvage", "ans-src-generated",
-        "ans-src-profile", "ans-src-provided", "ans-src-stored",
-        "ans-unrecorded", "ans-unverified", "ans-value", "ans-withheld",
-        "answers-count", "answers-dialog", "answers-loading",
+        "state": "buildable",
+        "why": "reading an artifact, not writing one. The records are Class 1 "
+               "objects already in R2 under "
+               "`u/{userId}/app/{applicationId}/answers.json`, and the board "
+               "serves them through its authenticated `/doc/` proxy. v2 needs "
+               "that proxy and the modal; neither is a write. The `capture` "
+               "level and the per-field `source` enum travel with the record, "
+               "so the badges are display of what is already there.",
+        "classes": {"ans-a", "ans-badge", "ans-differs", "ans-list",
+                    "ans-meta", "ans-note", "ans-q", "ans-row", "ans-salvage",
+                    "ans-src-generated", "ans-src-profile", "ans-src-provided",
+                    "ans-src-stored", "ans-unrecorded", "ans-unverified",
+                    "ans-value", "ans-withheld", "answers-count",
+                    "answers-dialog", "answers-loading"},
     },
     "Profile's write half: the answer bank and the resume wording editor": {
-        "bank-alts", "bank-edit", "bank-empty", "bank-group", "bank-list",
-        "bank-more", "bank-sensitive", "bank-when", "wording-field",
-        "wording-list", "wording-role", "resume-frame",
+        "state": "gated",
+        "why": "every control here saves. The wording editor writes "
+               "`profiles.base_resume_text` and the bank writes "
+               "`answer_bank`, both of which parity compares, so the first "
+               "one to land before the gate closes is a real divergence that "
+               "resets the clock. Sequence it after `live_board` flips.",
+        "classes": {"bank-alts", "bank-edit", "bank-empty", "bank-group",
+                    "bank-list", "bank-more", "bank-sensitive", "bank-when",
+                    "wording-field", "wording-list", "wording-role",
+                    "resume-frame"},
     },
-    "Settings and provider state, which v2 renders as its own route": {
-        "provider-active", "provider-message", "settings-link",
-        "settings-view", "profile-view", "profile-error", "back-board",
+    "provider connection state on the Settings page": {
+        "state": "buildable",
+        "why": "drawing whether a provider is connected is a read of "
+               "`provider_links`, which v2 already queries. Connect and "
+               "Disconnect are the writes and they are not these classes.",
+        "classes": {"provider-active", "provider-message"},
     },
-    "the scan banner and its progress, which is a device action v2 cannot "
-    "trigger while writes are gated": {
-        "scanbar", "scanmsg", "sysbanner", "capacity", "waiting",
+    "the scan banner and its progress": {
+        "state": "buildable",
+        "why": "the banner is a read of the last sweep and the slot fleet: "
+               "`board_meta`, `meta.slotsParked` and the ingest report all "
+               "carry it already. Only the Scan now button is a write, and "
+               "that is `scan`, which is in ALLOWED rather than here.",
+        "classes": {"scanbar", "scanmsg", "sysbanner", "capacity", "waiting"},
     },
-    "board-only affordances with no v2 equivalent yet": {
-        "ago", "applymsg", "aside", "chip-sm", "contact", "direct",
-        "dropping", "err", "fault-note", "jb-decidefail", "jb-linkmsg", "jb-out", "jb-pill", "jb-vt", "jb-wide", "msg",
-        "nav-n", "note", "ok", "pill", "stub", "ui-separator", "undo", "why",
+    "the board's single-document navigation": {
+        "state": "architectural",
+        "why": "`.settings-page` and `.profile-page` are `display:none` until "
+               "a class lands on `<body>`, because the board is one document "
+               "whose panels toggle. v2 serves them as routes, so nothing "
+               "sets those classes and nothing should. This is the 2026-08-30 "
+               "finding from the other side: the same CSS that rendered a "
+               "blank page there is correct to be inert here.",
+        "classes": {"settings-view", "profile-view", "back-board",
+                    "settings-link", "profile-error", "nav-n", "ui-separator"},
+    },
+    "board-only affordances with no v2 equivalent decided yet": {
+        "state": "buildable",
+        "why": "a long tail, each one small, none of them a write. Kept as "
+               "one group rather than seven because splitting them would "
+               "imply a sequencing decision nobody has made.",
+        "classes": {"ago", "applymsg", "aside", "chip-sm", "contact",
+                    "direct", "dropping", "err", "fault-note",
+                    "jb-decidefail", "jb-linkmsg", "jb-out", "jb-pill",
+                    "jb-vt", "jb-wide", "msg", "note", "ok", "pill", "stub",
+                    "undo", "why"},
     },
     "states whose base class v2 does render, already carried by ALLOWED with "
     "their own reasons; listed here too because the inverted check sees them "
     "from the other side": {
-        "done", "fault", "gate", "landed", "lost", "marked", "ref", "scan",
-        "wide",
+        "state": "buildable",
+        "why": "each has an entry in ALLOWED saying where the behaviour "
+               "actually lives. They are here only so the two checks agree "
+               "about what exists.",
+        "classes": {"done", "fault", "gate", "landed", "lost", "marked",
+                    "ref", "scan", "wide"},
     },
 }
 
@@ -321,7 +381,12 @@ def seen_classes():
 
 
 def unrendered_baseline():
-    return set().union(*UNRENDERED.values())
+    return set().union(*(g["classes"] for g in UNRENDERED.values()))
+
+
+def unrendered_by_state(state):
+    return set().union(*(g["classes"] for g in UNRENDERED.values()
+                         if g["state"] == state), set())
 
 
 def styled_rules():
@@ -487,12 +552,44 @@ class EveryStyledStateIsReachable(unittest.TestCase):
                          "v2 now renders these, so they are no longer a gap "
                          "and must come out of UNRENDERED: %s" % landed)
 
-    def test_the_unrendered_groups_say_what_the_feature_is(self):
-        for label, members in UNRENDERED.items():
+    def test_every_group_says_what_it_is_and_what_it_waits_on(self):
+        """A group with no state is an inventory entry, not a sequence entry.
+
+        The list is only worth keeping if it can be sequenced from, and that
+        needs each group to say whether the write gate is what is stopping it.
+        `architectural` is the one that has to be declared rather than
+        inferred: those classes will never be rendered, so counting them as
+        outstanding work overstates the remainder for as long as the file
+        exists.
+        """
+        for label, group in UNRENDERED.items():
             self.assertGreater(len(label), 30,
-                               "a group of %d classes needs a label that says "
-                               "what feature it is: %r" % (len(members), label))
-            self.assertTrue(members, "%r groups nothing" % label)
+                               "a group needs a label that says what feature "
+                               "it is: %r" % (label,))
+            self.assertIn(group["state"], STATES,
+                          "%r declares state %r, which is not one of %s"
+                          % (label, group.get("state"), list(STATES)))
+            self.assertGreater(len(group.get("why", "")), 60,
+                               "%r has no reason long enough to check" % label)
+            self.assertTrue(group["classes"], "%r groups nothing" % label)
+
+    def test_the_gated_group_is_the_one_that_writes(self):
+        """The `gated` claim is checkable and it is checked.
+
+        A group is gated when its controls save something, and the sharpest
+        evidence available here is that its classes belong to Profile's write
+        half -- the answer bank and the wording editor, both of which parity
+        compares. Anything else claiming to be gated is a claim nobody has
+        tested, and a wrong `gated` is worse than a wrong `buildable`: it
+        parks work behind a gate that was never in its way.
+        """
+        gated = unrendered_by_state("gated")
+        stray = sorted(c for c in gated
+                       if not (c.startswith("bank-") or c.startswith("wording-")
+                               or c == "resume-frame"))
+        self.assertEqual(stray, [],
+                         "these are marked gated and are not part of a write "
+                         "surface anyone has named: %s" % stray)
 
     def test_every_allowance_carries_a_reason(self):
         for key, why in ALLOWED.items():

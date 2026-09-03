@@ -577,6 +577,35 @@ the old board is carried across, the question "does the markup match" and the
 question "does the page render" are different questions, and only the second
 one is the one anybody cares about.
 
+#### And the same CSS is correct to be inert on the other side, 2026-09-03
+
+**A class the old board sets with a body toggle, which v2 serves as a route, is
+not a gap. Counting it as one overstates the remaining work permanently.**
+
+This is the finding above seen from the other end and it needs saying, because
+the obvious reading of "styled and never rendered" is "somebody forgot". The
+inverted reachability check reports 83 such classes, and seven of them --
+`settings-view`, `profile-view`, `back-board`, `nav-n`, `settings-link`,
+`profile-error`, `ui-separator` -- are the single-document board's navigation.
+`.settings-page` is `display:none` until `body.settings-view` is set; v2 has
+separate routes, so nothing sets it and nothing should. **The identical rule
+that rendered a blank page on 2026-08-30 is correct here.**
+
+So a list of unrendered classes needs three states rather than two, and the
+third has to be declared rather than inferred, because nothing about the class
+distinguishes "not built yet" from "never will be". Measured 2026-09-03: 64
+buildable, 12 gated on the write path, 7 architectural. Without the third the
+gap reads 83 forever and no amount of work closes it.
+
+**The guard on the second state is the one worth copying.** A group claiming to
+be blocked on the write gate must have classes belonging to a write surface
+somebody has named, and the test fails otherwise. A wrong `gated` parks
+buildable work behind a gate that was never in its way, and **that is the class
+of error nobody finds, because it looks like caution.** Every other wrong
+label produces work that fails; this one produces work that never starts, and
+the absence of a symptom is what protects it. Verified by mislabelling the scan
+banner and watching the test refuse it.
+
 ### A correct fix, mutation-verified, and the board stayed frozen, 2026-09-01
 
 **Two uncovered `on conflict` targets, one table apart, froze the board for
