@@ -60,8 +60,8 @@ PRs that armed on the pull, and it took three sessions converging to correct it.
 
 | claim | as written | measured 2026-09-03 | verdict |
 |---|---|---|---|
-| why three services exist | "a slow provider probe delayed a Connect click" | three different **resource profiles**, only one about latency | incomplete, and the missing part is the hard part |
-| signal-safe staged cleanup | "register handlers ... prove it with a test" | **already built** in `run_apply`, and it works | done; the test is what is missing |
+| why three services exist | "a slow provider probe delayed a Connect click" | three different **resource profiles**; `Interactive` pri 31 against `Background` pri 4, measured | **two processes is the expected outcome**, not one |
+| signal-safe staged cleanup | "register handlers ... prove it with a test" | **already built** in `run_apply`, and it works | done, and the test now exists |
 | drain window | implied by a 45-minute run | 62 runs: median **5.7 min**, p95 16.0, max **18.6**, zero over 45 | 45 is a timeout, not a duration |
 | anything else | -- | nothing built | accurate |
 
@@ -99,15 +99,39 @@ The environment split has the same shape. `NODE_OPTIONS` and `MALLOC_ARENA_MAX`
 are set for the document service alone; in one process they are set for every
 node child that process ever spawns, the renderer and the Vercel CLI included.
 
-None of this makes one process wrong. It makes ADR 0008's "the answer is an
-async task inside one process" an answer to the smaller half of the problem, and
-its own closing line already says Phase 4 has to demonstrate that rather than
-assert it. **The demonstration is a latency measurement of a Connect click with
-the provider lane running at `Background`, and it should be taken before the
-collapse rather than after.** If it fails, the fallback is two processes rather
-than three: a supervisor and one deliberately unthrottled control lane, which
-still gets the deploy story most of the way because the supervisor owns the
-re-exec.
+**So two processes is the expected outcome, and one is the thing that has to be
+demonstrated.** Writing it the other way round -- one process, with two as a
+fallback if something goes wrong -- gets the burden of proof backwards, because
+the priority difference is measured and the claim that it does not matter is
+not. `Interactive` at 31 against `Background` at 4 is a real difference that a
+single process cannot express, and no amount of `asyncio` structure creates one.
+
+The shape to build:
+
+```
+jobby-runner        supervisor: watch loop, document work, leases, re-exec
+                    ProcessType Background, LowPriorityIO, the node caps
+jobby-controls      the provider control lane, nothing else
+                    ProcessType Interactive, no throttle
+```
+
+Two plists instead of three, and the second one is small, does no work that
+takes time, and is the only thing a Connect click touches.
+
+**And the restart problem is not solved by the process count.** It is solved by
+`KeepAlive` plus self-replacement, and those work identically for two processes
+as for one: the supervisor re-execs itself, and it can restart its sibling the
+same way launchd would. Collapsing three into one was never what fixed the
+deploy; it was one design that happened to arrive alongside the thing that did.
+Reading Phase 4 as "the collapse phase" is what makes the priority measurement
+look like an obstacle rather than an input.
+
+One process remains available and should be adopted the moment it is earned:
+**time a Connect click with the provider lane installed at `Background`, against
+the same click at `Interactive`.** If there is no measurable difference, merge
+them and ADR 0008 is vindicated with evidence rather than reasoning. That is a
+cheap measurement and nobody has taken it, which is the whole reason the ADR's
+own closing line asks Phase 4 to demonstrate rather than assert.
 
 ### The signals bullet is already built, and it now has a reading
 
@@ -180,25 +204,35 @@ found, including this morning's.
 plist points at `/usr/local/bin/jobby-runner`, the runner replaces its own
 target, and the checkout's reflog stops being the authority.
 
-The plan's answer is `{"runner_version":"2.3.1"}` in the capacity
-advertisement, and **a self-reported version is the weakest possible instrument
-for this**. It is the `window.__jb_ran_theme` shape: a flag set by the thing
-being measured, which reads as "it ran" and is true and useless. A runner that
-re-execs into a half-unpacked directory, or that swaps the symlink and fails to
-exec, keeps answering with the version it believes it is.
+**`{"runner_version":"2.3.1"}` in the capacity advertisement does not replace
+it, and this is a change to the plan rather than a refinement of it.** A version
+a runner reports about itself is the `window.__jb_ran_theme` shape exactly: a
+flag set by the thing being measured, which reads as "it ran", is true, and is
+useless. A runner that re-execs into a half-unpacked directory, or swaps the
+symlink and fails to exec, or execs a binary whose bytes are wrong, keeps
+answering with the version it believes it is. Every one of those is a state the
+reflog comparison would have caught and a version string cannot.
 
-Two properties fix it and neither is expensive:
+Replace it with a hash the runner did not choose:
 
 ```
-the cloud verifies      resolve the symlink, hash the target, compare against
-                        the manifest SHA-256 the cloud itself served
-the runner proves it    report the hash it computed at exec time, not the
-                        version string it was compiled with
+the runner reports   the SHA-256 of the file it is executing, computed at exec
+                     time from its own resolved symlink target -- not a
+                     constant compiled into it
+the cloud verifies   that hash against the manifest SHA-256 the cloud itself
+                     served for that version, and refuses to lease to a runner
+                     whose hash it cannot match
 ```
 
-That is the same distinction as the R2 manifest's `--verify` being deep by
-default: a stamped version survives a corrupted body, so a version-only check
-calls corruption healthy.
+The second half is what makes it a verification rather than a nicer self-report.
+A hash the runner computes is still the runner's word; a hash the cloud can
+compare against what it shipped is not.
+
+Same distinction as the R2 manifest's `--verify` being deep by default: a
+stamped version survives a corrupted body, so a version-only check calls
+corruption healthy. And the same reason `migrate.py status` is not schema
+verification -- it compares the record against the directory, which is an
+adjacent question that reads as coverage.
 
 And one operational property worth keeping from the current design: the deploy
 lock. Self-replacement removes the human from the deploy, which removes the
@@ -209,11 +243,11 @@ just internal to the state machine.
 ## 5. What to measure before building it
 
 - **Connect click latency with the provider lane at `Background`.** This is the
-  measurement ADR 0008 asks for and nobody has taken. It decides one process
-  versus two, and it is cheap: install the provider lane under `Background`, time
-  a Connect, compare against `Interactive`. If the answer is "no difference", the
-  collapse is unblocked and the ADR is vindicated with evidence rather than
-  reasoning.
+  measurement ADR 0008 asks for and nobody has taken. It does not decide whether
+  Phase 4 ships -- two processes is the plan -- it decides whether one process
+  becomes available. Install the provider lane under `Background`, time a
+  Connect, compare against `Interactive`. If there is no measurable difference,
+  merge them and the ADR is vindicated with evidence.
 - **What the document worker actually needs from `NODE_OPTIONS` and
   `MALLOC_ARENA_MAX`.** Both were added for a reason nobody has written down. If
   they are load-bearing, one process has to set them globally and the blast
@@ -224,9 +258,12 @@ just internal to the state machine.
   `toolpath.search_path()` and launchd hands over almost nothing, so an exec that
   loses it produces a runner that cannot find node, vercel or the CLIs, and it
   will look like a provider fault.
-- **The staged-file assertion, added to the suite now.** It passes today. It
-  should be failing loudly the first time someone changes the handler, not
-  discovered again in Phase 4.
+- Nothing further on the staged-file cleanup. `tests/test_signal_clears_staged_documents.py`
+  now sends a real SIGTERM, SIGINT and SIGHUP to a real process and reads the
+  directory afterwards, asserts `activity.json` survives, asserts the exit status
+  still reports the signal, and carries the handler-absent mutation so it cannot
+  pass vacuously. Verified by disabling `browser.discard_staged`, which fails it.
+  Phase 4's negative test (d) is done.
 
 ## 6. The sequencing claim, so it is not re-derived later
 

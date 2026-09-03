@@ -1303,7 +1303,12 @@ could do nothing about it. Do not read that as "Anthropic cannot fill forms":
 the server was broken for both, and what differs is only who says so.
 
 So the fence is re-checked immediately before each provider attempt rather than
-once before the loop. It costs about 1.3 seconds against a 45-minute run. And a
+once before the loop. It costs about 1.3 seconds against a run whose ceiling is
+45 minutes. **That ceiling is `run_apply.TIMEOUT_SECONDS` and it is not a
+duration; do not quote it as one.** Measured 2026-09-03 over the 62 apply runs
+on this machine with a readable wall time: median 5.7 minutes, p75 7.7, p90
+11.0, p95 16.0, max 18.6, and zero over 45. That matters wherever something has
+to wait for a run to finish, which is Phase 4's drain. And a
 park is classified after the fact: the firewall counts every accepted tool call
 into `uploads/<id>/activity.json`, and a park with zero browser calls is
 recorded as `parkClass: capability`, which the board draws in red saying the
@@ -2262,6 +2267,41 @@ than the fact that it passed. A classifier is not verified by reading it. The
 word-bounded version above went from 4 of 4 generic questions wrongly flagged to
 0 of 7, measured against the 156 real answers, and that measurement is the only
 reason anyone knows it works.
+
+### And sometimes the word boundary is the wrong fix, 2026-09-03
+
+**An exclusion list on a thing's *role* is a small closed set. An exclusion list
+standing in for a *name-matching rule* grows forever and is always one company
+short.** Which one you have decides whether a boundary test helps or hurts.
+
+`company_logos.website_from_description` accepts a link whose host contains a
+token of the company name, `token in compact_host`, and it has the defect above
+in principle: `Ford` resolves to `stanfordalumni.com`, `Vast` to
+`devastating-labs.io`, `Apex` to `grapexchange.net`. So the obvious repair is a
+label-boundary test.
+
+**It was written, run against all 351 stored employer domains, and it lost.** A
+plain boundary test refuses `hioscar.com`, `onepeloton.com`, `getmoss.com`,
+`getstream.io`, `withpersona.com`, `mybrightwheel.com`, `getrecharge.com` and
+`ridewithvia.com`, 188 postings, because `get-`, `my-`, `with-`, `one-`, `hi-`
+and `ride-` are a domain convention rather than a collision. An affix-tolerant
+version that refuses a trailing word refuses 29 of which about sixteen are
+correct: `davies-group`, `redditinc`, `cusointernational`, `flockcover`,
+`toasttab`, `surferseo` and `ouraring` all have a word after the name and all
+belong to the company, and five more are a public-suffix bug (`tiro.co.uk`,
+`mable.com.au`, `paypay.ne.jp`) needing a list this codebase does not carry.
+Across all 351 the substring test has produced **one** likely bad row the role
+rules do not already catch.
+
+What does work looks at the host's role and never at the name: refuse a careers
+or content first label (28 of 351), refuse a general-purpose hosting domain (6
+of 351, and these are the ones that draw a stranger's mark -- Dropbox renders
+GitHub's octocat), then rank the candidates instead of taking the first.
+
+So the rule is not "always use word boundaries". It is: **the corpus decides,
+and a rule that has not met it is a guess.** The substring finding above was
+measured into existence and this one was measured out of it, by the same method.
+`docs/plans/phase3-inputs.md` section 11 carries the numbers.
 
 ## No diagnostic path is ever discarded
 
