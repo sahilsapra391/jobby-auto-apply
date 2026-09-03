@@ -26,7 +26,7 @@ and some of it was written before things it assumes changed.
 | §7 `sessions` table | 88 rows against 89 files | 88 against **97** | drift grew from 1 to 9 |
 | §8 the leak | one `active` orphan, shows in Needs you | orphan still there, **does not show** | consequence stale |
 | §10 / §5 numbering | two sections numbered 5 | -- | fix while editing |
-| §11 | did not exist | added 2026-09-03, the careers-host ingest defect | new, written out of this sketch |
+| §11 | did not exist | added 2026-09-03: **34 of 351 employer domains are not the employer** | new, written out of this sketch |
 | extracted attrs | 0 of 22,762; years 9,483 (41.7%) | 23,141; years 9,596 (41.5%) | holds |
 
 Four of those are worth more than a row.
@@ -269,16 +269,16 @@ Case B excludes it: its precondition is that neither row has a domain. It is a
 third mechanism, and the only one of the 13 groups the rule refuses.
 
 **It is not a resolver problem and it is filed as an ingest defect**, in
-`phase3-inputs.md` section 11, with the reproduction and the two causes. The
-short version: `company_logos.website_from_description` takes the first link in
-the posting body whose host contains a company token, an apply link precedes the
-corporate one on essentially every posting, and the filter that rejects
-`boards.greenhouse.io` does not reject an employer's own `jobs.` host. Measured,
-**24 of the 351 employers holding a domain have one whose first label is not the
-company**, including Airbnb, Robinhood, Roblox and Snowflake, plus five blogs.
+`phase3-inputs.md` section 11, with the reproduction, the two causes and the
+fix that the corpus refused. TELUS is how it was found and not the size of it:
+**34 of the 351 employers holding a domain hold one that is not the employer's,
+9.7%, behind 1,187 postings.** Twenty-eight are a careers or content first
+label (Snowflake 157 postings, Adyen 114, Airbnb 82, Robinhood 52) and six are
+hosted on somebody else's platform, which is the half that draws a stranger's
+mark: Dropbox renders GitHub's octocat, Harvey and Hex render Notion's.
 
 The resolver's refusal is containing this defect rather than fixing it, and the
-two must not be confused. Fix it in ingest, backfill the 24, and this group
+two must not be confused. Fix it in ingest, backfill the 34, and this group
 stops existing. A registrable-domain comparison in the resolver would also merge
 TELUS, and would be the right repair in the wrong place.
 
