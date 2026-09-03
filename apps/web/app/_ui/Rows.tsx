@@ -465,12 +465,18 @@ export function DoneRow(row: Row) {
                  </span>;
         }
         const has = lid && list.includes(`u/account-1/app/${lid}/answers.json`);
+        // **A button only where there is a record.** The other four states
+        // stay exactly what they were: making every row a button would put an
+        // affordance on 87 applications that have nothing behind it, which is
+        // the hardcoded "not captured" again wearing a nicer control.
         return has ? (
-          <a className="go" href={`/api/artifact?app=${encodeURIComponent(row.id)}&kind=answers`}
-             target="_blank" rel="noopener"
-             aria-label="Answers: what this form asked and what went into it">
+          <button className="go answers-open" type="button"
+                  data-app={row.id} data-company={s(row.company) ?? ""}
+                  data-role={s(row.role) ?? ""}
+                  aria-haspopup="dialog" aria-controls="p-answers"
+                  aria-label="Answers: what this form asked and what went into it">
             record &#8599;
-          </a>
+          </button>
         ) : (
           <Muted>not captured</Muted>
         );

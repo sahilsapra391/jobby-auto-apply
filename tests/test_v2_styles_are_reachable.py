@@ -140,22 +140,19 @@ UNRENDERED = {
         "classes": {"jb-bars", "jb-bar", "jb-sight", "jb-more", "jb-skipped",
                     "jb-footer"},
     },
-    "the answer record modal: what an employer's form asked and what went "
-    "into it, with its source and sensitivity badges": {
+    "what is left of the answer record modal after it landed: the four "
+    "`ans-src-*` badge variants, which are built by concatenating the source "
+    "onto a prefix": {
         "state": "buildable",
-        "why": "reading an artifact, not writing one. The records are Class 1 "
-               "objects already in R2 under "
-               "`u/{userId}/app/{applicationId}/answers.json`, and the board "
-               "serves them through its authenticated `/doc/` proxy. v2 needs "
-               "that proxy and the modal; neither is a write. The `capture` "
-               "level and the per-field `source` enum travel with the record, "
-               "so the badges are display of what is already there.",
-        "classes": {"ans-a", "ans-badge", "ans-differs", "ans-list",
-                    "ans-meta", "ans-note", "ans-q", "ans-row", "ans-salvage",
-                    "ans-src-generated", "ans-src-profile", "ans-src-provided",
-                    "ans-src-stored", "ans-unrecorded", "ans-unverified",
-                    "ans-value", "ans-withheld", "answers-count",
-                    "answers-dialog", "answers-loading"},
+        "why": "**not a gap, a limit of the reader.** The badge class is "
+               "`ans-src-` plus the field's own `source`, so it is constructed "
+               "at runtime in both boards and no static scan can see it. The "
+               "modal renders all four; `dynamic_bases` is the mechanism that "
+               "would exempt them if they were reached through a template "
+               "literal, and a string concatenation is outside what it reads. "
+               "Kept here rather than deleted so the count is not quietly "
+               "wrong in the other direction.",
+        "classes": {'ans-src-provided', 'ans-src-profile', 'ans-src-generated', 'ans-src-stored'},
     },
     "Profile's write half: the answer bank and the resume wording editor": {
         "state": "gated",

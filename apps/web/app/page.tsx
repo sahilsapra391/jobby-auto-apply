@@ -8,6 +8,7 @@ import { SelectFace } from "./_ui/SelectFace";
 import { AddLink, ScanBanner, Filters } from "./_ui/FoundSurface";
 import { DroppedDock } from "./_ui/Dropped";
 import { DroppedOpen } from "./_ui/DroppedOpen";
+import { AnswersModal } from "./_ui/AnswersModal";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
@@ -219,6 +220,9 @@ export default async function Board({
                    writesEnabled={writes} />
       <SelectFace />
       <DroppedOpen />
+      {/* One dialog for the page, opened by delegation, so it survives
+          LaneList replacing the rows when it pages. */}
+      <AnswersModal />
     </>
   );
 }
