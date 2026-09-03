@@ -1048,6 +1048,58 @@ green.** Disable the thing the check is for and watch it fail, once per case.
 Three runs, a minute each. Both failures above were invisible to everything
 cheaper.
 
+**And the shape recurred one level down, in the same session, after this entry
+was written.** The staleness test beside the main check asked whether an
+allowance's class name appeared anywhere in v2 -- the same question, about the
+same file -- and so called an allowance stale while the rule it suppressed was
+still unreachable. Knowing the shape did not prevent repeating it; what caught
+it was the check disagreeing with a change that should not have moved it. A
+lesson written down is not a lesson applied, and the second instance is always
+somewhere adjacent to the first.
+
+### A name assembled at runtime is invisible to every check that reads the source
+
+**Two guards disagreed about one file, both were wrong, and they were wrong in
+opposite directions.** The subject was a class name built by an expression:
+
+    className={"bank-row" + (open ? " open" : "")}
+    className={`bank-tag state-${entry.state ?? "confirmed"}`}
+
+`test_v2_styles_are_reachable` reads the markup to prove no styled state is
+unreachable. It could not see `state-sensitive`, `state-missing` or
+`state-dismissed` anywhere, and reported all three rules as dead CSS. False
+positive. `test_v2_matches_the_board` reads the markup to prove no class is
+invented, tokenised the same attributes, and reported `+`, `?`, `:`, `===` and
+`(entry.state` as classes v2 had made up. False positive of the opposite kind:
+one guard saw too few names, the other too many, from the identical text.
+
+**Neither is fixable by a better regex, and reaching for one is the trap.** The
+name does not exist in the source at all. It exists after the expression runs,
+and the set of names it can produce is a property of the data. A parser that
+resolved these two cases would still be defeated by the next
+`classes[kind]`, and every improvement would make the checks more confident and
+no more correct.
+
+Two responses, and both are needed:
+
+**Write the name out where the check has to see it.** Whole literals in a
+ternary, one branch per state, which is also how the stylesheet declares them.
+It reads no worse and both guards agree with it.
+
+**Where a name genuinely is computed, say so and stop asking about it.**
+`` `jb-chip ${kind}` `` renders six real variants that cannot be enumerated from
+the text, so `dynamic_bases()` collects the static part and the check skips
+every rule whose subject carries it. That is coverage deliberately given up,
+which is honest, where a listed guess at the six values would rot.
+
+The general form, past CSS: **a static check can only see the names that are
+written down.** Anything a program composes -- a class, a column, a table, a
+route, a metric key, an event name -- is outside what any source reader can
+enumerate, and a checker that quietly treats "not written down" as "does not
+exist" will be confidently wrong in whichever direction its default points.
+Decide which names must stay literal for the checks to work, and make the rest
+explicitly out of scope rather than accidentally so.
+
 ### A summary statistic over a non-stationary series is not a measurement
 
 **Ten of the checks written up here measured nothing. This one measured the
