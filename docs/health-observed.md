@@ -18,6 +18,8 @@ Rebuild it the same way. It goes stale the moment a guard's wording changes.
 | `guard_render` | 2 lines, "read the store mid-write" |
 | `mcp_preflight` refusal | 2 lines in an apply run log |
 | firewall activity counter | real `browserCalls` in apply logs: 10, 28, 59, 62 |
+| `close_missing` share brake | 22 firings in `ingest-runs.log`, read 2026-09-03 -- see below |
+| `run_apply` staged-file cleanup on a signal | driven 2026-09-03: real SIGTERM, both PDFs gone from disk, `activity.json` kept, exit 143. Verified by removing the handler and watching all three survive |
 
 ## Never observed here
 
@@ -28,6 +30,27 @@ Rebuild it the same way. It goes stale the moment a guard's wording changes.
 | `browser.open_application` failure | needs a dead Chrome behind a passing preflight |
 | `parkClass: capability` | needs a park with zero browser calls. 0 of 96 sessions carry the tag. |
 | `stale_sweep_warning` | added 2026-09-01. Its first firing would be an 8-hour sweep outage. |
+
+## The share brake fired 22 times and nothing read it
+
+`closureRefused` is the one guard here whose *record* was complete and whose
+*reader* did not exist. Over 75 sweeps from 2026-08-20 to 2026-09-03 it fired
+22 times, every one of them `rippling / astra`, held 33 and wouldClose 32, on
+consecutive sweeps from 2026-08-25T23:31Z to 2026-08-29T16:59Z.
+
+It was right. All 34 Astra records are `new` today, last seen 2026-09-03T04:11Z:
+the board returned 1 of 33 for four days and came back whole, and without the
+brake 32 live postings would have closed on the first of those sweeps.
+
+**Three ways it is still only half a guard**, which is why it sits here with the
+detail rather than as a bare row. It has no memory, so the twenty-second refusal
+reads exactly like the first and a genuinely emptied board would be refused
+forever. Nothing reads the field -- `grep` finds one writer in `ingest.py` and
+no reader anywhere. And it is per-board, so the largest closure on record,
+1,860 records on 2026-08-30T01:02Z, tripped it zero times.
+
+Recorded properly in `docs/plans/phase3-design.md` section 3, because it is a
+Phase 3 design input as well as a health observation.
 
 ## Two readings in the first pass were wrong, both in the reassuring direction
 

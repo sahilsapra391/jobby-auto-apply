@@ -453,6 +453,151 @@ source to derive a board key with (trying all sixteen patterns measured zero
 ambiguity on this corpus, which is a property of the corpus and not the method).
 
 
+## 11. 9.7% of employer domains are not the employer
+
+Added 2026-09-03, out of the employer-resolver sketch. TELUS is how it was
+found; it is not the size of it.
+
+**34 of the 351 employers holding a domain hold one that does not belong to the
+employer. 1,187 postings sit behind them.** This is not an edge case and the
+names are not obscure ones:
+
+```
+careers.snowflake.com    157      careers.robinhood.com     52
+careers.adyen.com        114      blog.duolingo.com         33
+careers.deliveroo.co.uk   98      blog.1password.com        31
+harveyai.notion.site      83      careers.doctolib.com      26
+careers.toasttab.com      84      careers.pagerduty.com     26
+careers.airbnb.com        82      launchdarkly.slack.com    24
+blog.cloudflare.com       73      dropbox.github.io         21
+careers.roblox.com        71      notion.notion.site        57
+```
+
+Two shapes, and they do different amounts of damage.
+
+**28 have a first label that is not the company** -- `careers.`, `jobs.`,
+`blog.`, plus `engineering.`, `images.`, `identity.` and `insideout.`. The
+favicon of `careers.snowflake.com` is usually Snowflake's, so the render mostly
+survives. The damage is in the data: the stored domain is what the employer
+resolver keys on, which is how TELUS ended up as two employers, and it is what
+parity reports as an `employer_field_pinned` disagreement, which is how
+`blog.duolingo.com` got onto that list.
+
+**6 are hosted on somebody else's platform**, and those do draw a stranger's
+mark, because the favicon belongs to the host:
+
+```
+Harvey        harveyai.notion.site      83 postings
+Notion        notion.notion.site        57
+LaunchDarkly  launchdarkly.slack.com    24
+Dropbox       dropbox.github.io         21
+Vonage        ericssonab70331551vonagepro-my.sharepoint.com   11
+Hex           hexhq.notion.site          4
+```
+
+Dropbox draws GitHub's octocat. Harvey and Hex draw Notion's. That is the
+stranger's-logo failure `company_logos.py` was built to prevent, arriving
+through the one path that does not go through its trusted-host check.
+
+### Two causes, both reproduced
+
+`company_logos.website_from_description` returns the **first** link in the
+posting body whose host contains a token of the company name:
+
+```python
+website_from_description("TELUS Digital",
+    '<a href="https://jobs.telusdigital.com/careers/1234">Apply</a>'
+    '<a href="https://www.telusdigital.com">About us</a>')
+-> "https://jobs.telusdigital.com"
+```
+
+**First match wins, with no ranking.** On a job posting the apply link precedes
+the corporate one essentially always, so this is the common case rather than bad
+luck. Duolingo is the same shape with a blog link in front.
+
+**And there is no rejection of a host by its role.** `_is_infrastructure_host`
+returns True for `boards.greenhouse.io` and `apply.workable.com` and False for
+`jobs.telusdigital.com`, `careers.duolingo.com` and `dropbox.github.io`. The
+filter knows about other people's ATSs and not about the employer's own careers
+host, and not about general-purpose hosting at all.
+
+### The substring host test, and why the obvious fix is worse
+
+The host test is `token in compact_host`, a substring with no label boundary,
+which is the class this repository's CLAUDE.md already records three instances
+of. It reproduces:
+
+```
+Ford  -> https://www.stanfordalumni.com
+Vast  -> https://devastating-labs.io
+Apex  -> https://grapexchange.net
+```
+
+`Vast` is a real employer here with 61 postings and no domain yet, so it is one
+posting body away rather than hypothetical.
+
+**A label-boundary test is the obvious fix and the corpus refuses it. Measured
+before writing it down.** 23 of the 351 stored domains match only as an embedded
+substring, and the clear majority of those are correct:
+
+```
+Oscar Health  hioscar.com          Peloton     onepeloton.com
+Brightwheel   mybrightwheel.com    Persona     withpersona.com
+Moss          getmoss.com          Recharge    getrecharge.com
+Stream        getstream.io         Via         ridewithvia.com
+```
+
+`get-`, `my-`, `with-`, `one-`, `hi-` and `ride-` are a standard domain
+convention, not a collision. A boundary test loses all eight of those and 188
+postings with them.
+
+The next idea is a boundary test that tolerates a leading affix and refuses a
+trailing word. That was written and run against all 351: **it refuses 29 and
+about sixteen of the refusals are correct domains.** `davies-group.com`,
+`redditinc.com`, `cusointernational.org`, `flockcover.com`, `toasttab.com`,
+`surferseo.com` and `ouraring.com` all have a word after the name and all belong
+to the company. Five more are a public-suffix bug -- `tiro.co.uk`,
+`mable.com.au`, `paypay.ne.jp` -- because taking the last two labels as the
+registrable domain is wrong for multi-part suffixes, and doing it properly needs
+a public-suffix list this codebase does not carry.
+
+**So the trailing word is not a signal, and the third rule of this design pass
+to be killed by the corpus is killed here.** Across all 351 stored domains the
+substring test has produced exactly **one** likely bad row that the role rules
+below do not already catch: `ATOM PARTNERS LIMITED -> atomsmiths.com`, one
+posting, where the token `atom` is followed by `smiths`. Not verified against
+the real company, and stated as a candidate rather than a fault.
+
+### What actually works: reject on the host's role, not on how the name matches
+
+The two rules that separate signal from noise in this corpus do not look at the
+name at all.
+
+```
+1  refuse a host whose first label is a careers or content label
+   catches  28 of 351, including every careers. and blog. row above
+
+2  refuse a host on a general-purpose hosting domain
+   catches  6 of 351, and these are the ones that draw a stranger's mark
+```
+
+Both are exclusion lists, which is what the substring finding argues against,
+and the distinction is worth stating rather than glossing: an exclusion list on
+a **host's role** is a small closed set that changes slowly, while an exclusion
+list standing in for a **name-matching rule** is the thing that grows forever
+and is always one company short. The existing `_is_infrastructure_host` is the
+first kind and its only defect is being incomplete.
+
+Then rank rather than take the first: prefer a candidate whose registrable
+domain is not the posting's own ATS host, prefer the shortest host, and prefer a
+bare `www.` or apex over any subdomain. TELUS resolves correctly under ranking
+alone, without any change to the matching.
+
+The 34 existing rows are a backfill. Until they are corrected, the employer
+resolver's "both have a domain and they differ" refusal is containing this
+defect rather than fixing it, and the two must not be confused.
+
+
 ## The three attributes nothing extracts, measured 2026-09-02
 
 `extracted.degree`, `extracted.employmentType` and `extracted.roleCategory` are
