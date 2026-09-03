@@ -26,6 +26,7 @@ and some of it was written before things it assumes changed.
 | §7 `sessions` table | 88 rows against 89 files | 88 against **97** | drift grew from 1 to 9 |
 | §8 the leak | one `active` orphan, shows in Needs you | orphan still there, **does not show** | consequence stale |
 | §10 / §5 numbering | two sections numbered 5 | -- | fix while editing |
+| §11 | did not exist | added 2026-09-03, the careers-host ingest defect | new, written out of this sketch |
 | extracted attrs | 0 of 22,762; years 9,483 (41.7%) | 23,141; years 9,596 (41.5%) | holds |
 
 Four of those are worth more than a row.
@@ -74,9 +75,38 @@ the board needs for a logo and a company view, and what it silently loses today
 on half the applications.
 
 That also reframes the cascade itself: **`ON DELETE SET NULL` is correct.** The
-posting is gone and nulling the pointer is honest. Exempting linked postings
-from pruning -- the previous draft's preference -- buys the right answer by
-fighting the retention policy forever, and the carve-out only grows.
+posting is gone and nulling the pointer is honest.
+
+**This replaces the exempt-linked-postings-from-pruning draft, and the reason
+is worth keeping rather than just the conclusion.** That draft was reached by
+treating the decay as the defect and reaching for the cheapest thing that stops
+it: 103 rows out of 23,141 postings, a small carve-out. Three things are wrong
+with it. It buys a correct answer by fighting the retention policy, and a
+carve-out against retention only ever grows, because every future application
+adds a row that may never be pruned. It preserves the whole posting to keep one
+field, when the field that matters is the employer and the body is already a
+Class 1 artifact in R2. And it leaves `posting_id` carrying two facts with
+different lifetimes, so the next person to read it still cannot tell whether a
+NULL means "we never linked this" or "the listing closed".
+
+Accepted instead, and the shape is the one `answer_record` already uses -- two
+claims, two fields, never blended:
+
+```
+applications.employer_id   new column. Survives pruning, follows merged_into,
+                           is what the board needs for a logo and a company view.
+applications.posted_at     copied down at link time so it freezes. 39% today
+                           against 100% for the identity fields.
+applications.posting_id    allowed to decay honestly. It means "the posting is
+                           still in the pool" and that genuinely expires.
+applications.company       stays frozen. It is what the employer's form saw.
+```
+
+The 5 links whose `company` disagrees with their resolved employer go to a
+review queue rather than an overwrite, for the same reason a salvaged answer
+record is never joined against `answers.json`: resolving a frozen claim against
+today's store produces what the store would say now, presented as what was true
+then.
 
 Two measurements make the shape concrete. `posted_at` is on 39% of applications
 against 100% of the identity fields, which is the one field the link was
@@ -236,15 +266,21 @@ TELUS Digital   jobs.telusdigital.com   12 postings
 
 Case A cannot see it: the domains differ, so domain equality finds nothing.
 Case B excludes it: its precondition is that neither row has a domain. It is a
-**third mechanism** and the only one of the 13 groups the rule refuses.
+third mechanism, and the only one of the 13 groups the rule refuses.
 
-**The resolver is the wrong place to fix it.** `jobs.telusdigital.com` should
-never have been recorded as an employer domain -- it is the careers host, the
-same shape as `blog.duolingo.com` beating `careers.duolingo.com` among the
-eleven `employer_field_pinned` disagreements parity already reports. Strip
-known careers-host labels before recording a domain and this group stops
-existing. A registrable-domain comparison in the resolver would also merge it,
-and would be the wrong repair in the right place.
+**It is not a resolver problem and it is filed as an ingest defect**, in
+`phase3-inputs.md` section 11, with the reproduction and the two causes. The
+short version: `company_logos.website_from_description` takes the first link in
+the posting body whose host contains a company token, an apply link precedes the
+corporate one on essentially every posting, and the filter that rejects
+`boards.greenhouse.io` does not reject an employer's own `jobs.` host. Measured,
+**24 of the 351 employers holding a domain have one whose first label is not the
+company**, including Airbnb, Robinhood, Roblox and Snowflake, plus five blogs.
+
+The resolver's refusal is containing this defect rather than fixing it, and the
+two must not be confused. Fix it in ingest, backfill the 24, and this group
+stops existing. A registrable-domain comparison in the resolver would also merge
+TELUS, and would be the right repair in the wrong place.
 
 ### The promotion rule, corrected against the corpus
 
@@ -383,29 +419,33 @@ signal that says "this has stopped being a bad fetch, come and look", and this
 is the first time anyone has looked.
 
 **It is per-board, so a pool-wide event trips nothing.** On 2026-08-30T01:02Z
-the sweep closed **1,860 records with zero refusals** -- 11.5% of a 16,123
-pool, no config change (version 23 either side). The closures were 1,358
-`oracle_orc` and 435 `greenhouse`, spread thin enough across boards that no
-single board crossed 70%.
+the sweep closed **1,860 records with zero refusals**, no config change (version
+23 either side). That is not a footnote about this guard, it is a Phase 3
+requirement, and it has its own section below.
 
-### The measured half-complete sweep
+### `sweep_runs` is not guarding a hypothesis. It is guarding 2026-08-30
 
-That same sweep is the case `sweep_runs` exists for, and it is on the disk
-rather than in anyone's imagination:
+**The half-complete sweep already happened, closed 435 Greenhouse postings, and
+nobody noticed for four days.** That is a stronger argument than the design had,
+and it should be the first thing anyone reads about this table.
 
 ```
-channel           found before   found after   status after
-greenhouse               5,909         3,209   ok
-smartrecruiters            996             0   ok
-oracle_orc               9,357         9,356   ok
+2026-08-30T01:02Z     found before   found after   status
+greenhouse                   5,909         3,209   ok
+smartrecruiters                996             0   ok
+oracle_orc                   9,357         9,356   ok
 ```
 
-Greenhouse returned 54% of its previous yield and reported success. Every
-Greenhouse board that came back short had its missing postings evaluated, and
-only the boards past 70% were spared. 435 closed. Nothing in the report can say
-whether those were real closures or a truncated fetch, and nothing could,
-because the sweep never recorded what a complete fetch of that board looks
-like.
+Greenhouse returned **54% of its previous yield and reported success**. Every
+Greenhouse board that came back short had its missing postings evaluated for
+closure, and only boards past the 70% per-board ceiling were spared. 435 closed.
+SmartRecruiters returned zero, reported success, and closed nothing, because of
+the structural property at the top of this section.
+
+Nothing in the report can say whether those 435 were real closures or a
+truncated fetch, and nothing could, because the sweep never recorded what a
+complete fetch of that board looks like. That is the entire gap, stated as a
+measured event rather than a risk.
 
 ### So what `sweep_runs` is actually for
 
@@ -429,8 +469,8 @@ sweep_runs
 Four requirements, each with the failure it prevents:
 
 **`complete` is written after the postings are committed, never before.** A
-status written first is a lie the moment the write fails, and closure would
-then read a partial sweep as whole. Same ordering as `writes.ts`: commit, then
+status written first is a lie the moment the write fails, and closure would then
+read a partial sweep as whole. Same ordering as `writes.ts`: commit, then
 publish.
 
 **A run that never finishes must not stay `running` forever.** A crashed worker
@@ -442,23 +482,84 @@ check is wrong for work spanning processes.
 
 **`job_count` is the evidence and it wants a ratchet.** A `complete` run
 returning 3,209 where that board's last complete run returned 5,909 is a
-truncation wearing a success, and that is the 2026-08-30 sweep exactly. Held
-against the board's own previous complete run with a tolerance; a fall refuses
-closure rather than performing it. This is `population.py` pointed at a third
-thing, and by then the shape has earned being factored out.
+truncation wearing a success, and that is 2026-08-30 exactly. Held against the
+board's own previous complete run with a tolerance; a fall refuses closure
+rather than performing it. This is `population.py` pointed at a third thing, and
+by then the shape has earned being factored out.
 
 **Closure reads only `complete` runs from this sweep window, and the window is
 explicit.** "The latest complete run per board" is not "a complete run in this
 sweep", and a board last swept successfully a week ago must not have its
 absences read as closures today.
 
+### The fifth brake: a pool-level ceiling. This is a requirement, not an observation
+
+**The largest closure on record closed 1,860 records, 11.5% of the pool, and
+tripped the per-board brake zero times.** `MAX_CLOSED_SHARE` is per board, so a
+failure correlated across boards is invisible to it by construction: 1,358
+`oracle_orc` and 435 `greenhouse` closures, spread thin enough that no single
+board crossed 70%. Phase 3 needs a pool-level ceiling alongside the per-board
+one, built on the same idea and the same refusal behaviour.
+
+**What it is measured against, and the denominator is the part to get right.**
+Not the whole pool. The per-board brake compares against what is held *for that
+board*, and the pool analogue is what is held *and could close*: state `new` or
+`watched`, on an `ats` or `careers` board. Measured 2026-09-03 that is **14,692
+of 23,202 records, 63.3%**. The rest is 3,959 expired tombstones plus 111
+`applied` and `passed` rows that brake 2 can never touch and aggregator records
+brake 3 can never touch, and letting them into the denominator means the
+threshold drifts with tombstone retention rather than with closure.
+
+It also has to be taken **before the sweep's own prune**, because prune shrinks
+the denominator in the same pass. The same 1,860 reads three different ways:
+
+```
+9.25%   of the pool before that sweep      (20,103)
+11.54%  of the pool after it               (16,123)
+14.61%  of the closeable population        (at today's 63.3% ratio)
+```
+
+A 1.6x spread from the denominator alone, which is why it is pinned here rather
+than left to whoever writes it.
+
+**The corpus sets the value and it is not a delicate calibration.** Over the 45
+sweeps that carry a closure count, closed as a share of the pool:
+
+```
+median   0.297%      p90   0.672%
+p75      0.539%      p95   0.746%
+next     1.08%   (2026-08-25)
+max      11.54%  (2026-08-30)
+```
+
+There is a canyon between p95 and the one real event. Any threshold from 2% to
+10% refuses exactly that sweep and nothing else, so the value is robust to the
+sample being small even though 45 sweeps and one outlier is a small sample.
+**5% of the closeable population** is the recommendation: about 4x p95 converted
+to that denominator, about 3x below the event, and re-derived when the pool's
+composition moves rather than left as a constant nobody revisits.
+
+**What it does when it fires is refuse the whole sweep's closures and say so**,
+the way the per-board brake refuses and records. A pool-level anomaly is
+evidence about the sweep rather than about one board, and closing selectively
+under it means choosing which boards to trust on no information. The cost of
+refusing is stale cards for four hours. The cost of not refusing was 2026-08-30.
+
+It does not replace `sweep_runs` and is not replaced by it. `sweep_runs` catches
+a channel that under-delivered and reported success; the pool ceiling catches a
+correlated failure across channels that each look individually fine. The
+2026-08-30 sweep would have been caught by either, which is a reason to build
+both rather than a reason to pick one.
+
+
 ### What must not change in the port
 
-The four brakes are not superseded by `sweep_runs` and all four survive it.
-Brake 4 in particular is the last line when every other signal says the sweep
-was fine, and it is the only one with a firing record. Brake 1's structural
-half is the one to write a test for, because it is the one that disappears
-without anybody deleting anything.
+The four existing brakes are not superseded by `sweep_runs` and all four
+survive it. The fifth is new and does not replace any of them. Brake 4 in
+particular is the last line when every other signal says the sweep was fine, and
+it is the only one with a firing record. Brake 1's structural half is the one to
+write a test for, because it is the one that disappears without anybody deleting
+anything.
 
 And `closureRefused` needs a reader. It is already computed, already carries
 the board and the counts, and has been sitting unread through the one window it
@@ -469,7 +570,8 @@ twenty-two is a question.
 ### What to measure before building it
 
 - the distribution of postings per board, so `MAX_CLOSED_SHARE` and any
-  `job_count` tolerance come from the corpus rather than a guess,
+  `job_count` tolerance come from the corpus rather than a guess. The pool-level
+  half of this is measured above; the per-board half is not,
 - how many boards are reached through more than one channel, since `ingest.py`
   already warns that a board reached twice must not look half-empty in either,
 - what the 1,358 `oracle_orc` closures of 2026-08-30 actually were, since that

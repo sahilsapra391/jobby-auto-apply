@@ -453,6 +453,91 @@ source to derive a board key with (trying all sixteen patterns measured zero
 ambiguity on this corpus, which is a property of the corpus and not the method).
 
 
+## 11. A careers host recorded as an employer domain, 24 of 351
+
+Added 2026-09-03. This came out of the employer-resolver sketch as a case the
+resolver should refuse, and it is not a resolver problem at all. It is an ingest
+defect, and the resolver is only where it becomes visible.
+
+```
+TelusDigital    telusdigital.com        55 postings
+TELUS Digital   jobs.telusdigital.com   12 postings
+```
+
+Two employer rows, both with a domain, and the domains disagree, so neither
+domain equality nor the no-domain squash rule can touch them. But the second
+domain should never have been written. `jobs.telusdigital.com` is where TELUS
+advertises jobs; the employer is `telusdigital.com`.
+
+**Measured: 24 of the 351 employers holding a domain (6.8%) have one whose first
+label is not the company.** Nineteen careers hosts and five blogs:
+
+```
+careers.airbnb.com     careers.robinhood.com   careers.roblox.com
+careers.snowflake.com  careers.adyen.com       careers.pagerduty.com
+careers.deliveroo.co.uk careers.mckesson.com   careers.calendly.com
+careers.doctolib.com   careers.feedzai.com     careers.hootsuite.com
+careers.oatly.com      careers.swissport.com   careers.toasttab.com
+career.proxify.io      jobs.funnel.io          jobs.spectrum.com
+jobs.telusdigital.com
+blog.duolingo.com      blog.cloudflare.com     blog.coursera.org
+blog.1password.com     blog.faire.com
+```
+
+`blog.duolingo.com` is already on record as one of the eleven
+`employer_field_pinned` parity disagreements, where the pinned value is the
+worse one. **Its cause is now identified rather than noted.**
+
+### Two causes, both reproduced
+
+`company_logos.website_from_description` returns the **first** link in the
+posting body whose host contains a token of the company name. Run against real
+input:
+
+```python
+website_from_description("TELUS Digital",
+    '<a href="https://jobs.telusdigital.com/careers/1234">Apply</a>'
+    '<a href="https://www.telusdigital.com">About us</a>')
+-> "https://jobs.telusdigital.com"
+```
+
+**First match wins, with no ranking.** On a job posting the apply link precedes
+the corporate one essentially always, so the ordering is not bad luck, it is the
+common case. Duolingo is the same shape with a blog link in front.
+
+**And there is no rejection of an employer's own careers host.** A third-party
+ATS host is caught by `_is_infrastructure_host` (`boards.greenhouse.io` and
+`apply.workable.com` both return True), and `jobs.telusdigital.com` and
+`careers.duolingo.com` both return False. The filter knows about other people's
+ATSs and not about the employer's own.
+
+### A third hazard in the same function, latent rather than live
+
+The host test is `token in compact_host`, a substring with no label boundary,
+which is the failure this repository's CLAUDE.md already records three instances
+of. Reproduced:
+
+```
+Ford      -> https://www.stanfordalumni.com
+Vast      -> https://devastating-labs.io
+Apex      -> https://grapexchange.net
+```
+
+`Vast` is a real employer here with 61 postings; it currently holds no domain,
+so this one has not fired yet. `Ford` and `Apex` are not in the store. Calling
+it latent rather than live is the honest reading, and it is one posting body
+away from either.
+
+### What Phase 3 should do about it
+
+Rank the candidates rather than taking the first, refuse a host whose first
+label is a careers or content label, and match on label boundaries rather than
+substrings. All three are in one function. The 24 existing rows are then a
+backfill, and until they are corrected the employer-resolver's "both have a
+domain and they differ" refusal is doing this defect's containment for it, which
+is the wrong place and should not be mistaken for a fix.
+
+
 ## The three attributes nothing extracts, measured 2026-09-02
 
 `extracted.degree`, `extracted.employmentType` and `extracted.roleCategory` are
