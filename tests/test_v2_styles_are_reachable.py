@@ -67,6 +67,98 @@ ALLOWED = {
         "the same control's failure state. Item 21.",
 }
 
+#: Classes carried by elements on the rendered Found lane, read out of the live
+#: DOM on 2026-09-03 from a production build of `7c20da1` served against the
+#: production database. **This is observed data with provenance, not an
+#: assertion**, and it exists for one reason: five of these classes cannot be
+#: found by reading the source at all. `className={`jb-chip ${kind}`}` renders
+#: `place`, `years`, `pay` and `unknown`, and no static reader can know that.
+#: Without them the inverted check below reports `.jb-chip.pay` as a treatment
+#: nothing renders, which is false and would be the loudest entry on a list
+#: meant to be read.
+OBSERVED_ON_THE_PAGE = frozenset({
+    "appbar", "boards", "brand", "btn", "chip", "company-cell", "company-mark",
+    "danger", "dialog-close", "dialog-head", "dropped-count", "dropped-dialog",
+    "dropped-dock", "dropped-label", "eyebrow", "filters", "ghost", "has-logo",
+    "hero-copy", "hint", "jb-actions", "jb-acts", "jb-addlink", "jb-adv",
+    "jb-advbody", "jb-banner", "jb-basic", "jb-btn", "jb-card", "jb-check",
+    "jb-checks", "jb-chip", "jb-chips", "jb-co", "jb-col", "jb-continent",
+    "jb-continent-count", "jb-continent-list", "jb-continent-main", "jb-count",
+    "jb-country", "jb-country-grid", "jb-country-row", "jb-defs", "jb-errored",
+    "jb-fact", "jb-fact-fill", "jb-fact-name", "jb-fact-num", "jb-fact-track",
+    "jb-facts", "jb-filters", "jb-grid", "jb-head", "jb-identity", "jb-ingest",
+    "jb-lab", "jb-location-actions", "jb-location-chevron", "jb-location-clear",
+    "jb-location-field", "jb-location-label", "jb-location-menu",
+    "jb-location-picker", "jb-location-title", "jb-mascot2", "jb-morph",
+    "jb-note", "jb-only", "jb-pills", "jb-plate", "jb-problist", "jb-probs",
+    "jb-radio", "jb-radios", "jb-ring", "jb-row", "jb-savestate", "jb-select",
+    "jb-select-btn", "jb-select-chevron", "jb-select-menu", "jb-select-opt",
+    "jb-select-value", "jb-stack", "jb-sum", "jb-ti", "jb-world",
+    "jm2-contour", "jm2-ink", "jm2-wipe-rect", "lane", "lede", "loaded",
+    "lockup", "muted", "n", "note-cell", "on", "panel", "pay", "place",
+    "primary", "primary-nav", "rowacts-inline", "seg", "segwrap", "sheet",
+    "stamp", "tab", "tablewrap", "themebtn", "themeseg", "top", "undrop",
+    "unknown", "when", "wrap", "years",
+})
+
+#: Styled in `board.css` and rendered by nothing in v2, grouped by the feature
+#: they belong to. **This is the measured gap between the two boards, and it is
+#: a ratchet**: a class that starts being rendered must be deleted from here,
+#: and a class that starts being styled without being rendered fails the build.
+#:
+#: It is not an exemption list. `ALLOWED` above says "v2 renders this markup and
+#: deliberately cannot reach this state"; this says "v2 does not have this
+#: feature yet". Blending them would lose the distinction that makes either
+#: useful, which is the same reason `answer_record` keeps five claims in five
+#: fields.
+#:
+#: Item 22 is the cautionary entry. It was closed as "already matching" because
+#: the stylesheet arrived, and the check that should have caught that could not:
+#: it started from classes v2 emits, so a class v2 never emits was outside its
+#: subject entirely. 13 of these 20 `jb-*` names are that one feature.
+UNRENDERED = {
+    "the card disclosure, item 22: hover-preview and click-pin, the two-column "
+    "responsibilities and requirements list, the score breakdown and where "
+    "else it was seen": {
+        "jb-det", "jb-caret", "jb-slot", "jb-panel", "jb-sections",
+        "jb-section", "jb-excerpt", "jb-bars", "jb-bar", "jb-sight",
+        "jb-more", "jb-skipped", "jb-footer",
+    },
+    "the answer record modal: what an employer's form asked and what went "
+    "into it, with its source and sensitivity badges": {
+        "ans-a", "ans-badge", "ans-differs", "ans-list", "ans-meta",
+        "ans-note", "ans-q", "ans-row", "ans-salvage", "ans-src-generated",
+        "ans-src-profile", "ans-src-provided", "ans-src-stored",
+        "ans-unrecorded", "ans-unverified", "ans-value", "ans-withheld",
+        "answers-count", "answers-dialog", "answers-loading",
+    },
+    "Profile's write half: the answer bank and the resume wording editor": {
+        "bank-alts", "bank-edit", "bank-empty", "bank-group", "bank-list",
+        "bank-more", "bank-sensitive", "bank-when", "wording-field",
+        "wording-list", "wording-role", "resume-frame",
+    },
+    "Settings and provider state, which v2 renders as its own route": {
+        "provider-active", "provider-message", "settings-link",
+        "settings-view", "profile-view", "profile-error", "back-board",
+    },
+    "the scan banner and its progress, which is a device action v2 cannot "
+    "trigger while writes are gated": {
+        "scanbar", "scanmsg", "sysbanner", "capacity", "waiting",
+    },
+    "board-only affordances with no v2 equivalent yet": {
+        "ago", "applymsg", "aside", "chip-sm", "contact", "direct",
+        "dropping", "err", "fault-note", "jb-decidefail", "jb-linkmsg",
+        "jb-loading", "jb-out", "jb-pill", "jb-vt", "jb-wide", "msg",
+        "nav-n", "note", "ok", "pill", "stub", "ui-separator", "undo", "why",
+    },
+    "states whose base class v2 does render, already carried by ALLOWED with "
+    "their own reasons; listed here too because the inverted check sees them "
+    "from the other side": {
+        "done", "fault", "gate", "landed", "lost", "marked", "ref", "scan",
+        "wide",
+    },
+}
+
 CLASS = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
 TOKEN = re.compile(r"[a-zA-Z][\w-]*")
 
@@ -88,6 +180,69 @@ def mentioned_names():
     return out
 
 
+def _attribute_values(src):
+    r"""Every literal assigned to a class attribute or property in one file.
+
+    **The value is read with a balanced-brace scan, not a regex.** The previous
+    reader was `class(?:Name)?=(\{[^}]*\}|"[^"]*")`, and `[^}]*` stops at the
+    first `}` in the expression -- which in
+    `className={kind ? \`jb-chip ${kind}\` : "jb-chip"}` is the one closing the
+    interpolation. It captured a fragment ending mid-template, found no
+    complete backtick pair inside it, and returned nothing, so `jb-chip` read
+    as a class v2 never renders. Measured on 2026-09-03: that cost 8 rendered
+    classes, and it is wrong in both directions at once -- a class wrongly
+    absent from this set is a false finding in the forward check and a false
+    pass in the inverted one.
+
+    Four shapes, because v2 uses all four:
+
+        className="a b"                 JSX literal
+        className={x ? `a ${k}` : "a"}  JSX expression, braces balanced here
+        btn.className = 'jb-select-btn' property assignment, spaces, single
+                                        quotes, inside a generated script
+        class=\"a b\"                    escaped HTML in a generated string
+
+    The third is not hypothetical: the whole `jb-select-*` family is set that
+    way inside `chrome.generated.ts`, and the old reader missed every one.
+    """
+    out = []
+    for match in re.finditer(r"\bclass(?:Name)?\s*=\s*", src):
+        i = match.end()
+        if i >= len(src):
+            continue
+        ch = src[i]
+        if ch in "\"'`":
+            end = src.find(ch, i + 1)
+            if end > 0:
+                out.append(src[i + 1:end])
+        elif ch == "\\" and src[i:i + 2] == '\\"':
+            end = src.find('\\"', i + 2)
+            if end > 0:
+                out.append(src[i + 2:end])
+        elif ch == "{":
+            depth, j = 0, i
+            while j < len(src):
+                if src[j] == "{":
+                    depth += 1
+                elif src[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            body = src[i:j + 1]
+            out += re.findall(r'"([^"\n]*)"', body)
+            out += re.findall(r"'([^'\n]*)'", body)
+            out += re.findall(r"`([^`]*)`", body)
+    # `classList.add("a", "b")` and `setAttribute("class", "a b")`.
+    for match in re.finditer(
+            r'classList\.(?:add|remove|toggle)\s*\(([^)]*)\)', src):
+        out += re.findall(r'["\']([^"\']+)["\']', match.group(1))
+    for match in re.finditer(
+            r'setAttribute\s*\(\s*["\']class["\']\s*,\s*["\']([^"\']*)', src):
+        out.append(match.group(1))
+    return out
+
+
 def rendered_classes():
     """Classes v2 demonstrably puts on an element.
 
@@ -95,24 +250,20 @@ def rendered_classes():
     is only interesting when v2 *renders* one of its classes, and "the word
     appears somewhere" is not that. Using the broad set for both halves made
     `.jb-linkmsg.ok` a finding because `ok` occurs in a comment.
+
+    Verified against the live DOM rather than by reading: every class on the
+    rendered Found lane is in this set. See
+    `test_the_extractor_finds_the_classes_the_page_actually_renders`.
     """
     out = set()
     for path in sorted(APP.rglob("*.ts*")):
         if "node_modules" in str(path):
             continue
-        src = path.read_text(encoding="utf-8")
-        # `className="a b"`, `className={cond ? "a b" : "a"}`, and the
-        # generated markup's own `class="..."`.
-        for match in re.finditer(r'class(?:Name)?=(\{[^}]*\}|"[^"]*")', src):
-            for literal in re.findall(r'"([^"\n]*)"|`([^`]*)`', match.group(1)):
-                for chunk in literal:
-                    out |= {t for t in re.split(r"\s+", chunk) if TOKEN.fullmatch(t)}
-        for match in re.finditer(
-                r'classList\.(?:add|remove|toggle)\(\s*"([^"]+)"', src):
-            out.add(match.group(1))
-        # The generated board markup arrives as escaped HTML in a string.
-        for match in re.finditer(r'class=\\"([^"\\]*)\\"', src):
-            out |= {t for t in re.split(r"\s+", match.group(1)) if TOKEN.fullmatch(t)}
+        for value in _attribute_values(path.read_text(encoding="utf-8")):
+            # An interpolation is a hole, not a class. `dynamic_bases` is what
+            # keeps rules about such elements out of the findings.
+            value = re.sub(r"\$\{[^}]*\}", " ", value)
+            out |= {t for t in re.split(r"\s+", value) if TOKEN.fullmatch(t)}
     return out
 
 
@@ -150,6 +301,28 @@ def dynamic_bases():
                 if TOKEN.fullmatch(token or "") and token in known:
                     out.add(token)
     return out
+
+
+
+def styled_class_names():
+    """Every class `board.css` styles, comments removed."""
+    css = re.sub(r"/\*.*?\*/", " ", CSS.read_text(encoding="utf-8"), flags=re.S)
+    return set(CLASS.findall(css))
+
+
+def seen_classes():
+    """Everything v2 is known to render: read from source, plus observed.
+
+    The union is the honest answer. Static reading misses what a template
+    interpolation builds; the observed set misses whatever that one page state
+    did not draw. Neither alone is complete and the check below would be wrong
+    in a different direction with either.
+    """
+    return rendered_classes() | OBSERVED_ON_THE_PAGE
+
+
+def unrendered_baseline():
+    return set().union(*UNRENDERED.values())
 
 
 def styled_rules():
@@ -264,6 +437,63 @@ class EveryStyledStateIsReachable(unittest.TestCase):
                          "\n" + "\n".join(sorted(set(findings)))
                          + "\n\nEither set the state, or add it to ALLOWED "
                            "with the reason it lives elsewhere.")
+
+
+    def test_the_extractor_finds_what_the_page_actually_renders(self):
+        """The control on `rendered_classes`, and it has already failed once.
+
+        Every class observed on the rendered page must either be found in the
+        source or be one a template interpolation builds. The reader this
+        replaced captured `className={...}` with `\\{[^}]*\\}`, which stops at
+        the `}` closing a `${...}`, and it silently lost `jb-chip` and the
+        whole `jb-select-*` family. That is wrong in both directions at once:
+        a class missing from this set is a false finding in the forward check
+        and a false pass in the inverted one, in the same run.
+        """
+        interpolated = {"place", "years", "pay", "unknown", "boards"}
+        missed = sorted(OBSERVED_ON_THE_PAGE - rendered_classes() - interpolated)
+        self.assertEqual(missed, [],
+                         "these classes are on the rendered page and the "
+                         "source reader cannot find them: %s" % missed)
+
+    def test_no_class_is_styled_and_rendered_by_nothing(self):
+        """The inverted check: start from the stylesheet, not from the markup.
+
+        **The forward check cannot see this and never could.** It starts from
+        classes v2 emits and asks whether each can reach its styled state, so a
+        class v2 never emits is outside its subject by construction. Item 22
+        shipped its entire stylesheet with no markup and no route, and this
+        file passed on it for a day.
+
+        What it reports is the measured gap between the two boards. New entries
+        fail; the baseline is a to-do list that only shrinks.
+        """
+        extra = sorted(styled_class_names() - seen_classes() - unrendered_baseline())
+        self.assertEqual(extra, [],
+                         "\nboard.css styles these and nothing in v2 renders "
+                         "them:\n  " + "\n  ".join(extra) +
+                         "\n\nEither render them, or add each to UNRENDERED "
+                         "under the feature it belongs to.")
+
+    def test_the_unrendered_list_only_shrinks(self):
+        """A baseline entry that is now rendered has to be deleted.
+
+        Without this the list is a graveyard: work lands, the class starts
+        being rendered, and the entry stays, so the next reader takes a
+        finished feature for an outstanding one. Same ratchet as
+        `population.py` and for the same reason.
+        """
+        landed = sorted(unrendered_baseline() & seen_classes())
+        self.assertEqual(landed, [],
+                         "v2 now renders these, so they are no longer a gap "
+                         "and must come out of UNRENDERED: %s" % landed)
+
+    def test_the_unrendered_groups_say_what_the_feature_is(self):
+        for label, members in UNRENDERED.items():
+            self.assertGreater(len(label), 30,
+                               "a group of %d classes needs a label that says "
+                               "what feature it is: %r" % (len(members), label))
+            self.assertTrue(members, "%r groups nothing" % label)
 
     def test_every_allowance_carries_a_reason(self):
         for key, why in ALLOWED.items():
