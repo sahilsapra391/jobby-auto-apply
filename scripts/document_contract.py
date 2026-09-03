@@ -75,12 +75,56 @@ def _slug(value, limit):
     return joined[:limit].strip("_") or "Unknown"
 
 
-def output_names(profile, company, role):
+#: How many hex characters of the application's own id go into a filename.
+#: Six, because the tag only has to separate applications that already agree on
+#: company and role, which is a set of two or three -- and because it is short
+#: enough to sit in a name an employer reads without looking like a tracking
+#: code.
+ID_TAG_CHARS = 6
+
+
+def id_tag(application_id):
+    """A short, stable tag for one application. Empty when there is no id."""
+    if not application_id:
+        return ""
+    digest = hashlib.sha256(str(application_id).encode("utf-8")).hexdigest()
+    return digest[:ID_TAG_CHARS]
+
+
+def output_names(profile, company, role, application_id=None):
+    """The four filenames one application's documents are written under.
+
+    **Company and role alone do not make a unique name, and three ways they
+    collide are real rather than theoretical.** Measured 2026-09-03 against the
+    live store:
+
+        "Senior PM, AI" and "Senior PM - AI"   `_slug` drops punctuation
+        two role titles sharing 55 characters  the role is capped at 55
+        the same role title twice              a re-application, or two
+                                               identical postings
+
+    All 205 applications in the store happen to produce 205 distinct names, so
+    the contract has never collided in production. That is a property of this
+    corpus and not of the rule, which is exactly the kind of thing that holds
+    until it doesn't: **14 documents from before this contract existed share
+    six filenames between them**, three Glance applications to three different
+    roles all claiming `Sahil_Sapra_Glance_Resume.pdf`, and the result is that
+    KV holds one object for three tailored resumes and nobody can say which
+    application received which.
+
+    So `application_id` puts six characters of the application's own id in the
+    name and uniqueness stops depending on the corpus. It is optional because
+    `r2_artifacts` has to keep resolving the names written before it existed;
+    passing it is what every new document does.
+    """
     person = _slug(" ".join(str(profile.get(k) or "")
                             for k in ("firstName", "lastName")), 45)
     company_part = _slug(company, 45)
     role_part = _slug(role, 55)
+    tag = id_tag(application_id)
     prefix = f"{person}_{company_part}_{role_part}"
+    if tag:
+        prefix = f"{prefix}_{tag}"
     return {
         "resumeHtml": f".{prefix}.resume.html",
         "resumePdf": f"{prefix}_Resume.pdf",
