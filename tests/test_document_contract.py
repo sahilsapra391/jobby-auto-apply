@@ -51,6 +51,58 @@ def bundle():
 
 
 class BundleTests(unittest.TestCase):
+    def test_company_and_role_alone_collide_three_ways(self):
+        """The reason the id tag exists, stated as the cases it covers.
+
+        All 205 applications in the store produce 205 distinct names, so this
+        contract has never collided in production. That is a property of the
+        corpus, not of the rule -- and the rule had already failed once, before
+        it owned naming: three Glance applications to three different roles all
+        claim `Sahil_Sapra_Glance_Resume.pdf`, so KV holds one object for three
+        tailored resumes and nothing can say which application received which.
+        """
+        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        name = lambda role: contract.output_names(  # noqa: E731
+            profile, "Acme", role)["resumePdf"]
+        long_a = ("Senior Product Manager, Platform Infrastructure and "
+                  "Developer Experience A")
+        long_b = long_a[:-1] + "B"
+        for label, first, second in (
+                ("punctuation is dropped by the slug",
+                 "Senior PM, AI", "Senior PM - AI"),
+                ("the role is capped at 55 characters", long_a, long_b),
+                ("the same title twice", "Product Manager", "Product Manager")):
+            with self.subTest(label):
+                self.assertEqual(name(first), name(second),
+                                 "this case is expected to collide without the "
+                                 "id tag; if it no longer does, the tag may be "
+                                 "carrying less than this test claims")
+
+    def test_the_id_tag_separates_every_one_of_them(self):
+        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        made = [contract.output_names(profile, "Acme", "Product Manager", aid)
+                for aid in ("glance-product-analyst-ii", "dc9c8137b240216e",
+                            "04f960acfe932252")]
+        for key in ("resumePdf", "coverPdf", "resumeHtml", "coverHtml"):
+            names = [m[key] for m in made]
+            self.assertEqual(len(set(names)), len(names),
+                             f"{key} is not unique across applications that "
+                             f"agree on company and role: {names}")
+
+    def test_the_tag_is_stable_and_absent_without_an_id(self):
+        """Stable, because a name that changes between runs orphans the file
+        written under the last one. Absent without an id, because
+        `r2_artifacts` still has to resolve everything written before the tag
+        existed.
+        """
+        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        once = contract.output_names(profile, "Acme", "PM", "abc123")["resumePdf"]
+        twice = contract.output_names(profile, "Acme", "PM", "abc123")["resumePdf"]
+        self.assertEqual(once, twice)
+        bare = contract.output_names(profile, "Acme", "PM")["resumePdf"]
+        self.assertEqual(bare, "Sahil_Sapra_Acme_PM_Resume.pdf")
+        self.assertNotEqual(bare, once)
+
     def test_output_names_always_include_the_role(self):
         names = contract.output_names(
             {"firstName": "Test", "lastName": "Candidate"},

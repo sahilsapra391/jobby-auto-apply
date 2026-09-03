@@ -1,4 +1,6 @@
 import { Pool, types } from "pg";
+// @ts-expect-error -- generated from deploy/r2.mjs, plain JS with no types.
+import { configured as r2Configured, listKeys } from "./r2.generated.mjs";
 import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
 import { COUNTRY_NAMES } from "../search.generated";
 
@@ -132,6 +134,20 @@ export async function page(lane: Lane, after: Cursor, limit = 50,
   // ordering by blocker count: a cursor naming the wrong column does not
   // error, it compares the wrong values and restarts the lane at the top on
   // every page. `v2_lanes` emits the key beside the SQL that orders by it.
+  // **The document columns are enriched here so both paths get them.** The
+  // Submitted row needs to know which artifacts the bucket holds and which
+  // filenames more than one application claims, and `LaneList` fetches page
+  // two through `/api/lane` rather than through the server component -- so
+  // enriching in `page.tsx` would give page one four honest states and page
+  // two the old two.
+  if (lane === "done" && rows.length) {
+    const [stored, siblings] = await Promise.all(
+      [storedArtifacts(), documentSiblings()]);
+    for (const row of rows) {
+      row.stored_artifacts = stored === null ? null : [...stored];
+      row.document_siblings = Object.fromEntries(siblings);
+    }
+  }
   const last = rows[rows.length - 1];
   const at = last === undefined ? null : (last[query.cursor] ?? null);
   return {
@@ -453,4 +469,81 @@ export async function profile(): Promise<{
       updatedAt: r.updated_at ?? null,
     })),
   };
+}
+
+// ---------------------------------------------------------------- artifacts
+
+/**
+ * Which application artifacts R2 actually holds, and which documents share a
+ * filename. Both answer the Submitted lane's document columns.
+ */
+
+const ARTIFACT_USER = process.env.JOBBY_USER_ID || "account-1";
+const ARTIFACT_TTL_MS = 60_000;
+let artifactCache: { at: number; keys: Set<string> } | null = null;
+
+/**
+ * Every artifact key under this account, or `null` when it could not be read.
+ *
+ * **`null` and an empty set are different claims and only one of them is about
+ * the bucket.** Returning an empty set on a credential fault would make every
+ * row on the page say the document could not be attributed, which is a
+ * statement about 104 applications drawn from a statement about this
+ * deployment's environment. The caller renders "unknown" for `null`.
+ *
+ * One listing, not one probe per row. Measured against the live bucket: 347
+ * keys in a single 699 ms call, where fifty per-row probes would be the shape
+ * that put fifty failing logo requests on every Found page load. Cached for a
+ * minute because artifacts change when an application finishes, which is not
+ * a per-render event.
+ */
+export async function storedArtifacts(): Promise<Set<string> | null> {
+  if (!r2Configured(process.env)) return null;
+  if (artifactCache && Date.now() - artifactCache.at < ARTIFACT_TTL_MS) {
+    return artifactCache.keys;
+  }
+  try {
+    const keys: string[] = await listKeys(process.env, `u/${ARTIFACT_USER}/app/`);
+    artifactCache = { at: Date.now(), keys: new Set(keys) };
+    return artifactCache.keys;
+  } catch {
+    // Never an empty set. See above.
+    return null;
+  }
+}
+
+export function artifactKey(legacyId: string, object: string) {
+  return `u/${ARTIFACT_USER}/app/${legacyId}/${object}`;
+}
+
+/**
+ * How many completed applications record each document filename.
+ *
+ * **A count above one is why a document cannot be attributed.** Three Glance
+ * applications to three different roles all recorded
+ * `Sahil_Sapra_Glance_Resume.pdf`; KV is keyed by filename and holds one
+ * object, so the old board serves the same PDF for all three and nothing says
+ * which application received it. `document_contract` now puts six characters
+ * of the application id in the name, so this cannot happen again -- but the
+ * fourteen documents written before that day are still ambiguous and the row
+ * has to say so.
+ */
+export async function documentSiblings(): Promise<Map<string, number>> {
+  const rows = await pool().query(`
+    select lower(split_part(e.payload->>'resumeVariant', '/', -1)) as name,
+           count(*) as n
+      from application_events e
+     where e.kind = 'completed' and e.payload->>'resumeVariant' like '%.pdf'
+     group by 1
+    union all
+    select lower(split_part(e.payload->>'coverLetter', '/', -1)) as name,
+           count(*) as n
+      from application_events e
+     where e.kind = 'completed' and e.payload->>'coverLetter' like '%.pdf'
+     group by 1`);
+  const out = new Map<string, number>();
+  for (const row of rows.rows) {
+    out.set(String(row.name), Number(row.n));
+  }
+  return out;
 }

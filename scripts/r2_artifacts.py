@@ -174,9 +174,17 @@ def name_map(applications, profile):
     for aid, entry in sorted(applications.items()):
         if not entry.get("company"):
             continue
-        names = document_contract.output_names(profile, entry["company"], entry.get("role"))
-        for contract_key, (kind, ext) in KIND_BY_CONTRACT_KEY.items():
-            claim(names[contract_key], aid, kind, ext)
+        # **Both generations, and the older one is not dead weight.** The
+        # contract gained six characters of the application id on 2026-09-03
+        # because company and role alone collided: three Glance applications to
+        # three different roles all claimed one filename. Everything written
+        # before that day is still on disk and in KV under the untagged name,
+        # so dropping it here would unattribute documents that resolve today.
+        for tagged in (aid, None):
+            names = document_contract.output_names(
+                profile, entry["company"], entry.get("role"), tagged)
+            for contract_key, (kind, ext) in KIND_BY_CONTRACT_KEY.items():
+                claim(names[contract_key], aid, kind, ext)
 
     # 3. The naming the generation before it used, for the two PDFs.
     stems = file_docs.plan({aid: (e.get("company"), e.get("role"))

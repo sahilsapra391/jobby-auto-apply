@@ -2332,6 +2332,99 @@ and a rule that has not met it is a guess.** The substring finding above was
 measured into existence and this one was measured out of it, by the same method.
 `docs/plans/phase3-inputs.md` section 11 carries the numbers.
 
+### A rule that has never collided has not been tested, 2026-09-03
+
+**205 applications produced 205 distinct document filenames, and that was a
+property of the corpus rather than of the rule.** `document_contract.
+output_names` builds a name from the person, the company and the role, and
+probing it directly found three ways two applications collide: `_slug` drops
+punctuation so "Senior PM, AI" and "Senior PM - AI" are one name, the role is
+capped at 55 characters so two long titles sharing a prefix are one name, and
+the same title twice is trivially one name.
+
+None of those had ever happened. What had happened was the same failure one
+generation earlier, before this contract owned naming: **three Glance
+applications to three different roles all claim
+`Sahil_Sapra_Glance_Resume.pdf`.** KV is keyed by filename and holds one
+object, so the board serves the same resume for Product Analyst II, Senior
+Product Manager and Product Manager, and nothing anywhere records which
+application received it. Datadog, Cohere, Plaid, Innovaccer and Ramp are the
+same shape: 14 documents, 6 filenames.
+
+The consequence is not only display. `r2_artifacts` refused to attribute those
+files, correctly, so they are the 14 that never reached R2 -- and had the id
+tag existed earlier they would all have been attributable. **A latent collision
+in a naming rule is a data-loss bug with a delay on it.**
+
+So: a rule whose uniqueness depends on the values it happens to have seen is
+not unique, it is lucky, and the fix is to make it unique by construction. Six
+characters of the application's own id, and the corpus stops being load-bearing.
+
+This is the sibling of the substring finding above and points the other way.
+There, the rule read correctly and the corpus decided what it meant, so the
+corpus had to be consulted. Here the corpus said the rule was fine and the
+corpus was wrong, because it had not yet contained the case. **Measure against
+the corpus to find what a rule does; do not conclude from the corpus that a
+rule is safe.**
+
+### A syntax check is not a name check, 2026-09-03
+
+`python3 -m py_compile` passed a call that referenced `application_id` in a
+function where the variable is called `aid`. It would have raised `NameError`
+on the first real document build.
+
+`py_compile` compiles; it does not resolve names, because Python resolves them
+at runtime. So it answers "is this parseable" and reads as "is this correct",
+which is the shape this file already records for `migrate.py status` comparing
+the migrations table against the directory, and for `GATE_PATHS` naming the
+caller rather than the code that writes.
+
+What caught it was reading the function to see which name was bound. What
+*would* have caught it is running the thing, which is the rule already written
+here twice. When a compile step is the only check between an edit and a commit,
+it has told you about syntax and nothing else.
+
+### "Could not look" is never "is not there", 2026-09-03
+
+**A check that cannot read its subject must say so in its own vocabulary. It
+must never return the shape of an empty answer.** Absence and inability are
+different facts, they lead to different actions, and only one of them is about
+the thing being asked about.
+
+Five instances, three of them from one week, and the earlier two are the
+expensive ones:
+
+```
+ping_health        network error -> None, and every caller ignored it, so a
+                   misconfigured alarm was indistinguishable from a healthy
+                   system
+pool_staleness     raised, a broad except returned None, and None reads as
+                   "nothing to say" -- an alarm that could not fire on any
+                   machine, shipped as the fix for an outage nothing alerted on
+deploy_verify      an unreadable start time or reflog is a failure naming
+                   which, not a pass; a file written inside the second `ps`
+                   reports is INDETERMINATE, not fresh
+/api/artifact      a missing credential is a 503 naming the four variables,
+                   never a 404 -- "no such document" for "this deployment
+                   cannot reach the bucket" sends the reader hunting a file
+                   that is sitting there
+storedArtifacts    returns null when the listing fails, never an empty set. An
+                   empty set would have made all 104 Submitted rows say their
+                   document could not be attributed: a claim about 104
+                   applications drawn from a claim about one environment
+```
+
+The tell is that the empty answer is always the convenient one. `None`, `[]`,
+`{}` and 404 all flow through the rest of the code without special handling,
+which is exactly why they get reached for, and the cost is that the failure
+becomes invisible at the point where it is cheapest to see.
+
+So when writing anything that reads: **name the third state.** Not found,
+found, and could not look. If the return type has no room for it, that is the
+bug -- and the caller has to render it differently, because a reader who is
+told "not captured" behaves differently from one told "storage could not be
+read".
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on

@@ -271,7 +271,7 @@ def build(aid):
 
     base = pick_base(profile, entry.get("region"))
     expected_documents = document_contract.output_names(
-        profile, company, entry.get("role"))
+        profile, company, entry.get("role"), aid)
     docs = find_documents(folder, entry.get("role"), expected_documents)
     pending = entry.get("pendingFields") or []
 
