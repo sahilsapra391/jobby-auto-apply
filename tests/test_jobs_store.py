@@ -1180,3 +1180,41 @@ class PostedDateRefreshTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AMissingPoolIsNotAnEmptyOne(unittest.TestCase):
+    """The plan's own negative test for Phase 1, which was still open.
+
+    "A read that gets zero rows must be distinguishable from a read that
+    errored." `store.read_json` returns the default for a path that does not
+    exist, so a deleted `jobs.json` came back as `{}` and the next sweep would
+    have repopulated from the connectors. Measured against the live pool on
+    2026-09-03: 16 watched, 100 applied, 11 passed. Those decisions are in
+    Postgres and nothing on the device reads them back.
+    """
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="pool-"))
+
+    def test_a_fresh_root_is_empty_and_fine(self):
+        """A store that has never swept has no pool and no companies, and
+        beginning is not the same as losing."""
+        self.assertEqual(jobs_store.load_jobs(self.root), {})
+
+    def test_a_pool_deleted_from_a_live_store_is_refused(self):
+        (self.root / "companies.json").write_text("{}")
+        with self.assertRaises(jobs_store.JobsStoreError) as caught:
+            jobs_store.load_jobs(self.root)
+        self.assertIn("not an empty one", str(caught.exception))
+
+    def test_a_pool_that_is_there_reads_normally(self):
+        (self.root / "companies.json").write_text("{}")
+        (self.root / "jobs.json").write_text('{"a": {"state": "new"}}')
+        self.assertEqual(list(jobs_store.load_jobs(self.root)), ["a"])
+
+    def test_an_empty_pool_beside_companies_is_still_empty(self):
+        """Deliberately empty is not missing. A store swept to nothing reads as
+        `{}` without complaint; only the absent file is refused."""
+        (self.root / "companies.json").write_text("{}")
+        (self.root / "jobs.json").write_text("{}")
+        self.assertEqual(jobs_store.load_jobs(self.root), {})
