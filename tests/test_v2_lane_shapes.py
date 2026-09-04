@@ -202,8 +202,19 @@ class LaneShapeTests(unittest.TestCase):
 
     def test_no_control_in_a_lane_is_live(self):
         """v2 writes nothing until the parity gate closes, and the controls say
-        so by being disabled rather than by being absent."""
-        buttons = re.findall(r"<button[^>]*>", self.tsx, re.S)
+        so by being disabled rather than by being absent.
+
+        **Comments are stripped first, and that is not a convenience.** The
+        scan is a regex over source, so a comment explaining the rule -- "every
+        `<button>` in a lane must carry `disabled`" -- is itself a bare
+        `<button>` and fails the check it documents. Same use-versus-mention
+        defect the reachability check took three attempts to get right, where
+        `fresh`, `loaded` and `over` matched the prose explaining them. A
+        scanner that reads comments is measuring the wrong text.
+        """
+        source = re.sub(r"/\*.*?\*/", " ", self.tsx, flags=re.S)
+        source = re.sub(r"(?m)^\s*//.*$", " ", source)
+        buttons = re.findall(r"<button[^>]*>", source, re.S)
         self.assertTrue(buttons, "no buttons found; the check is vacuous")
         live = [b for b in buttons if "disabled" not in b]
         self.assertEqual(live, [], f"these controls are not disabled: {live}")
