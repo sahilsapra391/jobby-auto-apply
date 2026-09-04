@@ -1542,6 +1542,3 @@ class LogoContractTests(unittest.TestCase):
 
         for (co, url), want, got in zip(self.CASES, expected, actual):
             self.assertEqual(want, got, f"{co!r} from {url!r}")
-
-if __name__ == "__main__":
-    unittest.main()

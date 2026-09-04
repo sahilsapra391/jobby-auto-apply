@@ -362,8 +362,3 @@ class IdleSlotReleaseTests(unittest.TestCase):
                     [{"applicationId": "acme-pm", "slot": "apply-2"}],
                     f"{status} held a slot",
                 )
-
-
-
-if __name__ == "__main__":
-    unittest.main()

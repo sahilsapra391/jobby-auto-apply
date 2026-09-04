@@ -214,7 +214,3 @@ class BoardKeyCollisionTests(pgtest.SchemaCase):
         self.assertEqual(len(self.stored()), 5)
         self.assertEqual(merged, [])
         self.assertEqual(len(mapping), 5)
-
-
-if __name__ == "__main__":
-    unittest.main()

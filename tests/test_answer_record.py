@@ -755,7 +755,3 @@ class HistoryStaysClosedTests(unittest.TestCase):
                     banned: {"what are your salary expectations?": "165000"}}))
                 with self.assertRaises(store.StoreError):
                     store.cmd_history_append(Args())
-
-
-if __name__ == "__main__":
-    unittest.main()

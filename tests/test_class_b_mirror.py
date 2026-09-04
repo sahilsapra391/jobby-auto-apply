@@ -373,7 +373,3 @@ class OnlyASessionSetsAStatus(pgtest.SchemaCase):
         class_b.mirror(self.conn, self.account, "session",
                        {"applicationId": "app4", "status": "  "})
         self.assertEqual(self.status_of("app4"), "review")
-
-
-if __name__ == "__main__":
-    unittest.main()

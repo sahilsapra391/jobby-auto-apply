@@ -296,7 +296,3 @@ class DatabaseUrlTests(unittest.TestCase):
         worker_key.set_database_url(self.GOOD.replace("neondb", "other"),
                                     config_path=str(self.cfg))
         self.assertEqual(self.cfg.read_text().count("JOBBY_DATABASE_URL="), 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

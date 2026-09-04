@@ -298,7 +298,3 @@ class NoTestReachesBrowserStateWithoutRedirectingIt(unittest.TestCase):
         source = (ROOT / "scripts" / "browser.py").read_text()
         self.assertIn('PROFILE = STATE / "browser-profile"', source)
         self.assertIn('ARTIFACTS = STATE / "browser-artifacts"', source)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -146,7 +146,3 @@ class TheFirewallReportsWhatItsBackendSaid(unittest.TestCase):
         with contextlib.redirect_stderr(captured):
             browser_mcp_proxy._report_backend_stderr(browser_mcp_proxy.deque(), 2)
         self.assertIn("wrote nothing to stderr", captured.getvalue())
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1438,7 +1438,3 @@ class EasternTimeTests(unittest.TestCase):
                 "errors": []}}}, clock.now_label())
         self.assertNotIn("UTC", visible_text(html))
         self.assertIn("EDT", html)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -153,7 +153,3 @@ class YearsFromSectionsTests(unittest.TestCase):
         body = ("Minimum qualifications: 5 years of experience in product. "
                 "Separately, our roadmap covers the next decade.")
         self.assertEqual(extract.years_required(body)["yearsMin"], 5)
-
-
-if __name__ == "__main__":
-    unittest.main()

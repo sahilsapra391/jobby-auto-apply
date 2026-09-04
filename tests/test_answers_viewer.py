@@ -347,7 +347,3 @@ class StateCostTests(unittest.TestCase):
                 for row in submitted_rows(page):
                     self.assertNotIn("answers-open", row)
                     self.assertIn("not captured", row)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -169,7 +169,3 @@ class StoryBankDefaultTests(unittest.TestCase):
                 self.assertIsNone(ats.default_facts())
             finally:
                 os.environ.pop("JOB_APPLICATION_DIR", None)
-
-
-if __name__ == "__main__":
-    unittest.main()

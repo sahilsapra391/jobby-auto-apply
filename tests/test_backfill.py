@@ -684,7 +684,3 @@ class AgainstARealDatabase(pgtest.SchemaCase):
             got = [r[0] for r in cur.fetchall()]
         self.assertEqual(got[0], "id1")
         self.assertEqual(sorted(got[1:]), ["id2", "id3"])
-
-
-if __name__ == "__main__":
-    unittest.main()

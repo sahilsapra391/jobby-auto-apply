@@ -178,7 +178,3 @@ class IngestRefusalTests(unittest.TestCase):
         done = self._ingest("--dry-run", "--channel", "nonexistent-channel")
         self.assertNotEqual(3, done.returncode,
                             "a dry run should not be refused: " + done.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()

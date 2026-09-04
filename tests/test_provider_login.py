@@ -116,7 +116,3 @@ class LoginTests(unittest.TestCase):
         source = (ROOT / "scripts" / "provider_login.py").read_text()
         for banned in ("getpass", "webbrowser", "provider_secrets.store"):
             self.assertNotIn(banned, source, f"{banned} is back in the login path")
-
-
-if __name__ == "__main__":
-    unittest.main()

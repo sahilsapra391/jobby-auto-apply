@@ -79,7 +79,3 @@ class GroupingTests(unittest.TestCase):
         self.assertEqual(salary.indian_grouping(3000000), "30,00,000")
         self.assertEqual(salary.indian_grouping(120000), "1,20,000")
         self.assertEqual(salary.indian_grouping(900), "900")
-
-
-if __name__ == "__main__":
-    unittest.main()

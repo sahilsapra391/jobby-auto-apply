@@ -168,7 +168,3 @@ class WiringTests(unittest.TestCase):
                              "the discard followed the redirect instead of the path")
         finally:
             elsewhere.cleanup()
-
-
-if __name__ == "__main__":
-    unittest.main()

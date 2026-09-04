@@ -134,7 +134,3 @@ class RenderAndVerifyTest(unittest.TestCase):
     def test_rendered_pdf_is_owner_readable_only(self):
         import os
         self.assertEqual(os.stat(self.base).st_mode & 0o777, 0o600)
-
-
-if __name__ == "__main__":
-    unittest.main()

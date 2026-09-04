@@ -536,7 +536,3 @@ console.log(JSON.stringify(out));
         if found is None:
             self.skipTest("node is not installed")
         return found
-
-
-if __name__ == "__main__":
-    unittest.main()

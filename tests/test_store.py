@@ -158,7 +158,3 @@ class StoreTest(unittest.TestCase):
         store.cmd_meta_set(ns(root=self.root, key="artifactUrl", value="https://x"))
         got = store.cmd_meta_get(ns(root=self.root, key="artifactUrl"))
         self.assertEqual(got["artifactUrl"], "https://x")
-
-
-if __name__ == "__main__":
-    unittest.main()

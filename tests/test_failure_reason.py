@@ -192,7 +192,3 @@ class ClientReadsItBackTests(unittest.TestCase):
         for bad in ("../../etc/passwd", None, 7, "not-a-uuid", ""):
             with self.subTest(bad=bad):
                 self.assertEqual("", job._worker_failure_reason(bad, str(self.root)))
-
-
-if __name__ == "__main__":
-    unittest.main()

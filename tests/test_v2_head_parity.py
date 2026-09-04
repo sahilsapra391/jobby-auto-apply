@@ -140,7 +140,3 @@ class GeneratorRefusesToEmitLessTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             sync_v2_styles._span("<meta charset=utf-8> and then nothing",
                                  "<meta charset=", "<link rel=\"manifest\"", "the head")
-
-
-if __name__ == "__main__":
-    unittest.main()

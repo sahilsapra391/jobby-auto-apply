@@ -714,7 +714,3 @@ class StatusTests(unittest.TestCase):
         self.assertIsNone(block["running"]["apply-8"])
         self.assertIn("apply-1", block["warning"])
         json.dumps(block)
-
-
-if __name__ == "__main__":
-    unittest.main()

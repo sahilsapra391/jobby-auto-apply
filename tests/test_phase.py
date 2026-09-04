@@ -109,7 +109,3 @@ class LaneTransitionTests(unittest.TestCase):
             capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
         self.assertIn("no such application", r.stdout)
-
-
-if __name__ == "__main__":
-    unittest.main()

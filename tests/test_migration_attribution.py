@@ -182,7 +182,3 @@ class TheReconstructedMigrationSaysSo(unittest.TestCase):
                        "scan_started_at", "scan_finished_at", "blocked",
                        "slots_parked", "search_config"):
             self.assertIn(column, text)
-
-
-if __name__ == "__main__":
-    unittest.main()

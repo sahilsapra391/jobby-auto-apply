@@ -425,7 +425,3 @@ class TheRecordIsUnchangedTests(unittest.TestCase):
     def test_a_root_that_is_not_a_path_at_all_returns_none(self):
         self.assertIsNone(provider_usage.record(
             "app11", "openai", "m", "form", None, root=object(), prices=None))
-
-
-if __name__ == "__main__":
-    unittest.main()

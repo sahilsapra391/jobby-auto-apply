@@ -469,7 +469,3 @@ class RealBrowserUploadTests(unittest.TestCase):
         # Still exact: an uncounted call or a double-counted one fails here.
         self.assertEqual(recorded["totalCalls"], probes + selecting + 2)
         self.assertEqual(recorded["backendExit"], 0)
-
-
-if __name__ == "__main__":
-    unittest.main()

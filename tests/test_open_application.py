@@ -182,6 +182,3 @@ class RunnerRefusesABlankPageTests(unittest.TestCase):
         staged.assert_not_called()
         self.assertIn("the posting would not open in apply-1", recorded["blocked"])
         self.assertIn("did not load", recorded["blocked"])
-
-if __name__ == "__main__":
-    unittest.main()

@@ -141,7 +141,3 @@ class ExtractShapeTests(unittest.TestCase):
         found = extract.extract("filler " * 20000 + " 5+ years of experience")
         self.assertIsNone(found["yearsMin"], "past the scan cap, so not found")
         self.assertEqual(extract.MAX_SCAN_CHARS, 40_000)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1009,7 +1009,3 @@ class StalenessSweepTests(IngestCase):
         self.assertEqual(total, 1)
         self.assertTrue(any("jobs/1" in u for u in urls))
         self.assertFalse(any("jobs/2" in u for u in urls))
-
-
-if __name__ == "__main__":
-    unittest.main()

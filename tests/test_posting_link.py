@@ -114,7 +114,3 @@ class ResolverTests(pgtest.SchemaCase):
         code = source[source.index("class Resolver"):]
         self.assertNotIn("roles", code,
                          "the resolver must not read the frozen snapshot")
-
-
-if __name__ == "__main__":
-    unittest.main()

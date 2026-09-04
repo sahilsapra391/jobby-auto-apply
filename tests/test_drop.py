@@ -87,7 +87,3 @@ class StopAgentTests(unittest.TestCase):
     def test_no_lock_at_all_is_not_an_error(self):
         drop.watch.lock_holder = lambda name: None
         self.assertFalse(drop.stop_agent("anything")["stopped"])
-
-
-if __name__ == "__main__":
-    unittest.main()

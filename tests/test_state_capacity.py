@@ -117,7 +117,3 @@ class ItRaisesRatherThanReturningASentinelTest(unittest.TestCase):
             self.assertIn("could not measure", str(exc))
         else:
             self.fail("expected CapacityError")
-
-
-if __name__ == "__main__":
-    unittest.main()

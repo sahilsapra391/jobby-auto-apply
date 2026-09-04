@@ -344,7 +344,3 @@ class MeasuredAgainstTheRealPool(unittest.TestCase):
                              if board_key.parse(source, j["canonicalUrl"]))
                 self.assertEqual(parsed, len(rows),
                                  f"{source} parsed {parsed}/{len(rows)}")
-
-
-if __name__ == "__main__":
-    unittest.main()

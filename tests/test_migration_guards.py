@@ -427,7 +427,3 @@ class PooledConnectionsAreRefused(unittest.TestCase):
                     "postgresql://u:p@db.example.com/x?pgbouncer=true"):
             with self.subTest(url=url):
                 self.assertFalse(migrate.is_pooled(migrate.direct_url(url)))
-
-
-if __name__ == "__main__":
-    unittest.main()

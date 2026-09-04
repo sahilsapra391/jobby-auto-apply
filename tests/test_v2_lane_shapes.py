@@ -218,7 +218,3 @@ class LaneShapeTests(unittest.TestCase):
         self.assertTrue(buttons, "no buttons found; the check is vacuous")
         live = [b for b in buttons if "disabled" not in b]
         self.assertEqual(live, [], f"these controls are not disabled: {live}")
-
-
-if __name__ == "__main__":
-    unittest.main()

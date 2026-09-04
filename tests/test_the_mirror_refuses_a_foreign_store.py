@@ -125,7 +125,3 @@ class ItFailsClosed(unittest.TestCase):
         direction is the one that mirrors."""
         with mock.patch("pathlib.Path.resolve", side_effect=OSError("nope")):
             self.assertFalse(class_b.writes_the_device_store("/anything"))
-
-
-if __name__ == "__main__":
-    unittest.main()

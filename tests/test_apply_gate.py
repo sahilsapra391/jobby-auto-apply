@@ -144,7 +144,3 @@ class ReportedRunningTests(unittest.TestCase):
         watch.take_lock("scan", os.getpid(), note="tier1-ingest")
         self.assertIsNotNone(watch.lock_holder("scan"),
                              "the board's running list reads lock_holder")
-
-
-if __name__ == "__main__":
-    unittest.main()

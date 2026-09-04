@@ -101,7 +101,3 @@ class ShippedTemplateIsCleanTests(unittest.TestCase):
         template = json.loads(
             (ROOT / "templates" / "resume-content.json").read_text())
         resume_build.assert_integrity(template, template)
-
-
-if __name__ == "__main__":
-    unittest.main()

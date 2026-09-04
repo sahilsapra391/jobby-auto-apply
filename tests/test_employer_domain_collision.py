@@ -150,7 +150,3 @@ class EmployerDomainCollisionTests(pgtest.SchemaCase):
         self.assertEqual(held.get("alpha"), "a.example")
         self.assertEqual(held.get("beta"), "b.example")
         self.assertEqual(held.get("gamma"), "c.example")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -142,7 +142,3 @@ class EverySettledDecisionHasARecord(unittest.TestCase):
         present = {p.name for p in ADR.glob("0*.md")}
         self.assertEqual(linked - present, set(),
                          "the index links records that are not there")
-
-
-if __name__ == "__main__":
-    unittest.main()

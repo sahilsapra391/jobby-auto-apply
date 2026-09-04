@@ -267,7 +267,3 @@ class TheThemeAndMotionRulesSurvive(unittest.TestCase):
         for block in blocks:
             with self.subTest(block=block[:60]):
                 self.assertIn(block, self.css)
-
-
-if __name__ == "__main__":
-    unittest.main()

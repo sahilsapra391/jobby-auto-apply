@@ -174,7 +174,3 @@ class TheApplicationsRuleIsAnchored(unittest.TestCase):
         self.assertTrue(out.stdout.strip(),
                         "the write endpoint is not tracked, so it cannot be "
                         "in any build but this working tree")
-
-
-if __name__ == "__main__":
-    unittest.main()

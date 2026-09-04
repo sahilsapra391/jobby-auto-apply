@@ -70,7 +70,3 @@ class WorkerReportingTests(unittest.TestCase):
             "teamtailor",
             "amor-management-consultants-indias-premiere-auto-talent-hiring-specialists")
         self.assertEqual((found, count), (False, 0))
-
-
-if __name__ == "__main__":
-    unittest.main()

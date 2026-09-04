@@ -330,7 +330,3 @@ class TheClockReadsTheRealLog(unittest.TestCase):
         self.assertEqual(
             parity_clock.INTERVAL,
             timedelta(seconds=install_parity_timer.INTERVAL_SECONDS))
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -246,8 +246,3 @@ class PricedModelTests(unittest.TestCase):
         self.assertEqual(
             provider_usage.unpriced_reason(usage, "claude-sonnet-5", None),
             "no price table")
-
-
-
-if __name__ == "__main__":
-    unittest.main()

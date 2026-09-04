@@ -1889,8 +1889,3 @@ class TrustedFieldNormalisationTests(unittest.TestCase):
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(clean["coverLetter"]["role"], "Private Role")
         self.assertEqual(clean["coverLetter"]["employer"], "Private Company")
-
-
-
-if __name__ == "__main__":
-    unittest.main()

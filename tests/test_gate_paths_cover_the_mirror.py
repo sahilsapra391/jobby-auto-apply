@@ -98,7 +98,3 @@ class GatePathsCoverTheMirrorTests(unittest.TestCase):
         those would restart the clock for editing the clock."""
         for never in ("scripts/parity_clock.py", "scripts/write_path_coverage.py"):
             self.assertNotIn(never, parity_clock.GATE_PATHS)
-
-
-if __name__ == "__main__":
-    unittest.main()

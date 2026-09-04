@@ -217,7 +217,3 @@ class ThePrimitiveListIsHonest(unittest.TestCase):
                     and isinstance(n.func, ast.Attribute)
                     and n.func.attr in PRIMITIVES]
             self.assertEqual(len(hits), 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

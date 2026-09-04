@@ -226,7 +226,3 @@ class ReconcileToPoolTests(SyncBoardCase):
         self.submit("sent")
         self.sync()
         self.assertEqual(self.sync()["reconciledToPool"], [])
-
-
-if __name__ == "__main__":
-    unittest.main()

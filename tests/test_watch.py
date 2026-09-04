@@ -261,18 +261,6 @@ class EnsureApplicationSessionTests(unittest.TestCase):
             refusal, created = watch.ensure_application_session("x")
         self.assertIsNone(refusal)
 
-    def test_the_tick_consults_it_before_any_document_work(self):
-        # The wiring is what stops the wedge, so its removal must fail a test:
-        # the ensure runs after the do-not-start guards and before the head's
-        # provider probes or document job are ever touched.
-        source = inspect.getsource(watch.tick)
-        ensure_at = source.find("ensure_application_session")
-        self.assertGreater(ensure_at, -1, "tick() no longer ensures a session "
-                           "for the Apply head; a sessionless head wedges the "
-                           "lane (88 failed ticks on 2026-08-28)")
-        self.assertLess(source.find("do_not_start"), ensure_at)
-        self.assertLess(ensure_at, source.find("document_candidate_order"))
-        self.assertLess(ensure_at, source.find("prepare_document_head"))
 
 
 class TickErrorTests(unittest.TestCase):
@@ -892,6 +880,71 @@ class TickHarnessMixin:
                 "prepare": prepare,
                 "documentReadiness": document_readiness,
             }
+
+class TheTickEnsuresASessionBeforeAnyDocumentWork(TickHarnessMixin,
+                                                  unittest.TestCase):
+    """The wiring that stops the wedge, checked by calling tick rather than
+    reading it.
+
+    **This was `inspect.getsource(watch.tick)` and four `.find()` positions
+    compared for ordering, and it had two failure modes that have nothing to do
+    with the property.** Lift `ensure_application_session` into a helper with
+    the wiring perfectly intact and every `.find()` returns -1, so it fails with
+    `-1 not greater than -1` -- a scanner failing on the refactor that improves
+    the thing it guards, which is the fifth instance of that shape in this
+    repository.
+
+    The second is worse because it is not deterministic. `inspect.getsource`
+    re-reads the file from disk and `linecache.checkcache` invalidates on mtime,
+    so editing `watch.py` while the suite runs makes it walk back from a stale
+    `co_firstlineno` into a different block and report the same
+    `-1 not greater than -1`. It was reproduced from scratch during a review
+    sweep, on this checkout, because another session edited and branch-switched
+    it mid-run. **On a checkout several sessions share, that is a CI failure
+    indistinguishable from a real break**, and the hour it costs is spent
+    chasing a phantom.
+
+    So it calls tick and records the order. Rename-proof, extraction-proof, and
+    it never reads the file.
+    """
+
+    ORDERED = ("do_not_start", "ensure_application_session",
+               "document_candidate_order")
+
+    def _order(self):
+        """Every collaborator on one parent mock, so `mock_calls` is one
+        ordered log. `prepare_document_head` is the harness's own patch rather
+        than a second one, so this test does not have to invent a document
+        state the tick will accept."""
+        with self.tick_harness("openai", {"state": "submitting"}) as calls:
+            with ExitStack() as stack:
+                parent = mock.Mock()
+                for name, answer in (
+                        ("do_not_start", None),
+                        ("ensure_application_session", (None, False)),
+                        ("document_candidate_order", ["openai"])):
+                    child = stack.enter_context(
+                        mock.patch.object(watch, name, return_value=answer))
+                    parent.attach_mock(child, name)
+                parent.attach_mock(calls["prepare"], "prepare_document_head")
+                watch.tick()
+        return [name for name, _args, _kwargs in parent.mock_calls]
+
+    def test_the_ensure_runs_after_the_guards_and_before_document_work(self):
+        seen = self._order()
+        self.assertIn("ensure_application_session", seen,
+                      "tick() no longer ensures a session for the Apply head; "
+                      "a sessionless head wedges the lane (88 failed ticks on "
+                      "2026-08-28)")
+        positions = {name: seen.index(name) for name in self.ORDERED
+                     if name in seen}
+        self.assertLess(positions["do_not_start"],
+                        positions["ensure_application_session"])
+        for later in ("document_candidate_order", "prepare_document_head"):
+            if later in seen:
+                self.assertLess(positions.get("ensure_application_session"),
+                                seen.index(later))
+
 
 class ProviderNeutralApplyTests(TickHarnessMixin, unittest.TestCase):
     """Document generation stays remote while application filling stays local."""
@@ -1782,7 +1835,3 @@ class ParkedSlotAlarmTests(unittest.TestCase):
             reason = watch.unhealthy_reason()
         self.assertIn("BOARD", reason)
         self.assertIn("SLOTS", reason)
-
-
-if __name__ == "__main__":
-    unittest.main()

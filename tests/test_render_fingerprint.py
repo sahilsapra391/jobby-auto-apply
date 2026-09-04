@@ -56,7 +56,3 @@ class RenderFingerprintTests(unittest.TestCase):
 
     def test_the_fingerprint_is_stable_when_nothing_changes(self):
         self.assertEqual(watch.render_version(), watch.render_version())
-
-
-if __name__ == "__main__":
-    unittest.main()

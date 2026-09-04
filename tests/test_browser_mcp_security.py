@@ -205,7 +205,3 @@ class BrowserMcpSecurityTests(unittest.TestCase):
 
         self.assertFalse(result["cleared"])
         self.assertTrue(marker.exists())
-
-
-if __name__ == "__main__":
-    unittest.main()

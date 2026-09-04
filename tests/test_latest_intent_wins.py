@@ -100,7 +100,3 @@ class LatestIntentWinsTests(unittest.TestCase):
             ["junk", {"noId": True}], [apply_click("a", "2026-08-27T21:00:00.000Z")])
         self.assertEqual(execute, ["junk", {"noId": True}])
         self.assertEqual(superseded, [])
-
-
-if __name__ == "__main__":
-    unittest.main()

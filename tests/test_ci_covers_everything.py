@@ -229,7 +229,3 @@ class DatabaseTestsRunInCI(unittest.TestCase):
         sys.path.insert(0, str(REPO / "packages" / "schema"))
         import migrate
         self.assertFalse(migrate.is_pooled(pgtest.URL))
-
-
-if __name__ == "__main__":
-    unittest.main()

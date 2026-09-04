@@ -586,8 +586,3 @@ class ContractRefusalDetailTest(DocumentJobStore, unittest.TestCase):
         self.assertEqual("queued", state["state"])
         self.assertNotIn("errorDetail", state)
         self.assertNotIn("errorCode", state)
-
-
-
-if __name__ == "__main__":
-    unittest.main()

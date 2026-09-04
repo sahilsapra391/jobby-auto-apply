@@ -195,7 +195,3 @@ class PoolStalenessTests(unittest.TestCase):
         self.assertIsNotNone(watch.pool_staleness(),
                              "pool_staleness returns None on a machine that "
                              "has a pool, so the alarm cannot fire")
-
-
-if __name__ == "__main__":
-    unittest.main()

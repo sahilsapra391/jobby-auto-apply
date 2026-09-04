@@ -526,7 +526,3 @@ class IdStabilityTests(unittest.TestCase):
         forward, _, _ = store([first, second])
         backward, _, _ = store([second, first])
         self.assertEqual(len(forward), len(backward), 2)
-
-
-if __name__ == "__main__":
-    unittest.main()

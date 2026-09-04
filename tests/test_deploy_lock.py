@@ -177,7 +177,3 @@ class StatusSurfaceTests(unittest.TestCase):
         self.assertIn("deploy_lock", dir(watch))
         source = (ROOT / "scripts" / "watch.py").read_text()
         self.assertIn('out["deploy"]', source)
-
-
-if __name__ == "__main__":
-    unittest.main()

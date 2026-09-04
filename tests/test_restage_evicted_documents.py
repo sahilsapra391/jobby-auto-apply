@@ -166,7 +166,3 @@ class RunApplyRestageTests(unittest.TestCase):
         called.assert_called_once_with("aa11bb22cc33dd44", "/tmp/apps/Acme")
         self.assertIn("documents_restaged", err)
         self.assertIn("Acme_CoverLetter.pdf", err)
-
-
-if __name__ == "__main__":
-    unittest.main()

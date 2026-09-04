@@ -2573,6 +2573,73 @@ nothing ever used -- both read as a check and neither can fail. When widening
 what a function reads, grep for callers that construct its argument rather than
 pass a real one.
 
+## An adversarial pass that corrects the reason is worth more than one that agrees
+
+**A right finding with a wrong reason is how a fix lands in the wrong place.**
+
+A review sweep over the corpus-check branch reported that
+`test_the_tick_consults_it_before_any_document_work` was fragile, and gave a
+reason: it "survives only because the corpus spawn landed in `main()` rather
+than in `tick()`". The verifier that took that finding did not stop at
+confirming the verdict. It mutated `tick`'s source in memory, inserted the
+spawn at the top of `tick` and again immediately before the ensure call, and
+re-ran the four assertions:
+
+    real tick() as on the branch                 PASS
+    corpus spawn inserted at the TOP of tick()   PASS
+    corpus spawn inserted just before the ensure PASS
+    ensure extracted into a helper               FAIL  -1 not greater than -1
+
+The test asserts marker *ordering*, and the spawn block contains none of the
+four markers, so putting it inside `tick` could never have broken it. **The
+fragility was real and the stated cause was false**, and had the reason been
+taken on trust the remedy would have been a rule about where spawns may go --
+which protects nothing, because the actual trigger is any extraction or rename.
+
+The verifier then found a second failure mode the finder had not seen at all,
+and reproduced it: `inspect.getsource` re-reads from disk and
+`linecache.checkcache` invalidates on mtime, so an edit to `watch.py` while the
+suite runs makes it walk back from a stale `co_firstlineno` into a different
+block. Verified again independently before this was written, by inserting sixty
+lines above `tick` in a running interpreter: `getsource` returned a block whose
+first line was `# shifted` and the search returned -1. On a checkout several
+sessions share, **that is a CI failure indistinguishable from a real break**.
+
+So the rule for a verification pass: confirm or refute the *mechanism*, not
+just the verdict. A verifier that only answers "is this real" leaves the
+reasoning unchecked, and the reasoning is what the fix gets built on.
+
+## A guard wired through per-clone config is absent where the work happens
+
+`.githooks/pre-commit` is this repository's third enforcement point for the
+image allowlist and the only one for the `JOBBY_ADD` staging rule. It runs
+through `core.hooksPath`, which is **git config, per clone, and not carried by
+the repository**.
+
+Measured 2026-09-04:
+
+    production checkout   core.hooksPath = .githooks    hook active
+    ~/dev worktree        core.hooksPath = (unset)      hook inert
+
+Every rule in the worktree discipline section says agent work happens in a
+worktree and never in the production checkout. So the guard was installed in
+the one place it is least needed and absent from the nine places it is most.
+Nothing announces this: a hook that is not installed does not fail, it simply
+is not there, which is the same silence as a hook that passes.
+
+The consequence is narrower than "the guards do not work" and worth stating
+exactly: `git add -A` in a worktree is ungated, and so is committing an image.
+`tests/test_no_pii.py` still catches the image in CI, and nothing catches the
+accidental staging at all.
+
+**And it is why the fix for a local-feedback problem cannot be a pre-commit
+hook.** Two classes shipped below a `__main__` block in one session; a hook
+would not have caught either, because both were committed from a worktree. The
+fix was to delete the main block from all 139 test files so the hazard cannot
+occur, which needs no installation anywhere. Prefer removing a hazard to
+detecting it, and when you must detect it, check where the detector runs before
+believing it covers you.
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on

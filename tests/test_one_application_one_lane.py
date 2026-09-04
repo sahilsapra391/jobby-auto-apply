@@ -98,7 +98,3 @@ class ThePageDrawsItOnceTests(unittest.TestCase):
             chunk = page.split(f'data-tab="{lane}"')[1].split("</button>")[0]
             counts[lane] = int(chunk.split('<span class="n">')[1].split("<")[0])
         self.assertEqual(counts, {"watch": 1, "flight": 1, "act": 1})
-
-
-if __name__ == "__main__":
-    unittest.main()

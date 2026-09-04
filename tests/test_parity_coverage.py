@@ -256,7 +256,3 @@ class TheClockRefusesAShallowRun(unittest.TestCase):
         key means the old rule, not a failure."""
         old = {"at": "2026-09-01T00:00:00Z", "ok": True, "divergences": 0}
         self.assertEqual(parity_log.with_coverage(dict(old)), old)
-
-
-if __name__ == "__main__":
-    unittest.main()

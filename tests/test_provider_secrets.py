@@ -44,7 +44,3 @@ class ProviderSecretTests(unittest.TestCase):
         (self.root / "anthropic").symlink_to(target)
         with self.assertRaises(secrets.ProviderSecretError):
             secrets.load("anthropic", self.root)
-
-
-if __name__ == "__main__":
-    unittest.main()

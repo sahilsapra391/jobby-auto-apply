@@ -88,7 +88,3 @@ class TheQuarantineDescribesRealTests(unittest.TestCase):
         self.assertTrue(files(), "no quarantined files; delete this file and "
                                  "docs/quarantine.md rather than leaving an "
                                  "empty arrangement that always passes")
-
-
-if __name__ == "__main__":
-    unittest.main()

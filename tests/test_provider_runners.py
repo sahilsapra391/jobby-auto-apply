@@ -834,8 +834,3 @@ class ProviderFallthroughTests(ApplyFixtureMixin, unittest.TestCase):
             authenticated=authenticated,
         )
         self.assertEqual(tried, ["anthropic"])
-
-
-
-if __name__ == "__main__":
-    unittest.main()
