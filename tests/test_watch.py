@@ -31,6 +31,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import ping_reasons  # noqa: E402
 import store_isolation  # noqa: E402
 
 
@@ -1751,11 +1752,36 @@ class ParkedSlotAlarmTests(unittest.TestCase):
             self.assertEqual(watch.parked_apply_slots()[0]["ageSeconds"], 0)
 
     def test_the_ping_carries_it_alongside_board_staleness_not_instead(self):
-        """One alarm, two reasons. Two alarms is how one stops being read."""
-        source = (pathlib.Path(watch.__file__).read_text())
-        block = source[source.index("stale = "):source.index("stale = ") + 400]
-        self.assertIn("stale_board_warning()", block)
-        self.assertIn("parked_slot_warning()", block)
+        """One alarm, two reasons. Two alarms is how one stops being read.
+
+        **This read watch.py's source and sliced 400 characters after
+        `stale = `.** It is the fourth test in this repository anchored on the
+        text of that composition, and all four broke together when the
+        composition was lifted into `unhealthy_reason` so that it could be
+        called at all. Four scanners asserting the arrangement of one
+        expression, and not one of them would have noticed the expression
+        being wrong.
+
+        Both reasons are checked by making each speak while the other four are
+        silent, which is what "alongside, not instead" actually means.
+        """
+        for name in ("stale_board_warning", "parked_slot_warning"):
+            with self.subTest(warning=name):
+                with mock.patch.object(watch, "PING_REASONS",
+                                       ping_reasons.only(watch, name)):
+                    self.assertEqual(watch.unhealthy_reason(),
+                                     ping_reasons.HEARD)
+
+    def test_the_two_reasons_are_joined_rather_than_one_winning(self):
+        """"Alongside, not instead" is a claim about two speaking at once, and
+        the old text scan could not have seen the difference between joining
+        them and returning the first."""
+        with mock.patch.object(watch, "PING_REASONS", ping_reasons.several(
+                watch, {"stale_board_warning": "BOARD",
+                        "parked_slot_warning": "SLOTS"})):
+            reason = watch.unhealthy_reason()
+        self.assertIn("BOARD", reason)
+        self.assertIn("SLOTS", reason)
 
 
 if __name__ == "__main__":

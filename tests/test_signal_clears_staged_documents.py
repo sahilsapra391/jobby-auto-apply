@@ -56,8 +56,16 @@ browser._STAGED.append(target)
 %(install)s
 sys.stdout.write("ready\\n")
 sys.stdout.flush()
-while True:
+# A deadline, because a fixture that waits forever becomes an orphan the
+# first time anything goes wrong. The parent's `finally` kills this child and
+# is correct; no `finally` survives the parent being SIGKILLed, which is what
+# happens when a run hangs and somebody stops it. One was found spinning at
+# 20 wakeups a second, 34 hours after the run that made it, staging files into
+# a temp directory that no longer existed.
+deadline = time.time() + 120
+while time.time() < deadline:
     time.sleep(0.05)
+sys.exit("the signal never arrived; this fixture is not going to wait forever")
 """
 
 INSTALL = "run_apply._install_discard_signal_handlers()"

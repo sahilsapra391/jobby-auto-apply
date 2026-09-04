@@ -279,6 +279,61 @@ URL, so it sidesteps the whole class. That is the second argument for passing
 the key rather than re-deriving it -- section 4 gives the first, which is that
 79.2% is as far as derivation gets on the corpus that exists.
 
+### 9a. The fold keeps the expired record, measured 2026-09-03
+
+**§9 says the two records are one posting and that is right. Which of them
+survives the fold is a separate question, and today the answer is the wrong
+one.**
+
+All three collisions in the store share one signature. The employer edits the
+posting, Breezy keeps the id and rewrites the slug, the URL-keyed sighting
+misses it, the sweep expires the old record, and five or six minutes later
+ingests the new slug as a new record. The lifetimes never overlap:
+
+```
+breezy/bitdeer/eeab1edbc9db        closed 08-31 19:41   next seen 19:47
+breezy/surge/f8b44d25ba27          closed 09-02 15:47   next seen 15:52
+breezy/nationsbenefits/8afada1bbe99  closed 09-03 19:43   next seen 19:48
+```
+
+`postings` then holds **one row per pair and it is the closed one**. The live
+record has no row of its own; it is filed under the expired one in
+`merged_legacy_ids`.
+
+```
+1afe6cbad39c16b2   closed 2026-09-02   $65,000 - $85,000
+                   "Operations Manager - 2nd & 3rd Shift"
+
+live posting at the same Breezy id, no row:
+f4ca7580de7eacac   open                $50,000 - $55,000
+                   "3rd Shift Electronics Operations Supervisor"
+```
+
+**This is a cutover item, not only a Phase 3 one.** v2 reads Postgres, so it
+shows three postings as closed that the Python board shows as open, at the
+previous title and the previous pay. Three of roughly 17,000 today, and the
+mechanism runs every time an employer retitles, so it accumulates rather than
+sitting still. The three collisions went 2, then 5, then 7 in two days when
+somebody last counted, and today's number is a snapshot of the same drift.
+
+Winner selection is the fix and it is a one-line rule: **between records
+sharing a board key, the one that is still live wins.** It belongs in
+`backfill.upsert_postings` alongside the `on conflict` work, and it is not made
+here because a mirror change is the user's call.
+
+**Parity is right to be silent about it**, which is worth stating because the
+silence looks like coverage. Both stores agree; the fold is deterministic and
+the mirror faithfully reflects what it decided. This is the `Appcast
+Enterprise` lesson one table over: a green parity run means the mirror lost
+nothing on the way across, and says nothing whatever about whether what
+crossed was right.
+
+**And nothing would have found it except running the tests.**
+`test_every_dropped_field_is_one_a_merge_may_discard` had been failing on
+`main` and `test_every_colliding_key_is_a_genuine_duplicate_posting` was about
+to. Both skip in CI, and CI is the only place the suite runs. The salary pair
+is the reason the hourly corpus check exists.
+
 ## 10. §3 cannot name an application, and `roles` is not the way out
 
 `applications` holds no company and no role. An application lane rendered from

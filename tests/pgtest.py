@@ -86,11 +86,33 @@ def apply_migrations(conn):
     conn.commit()
 
 
+@unittest.skipUnless(available(),
+                     "needs JOBBY_TEST_DATABASE_URL and psycopg")
 class SchemaCase(unittest.TestCase):
     """A test case owning one disposable schema.
 
     `prefix` distinguishes one module's scratch schemas from another's when
     something goes wrong and they have to be found by hand.
+
+    **The guard belongs here and it was on `apply_migrations`, which is a
+    module-level function rather than a test.** That decorator is not useless:
+    called from inside a test with no database configured it raises SkipTest
+    and unittest records a skip. It is simply never reached, because `setUp`
+    runs first and `admin_conn()` connects before any migration is applied.
+    With `JOBBY_TEST_DATABASE_URL` unset, `driver().connect("")` does not
+    refuse, it falls through to libpq's own defaults and dials localhost:5432.
+
+    Measured on this machine 2026-09-03: 20 of `test_verify_parity`'s tests
+    errored with "Is the server running locally and accepting connections on
+    that socket?" where they should have skipped. Invisible in CI, which
+    supplies the container, and it is one reason nobody runs this suite where
+    the real corpus lives -- a clean checkout on the developer's own Mac
+    reports twenty errors that mean nothing, which is how a real failure two
+    classes further down went unread for a day.
+
+    A class-level skip is inherited by subclasses and runs before `setUp`,
+    which is the property this relies on and which was verified rather than
+    assumed.
     """
 
     prefix = "pgtest"

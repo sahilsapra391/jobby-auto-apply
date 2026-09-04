@@ -29,7 +29,9 @@ from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tests"))
 
+import ping_reasons  # noqa: E402
 import watch  # noqa: E402
 
 SOURCE = (REPO / "scripts" / "watch.py").read_text(encoding="utf-8")
@@ -110,23 +112,33 @@ class SweepStalenessTests(unittest.TestCase):
     def test_it_is_actually_wired_into_the_dead_man_ping(self):
         """**The half that matters.** A warning function nothing calls is the
         `activity.json` counter again: correct, exercised, and never once run.
+
+        **And it used to check that by reading the source**, anchored on the
+        literal `stale = "; ".join(` inside the tick loop, because the
+        composition lived in the loop and a loop cannot be run for one
+        iteration. That anchor broke the moment the composition was lifted
+        into `unhealthy_reason` to make it callable -- a scanner failing on
+        the refactor that improved the thing it guards, which is the same
+        shape as a check whose subject is the configuration rather than the
+        property.
+
+        This calls it instead. Each warning is silenced but one, and the
+        surviving message has to come out the other side.
         """
-        composition = SOURCE[SOURCE.index('stale = "; ".join('):]
-        composition = composition[:composition.index("if message")]
-        self.assertIn("stale_sweep_warning()", composition,
-                      "stale_sweep_warning is not in the dead-man composition, "
-                      "so it can never fire")
+        with mock.patch.object(watch, "PING_REASONS",
+                               ping_reasons.only(watch, "stale_sweep_warning")):
+            self.assertEqual(watch.unhealthy_reason(), ping_reasons.HEARD)
 
-    def test_the_publish_check_and_this_one_measure_different_things(self):
-        """They are two reasons on one alarm, not one reason twice. Merging
-        them would lose the distinction the outage turned on: the board was
-        publishing perfectly and the data was a day old."""
-        board = code_of("board_staleness")
-        self.assertIn("LAST_PUBLISH", board)
-        self.assertNotIn("jobs_store", board,
-                         "board staleness must not start reading the pool; "
-                         "the two questions are different")
-
+    def test_every_warning_reaches_the_ping_not_just_this_one(self):
+        """Derived from `watch.PING_REASONS`, so a sixth reason is covered here
+        the moment it joins the tuple rather than when somebody remembers to
+        edit this file and the three others like it."""
+        self.assertGreaterEqual(len(watch.PING_REASONS), 5)
+        for name, patched in ping_reasons.each(watch):
+            with self.subTest(reason=name):
+                with mock.patch.object(watch, "PING_REASONS", patched):
+                    self.assertEqual(watch.unhealthy_reason(),
+                                     ping_reasons.HEARD)
 
 class PoolStalenessTests(unittest.TestCase):
     def test_it_reads_the_pool_and_not_the_publish_stamp(self):

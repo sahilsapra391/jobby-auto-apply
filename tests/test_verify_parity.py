@@ -524,11 +524,66 @@ class EveryMergedFieldDropIsExplainable(unittest.TestCase):
     #:                                 per-record sweep bookkeeping; `state`
     #:                                 only under the disagreement rule below.
     #:
+    #:   closed_at, first_seen_at, sources
+    #:                                 the same bookkeeping one field over, and
+    #:                                 measured on 2026-09-03 over all three
+    #:                                 folds the store then held. Each is one
+    #:                                 Breezy posting under two title slugs
+    #:                                 with an identical ATS id: eeab1edbc9db,
+    #:                                 8afada1bbe99, f8b44d25ba27. The loser is
+    #:                                 discovered later, so its first_seen_at is
+    #:                                 later and the fold rightly keeps the
+    #:                                 earlier one; its closed_at is null
+    #:                                 against a winner the sweep has closed.
+    #:
+    #:                                 `sources` is the one worth checking
+    #:                                 rather than assuming, because the
+    #:                                 sightings figure reads it. In all three
+    #:                                 folds the loser's entry differs only in
+    #:                                 the slug inside the URL: same board,
+    #:                                 same tier, same sourceClass. The loser
+    #:                                 adds no board the winner does not have,
+    #:                                 so no fold can move the multi-board
+    #:                                 share. If that ever stops being true the
+    #:                                 fix is for the mirror to union the two
+    #:                                 arrays, not for this set to grow.
+    #:
+    #:   salary_raw                    content, not bookkeeping, and the one
+    #:                                 that is exempt here while pointing at a
+    #:                                 real defect somewhere else. Posting
+    #:                                 f8b44d25ba27 holds $50,000-$55,000 in
+    #:                                 the file store against $65,000-$85,000
+    #:                                 in Postgres.
+    #:
+    #:                                 That a fold discards one of two salaries
+    #:                                 is correct: it is one posting, edited.
+    #:                                 **Which one it discards is not.** All
+    #:                                 three folds keep the record the sweep
+    #:                                 has already expired and file the live
+    #:                                 one under it, so Postgres holds
+    #:                                 "Operations Manager, $65,000-$85,000,
+    #:                                 closed" where the live posting is "3rd
+    #:                                 Shift Electronics Operations
+    #:                                 Supervisor, $50,000-$55,000". v2 reads
+    #:                                 Postgres, so it shows three postings as
+    #:                                 closed that the board shows as open, at
+    #:                                 the previous title and the previous pay.
+    #:
+    #:                                 That is winner selection in the mirror,
+    #:                                 not a comparison fault, so parity is
+    #:                                 right to be quiet about it and this set
+    #:                                 is right to exempt it. It is recorded in
+    #:                                 docs/plans/phase3-inputs.md instead,
+    #:                                 because an exemption whose reason is "a
+    #:                                 bug lives over there" is only honest
+    #:                                 while over there is written down.
+    #:
     #: Adding to this list is a classification, not a widening: each entry
     #: above was added after looking at the actual pair, because a set that
     #: grows to make a test pass is the exemption this class exists to bound.
     DROPPABLE = {"apply_url", "title", "norm_title", "desc_fingerprint",
-                 "state", "summary", "posted_at", "last_seen_at", "seen_count"}
+                 "state", "summary", "posted_at", "last_seen_at", "seen_count",
+                 "closed_at", "first_seen_at", "sources", "salary_raw"}
 
     def test_the_document_names_the_record_and_its_winner(self):
         doc = (REPO / "docs" / "parity.md").read_text(encoding="utf-8")
