@@ -70,6 +70,25 @@ UNKNOWN_EMPLOYER = "(unknown employer)"
 UNKNOWN_EMPLOYER_NAME = "Unknown employer"
 
 
+def winner_key(legacy_id, closed_at):
+    """The board-key sort, over the two fields it actually reads.
+
+    **It takes fields rather than a record because the caller below has only
+    an id and a closedness, and the previous version made it a record.** That
+    call site built `{"id": holder}`, a stand-in carrying the one field the
+    sort then read, and it was correct exactly as long as the sort read one
+    field. Teaching the sort about closedness while leaving that synthetic in
+    place would have made the change inert: a dict with one key answers
+    `.get("closedAt")` with None, so every incumbent would evaluate as live, a
+    genuinely live record could never displace a closed one, and every test
+    drawn from the real pool would still have passed.
+
+    So the synthetic is gone rather than corrected. Nothing constructs a
+    record to ask this question.
+    """
+    return (bool(closed_at), legacy_id or "")
+
+
 def BOARD_KEY_WINNER(record):
     """The sort key deciding which record survives a board-key collision.
 
@@ -87,9 +106,26 @@ def BOARD_KEY_WINNER(record):
     moves between runs makes parity flap, because the posting's uuid changes
     and every decision pointing at it has to be rewritten.
 
+    **A live posting beats a closed one, and that is a correctness rule laid
+    over what used to be only a stability rule.** Measured 2026-09-03 over
+    every fold the store held: all three kept the record the sweep had already
+    expired and filed the live one under it, so `postings` held "Operations
+    Manager, $65,000-$85,000, closed" where the live posting at the same
+    Breezy id was "3rd Shift Electronics Operations Supervisor,
+    $50,000-$55,000". v2 reads Postgres, so it showed three postings as closed
+    that the board showed as open, at the previous title and the previous pay.
+    The smallest id won each time, which is what this asked for and never what
+    anybody wanted.
+
+    **The trade is deliberate: a winner can now move.** Two records live
+    together, one closes, and the surviving pair may re-sort. That is a flap in
+    `legacy_id` and not in the uuid, because a displaced incumbent is renamed
+    rather than replaced and decisions point at the uuid. An id that moves is
+    worth less than three open postings shown as closed.
+
     The loser is reported by `run()`, never dropped quietly.
     """
-    return record.get("id") or ""
+    return winner_key(record.get("id"), record.get("closedAt"))
 
 
 class BackfillError(Exception):
@@ -444,19 +480,25 @@ def upsert_postings(conn, records, employers, batch=500):
     for record in records:
         row = posting_row(record)
         incoming_keys.add((row["source"], row["board_slug"], row["external_id"]))
-    held = {}
+    held, closed_of = {}, {}
     if incoming_keys:
         keys = sorted(incoming_keys)
         with conn.cursor() as cur:
             for chunk in _chunks(keys, batch):
                 placeholders = ", ".join(["(%s, %s, %s)"] * len(chunk))
                 cur.execute(
-                    f"select source, board_slug, external_id, legacy_id "
+                    f"select source, board_slug, external_id, legacy_id, "
+                    f"closed_at "
                     f"from postings where (source, board_slug, external_id) "
                     f"in ({placeholders})",
                     [field for key in chunk for field in key])
-                for source, slug, external, legacy in cur.fetchall():
+                for source, slug, external, legacy, closed in cur.fetchall():
                     held[(source, slug, external)] = legacy
+                    # Closedness by id, for every claimant rather than only the
+                    # stored ones: a batch record that takes a key becomes the
+                    # holder the next record is compared against, and giving
+                    # that one a default would be the synthetic all over again.
+                    closed_of[legacy] = closed
 
     prepared, seen, merged, folded, renames = [], {}, [], {}, []
     # The stored holder is a claimant like any other, so it is seeded into
@@ -485,7 +527,8 @@ def upsert_postings(conn, records, employers, batch=500):
             # was five existing tests that caught this rather than any of the
             # new ones.
             holder = None
-        if holder is not None and BOARD_KEY_WINNER({"id": holder}) <= \
+        if holder is not None and \
+                winner_key(holder, closed_of.get(holder)) <= \
                 BOARD_KEY_WINNER(record):
             merged.append(row["legacy_id"])
             # The loser gets no row, so the winner carries its id. Without
@@ -513,6 +556,7 @@ def upsert_postings(conn, records, employers, batch=500):
             merged.append(holder)
             folded.setdefault(row["legacy_id"], []).append(holder)
         seen[key] = row["legacy_id"]      # see BOARD_KEY_WINNER
+        closed_of[row["legacy_id"]] = record.get("closedAt")
         prepared.append([employer_id] + [row[c] for c in columns])
 
     assignments = ", ".join(f"{c} = excluded.{c}" for c in columns
@@ -554,7 +598,19 @@ def upsert_postings(conn, records, employers, batch=500):
                     from (values {values}) as v(legacy, ids)
                     where postings.legacy_id = v.legacy""",
                 [field for row in chunk for field in row])
-    return mapping, merged
+    # A displaced incumbent that also arrives in the same batch is appended
+    # twice: once as the holder it lost, once as the arrival that folded. The
+    # database never saw the duplicate, because the merged-ids update aggregates
+    # `distinct`; the person did, because `run()` prints
+    # `len(report["merged"])` and joins the first five. Order-preserving so the
+    # printed sample stays the same records.
+    #
+    # Pre-existing rather than new -- `main` does it too, whenever a displaced
+    # incumbent is in the batch -- but it was rare there, needing a lucky id
+    # sort, and a live record now displaces a closed one on every retitle. A
+    # latent double becomes the common case, so it is fixed with the change
+    # that makes it common.
+    return mapping, list(dict.fromkeys(merged))
 
 
 def score_row(record):
