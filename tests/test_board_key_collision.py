@@ -216,9 +216,6 @@ class BoardKeyCollisionTests(pgtest.SchemaCase):
         self.assertEqual(len(mapping), 5)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TheWinnerIsTheLiveRecord(unittest.TestCase):
     """A fold keeps the posting that is still open.
@@ -364,3 +361,5 @@ class TheWinnerIsTheLiveRecord(unittest.TestCase):
         self.assertEqual(merged, ["aaaa1111"])
         self.assertEqual(renames, [["aaaa1111", "ffff5555"]])
 
+if __name__ == "__main__":
+    unittest.main()
