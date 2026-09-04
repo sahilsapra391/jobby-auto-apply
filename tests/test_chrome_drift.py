@@ -37,6 +37,7 @@ import plistlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -587,14 +588,44 @@ class AlarmScopeTests(unittest.TestCase):
         self.assertEqual(watch.chrome_flag_warning(), "")
 
     def test_the_ping_carries_the_flag_branch_and_not_the_version_branch(self):
-        source = (ROOT / "scripts" / "watch.py").read_text()
-        marker = "stale = \"; \".join("
-        self.assertIn(marker, source)
-        joined = source.split(marker, 1)[1].split("if message", 1)[0]
-        self.assertIn("stale_board_warning()", joined)
-        self.assertIn("parked_slot_warning()", joined)
-        self.assertIn("chrome_flag_warning()", joined)
-        self.assertNotIn("chrome_drift_warning", joined)
+        """The flags half pages; the version half does not.
+
+        **This read the source and was anchored on the literal
+        `stale = "; ".join(` inside the tick loop**, because the composition
+        lived in the loop and a loop cannot be run for one iteration. The
+        anchor broke the moment the composition was lifted into
+        `unhealthy_reason` so it could be called at all: a scanner failing on
+        the refactor that improved the thing it guards. It calls the function
+        now.
+
+        **The negative half could never have failed.** It read
+        `assertNotIn("chrome_drift_warning", joined)`, and there is no
+        `chrome_drift_warning` in this repository -- the two version-side
+        functions are `chrome_drift` and `chrome_drift_message`. An assertion
+        that a never-used name is absent is true of every string ever written.
+        It read as "the version branch is not in the ping" and asserted
+        nothing at all, which is the same defect as a `\b`-less marker list:
+        the line reads correctly and the corpus decides what it means.
+
+        So the negative is now a call that raises. If the composition ever
+        reaches the version branch this fails loudly, and it names a function
+        that exists, which is the part that makes it capable of failing.
+        """
+        quiet = {name: (lambda: "") for name in
+                 ("stale_board_warning", "stale_sweep_warning",
+                  "parked_slot_warning")}
+
+        def never(*_args, **_kwargs):
+            raise AssertionError("the dead-man ping reached the Chrome "
+                                 "*version* branch; a stale binary is "
+                                 "untidiness and must not page anyone")
+
+        with mock.patch.multiple(watch, **quiet), \
+                mock.patch.object(watch.corpus_check, "warning", lambda: ""), \
+                mock.patch.object(watch, "chrome_drift_message", never), \
+                mock.patch.object(watch, "chrome_flag_warning",
+                                  lambda: "A SLOT LOST ITS FLAG"):
+            self.assertEqual(watch.unhealthy_reason(), "A SLOT LOST ITS FLAG")
 
 
 class StopSlotTests(unittest.TestCase):
