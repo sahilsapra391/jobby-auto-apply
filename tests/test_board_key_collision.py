@@ -216,5 +216,150 @@ class BoardKeyCollisionTests(pgtest.SchemaCase):
         self.assertEqual(len(mapping), 5)
 
 
+
+class TheWinnerIsTheLiveRecord(unittest.TestCase):
+    """A fold keeps the posting that is still open.
+
+    Measured 2026-09-03 over every fold the store held: all three kept the
+    record the sweep had already expired and filed the live one under it, so
+    `postings` held "Operations Manager, $65,000-$85,000, closed" where the
+    live posting at the same Breezy id was "3rd Shift Electronics Operations
+    Supervisor, $50,000-$55,000". v2 reads Postgres, so it showed three open
+    postings as closed, at the previous title and the previous pay.
+
+    **These need no database, on purpose.** The collision decision is pure
+    logic over the arriving records and whatever already holds their keys, and
+    the machine that holds the real corpus has no Postgres on it -- 51 of the
+    corpus check's skips are exactly that. So the loop is driven through a stub
+    connection: the real `upsert_postings`, the real sort, the real branch, and
+    a cursor that answers the incumbent query and records the statements.
+    """
+
+    def test_live_beats_closed_and_then_the_id_decides(self):
+        self.assertLess(backfill.winner_key("zzzz", None),
+                        backfill.winner_key("aaaa", "2026-09-02T00:00:00Z"))
+        self.assertLess(backfill.winner_key("aaaa", None),
+                        backfill.winner_key("bbbb", None))
+        self.assertLess(backfill.winner_key("aaaa", "2026-09-02T00:00:00Z"),
+                        backfill.winner_key("bbbb", "2026-09-02T00:00:00Z"))
+
+    def test_the_record_carries_its_own_closedness_into_the_sort(self):
+        live = {"id": "ffff", "closedAt": None}
+        shut = {"id": "aaaa", "closedAt": "2026-09-02T00:00:00Z"}
+        self.assertEqual(sorted([shut, live], key=backfill.BOARD_KEY_WINNER),
+                         [live, shut])
+
+    # -- the real loop, no database ---------------------------------------
+
+    class _Cursor:
+        def __init__(self, incumbents, log):
+            self.incumbents, self.log, self._pending = incumbents, log, []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params=None):
+            self.log.append((" ".join(sql.split()), list(params or [])))
+            if "from postings where (source" in " ".join(sql.split()):
+                self._pending = self.incumbents
+            else:
+                self._pending = []
+
+        def fetchall(self):
+            return self._pending
+
+    class _Conn:
+        def __init__(self, incumbents):
+            self.incumbents, self.log = incumbents, []
+
+        def cursor(self):
+            return TheWinnerIsTheLiveRecord._Cursor(self.incumbents, self.log)
+
+    def _drive(self, arriving, incumbents):
+        conn = self._Conn(incumbents)
+        employers = {backfill.norm_company("Acme"): "employer-1"}
+        mapping, merged = backfill.upsert_postings(conn, arriving, employers)
+        renames = [params for sql, params in conn.log
+                   if sql.startswith("update postings set legacy_id")]
+        return merged, renames, conn.log
+
+    def test_a_live_record_displaces_a_closed_incumbent_that_sorts_lower(self):
+        """**The case that decides whether the fix is real.**
+
+        The closed incumbent's id sorts *below* the live arriving record's, so
+        under the old id-only rule the incumbent wins and the live posting is
+        folded away -- which is exactly what production did, three times out of
+        three. It is also the case that a half-applied fix passes: leave the
+        call site building `{"id": holder}` and the incumbent reads as live,
+        the smaller id wins again, and every test drawn from the pool is still
+        green.
+        """
+        live = record("ffff5555", "https://boards.greenhouse.io/acme/jobs/900",
+                      title="Supervisor")
+        arriving = [live]
+        incumbents = [("greenhouse", "acme", "900", "aaaa1111",
+                       "2026-09-02T15:47:07Z")]
+        merged, renames, _log = self._drive(arriving, incumbents)
+
+        self.assertEqual(merged, ["aaaa1111"],
+                         "the closed incumbent should have been folded into "
+                         "the live arriving record, not the other way round")
+        self.assertEqual(renames, [["aaaa1111", "ffff5555"]],
+                         "the live record must take the stored row rather than "
+                         "get a new one; the uuid is what decisions point at")
+
+    def test_a_closed_incumbent_still_wins_against_another_closed_record(self):
+        """Closedness is the first key, not the only one. With nothing live,
+        the id decides exactly as before, which is what keeps a winner from
+        moving on every pass."""
+        later = record("ffff5555", "https://boards.greenhouse.io/acme/jobs/900")
+        later["closedAt"] = "2026-09-03T00:00:00Z"
+        incumbents = [("greenhouse", "acme", "900", "aaaa1111",
+                       "2026-09-02T15:47:07Z")]
+        merged, renames, _log = self._drive([later], incumbents)
+        self.assertEqual(merged, ["ffff5555"])
+        self.assertEqual(renames, [])
+
+    def test_a_live_incumbent_is_not_displaced_by_a_closed_arrival(self):
+        shut = record("aaaa1111", "https://boards.greenhouse.io/acme/jobs/900")
+        shut["closedAt"] = "2026-09-03T00:00:00Z"
+        incumbents = [("greenhouse", "acme", "900", "ffff5555", None)]
+        merged, renames, _log = self._drive([shut], incumbents)
+        self.assertEqual(merged, ["aaaa1111"],
+                         "the closed arrival folds into the live stored row")
+        self.assertEqual(renames, [])
+
+    def test_the_incumbent_query_actually_asks_for_closedness(self):
+        """Edit 2 of four, pinned. Without `closed_at` in the select the
+        unpack raises, but a future rewrite could drop it and default the
+        value, which is the same inertness one layer down."""
+        live = record("ffff5555", "https://boards.greenhouse.io/acme/jobs/900")
+        _merged, _renames, log = self._drive([live], [])
+        selects = [sql for sql, _ in log if "from postings where (source" in sql]
+        self.assertTrue(selects)
+        self.assertIn("closed_at", selects[0])
+
+    def test_a_displaced_incumbent_is_reported_once_not_twice(self):
+        """`run()` prints `len(report["merged"])` and joins the first five, so
+        a doubled id is a wrong number in front of a person.
+
+        The incumbent loses its key to the live arrival and then arrives in the
+        same batch itself, which appends it on both branches. `main` has the
+        same double whenever a displaced incumbent is in the batch; it was rare
+        there because displacement needed a lucky id sort, and a live record
+        now displaces a closed one on every retitle.
+        """
+        live = record("ffff5555", "https://boards.greenhouse.io/acme/jobs/900")
+        shut = record("aaaa1111", "https://boards.greenhouse.io/acme/jobs/900")
+        shut["closedAt"] = "2026-09-02T15:47:07Z"
+        merged, renames, _log = self._drive([live, shut],
+                                            [("greenhouse", "acme", "900",
+                                              "aaaa1111", "2026-09-02T15:47:07Z")])
+        self.assertEqual(merged, ["aaaa1111"])
+        self.assertEqual(renames, [["aaaa1111", "ffff5555"]])
+
 if __name__ == "__main__":
     unittest.main()
