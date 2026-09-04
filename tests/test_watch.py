@@ -31,6 +31,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import ping_reasons  # noqa: E402
 import store_isolation  # noqa: E402
 
 
@@ -1764,27 +1765,20 @@ class ParkedSlotAlarmTests(unittest.TestCase):
         Both reasons are checked by making each speak while the other four are
         silent, which is what "alongside, not instead" actually means.
         """
-        others = ("stale_sweep_warning", "chrome_flag_warning")
-        for speaking, quiet in (("stale_board_warning", "parked_slot_warning"),
-                                ("parked_slot_warning", "stale_board_warning")):
-            with self.subTest(warning=speaking):
-                silence = {name: (lambda: "") for name in others + (quiet,)}
-                with mock.patch.multiple(watch, **silence), \
-                        mock.patch.object(watch.corpus_check, "warning",
-                                          lambda: ""), \
-                        mock.patch.object(watch, speaking, lambda: "HEARD"):
-                    self.assertEqual(watch.unhealthy_reason(), "HEARD")
+        for name in ("stale_board_warning", "parked_slot_warning"):
+            with self.subTest(warning=name):
+                with mock.patch.object(watch, "PING_REASONS",
+                                       ping_reasons.only(watch, name)):
+                    self.assertEqual(watch.unhealthy_reason(),
+                                     ping_reasons.HEARD)
 
     def test_the_two_reasons_are_joined_rather_than_one_winning(self):
         """"Alongside, not instead" is a claim about two speaking at once, and
         the old text scan could not have seen the difference between joining
         them and returning the first."""
-        silence = {name: (lambda: "") for name in
-                   ("stale_sweep_warning", "chrome_flag_warning")}
-        with mock.patch.multiple(watch, **silence), \
-                mock.patch.object(watch.corpus_check, "warning", lambda: ""), \
-                mock.patch.object(watch, "stale_board_warning", lambda: "BOARD"), \
-                mock.patch.object(watch, "parked_slot_warning", lambda: "SLOTS"):
+        with mock.patch.object(watch, "PING_REASONS", ping_reasons.several(
+                watch, {"stale_board_warning": "BOARD",
+                        "parked_slot_warning": "SLOTS"})):
             reason = watch.unhealthy_reason()
         self.assertIn("BOARD", reason)
         self.assertIn("SLOTS", reason)

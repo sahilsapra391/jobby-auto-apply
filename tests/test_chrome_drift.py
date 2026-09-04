@@ -42,6 +42,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import ping_reasons  # noqa: E402
 import store_isolation  # noqa: E402
 
 INSTALLED = "151.0.7922.175"
@@ -611,21 +612,16 @@ class AlarmScopeTests(unittest.TestCase):
         reaches the version branch this fails loudly, and it names a function
         that exists, which is the part that makes it capable of failing.
         """
-        quiet = {name: (lambda: "") for name in
-                 ("stale_board_warning", "stale_sweep_warning",
-                  "parked_slot_warning")}
-
         def never(*_args, **_kwargs):
             raise AssertionError("the dead-man ping reached the Chrome "
                                  "*version* branch; a stale binary is "
                                  "untidiness and must not page anyone")
 
-        with mock.patch.multiple(watch, **quiet), \
-                mock.patch.object(watch.corpus_check, "warning", lambda: ""), \
-                mock.patch.object(watch, "chrome_drift_message", never), \
-                mock.patch.object(watch, "chrome_flag_warning",
-                                  lambda: "A SLOT LOST ITS FLAG"):
-            self.assertEqual(watch.unhealthy_reason(), "A SLOT LOST ITS FLAG")
+        with mock.patch.object(watch, "chrome_drift_message", never), \
+                mock.patch.object(watch, "PING_REASONS",
+                                  ping_reasons.only(watch,
+                                                    "chrome_flag_warning")):
+            self.assertEqual(watch.unhealthy_reason(), ping_reasons.HEARD)
 
 
 class StopSlotTests(unittest.TestCase):

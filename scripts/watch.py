@@ -2754,12 +2754,21 @@ def unhealthy_reason():
     verifies, which is how this file's own guards keep turning out to measure
     nothing. Adding a fifth reason was the moment that stopped being free.
     """
-    return "; ".join(
-        message for message in
-        (stale_board_warning(), stale_sweep_warning(), parked_slot_warning(),
-         chrome_flag_warning(), corpus_check.warning())
-        if message
-    )
+    return "; ".join(m for m in (warn() for warn in PING_REASONS) if m)
+
+
+#: Every reason the dead-man ping may be red, in one place.
+#:
+#: **A tuple rather than five calls written out, because four separate test
+#: modules assert on this composition and each one silences the others.** Named
+#: inline, a sixth reason means editing four files, and forgetting one is
+#: silent in the worst way: a warning that is composed and never joined, which
+#: is the `activity.json` counter again -- correct, exercised, never once run.
+#: Derived from here, a new reason is covered by every one of those tests for
+#: free. Same argument `mirror_fields` makes for deriving parity's field set
+#: from the writer instead of listing it alongside.
+PING_REASONS = (stale_board_warning, stale_sweep_warning, parked_slot_warning,
+                chrome_flag_warning, corpus_check.warning)
 
 
 def heartbeat_due(line, last_line, since_last_ping):
