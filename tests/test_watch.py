@@ -1751,11 +1751,43 @@ class ParkedSlotAlarmTests(unittest.TestCase):
             self.assertEqual(watch.parked_apply_slots()[0]["ageSeconds"], 0)
 
     def test_the_ping_carries_it_alongside_board_staleness_not_instead(self):
-        """One alarm, two reasons. Two alarms is how one stops being read."""
-        source = (pathlib.Path(watch.__file__).read_text())
-        block = source[source.index("stale = "):source.index("stale = ") + 400]
-        self.assertIn("stale_board_warning()", block)
-        self.assertIn("parked_slot_warning()", block)
+        """One alarm, two reasons. Two alarms is how one stops being read.
+
+        **This read watch.py's source and sliced 400 characters after
+        `stale = `.** It is the fourth test in this repository anchored on the
+        text of that composition, and all four broke together when the
+        composition was lifted into `unhealthy_reason` so that it could be
+        called at all. Four scanners asserting the arrangement of one
+        expression, and not one of them would have noticed the expression
+        being wrong.
+
+        Both reasons are checked by making each speak while the other four are
+        silent, which is what "alongside, not instead" actually means.
+        """
+        others = ("stale_sweep_warning", "chrome_flag_warning")
+        for speaking, quiet in (("stale_board_warning", "parked_slot_warning"),
+                                ("parked_slot_warning", "stale_board_warning")):
+            with self.subTest(warning=speaking):
+                silence = {name: (lambda: "") for name in others + (quiet,)}
+                with mock.patch.multiple(watch, **silence), \
+                        mock.patch.object(watch.corpus_check, "warning",
+                                          lambda: ""), \
+                        mock.patch.object(watch, speaking, lambda: "HEARD"):
+                    self.assertEqual(watch.unhealthy_reason(), "HEARD")
+
+    def test_the_two_reasons_are_joined_rather_than_one_winning(self):
+        """"Alongside, not instead" is a claim about two speaking at once, and
+        the old text scan could not have seen the difference between joining
+        them and returning the first."""
+        silence = {name: (lambda: "") for name in
+                   ("stale_sweep_warning", "chrome_flag_warning")}
+        with mock.patch.multiple(watch, **silence), \
+                mock.patch.object(watch.corpus_check, "warning", lambda: ""), \
+                mock.patch.object(watch, "stale_board_warning", lambda: "BOARD"), \
+                mock.patch.object(watch, "parked_slot_warning", lambda: "SLOTS"):
+            reason = watch.unhealthy_reason()
+        self.assertIn("BOARD", reason)
+        self.assertIn("SLOTS", reason)
 
 
 if __name__ == "__main__":

@@ -172,5 +172,40 @@ class ItDoesNotMakeTheWatcherLookLikeATestRunner(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "False False", out.stdout)
 
 
+class TheRunnerLivesInTestsAndTheConfigDoesNot(unittest.TestCase):
+    """The split exists so that no module under `scripts/` imports a test
+    runner, which `test_store_isolation` enforces for the whole tree. These
+    check the halves stayed joined: a path that rots is a spawn that fails
+    every hour into a log nobody opens.
+    """
+
+    def test_the_runner_the_watcher_spawns_exists(self):
+        self.assertTrue(corpus_check.RUNNER.exists(),
+                        f"watch.py spawns {corpus_check.RUNNER}, which is not "
+                        f"there; the hourly check would fail silently")
+
+    def test_the_runner_takes_its_configuration_rather_than_restating_it(self):
+        """MODULES and MAX_SKIPPED are measured numbers with reasons attached.
+        A second copy in the runner is the drift every list in this repository
+        has already had."""
+        source = corpus_check.RUNNER.read_text(encoding="utf-8")
+        self.assertIn("import corpus_check", source)
+        for restated in ("MODULES = (", "MAX_SKIPPED ="):
+            self.assertNotIn(restated, source,
+                             f"the runner restates {restated.split()[0]} "
+                             f"instead of importing it")
+
+    def test_asking_scripts_to_run_them_refuses_and_says_where(self):
+        """`--run` on the production module is refused rather than quietly
+        doing nothing, and the refusal names the runner. A dead flag that
+        prints usage is how somebody concludes the feature is broken."""
+        import subprocess
+        out = subprocess.run([sys.executable, str(REPO / "scripts" /
+                                                  "corpus_check.py"), "--run"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("corpus_runner.py", out.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

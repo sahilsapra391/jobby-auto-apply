@@ -125,55 +125,6 @@ def _load():
         return None
 
 
-def run(modules=MODULES):
-    """Run the corpus modules in this process and write the result.
-
-    In-process and structured rather than parsing `unittest`'s prose. The
-    prose is stable enough in practice and that is not the point: a parser
-    that stops matching reports zero failures, which is the same green as
-    success. `TestResult` cannot do that.
-    """
-    import unittest
-
-    sys.path.insert(0, str(REPO))
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
-    load_errors = []
-    for name in modules:
-        try:
-            suite.addTests(loader.loadTestsFromName(name))
-        except Exception as exc:                          # a module that will
-            load_errors.append(f"{name}: {exc!r}")        # not import is a fault
-    started = time.time()
-    result = unittest.TextTestRunner(
-        stream=open(os.devnull, "w"), verbosity=0).run(suite)
-    failures = [str(t) for t, _ in result.failures]
-    errors = [str(t) for t, _ in result.errors] + load_errors
-    skipped = len(result.skipped)
-    reasons = {}
-    for _, why in result.skipped:
-        reasons[why] = reasons.get(why, 0) + 1
-    over = skipped > MAX_SKIPPED
-    payload = {
-        "ranAt": int(started),
-        "seconds": round(time.time() - started, 1),
-        "modules": list(modules),
-        "ran": result.testsRun,
-        "failures": failures,
-        "errors": errors,
-        "skipped": skipped,
-        "skipCeiling": MAX_SKIPPED,
-        "skipReasons": reasons,
-        "ok": not failures and not errors and not over,
-    }
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = RESULT.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    tmp.replace(RESULT)
-    return payload
-
-
 def warning(now=None):
     """The message for the dead-man ping, or an empty string.
 
@@ -218,11 +169,20 @@ def due(now=None):
     return now - payload.get("ranAt", 0) >= 55 * 60
 
 
+#: The runner, which lives in tests/ because it imports unittest and nothing
+#: under scripts/ may. `watch.spawn` launches this path; see the module
+#: docstring there for why the split is the fix rather than a dodge.
+RUNNER = Path(__file__).resolve().parents[1] / "tests" / "corpus_runner.py"
+
+
 def main(argv):
     if "--run" in argv:
-        payload = run()
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0 if payload["ok"] else 1
+        # Deliberately not run in this process: this module is imported by the
+        # watcher, and a `run()` here would be one careless call away from
+        # giving a production daemon a test runner's signature.
+        print(f"run it directly, so unittest stays out of this process:\n"
+              f"  python3 {RUNNER} --run", file=sys.stderr)
+        return 2
     payload = _load()
     if payload is None:
         print("no corpus check has run on this machine")

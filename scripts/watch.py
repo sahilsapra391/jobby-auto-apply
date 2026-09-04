@@ -3104,8 +3104,8 @@ def main():
             # limit is six hours precisely so a busy afternoon does not ring.
             if (corpus_check.due() and not lock_holder("corpus")
                     and not running_applications()):
-                spawn("corpus", [sys.executable, str(REPO / "scripts" /
-                                                     "corpus_check.py"), "--run"],
+                spawn("corpus", [sys.executable, str(corpus_check.RUNNER),
+                                 "--run"],
                       "corpus-check.log", note="corpus tests")
             stale = unhealthy_reason()
             if stale:

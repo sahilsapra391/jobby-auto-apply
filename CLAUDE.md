@@ -2466,6 +2466,70 @@ is the arrangement of the code rather than the property the arrangement is for.
 It calls the function now, silencing four warnings and asserting the fifth
 comes out, and it covers all five rather than the one it was written for.
 
+## A notification commits first; the work itself enqueues first
+
+**Ordering between a database commit and the side effect beside it is decided
+by what the side effect *is*, and the two cases point opposite ways.**
+
+`writes.publish` commits first, and its docstring gives the reason: "A
+published event with no row behind it is a board showing a change the database
+does not have, and it vanishes on the next reconnect, which is worse than a
+slow board because the user watched it work." Failing after the commit is the
+recoverable direction -- the row is right, the board is briefly stale, the next
+fetch corrects it.
+
+**Every clause of that is false of an enqueue.** A lost publish self-corrects
+on the next fetch. A lost enqueue means the work never happens, and nothing
+ever fetches it back. So an enqueue goes *before* the commit: nothing gets
+recorded that will not happen. The failure directions then read
+
+    enqueue ok, commit fails   the daemon does the work and writes the row
+                               itself through dual-write, which is exactly
+                               what a board click does today
+    enqueue fails              the request errors, nothing is written, the
+                               user retries
+
+The general form: **a notification must never describe a state the store does
+not hold, so it commits first. Work must never be recorded as done when it was
+never scheduled, so it enqueues first.** Getting this backwards produces the
+worst failure this project has: a board that says it did something, and a
+machine that never heard.
+
+Phase 3 needs this, because the reconciliation between a v2 decision and the
+device's work queue is exactly a case of it.
+
+## A synthetic record silently satisfies every predicate it has no field for
+
+`backfill.upsert_postings` decides a board-key collision with
+
+```python
+if holder is not None and BOARD_KEY_WINNER({"id": holder}) <= BOARD_KEY_WINNER(record):
+```
+
+The incumbent is not a record. It is `{"id": holder}`, a stand-in carrying one
+field, because `BOARD_KEY_WINNER` reads one field.
+
+**So widening that function silently disables the widening.** Teaching it to
+prefer a live posting over a closed one -- `(bool(record.get("closedAt")), id)`
+-- makes the synthetic evaluate as `(False, holder)` on every call, because a
+dict with one key has no `closedAt` and `.get` returns None. The incumbent is
+then permanently "live", a genuinely live arriving record can never displace a
+closed stored one, and the change is inert. Every test drawn from the real
+pool still passes, because the pool is where the behaviour was measured and
+the behaviour did not move.
+
+That is why the fix is four edits and not one: the sort key, the `held` query
+gaining `closed_at`, `held`/`seen` carrying it, **and the call site**. Three of
+the four are visible in a diff and the fourth is the one that matters.
+
+The class, which is what to carry forward: **a stand-in built to satisfy one
+predicate answers every other predicate with a default, and a default is
+indistinguishable from a real value that happens to equal it.** Same shape as
+`assertNotIn("chrome_drift_warning", ...)` asserting the absence of a name
+nothing ever used -- both read as a check and neither can fail. When widening
+what a function reads, grep for callers that construct its argument rather than
+pass a real one.
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on
