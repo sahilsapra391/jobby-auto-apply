@@ -230,7 +230,3 @@ class RealStoreTest(unittest.TestCase):
         self.assertLess(len(payload), publish.MAX_STATE_BYTES,
                         f"the real state is {len(payload)/1024/1024:.2f} MB against a "
                         f"{publish.MAX_STATE_BYTES/1024/1024:.0f} MB ceiling")
-
-
-if __name__ == "__main__":
-    unittest.main()

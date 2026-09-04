@@ -86,7 +86,3 @@ class NoAutomatedPathRaisesAWindowTests(unittest.TestCase):
         """A matcher that matches nothing passes for the wrong reason."""
         self.assertIn("/json/activate", body_of("focus"))
         self.assertGreater(len(every_function()), 20)
-
-
-if __name__ == "__main__":
-    unittest.main()

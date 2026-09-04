@@ -93,7 +93,3 @@ class WriteTakesTheLockTests(unittest.TestCase):
             body = source.split(name, 1)[1].split("\ndef ", 1)[0]
             self.assertIn("with edit(root", body, name)
             self.assertNotIn("save_jobs(root", body, name)
-
-
-if __name__ == "__main__":
-    unittest.main()

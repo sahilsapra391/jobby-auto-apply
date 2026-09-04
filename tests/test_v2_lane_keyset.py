@@ -712,7 +712,3 @@ class TheLanesOrderTheWayTheBoardDoes(LaneCase):
         self.assertGreater(len(set(dates)), 1,
                            "every completion is at the same instant, so this "
                            "would pass under any ordering at all")
-
-
-if __name__ == "__main__":
-    unittest.main()

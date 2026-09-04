@@ -224,7 +224,3 @@ class TheMirrorStillDoesItsJob(AnswerBankCase):
         class_b._mirror_answers(self.conn, self.account,
                                 {"relocation": self.entry()})
         self.assertEqual(self.keys(), ["relocation"])
-
-
-if __name__ == "__main__":
-    unittest.main()

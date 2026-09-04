@@ -164,7 +164,3 @@ class PublishReportsTheTimeoutTests(unittest.TestCase):
         finally:
             watch.run = original
         self.assertFalse(watch.LAST_DEPLOY.exists())
-
-
-if __name__ == "__main__":
-    unittest.main()

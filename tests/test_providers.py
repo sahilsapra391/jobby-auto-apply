@@ -969,8 +969,3 @@ class FormUsageReportingTests(unittest.TestCase):
         for task in ("documents", "scan"):
             with self.subTest(task=task):
                 self.assertNotIn("--output-format", self.invocation(task).argv)
-
-
-
-if __name__ == "__main__":
-    unittest.main()

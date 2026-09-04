@@ -297,7 +297,3 @@ class FilterTests(StoreFixture, unittest.TestCase):
     def test_an_empty_sweep_is_not_an_error(self):
         self.assertEqual(self.filter([])["counts"],
                          {"in": 0, "new": 0, "alreadyKnown": 0})
-
-
-if __name__ == "__main__":
-    unittest.main()

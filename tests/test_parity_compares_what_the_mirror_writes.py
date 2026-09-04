@@ -252,7 +252,3 @@ class ValuesAreComparedNotReprs(unittest.TestCase):
                      ("1", "1.0")):
             self.assertFalse(verify_parity.same_value(*pair),
                              f"{pair!r} compared equal")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -620,7 +620,3 @@ class EveryStyledStateIsReachable(unittest.TestCase):
                            f"board.css; the selector scan has stopped working")
         self.assertGreater(len(mentioned_names()), 200,
                            "the emitted-class scan found almost nothing")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -686,8 +686,3 @@ class RunIdentityTests(unittest.TestCase):
 
     def test_no_base_and_no_profile_is_still_none(self):
         self.assertIsNone(brief.run_identity({}, None))
-
-
-
-if __name__ == "__main__":
-    unittest.main()

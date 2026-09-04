@@ -151,7 +151,3 @@ class ReflogWindowTests(unittest.TestCase):
         self.assertIsNone(
             deploy_verify.reflog_between(Path(tempfile.mkdtemp()), 0,
                                          time.time()))
-
-
-if __name__ == "__main__":
-    unittest.main()

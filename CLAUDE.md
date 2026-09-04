@@ -2573,6 +2573,113 @@ nothing ever used -- both read as a check and neither can fail. When widening
 what a function reads, grep for callers that construct its argument rather than
 pass a real one.
 
+## An adversarial pass that corrects the reason is worth more than one that agrees
+
+**A right finding with a wrong reason is how a fix lands in the wrong place.**
+
+A review sweep over the corpus-check branch reported that
+`test_the_tick_consults_it_before_any_document_work` was fragile, and gave a
+reason: it "survives only because the corpus spawn landed in `main()` rather
+than in `tick()`". The verifier that took that finding did not stop at
+confirming the verdict. It mutated `tick`'s source in memory, inserted the
+spawn at the top of `tick` and again immediately before the ensure call, and
+re-ran the four assertions:
+
+    real tick() as on the branch                 PASS
+    corpus spawn inserted at the TOP of tick()   PASS
+    corpus spawn inserted just before the ensure PASS
+    ensure extracted into a helper               FAIL  -1 not greater than -1
+
+The test asserts marker *ordering*, and the spawn block contains none of the
+four markers, so putting it inside `tick` could never have broken it. **The
+fragility was real and the stated cause was false**, and had the reason been
+taken on trust the remedy would have been a rule about where spawns may go --
+which protects nothing, because the actual trigger is any extraction or rename.
+
+The verifier then found a second failure mode the finder had not seen at all,
+and reproduced it: `inspect.getsource` re-reads from disk and
+`linecache.checkcache` invalidates on mtime, so an edit to `watch.py` while the
+suite runs makes it walk back from a stale `co_firstlineno` into a different
+block. Verified again independently before this was written, by inserting sixty
+lines above `tick` in a running interpreter: `getsource` returned a block whose
+first line was `# shifted` and the search returned -1. On a checkout several
+sessions share, **that is a CI failure indistinguishable from a real break**.
+
+So the rule for a verification pass: confirm or refute the *mechanism*, not
+just the verdict. A verifier that only answers "is this real" leaves the
+reasoning unchecked, and the reasoning is what the fix gets built on.
+
+## A guard wired through per-clone config, and the mechanism I got wrong
+
+`.githooks/pre-commit` is this repository's third enforcement point for the
+image allowlist and the only one for the `JOBBY_ADD` staging rule. It runs
+through `core.hooksPath`, which is **git config, per clone**, and a fresh
+`git clone` has it unset. Nothing in a repository can set it on the way in;
+git runs no repository-supplied code during a clone, deliberately.
+
+Measured 2026-09-04:
+
+    production checkout   core.hooksPath = .githooks    hook active
+    ~/dev checkout        core.hooksPath = (unset)      hook inert
+
+So in that checkout `git add -A` had never been gated and nothing said so,
+because a hook that is not installed does not fail. It is silent, and that is
+the same silence as a hook that passes.
+
+**The first version of this entry gave the wrong reason, and the wrong reason
+was the more alarming one.** It said the gap was worktrees -- that the guard was
+"installed in the one place it is least needed and absent from the nine places
+it is most", since all agent work happens in worktrees. That inference came from
+one true observation (a checkout with it unset) and one assumption nobody
+checked (that the checkout was a worktree). It was a separate clone.
+
+A linked worktree **shares the repository's config**, so `git worktree add` from
+a configured checkout inherits `core.hooksPath` with nothing further to do.
+Verified by creating one and reading the value back, which took about ten
+seconds and should have come before the write-up rather than after it. The gap
+is clones, and only clones.
+
+Same shape as the `activity.json` attribution and the tick-scanner cause: real
+evidence, internally consistent, pointing at the wrong mechanism. **Provenance
+is the property the artefact cannot answer**, and "which kind of checkout is
+this" is a provenance question. `test -f .git` answers it; reasoning does not.
+
+The fix is structural rather than a resolution to remember.
+`scripts/install_hooks.py` binds a checkout and reports what changed, and
+`tests/test_hooks_are_installed.py` fails in any checkout where the binding is
+missing and names that command. It also checks the hooks are executable,
+because git skips a non-executable hook without a word.
+
+That test skips under CI, and the reason it is not the usual excuse is worth
+stating: the property is "the person committing from this checkout is gated",
+and CI does not commit. The subject does not exist there. That is different
+from a skip that declines to look at a subject which does.
+
+## A mutation applied to something the test controls proves nothing
+
+**And it reads as verification, which is what makes it worth its own line.**
+
+Checking whether a rewritten test was sensitive to the property it guards, the
+mutation was `watch.do_not_start = lambda aid: "the user dropped it"` on the
+module, expecting `tick` to short-circuit and the ensure never to be reached.
+The suite passed, which was reported as "passed (BAD)" and looked like the test
+being insensitive.
+
+The test itself patches `do_not_start`, because it needs a known answer from
+every collaborator to record their order. So `mock.patch.object` overwrote the
+mutation on entry and restored it on exit. **The mutation never reached the
+code under test**, and a mutation that does not reach the code says nothing in
+either direction: passing does not mean the test is blind, and failing would
+not have meant it was sharp.
+
+The real check was to remove the wiring from `watch.py` -- the thing the test
+does *not* control -- which failed, correctly.
+
+So: before believing a mutation, ask what the test patches. Anything on that
+list is under the test's control and cannot be mutated from outside it. Mutate
+the production source, or mutate the value the test's own patch supplies, and
+never the name in between.
+
 ## No diagnostic path is ever discarded
 
 **A guard, alarm or counter is unverified until it has been observed firing on

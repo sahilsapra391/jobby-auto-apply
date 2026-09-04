@@ -260,7 +260,3 @@ class BriefTests(unittest.TestCase):
                                return_value=mock.Mock(returncode=0, stdout="{}", stderr="")), \
              mock.patch.object(brief.document_contract, "output_names", return_value={}):
             return brief.build(aid)
-
-
-if __name__ == "__main__":
-    unittest.main()

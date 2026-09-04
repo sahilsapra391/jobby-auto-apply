@@ -165,7 +165,3 @@ class TheGuardCannotFireOnTheDevice(unittest.TestCase):
                          f"a daemon import path pulls in {lines.get('leaked')}, so "
                          f"this guard would refuse the watcher's own mirror writes")
         self.assertEqual(lines.get("under_test"), "False")
-
-
-if __name__ == "__main__":
-    unittest.main()

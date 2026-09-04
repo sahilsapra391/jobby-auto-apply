@@ -95,7 +95,3 @@ class TheGeneratorReadsNothingReal(unittest.TestCase):
                                return_value="<style>a{}</style><style>b{}</style>"):
             with self.assertRaises(SystemExit):
                 sync_v2_styles.board_css()
-
-
-if __name__ == "__main__":
-    unittest.main()

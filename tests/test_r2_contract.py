@@ -113,7 +113,3 @@ class SigningContractTest(unittest.TestCase):
         source = (ROOT / "deploy" / "r2.mjs").read_text(encoding="utf-8")
         self.assertIn(f"DEFAULT_EXPIRY_SECONDS = {python_default}", source)
         self.assertIn(f"DEFAULT_BUCKET = '{r2.DEFAULT_BUCKET}'", source)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -136,7 +136,3 @@ class TheDocumentSaysWhichWayUpClassBIs(unittest.TestCase):
         doc = (REPO / "docs" / "write-paths.md").read_text(encoding="utf-8")
         self.assertIn("answer_bank", doc)
         self.assertIn("if not exists", doc)
-
-
-if __name__ == "__main__":
-    unittest.main()

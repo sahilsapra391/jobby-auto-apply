@@ -80,7 +80,3 @@ class IdentityTests(unittest.TestCase):
             b"Careers at some board", "AT&T", "IN")
         self.assertEqual(strong, [])
         self.assertFalse(identity)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -119,7 +119,3 @@ class MarkupTests(unittest.TestCase):
     def test_an_html_entity_em_dash_is_caught(self):
         with self.assertRaises(voice_lint.VoiceError):
             voice_lint.check("<p>I led it &mdash; and it worked.</p>")
-
-
-if __name__ == "__main__":
-    unittest.main()

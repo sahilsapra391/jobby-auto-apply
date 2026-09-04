@@ -765,7 +765,3 @@ class TheGeneratedScriptIsRealJavaScriptTests(unittest.TestCase):
         self.assertIn("missingHelper", bare)
         self.assertNotIn("helperInAComment", bare)
         self.assertNotIn("inAString", bare)
-
-
-if __name__ == "__main__":
-    unittest.main()

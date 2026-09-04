@@ -378,7 +378,3 @@ class ShippedMigrationsApplyToAnEmptyDatabase(pgtest.SchemaCase):
         self.assertIn("flags", cols)
         self.assertEqual(cols["flags"][0], "jsonb")
         self.assertEqual(cols["flags"][1], "NO", "flags must be not null")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -206,7 +206,3 @@ class ATestUrlMayNotBeProduction(unittest.TestCase):
         self.assertFalse(migrate.same_database(DEVICE, OTHER))
         self.assertFalse(migrate.same_database(DEVICE, ""))
         self.assertFalse(migrate.same_database("", ""))
-
-
-if __name__ == "__main__":
-    unittest.main()

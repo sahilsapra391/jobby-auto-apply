@@ -229,7 +229,3 @@ class PlanTests(unittest.TestCase):
         for position in self.plan():
             if position["datesFromProfile"]:
                 self.assertEqual(position["location"], "Charlotte, NC")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -499,7 +499,3 @@ class TheMirrorTimesItself(pgtest.SchemaCase):
                                     {"a": self.rec("a")})
         total = report["mirrorSeconds"] + report["fileSeconds"]
         self.assertGreater(total, 0)
-
-
-if __name__ == "__main__":
-    unittest.main()

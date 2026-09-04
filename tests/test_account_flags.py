@@ -338,7 +338,3 @@ class FlippingAFlag(pgtest.SchemaCase):
             flags.set_flag(self.conn, self.account, "live_board", "false")
         self.assertTrue(flags.enabled(
             flags.for_account(self.conn, self.account), "live_board"))
-
-
-if __name__ == "__main__":
-    unittest.main()

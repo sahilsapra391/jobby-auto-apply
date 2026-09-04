@@ -54,7 +54,3 @@ class CompanyLogoTests(unittest.TestCase):
     def test_monograms_are_stable_and_ignore_legal_suffixes(self):
         self.assertEqual(company_logos.initials("Northstar Labs, Inc."), "NL")
         self.assertEqual(company_logos.initials("IFS"), "I")
-
-
-if __name__ == "__main__":
-    unittest.main()

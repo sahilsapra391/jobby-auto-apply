@@ -80,7 +80,3 @@ class LockClearingTests(unittest.TestCase):
         self.assertIsNotNone(held)
         self.assertEqual(held["pid"], os.getpid())
         self.assertFalse(watch.reserve("apply-2", note="starting"))
-
-
-if __name__ == "__main__":
-    unittest.main()

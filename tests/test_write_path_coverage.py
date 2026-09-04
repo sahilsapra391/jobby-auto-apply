@@ -401,7 +401,3 @@ class TheGateCountsTheWholeLogAndExcusesWhatNobodyCanDrive(unittest.TestCase):
                 self.assertNotIn(key, excused,
                                  f"{key} is a class B mirror write and cannot "
                                  f"be excused")
-
-
-if __name__ == "__main__":
-    unittest.main()

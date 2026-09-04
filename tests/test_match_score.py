@@ -291,7 +291,3 @@ class FreshnessWordingTests(unittest.TestCase):
         for age in range(0, 120):
             with self.subTest(age=age):
                 self.assertNotIn(match_score.when_words(age), bad)
-
-
-if __name__ == "__main__":
-    unittest.main()

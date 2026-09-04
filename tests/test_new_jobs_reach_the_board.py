@@ -111,7 +111,3 @@ class NewJobsReachTheBoardTests(unittest.TestCase):
                             NOW - timedelta(hours=1))])
         payload = publish.serialize_state(self.served_state())
         self.assertLessEqual(len(payload), publish.MAX_STATE_BYTES)
-
-
-if __name__ == "__main__":
-    unittest.main()

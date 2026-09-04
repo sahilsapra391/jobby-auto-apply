@@ -270,7 +270,3 @@ class TheStandingRule(unittest.TestCase):
     def test_status_reports_it_where_everyone_already_looks(self):
         source = (ROOT/"scripts"/"watch.py").read_text()
         self.assertIn('out["googleSignIn"]', source)
-
-
-if __name__ == "__main__":
-    unittest.main()

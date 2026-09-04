@@ -16,6 +16,7 @@ catches anything below the main block, not only a class.
 Run from the repo root: python3 -m unittest discover -s tests
 """
 
+import ast
 import pathlib
 import re
 import unittest
@@ -26,38 +27,58 @@ CLASS = re.compile(r"^class \w+", re.M)
 
 
 class SuiteShapeTests(unittest.TestCase):
-    def test_no_test_class_is_defined_below_the_main_block(self):
+    def test_no_test_file_has_a_main_block(self):
+        """**The hazard is removed rather than detected.**
+
+        Two rules used to live here: that no class sat below the main block,
+        and that nothing followed `unittest.main()`. Both were correct and both
+        fired only in CI, because they are tests. Appending a class to a file
+        whose last lines are `if __name__ == "__main__"` therefore passed
+        locally, ran under `discover`, and never ran on a direct execution of
+        the file -- twice in one session, same cause, and the second time was
+        after resolving to be careful about the first.
+
+        A pre-commit hook would not have caught it either. `.githooks` is
+        wired through `core.hooksPath`, which is per-clone, and it is set in
+        the production checkout and unset in the worktrees where all agent
+        work happens. A guard whose installation is per-clone is a guard the
+        next worktree does not have.
+
+        So the block is gone from all 139 test files instead. `discover` never
+        needed it, `python3 -m unittest tests.test_foo` still runs one module,
+        and code appended to any of them now runs however it is invoked.
+        Measured before removing them: 138 of 139 had one and not one did
+        anything other than call `unittest.main()`.
+
+        **The two rules it replaces would both have become vacuous**, because
+        each skipped a file with no main block, and a loop that skips
+        everything passes. This one fails when a block comes back.
+
+        It walks an AST rather than matching text, because the marker it looks
+        for appears in this file's own docstring and in the regex the old rules
+        used. A parser never sees either.
+        """
         offenders = []
         for path in sorted(TESTS.glob("test_*.py")):
-            body = path.read_text()
-            main = MAIN_BLOCK.search(body)
-            if not main:
-                continue
-            for found in CLASS.finditer(body):
-                if found.start() > main.start():
-                    offenders.append(f"{path.name}: {found.group(0)} after the main block")
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                if not isinstance(node, ast.If):
+                    continue
+                test = node.test
+                if (isinstance(test, ast.Compare)
+                        and isinstance(test.left, ast.Name)
+                        and test.left.id == "__name__"):
+                    offenders.append(f"{path.name}:{node.lineno}")
         self.assertEqual(
             offenders, [],
-            "these classes never run when the file is executed directly:\n"
-            + "\n".join(offenders))
+            "a main block is back in these files. Anything appended after one "
+            "runs under discover and not under a direct run of the file, which "
+            "is how two classes shipped unexecuted:\n" + "\n".join(offenders))
 
     def test_the_suite_is_not_empty(self):
         # Every check in this file is a loop over a glob, and a loop over an
         # empty glob passes. From the discovery branch's version of this guard.
         self.assertGreater(len(list(TESTS.glob("test_*.py"))), 15)
-
-    def test_the_main_block_is_the_last_thing_in_the_file(self):
-        for path in sorted(TESTS.glob("test_*.py")):
-            body = path.read_text().rstrip()
-            main = MAIN_BLOCK.search(body)
-            if not main:
-                continue
-            with self.subTest(file=path.name):
-                tail = body[main.start():]
-                self.assertLessEqual(
-                    len(tail.splitlines()), 3,
-                    f"{path.name} has code after unittest.main()")
-
 
     def test_no_test_case_inherits_another_test_cases_tests(self):
         """Subclassing a TestCase to reuse its setUp re-runs all of its tests.
@@ -85,7 +106,3 @@ class SuiteShapeTests(unittest.TestCase):
                             f"{path.name}: {name} re-runs {len(inherited)} tests "
                             f"inherited from {parent.name}")
         self.assertEqual(offenders, [], "\n".join(offenders))
-
-
-if __name__ == "__main__":
-    unittest.main()

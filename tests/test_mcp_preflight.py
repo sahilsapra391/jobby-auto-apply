@@ -139,7 +139,3 @@ class PreflightTests(unittest.TestCase):
         found = subprocess.run(
             ["pgrep", "-f", config["args"][0]], capture_output=True, text=True)
         self.assertNotEqual(found.returncode, 0, found.stdout)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -942,7 +942,3 @@ class PreferenceSurvivesEvictionTest(unittest.TestCase):
                               apply=True, client=self.client)
         self.assertGreater(result.get("refusedDowngrade", 0), 0,
                            "the guard's own branch has to execute in some test")
-
-
-if __name__ == "__main__":
-    unittest.main()

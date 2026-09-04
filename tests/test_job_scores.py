@@ -129,7 +129,3 @@ class JobScoreTests(pgtest.SchemaCase):
         self.assertIn("backfill.upsert_scores(", source,
                       "mirror_pool does not call upsert_scores, so no score "
                       "ever reaches Postgres")
-
-
-if __name__ == "__main__":
-    unittest.main()

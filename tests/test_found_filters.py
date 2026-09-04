@@ -192,7 +192,3 @@ class FilterBehaviourTests(pgtest.SchemaCase):
                         "where legacy_id = 'pm-new'")
         self.assertNotIn("pm-new", self.found(within="7 days"))
         self.assertIn("pm-new", self.found())
-
-
-if __name__ == "__main__":
-    unittest.main()

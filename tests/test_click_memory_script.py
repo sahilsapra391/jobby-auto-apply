@@ -149,7 +149,3 @@ class PageScriptTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr[-2000:])
                 finally:
                     pathlib.Path(path).unlink()
-
-
-if __name__ == "__main__":
-    unittest.main()

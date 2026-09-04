@@ -237,7 +237,3 @@ class AgyLogReasonTests(unittest.TestCase):
         self.assertEqual(
             document_worker._agy_log_reason(self.CONVERSATION,
                                             log_dir=self.root / "absent"), "")
-
-
-if __name__ == "__main__":
-    unittest.main()

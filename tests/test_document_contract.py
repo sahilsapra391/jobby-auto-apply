@@ -252,7 +252,3 @@ class ResultTests(unittest.TestCase):
             with self.assertRaises(contract.DocumentContractError):
                 contract.install_result(result, tmp, "acme-pm")
             self.assertEqual(list(pathlib.Path(tmp).iterdir()), [])
-
-
-if __name__ == "__main__":
-    unittest.main()

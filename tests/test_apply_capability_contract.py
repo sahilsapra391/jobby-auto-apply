@@ -282,7 +282,3 @@ class TheBoardShowsTheDifferenceTests(unittest.TestCase):
         )
         self.assertIn("1 to do", page)
         self.assertNotIn("system fault", page)
-
-
-if __name__ == "__main__":
-    unittest.main()

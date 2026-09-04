@@ -627,7 +627,3 @@ class StateGrowthWarningTests(unittest.TestCase):
         self.assertLess(source.index("mark_published()"),
                         source.index("remember_state_size"))
         self.assertIn("published_bytes", source)
-
-
-if __name__ == "__main__":
-    unittest.main()

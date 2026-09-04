@@ -190,7 +190,3 @@ class SourceClassTests(unittest.TestCase):
                 jobs, report = jobs_store.close_missing(jobs, {key(): {"a"}}, at=NOW)
                 self.assertEqual(jobs["b"]["state"], "new")
                 self.assertEqual(report["closed"], [])
-
-
-if __name__ == "__main__":
-    unittest.main()

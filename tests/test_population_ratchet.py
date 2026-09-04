@@ -144,7 +144,3 @@ class TheWayDownNeedsBothHalves(unittest.TestCase):
         with self.assertRaises(population.PopulationError):
             population.lower(reading(postings__logo_domain=(22376, 22935)),
                              "no reason to", allow=True, root=self.root)
-
-
-if __name__ == "__main__":
-    unittest.main()

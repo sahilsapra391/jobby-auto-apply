@@ -110,7 +110,3 @@ class RenderedDocumentMatchesContentTests(unittest.TestCase):
         reads back, unchanged."""
         template, content = resume_build.extract(self.html)
         self.assertEqual(resume_build.render(template, content), self.html)
-
-
-if __name__ == "__main__":
-    unittest.main()

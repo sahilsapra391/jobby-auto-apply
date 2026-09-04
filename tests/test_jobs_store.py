@@ -1215,6 +1215,3 @@ class AMissingPoolIsNotAnEmptyOne(unittest.TestCase):
         (self.root / "companies.json").write_text("{}")
         (self.root / "jobs.json").write_text("{}")
         self.assertEqual(jobs_store.load_jobs(self.root), {})
-
-if __name__ == "__main__":
-    unittest.main()

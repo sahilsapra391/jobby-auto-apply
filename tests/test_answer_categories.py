@@ -202,7 +202,3 @@ class CategoryCoverageTests(unittest.TestCase):
                    self.FIXTURE["knownGaps"]["englishQuestionsWithNoCategory"]]
         self.assertGreater(len(english), 0)
         self.assertIn("Are you crypto-native?", english)
-
-
-if __name__ == "__main__":
-    unittest.main()

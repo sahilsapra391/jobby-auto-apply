@@ -151,7 +151,3 @@ class ResolveTests(unittest.TestCase):
             "abc123", root=self.root, fetcher=fetcher, allow_network=False)
         self.assertEqual(text, EXCERPT)
         self.assertEqual(fetcher.urls, [])
-
-
-if __name__ == "__main__":
-    unittest.main()

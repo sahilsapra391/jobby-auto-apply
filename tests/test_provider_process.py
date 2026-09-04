@@ -57,7 +57,3 @@ class BoundedProcessTests(unittest.TestCase):
                         provider, message
                     )
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1313,7 +1313,3 @@ class ListingCompletenessTests(unittest.TestCase):
             "smartrecruiters", "workable", "recruitee", "personio", "breezy",
             "rippling", "teamtailor", "pinpoint", "jazzhr", "oracle_orc", "gem",
         })
-
-
-if __name__ == "__main__":
-    unittest.main()

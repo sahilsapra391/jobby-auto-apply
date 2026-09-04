@@ -201,7 +201,3 @@ class RenderTimeFreshnessTests(unittest.TestCase):
         label, stale = self.page._freshness("not a date")
         self.assertFalse(stale)
         self.assertTrue(label)
-
-
-if __name__ == "__main__":
-    unittest.main()

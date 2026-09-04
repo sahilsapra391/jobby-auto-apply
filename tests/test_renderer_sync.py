@@ -162,7 +162,3 @@ class BundleDataFilesTest(unittest.TestCase):
             + result.stderr,
         )
         self.assertGreater(int(result.stdout.strip()), 0)
-
-
-if __name__ == "__main__":
-    unittest.main()

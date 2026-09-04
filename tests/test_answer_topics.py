@@ -1168,7 +1168,3 @@ class ResolveAnswerTests(unittest.TestCase):
         got = store.resolve_answer({}, PROFILE, "What is your favourite colour?")
         self.assertEqual(got.get("match"), "none")
         self.assertIn("candidates", got)
-
-
-if __name__ == "__main__":
-    unittest.main()

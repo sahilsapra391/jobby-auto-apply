@@ -222,7 +222,3 @@ class NeonMatchesThePin(unittest.TestCase):
         finally:
             prod.close()
             test.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -199,7 +199,3 @@ class LiveDatabaseTests(pgtest.SchemaCase):
             self.assertEqual(cur.fetchone()[0], 1)
             cur.execute("select count(*) from jobs")
             self.assertEqual(cur.fetchone()[0], 2)
-
-
-if __name__ == "__main__":
-    unittest.main()

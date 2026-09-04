@@ -360,6 +360,3 @@ class TheWinnerIsTheLiveRecord(unittest.TestCase):
                                               "aaaa1111", "2026-09-02T15:47:07Z")])
         self.assertEqual(merged, ["aaaa1111"])
         self.assertEqual(renames, [["aaaa1111", "ffff5555"]])
-
-if __name__ == "__main__":
-    unittest.main()

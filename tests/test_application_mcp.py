@@ -491,7 +491,3 @@ class CaptureContractAgreesInBothPlacesTests(unittest.TestCase):
         for name, text in (("SKILL.md", self.skill), ("run_apply", self.contract)):
             with self.subTest(document=name):
                 self.assertIn("never sees the form", text)
-
-
-if __name__ == "__main__":
-    unittest.main()

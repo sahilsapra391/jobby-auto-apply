@@ -30,7 +30,3 @@ class KvQueueJsTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0,
                          f"node --test failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-1000:]}")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -917,7 +917,3 @@ class TheLoggedSummaryCarriesBothAsides(unittest.TestCase):
         line = self.summary(divergences=[{"kind": "only_in_postgres", "id": "y"}])
         self.assertFalse(line["ok"])
         self.assertEqual(line["divergences"], 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

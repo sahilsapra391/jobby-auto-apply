@@ -931,7 +931,3 @@ class WatcherEditTests(unittest.TestCase):
 
     def test_an_unknown_action_produces_no_command_rather_than_a_guess(self):
         self.assertIsNone(watch._resume_command({"action": "delete-everything"})[0])
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -325,7 +325,3 @@ class TheRecordedFileSaysWhatWasNotMeasured(unittest.TestCase):
             self.assertEqual(
                 gate_latency.main(["record", str(samples), "--out", str(out)]), 0)
             self.assertIn("PASS", out.read_text())
-
-
-if __name__ == "__main__":
-    unittest.main()

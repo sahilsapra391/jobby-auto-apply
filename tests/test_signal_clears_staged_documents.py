@@ -151,7 +151,3 @@ class SignalClearsStagedDocumentsTests(unittest.TestCase):
                 "documents in place -- if it does not, the first test is "
                 "passing for a reason that has nothing to do with the handler")
             self.assertEqual(-signal.SIGTERM, code)
-
-
-if __name__ == "__main__":
-    unittest.main()

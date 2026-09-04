@@ -75,7 +75,3 @@ class ClaimOrderTests(unittest.TestCase):
         self.assertLess(body.index('store(["history-list"])'),
                         body.index('queue("claim")'),
                         "history must be read before the queue is claimed")
-
-
-if __name__ == "__main__":
-    unittest.main()

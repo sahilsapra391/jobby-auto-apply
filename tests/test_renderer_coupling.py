@@ -151,7 +151,3 @@ class DriftDoesNotBlockAWorkingBoardTests(unittest.TestCase):
         status, body, _ = self.run_page(page._renderer_fingerprint(), explode)
         self.assertEqual(status, 502)
         self.assertIn(b"could not be rendered", body)
-
-
-if __name__ == "__main__":
-    unittest.main()

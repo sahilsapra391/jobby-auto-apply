@@ -240,7 +240,3 @@ class StateFitsTheCeilingTest(unittest.TestCase):
                            "test cannot detect the fault it exists for")
         with self.assertRaises(publish.PublishError):
             publish.guard_state_size(b"x" * unslimmed)
-
-
-if __name__ == "__main__":
-    unittest.main()

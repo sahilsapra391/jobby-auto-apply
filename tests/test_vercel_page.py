@@ -83,7 +83,3 @@ class VercelPageTest(unittest.TestCase):
         with mock.patch.object(PAGE, "_kv_value", return_value=envelope):
             with self.assertRaisesRegex(ValueError, "schema"):
                 PAGE._state()
-
-
-if __name__ == "__main__":
-    unittest.main()

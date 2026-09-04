@@ -212,7 +212,3 @@ class ADropIsNotUndoneTests(unittest.TestCase):
         block = source[source.index("apply_items = q.get(\"apply\") or []"):][:900]
         self.assertIn("just_dropped", block)
         self.assertIn('changed.get("dropped")', block)
-
-
-if __name__ == "__main__":
-    unittest.main()

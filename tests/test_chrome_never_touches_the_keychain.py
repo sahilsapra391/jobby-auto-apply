@@ -140,7 +140,3 @@ class HeadlessByDefaultTests(unittest.TestCase):
         source = inspect.getsource(browser.show)
         self.assertIn("is_headed", source)
         self.assertLess(source.index("is_headed"), source.index("stop_slot"))
-
-
-if __name__ == "__main__":
-    unittest.main()

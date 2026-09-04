@@ -231,7 +231,3 @@ class TaxonomyCoverageTests(unittest.TestCase):
         _covered, still = questionnaire.coverage(self.FIXTURE["knownOrphans"], payload)
         self.assertEqual(sorted(still), sorted(self.FIXTURE["knownOrphans"]),
                          "this orphan is covered now: take it out of the fixture")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -374,7 +374,3 @@ class RenderAndVerifyTests(unittest.TestCase):
         )
         self.assertFalse(report["ok"])
         self.assertFalse(report["requiredFields"]["role"])
-
-
-if __name__ == "__main__":
-    unittest.main()

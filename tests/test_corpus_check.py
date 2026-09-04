@@ -205,7 +205,3 @@ class TheRunnerLivesInTestsAndTheConfigDoesNot(unittest.TestCase):
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 2)
         self.assertIn("corpus_runner.py", out.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()

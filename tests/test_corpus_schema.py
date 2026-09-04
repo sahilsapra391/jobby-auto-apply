@@ -467,7 +467,3 @@ class ALegacyTableNameCannotSilentlySwallowAMigration(pgtest.SchemaCase):
             path.write_text("-- create table if not exists answers (x int);\n"
                             "create table if not exists real_one (x int);\n")
             self.assertEqual(self.tables_created(path), {"real_one"})
-
-
-if __name__ == "__main__":
-    unittest.main()
