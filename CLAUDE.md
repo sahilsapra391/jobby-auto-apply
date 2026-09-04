@@ -2384,6 +2384,49 @@ What caught it was reading the function to see which name was bound. What
 here twice. When a compile step is the only check between an edit and a commit,
 it has told you about syntax and nothing else.
 
+### The same rule, applied in one file and not its neighbour, 2026-09-03
+
+**`dual_write.read_pool` refuses a zero-byte pool and says exactly why.
+`jobs_store.load_jobs`, in the same repository, returned `{}` for a pool that
+was not there.** One function had the rule written into its docstring; the one
+next to it had the same failure open.
+
+```
+dual_write.read_pool   "a read that failed and a store that is empty produce
+                        the same value, so an outage reads as an empty pool and
+                        every count downstream is confidently wrong"
+                        -> zero bytes is broken
+
+jobs_store.load_jobs   store.read_json returns the default when the path does
+                        not exist
+                        -> a deleted jobs.json is {}
+```
+
+What it would have cost, measured against the live pool: an absent pool reads
+as empty, the next sweep repopulates from the connectors, and the device loses
+**16 watched, 100 applied and 11 passed**. Those 127 decisions are in Postgres
+and `jobs_store` contains zero SELECTs, so nothing reads them back. Eleven jobs
+already passed on would be re-offered, with no error anywhere.
+
+**The plan had written the test for it.** Phase 1's negative tests say "a read
+that gets zero rows must be distinguishable from a read that errored", naming
+the `json.loads(stdout or "[]")` bug as the shape to design against. That test
+was satisfied in `read_pool` and left open in `load_jobs`, in the file
+`GATE_PATHS` names.
+
+Two things generalise. **A rule stated in one function's docstring is not a
+rule the codebase holds**, and the closer the neighbour the less likely anyone
+checks -- `read_pool` and `load_jobs` read the same file for the same reason.
+And **a negative test written in a plan is not a negative test that exists**;
+this one was written before the code and satisfied in one of the two places it
+applied.
+
+The fix is narrow on purpose. A fresh root has neither pool nor companies and
+is legitimately empty; a store that has swept has both, so the pool alone being
+gone is a deletion. Refusing every missing file would have failed every test
+that starts from a temp directory, which is a different bug and one the
+mutation test catches.
+
 ### "Could not look" is never "is not there", 2026-09-03
 
 **A check that cannot read its subject must say so in its own vocabulary. It

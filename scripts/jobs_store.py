@@ -164,8 +164,46 @@ def _read(path, default):
 
 # --- jobs -------------------------------------------------------------------
 
+#: A file a store that has ever swept is guaranteed to have beside its pool.
+#: `companies.json` is written by the same `ingest` pass that writes `jobs.json`
+#: and is never removed, so its presence separates "this store has run" from
+#: "this is a fresh root".
+POOL_SIBLING = "companies"
+
+
 def load_jobs(root):
-    return _read(paths(root)["jobs"], {})
+    """The pool. Refuses when the file is gone from a store that has one.
+
+    **A missing pool and an empty pool must not produce the same value**, which
+    is the plan's own negative test for this phase -- "a read that gets zero
+    rows must be distinguishable from a read that errored" -- and was the one
+    case still open. `store.read_json` returns the default when the path does
+    not exist, so a deleted `jobs.json` came back as `{}`, the next sweep
+    repopulated from the connectors, and the device lost every decision it had:
+    measured 2026-09-03 against the live pool, 16 watched, 100 applied and 11
+    passed. Those 127 rows are in Postgres and nothing on the device reads them
+    back, so it would have re-offered eleven jobs already passed on and shown an
+    empty Watching shelf, with no error anywhere.
+
+    `dual_write.read_pool` had this right for its own case and says why: "a read
+    that failed and a store that is empty produce the same value, so an outage
+    reads as an empty pool and every count downstream is confidently wrong." It
+    refuses zero bytes. This is the same rule for the missing file.
+
+    **A fresh root is still empty and still fine**, which is why the check is
+    the sibling rather than the file. A store that has never swept has neither;
+    one that has swept has both, so the pool alone being gone is a deletion and
+    not a beginning.
+    """
+    path = paths(root)["jobs"]
+    if not path.exists() and paths(root)[POOL_SIBLING].exists():
+        raise JobsStoreError(
+            f"{path.name} is missing from a store that has {paths(root)[POOL_SIBLING].name}. "
+            f"An absent pool is not an empty one: sweeping now would repopulate "
+            f"from the connectors and drop every watched, applied and passed "
+            f"decision this store holds. Restore it, or remove the store root "
+            f"deliberately if that is what was meant.")
+    return _read(path, {})
 
 
 # Read-modify-write on the whole pool is the shape that has now lost work

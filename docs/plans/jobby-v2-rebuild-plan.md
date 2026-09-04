@@ -473,12 +473,67 @@ A note the agent should internalise before Phase 0: **agent transcripts are not 
 - Land the schema from §3, single account, `account_id` present and populated but not yet enforced.
 - Dual-write: every existing write path writes both the file store and Postgres.
 - A `verify_parity.py` job that diffs the two stores field by field and exits non-zero on any divergence. Run it in CI and on a schedule.
-- Flip reads to Postgres behind the flag. Keep the file store writing for one week.
-- Delete the file store and `jobs.json`.
+- Flip reads to Postgres behind the flag. Keep the file store writing.
+- ~~Delete the file store and `jobs.json`.~~ **Moved to Phase 4. See below.**
 
 **Negative tests:** a write that fails in Postgres must fail the whole operation, not silently succeed against the file. A read that gets zero rows must be distinguishable from a read that errored. The existing `json.loads(stdout or "[]")` bug is the exact failure to design against.
 
-**Gate:** 7 consecutive days of parity job green, then the file store is deleted in a commit that is easy to revert.
+**Gate:** ~~7 consecutive days of parity job green, then the file store is deleted in a commit that is easy to revert.~~ **Superseded 2026-09-03.**
+
+#### The deletion is a Phase 4 step, gated on the device, not on parity days
+
+**Deleting the file store does not cost rollback. It costs the device knowing
+what has already been decided, and that is Phase 4 work.**
+
+Measured 2026-09-03. `scripts/jobs_store.py` contains **zero SELECTs**: nothing
+on the device ever reads its own state back from Postgres. The decisions live in
+the pool file, are mirrored outward, and are never read inward. So an empty pool
+is repopulated from the connectors and the device loses:
+
+```
+watched     16
+applied    100
+passed      11
+```
+
+127 rows, exactly what `job_decisions` holds. The device would re-offer eleven
+jobs already passed on and show an empty Watching shelf.
+
+The deployed board is not the constraint: it renders `jobby:board-state` from
+KV and never touches the file store at request time, so it would keep serving
+the last publish. The insurance that deletion removes is not the board's, it is
+the device's working memory.
+
+So the deletion's gate is **the device reading its decisions from Postgres**,
+which is Phase 4's runner work, and it is not a number of green parity days.
+Counting days measures whether the mirror is faithful; it says nothing about
+whether anything can read the mirror back.
+
+**And parity stops when the flag flips, rather than running through the week.**
+Once v2 writes, a v2-originated `UPDATE` and a genuine mirror fault produce the
+identical finding: same `kind`, same keys, same shape, differing only in a value
+nobody can attribute. Measured by driving `verify_parity.compare` against
+synthetic input rather than by writing a divergence, which would have reset the
+clock:
+
+```
+a v2 INSERT        {'kind': 'only_in_postgres', 'id': ...}
+a lost mirror row  {'kind': 'only_in_file',     'id': ...}
+
+a v2 UPDATE        {'kind': 'field_mismatch', 'field': 'state', ...}
+a bad mirror write {'kind': 'field_mismatch', 'field': 'state', ...}
+```
+
+Inserts stay distinguishable; updates do not, and state changes are the most
+common v2 write. At 1 to 6 decisions a day that is 15 to 40 findings a week that
+each need auditing by hand, in the one class a real bug would hide in. Running
+the check through that window makes it unreadable rather than reassuring, so it
+is turned off at the flip and `population.py`'s ratchet is the floor until the
+device moves.
+
+Making them distinguishable needs a column recording which side wrote, which is
+a change to `packages/schema/backfill.py`. Worth doing before Phase 4's deletion
+and not before this flip.
 
 ---
 
