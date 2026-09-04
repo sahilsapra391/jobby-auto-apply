@@ -1178,9 +1178,6 @@ class PostedDateRefreshTests(unittest.TestCase):
         self.assertFalse(jobs_store.refresh_posted_date(held, incoming))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class AMissingPoolIsNotAnEmptyOne(unittest.TestCase):
     """The plan's own negative test for Phase 1, which was still open.
@@ -1218,3 +1215,6 @@ class AMissingPoolIsNotAnEmptyOne(unittest.TestCase):
         (self.root / "companies.json").write_text("{}")
         (self.root / "jobs.json").write_text("{}")
         self.assertEqual(jobs_store.load_jobs(self.root), {})
+
+if __name__ == "__main__":
+    unittest.main()
