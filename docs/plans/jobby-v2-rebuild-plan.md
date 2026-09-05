@@ -594,6 +594,44 @@ and not before this flip.
 - Per-account DO instances. Per-account encryption keys for the document bundle.
 - Admin surface: list accounts, revoke a device, disable a board, read a sweep run. Read-mostly.
 
+**The channel's subscribe path is unauthenticated, and it cannot reach a
+second account as it stands.** This is a hard requirement of this phase, not a
+hardening step inside it, and it is written here because the decision that
+created it was correct for one account and is a cross-account leak for two.
+
+A browser cannot set a header on a WebSocket handshake. `useLive` sends exactly
+one frame, ever -- `{resume_from: <seq>}` -- with no account and no token in it,
+and it opens `NEXT_PUBLIC_JOBBY_CHANNEL_WS` verbatim. So the account rides the
+socket URL, `/a/<accountId>`, and `NEXT_PUBLIC_*` is inlined at build time:
+that URL is one public constant, identical for every viewer, readable in the JS
+bundle.
+
+**It is an address, not a credential.** Today the board gates every path
+including `_next/static`, so the address is not obtainable without the
+password, and there is one account for it to address. Both of those stop being
+true in this phase. With a second account, anyone who can read their own bundle
+can subscribe to a channel by editing one path segment, and the events carry
+application ids, phases and decisions.
+
+So Phase 5 cannot ship the channel as it is. The fix needs a client change and
+there are two shapes, neither built:
+
+  - a short-lived signed ticket minted by a Vercel route and appended to the
+    socket URL as a query parameter, checked by the Worker against the account
+    the path names
+  - the `Sec-WebSocket-Protocol` subprotocol, which is the one handshake header
+    a browser will set, carrying a bearer the Worker validates
+
+Whichever is chosen, the Worker must reject a socket whose credential does not
+name the account in its path, and `channelFor` stays the single derivation both
+sides use.
+
+**Per-account DO instances above is not this requirement and does not cover
+it.** The instances are already per-account -- `idFromName("account:" + id)`,
+one derivation for the socket and the publish -- and that is isolation of
+state, not of access. A correctly isolated object that anyone may subscribe to
+is still a leak.
+
 **v2 connects as the database owner today, and moving it off is a requirement
 of this phase rather than a hardening step inside it.** `JOBBY_DATABASE_URL` on
 the `jobby-v2` Vercel project is the device's own credential, set 2026-09-01
