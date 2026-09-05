@@ -691,8 +691,61 @@ def rendered():
 #:
 #: `outputs()` is called rather than held, because each entry's second half is
 #: a renderer and importing this module must not run them.
+KV_SOURCE = REPO / "deploy" / "kv.mjs"
+KV_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "kv.generated.mjs"
+KVQUEUE_SOURCE = REPO / "deploy" / "kvqueue.mjs"
+KVQUEUE_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "kvqueue.generated.mjs"
 R2_SOURCE = REPO / "deploy" / "r2.mjs"
 R2_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "r2.generated.mjs"
+
+
+def _generated_header(source_name, why):
+    return (f"// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
+            f"//\n"
+            f"// Copied from deploy/{source_name}. Change that file.\n"
+            f"//\n"
+            + "".join(f"// {line}\n" for line in why.split("\n")))
+
+
+#: The one line the copy may not take verbatim: the generated queue imports the
+#: generated kv, not `deploy/kv.mjs`, which is outside v2's traced bundle.
+KVQUEUE_IMPORT = ("import { kvGet, kvPut, configured } from './kv.mjs';",
+                  "import { kvGet, kvPut, configured } from './kv.generated.mjs';")
+
+
+def kv_module():
+    """`deploy/kv.mjs` verbatim, so v2 speaks to KV the way the board does.
+
+    The queue is the daemon's work list and there is exactly one of it. A
+    second client for the same namespace is a second set of assumptions about
+    read-modify-write on one key, and that key has already cost this project an
+    outage where an apply enqueue ate a watch enqueue.
+    """
+    return _generated_header(
+        "kv.mjs",
+        "One KV client, not two. The queue is a single key under\n"
+        "read-modify-write and a second implementation of that is a\n"
+        "second set of assumptions about it.") + KV_SOURCE.read_text(encoding="utf-8")
+
+
+def kvqueue_module():
+    """`deploy/kvqueue.mjs`, with its one import repointed at the copy beside it.
+
+    v2 is a separate Next project rooted at `apps/web`, so a file outside it is
+    not in the traced bundle. The import has to name the sibling copy or the
+    build resolves nothing; everything else is verbatim, and `--check` fails
+    the PR when the two part.
+    """
+    body = KVQUEUE_SOURCE.read_text(encoding="utf-8")
+    before, after = KVQUEUE_IMPORT
+    if body.count(before) != 1:
+        raise SystemExit(
+            f"kvqueue.mjs no longer has exactly one `{before}`; the generator "
+            f"rewrites that line and cannot guess a new shape")
+    return _generated_header(
+        "kvqueue.mjs",
+        "Verbatim but for the kv import, which names the generated copy\n"
+        "beside it: deploy/ is outside v2's traced bundle.") + body.replace(before, after)
 
 
 def r2_module():
@@ -737,6 +790,8 @@ def outputs():
         (SEARCH, search_module),
         (PROVIDER_LABELS, providers_module),
         (R2_TARGET, r2_module),
+        (KV_TARGET, kv_module),
+        (KVQUEUE_TARGET, kvqueue_module),
     ]
 
 

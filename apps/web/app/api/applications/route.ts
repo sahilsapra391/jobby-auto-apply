@@ -3,6 +3,7 @@ import {
   accountId, publish, remember, replay, requireWritesEnabled, WriteRefused,
 } from "../../_ui/writes";
 import { pool } from "../../_ui/db";
+import { DECISION_QUEUE, STATUS_QUEUE, QueueRefused, order } from "../../_ui/queue";
 
 /**
  * The board's writes. **Behind `live_board`, which is off.**
@@ -116,7 +117,21 @@ export async function POST(request: NextRequest) {
       { error: "a status or an event is required" }, { status: 400 });
   }
 
-  // ---- the commit -------------------------------------------------------
+  // ---- the queue, then the commit ---------------------------------------
+  // Only a drop is a work order here. The other statuses are stages the daemon
+  // moves an application through, and a board observes those rather than
+  // ordering them; see STATUS_QUEUE.
+  if (body.status && STATUS_QUEUE[body.status]) {
+    try {
+      await order(STATUS_QUEUE[body.status], legacyId);
+    } catch (err) {
+      if (err instanceof QueueRefused) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+  }
+
   const client = await pool().connect();
   let applicationId: string;
   try {
@@ -194,14 +209,24 @@ async function decide(account: string, key: string, body: Body) {
   const client = await pool().connect();
   let applicationId: string | null = null;
   try {
-    await client.query("begin");
-    await client.query("select set_config('app.account_id', $1, true)", [account]);
+    // Read outside the transaction, because the enqueue below needs the legacy
+    // id and a transaction held open across a call to Cloudflare is a row lock
+    // held for a network round trip.
     const posting = await client.query(
       "select legacy_id from postings where id = $1", [postingId]);
     if (!posting.rows.length) {
-      await client.query("rollback");
       return NextResponse.json({ error: "no such posting" }, { status: 404 });
     }
+
+    // **Before the commit, because the enqueue is the work.** A row recorded
+    // for a click the daemon never hears about is a board that says it did
+    // something and a machine that never heard, which is the worst failure
+    // this project has. Failing here writes nothing and the reader retries.
+    // See `_ui/queue.ts` for why this ordering is the inverse of `publish`'s.
+    await order(DECISION_QUEUE[decision], posting.rows[0].legacy_id);
+
+    await client.query("begin");
+    await client.query("select set_config('app.account_id', $1, true)", [account]);
     await client.query(
       `insert into job_decisions
          (account_id, posting_id, state, decided_at, decided_from)
@@ -226,6 +251,13 @@ async function decide(account: string, key: string, body: Body) {
     await client.query("commit");
   } catch (err) {
     await client.query("rollback").catch(() => {});
+    // A refused enqueue is a 502 or a 503 that says why, not a 500. It fires
+    // before `begin`, so this rollback is a no-op on that path; it is left
+    // unconditional rather than made clever, because a rollback skipped by a
+    // mistaken branch is a transaction left open on a pooled connection.
+    if (err instanceof QueueRefused) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     throw err;
   } finally {
     client.release();
