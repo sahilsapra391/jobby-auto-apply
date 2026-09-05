@@ -213,27 +213,19 @@ export default {
     if (request.headers.get("Upgrade") === "websocket") {
       const account = accountFromPath(url.pathname);
       if (!account) {
-        // **Accepted, then closed with a reason, rather than refused with a
-        // 400.** A non-101 answer to an upgrade reaches the browser as close
-        // code 1006 with no reason -- the code for an abnormal closure, which
-        // is exactly what a dropped network gives you. `useLive` cannot tell
-        // them apart, so it draws "the live connection dropped, reconnecting"
-        // and backs off forever against a URL that will never work.
+        // **A 400, and the reason cannot be delivered over the socket.**
+        // Closing right after `accept()` was tried and deployed: the client
+        // still saw 1006 with an empty reason, because the close races the
+        // handshake and there is no established socket to carry a close frame
+        // on. Measured against the deployed Worker, not reasoned about.
         //
-        // Observed rather than reasoned about: the board showed that banner on
-        // every page because NEXT_PUBLIC_JOBBY_CHANNEL_WS had been set to the
-        // bare origin. The misconfiguration was ten seconds to fix and the
-        // message sent the reader looking for a network fault.
-        //
-        // 4400 is in the application range, so it cannot be confused with a
-        // protocol code, and the reason travels with it into the console.
-        const pair = new WebSocketPair();
-        const [client, server] = Object.values(pair);
-        server.accept();
-        server.close(4400,
-          "this socket URL names no account. Set NEXT_PUBLIC_JOBBY_CHANNEL_WS " +
-          "to wss://<worker>/a/<accountId>, and rebuild: it is inlined.");
-        return new Response(null, { status: 101, webSocket: client });
+        // It is the wrong place regardless. 1006 is equally what a wrong host,
+        // a DNS failure or a TLS failure gives, and a server cannot annotate
+        // any of those because it never sees the request. Only the client
+        // knows whether `open` ever fired, and that is the one fact that
+        // separates "this address is wrong forever" from "the network went
+        // away" -- so `useLive` draws that distinction instead.
+        return json({ error: "the socket URL must name an account: /a/<id>" }, 400);
       }
       return channelFor(env, account).fetch(request);
     }

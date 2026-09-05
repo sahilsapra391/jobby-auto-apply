@@ -310,7 +310,18 @@ export function LaneList({
   return (
     <ActionsContext.Provider value={actions}>
     <div ref={holder}>
-      {live.connected === false ? (
+      {/* **Two facts, two messages.** "Dropped" claims there was a connection;
+          when the address is wrong there never was one, and saying dropped
+          sends the reader to look for a network fault. See useLive. */}
+      {live.connected === "unreachable" ? (
+        <p className="hint" role="status">
+          The live channel is not answering, so this lane updates when you
+          reload it. Nothing is lost. If this is every page, check
+          NEXT_PUBLIC_JOBBY_CHANNEL_WS: it must name the account,
+          wss://&lt;worker&gt;/a/&lt;accountId&gt;, and it is inlined at build
+          time, so it needs a rebuild rather than an environment change.
+        </p>
+      ) : live.connected === false ? (
         <p className="hint" role="status">
           The live connection dropped. Reconnecting; this lane is as of the
           last update it received.

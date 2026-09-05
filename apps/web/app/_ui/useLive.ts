@@ -26,9 +26,26 @@ export const BURST = 8;
 /** Reconnect backoff, capped. A tab left open overnight must not hammer. */
 const BACKOFF = [500, 1000, 2000, 5000, 10_000, 30_000];
 
+/** Failed handshakes before the board stops calling it a dropped connection. */
+const UNREACHABLE_AFTER = 3;
+
 export type LiveState = {
-  /** null when no channel is configured, so "off" and "down" are different. */
-  connected: boolean | null;
+  /**
+   * Four states, because three of them are things a reader would do something
+   * different about.
+   *
+   *   null           no channel configured; the board updates on reload
+   *   true           connected
+   *   false          it was connected and dropped; reconnecting
+   *   "unreachable"  it has never connected. The address is wrong, or the
+   *                  channel is down, and no amount of waiting fixes it
+   *
+   * The last one exists because collapsing it into `false` cost an afternoon:
+   * the board said "the live connection dropped" on every page while the URL
+   * simply named no account, and the message sent the reader after a network
+   * fault that was not there.
+   */
+  connected: boolean | null | "unreachable";
   /** Rows the lane gained that this list cannot place. */
   arrived: number;
   /** Refetch page one and clear the arrivals. */
@@ -64,7 +81,7 @@ export function useLive({
   /** Subjects this tab has already drawn optimistically. */
   absorbs: (subject: string) => boolean;
 }): LiveState {
-  const [connected, setConnected] = useState<boolean | null>(null);
+  const [connected, setConnected] = useState<boolean | null | "unreachable">(null);
   const [arrived, setArrived] = useState(0);
   // Held in refs, not state: the session outlives a render and re-creating it
   // would reset the seq, which is the one number a reconnect depends on.
@@ -145,19 +162,37 @@ export function useLive({
     });
     session.current = live;
 
+    // **A socket that never opened is a different fact from one that dropped,
+    // and collapsing them cost an afternoon.** The board drew "the live
+    // connection dropped, reconnecting" on every page while the real cause was
+    // `NEXT_PUBLIC_JOBBY_CHANNEL_WS` pointing at the channel's origin with no
+    // account path. The message was true about the symptom, wrong about the
+    // cause, and sent the reader hunting a network fault that did not exist.
+    //
+    // It cannot be fixed on the server. A refused upgrade arrives as close
+    // 1006 with an empty reason -- closing after `accept()` was tried and
+    // deployed and made no difference, because the close races the handshake.
+    // And 1006 is equally a wrong host, a DNS failure or a TLS failure, none
+    // of which any server sees. The one fact that separates "this address is
+    // wrong forever" from "the network went away" is whether `open` ever
+    // fired, and only this side knows it.
+    let everOpened = false;
     const open = () => {
       socket = new WebSocket(url);
       socket.addEventListener("open", () => {
         attempt = 0;
+        everOpened = true;
         setConnected(true);
         socket?.send(JSON.stringify(live.hello()));
       });
       socket.addEventListener("message", (e) => { void live.receive(e.data); });
       socket.addEventListener("close", () => {
-        setConnected(false);
         if (closed) return;
-        // Never give up silently: a tab that stops reconnecting looks exactly
-        // like one with nothing to show.
+        // Three handshakes that never opened is a setting, not a blip. It
+        // keeps retrying -- a tab that gives up silently looks exactly like one
+        // with nothing to show, which is the rule this file already held -- but
+        // it stops claiming the connection dropped, because it never connected.
+        setConnected(everOpened || attempt < UNREACHABLE_AFTER ? false : "unreachable");
         timer = setTimeout(open, BACKOFF[Math.min(attempt++, BACKOFF.length - 1)]);
       });
       socket.addEventListener("error", () => socket?.close());

@@ -91,21 +91,21 @@ test('both sides derive the same Durable Object name', () => {
   assert.equal(fromSocket, `account:${ACCOUNT}`);
 });
 
-test('a socket with no account is closed with a reason, not left at 1006', async () => {
-  // **The failure mode matters as much as the refusal.** A non-101 answer
-  // reaches the browser as close code 1006 -- an abnormal closure, the same
-  // thing a dropped network gives -- so `useLive` draws "the live connection
-  // dropped, reconnecting" and backs off forever against a URL that will never
-  // work. That happened: the board showed the banner on every page because the
-  // env var was the bare origin, and the message sent the reader looking for a
-  // network fault.
+test('a socket with no account is refused, not defaulted', async () => {
+  // Refused rather than defaulted: a channel that picks an account when the
+  // URL does not name one delivers somebody else's applications.
+  //
+  // The refusal reaches the browser as close 1006 with no reason, and that is
+  // not fixable here. Closing after `accept()` was tried and deployed and the
+  // client still saw 1006: the close races the handshake, so there is no
+  // socket to carry the frame. `useLive` distinguishes never-opened from
+  // dropped instead, which also covers a wrong host and a TLS failure -- cases
+  // no server ever sees.
   const env = stubEnv();
   const res = await worker.fetch(
     new Request('https://channel.example/', { headers: { Upgrade: 'websocket' } }), env);
-  assert.equal(res.status, 101, 'it must complete the handshake to say anything at all');
-  assert.equal(env.closed?.code, 4400, 'application range, so it cannot read as a protocol code');
-  assert.match(env.closed?.reason ?? '', /NEXT_PUBLIC_JOBBY_CHANNEL_WS/,
-               'the reason must name the variable, or it sends the reader hunting');
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /must name an account/);
   assert.deepEqual(env.asked, [], 'no Durable Object should have been touched');
 });
 
