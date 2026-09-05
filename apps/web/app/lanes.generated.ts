@@ -76,7 +76,7 @@ export const LANES: Record<Lane, { label: string; page: string; pageParams: stri
           "within",
           "direct"
         ],
-        "cursor": "total",
+        "cursor": "score",
         "cursorType": "number"
       }
     },

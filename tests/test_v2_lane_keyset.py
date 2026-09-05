@@ -594,8 +594,13 @@ class EveryOrderingBreaksTiesOnItsOwnRow(unittest.TestCase):
         class is asserting something that cannot fail."""
         crossing = []
         for lane, sort, sql in self.pairs():
-            column, _ = (v2_lanes.SORTS[sort] if lane in v2_lanes.POSTING_LANES
-                         else ("p.posted_at", None))
+            # SORTS is (expression, row key, cast). It was (expression, cast)
+            # until the row key had to be named rather than split out of the
+            # expression -- `s.total` is selected as `score`, so the inferred
+            # cursor named a column no row carried and Load more died on
+            # Found's default sort.
+            column = (v2_lanes.SORTS[sort][0] if lane in v2_lanes.POSTING_LANES
+                      else "p.posted_at")
             if column.split(".")[0] != self.identity(sql):
                 crossing.append((lane, sort))
         self.assertTrue(crossing,

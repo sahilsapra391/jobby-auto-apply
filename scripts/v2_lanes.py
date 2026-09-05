@@ -261,9 +261,24 @@ def order_by(column, ident=None):
 #: What the Found lane may be ordered by, and the type its cursor walks. The
 #: board offers exactly these two (`found_lane.SORT_OPTIONS`), so v2 offers
 #: exactly these two: "Newest" and "Match %".
+#: **The row key is named, not inferred from the expression.** It used to be
+#: `expression.split(".")[-1]`, which is right for `p.posted_at` and wrong for
+#: `s.total`, because the SELECT aliases that one `s.total as score`. So the
+#: cursor named a column the row does not carry, `row["total"]` was undefined,
+#: page one handed out `{at: null}`, and page two matched only the null branch
+#: and came back empty with `done: true`.
+#:
+#: That broke Load more on Found's *default* sort, and it broke it in the shape
+#: that reads as working: the button did nothing and the lane said "and that is
+#: all of them" over 5,792 matching rows.
+#:
+#: `APPLICATION_ORDER` below is the same table one struct over and it already
+#: names its key, under a comment reading "a cursor can only carry a value the
+#: row actually returned". The rule was written down, held in one table, and
+#: not in its neighbour.
 SORTS = {
-    "new": ("p.posted_at", "timestamptz"),
-    "score": ("s.total", "int"),
+    "new": ("p.posted_at", "posted_at", "timestamptz"),
+    "score": ("s.total", "score", "int"),
 }
 
 #: How a lane of applications is ordered, and the row key its cursor walks.
@@ -369,7 +384,7 @@ def page_sql(lane, sort="new"):
     if lane not in LANES:
         raise KeyError(f"no lane {lane!r}")
     if lane in POSTING_LANES:
-        column, cast = SORTS[sort]
+        column, _key, cast = SORTS[sort]
         # Postings are the row here whatever the ordering reads.
         return f"""
 select {POSTING_COLUMNS}
@@ -546,8 +561,7 @@ def as_typescript():
             # A cursor naming the wrong column does not error: it compares the
             # wrong values and restarts the lane at the top on every page.
             column, key, cast = (
-                (*[SORTS[name][0], SORTS[name][0].split(".")[-1]],
-                 SORTS[name][1]) if k in POSTING_LANES
+                SORTS[name] if k in POSTING_LANES
                 else application_order(k))
             emitted[name] = {"sql": text, "params": params, "cursor": key,
                              "cursorType": CURSOR_TYPES[cast]}
@@ -560,9 +574,9 @@ def as_typescript():
             "row": row_text,
             "rowParams": row_params,
             "sorts": emitted,
-            "cursor": (SORTS["new"][0].split(".")[-1] if k in POSTING_LANES
+            "cursor": (SORTS["new"][1] if k in POSTING_LANES
                        else application_order(k)[1]),
-            "cursorType": CURSOR_TYPES[SORTS["new"][1] if k in POSTING_LANES
+            "cursorType": CURSOR_TYPES[SORTS["new"][2] if k in POSTING_LANES
                                        else application_order(k)[2]],
         }
     return (
