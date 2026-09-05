@@ -146,6 +146,8 @@ jobs:
                      apps/web/app/providers.generated.ts \
                      apps/web/app/search.generated.ts \
                      apps/web/app/_ui/r2.generated.mjs \
+                     apps/web/app/_ui/kv.generated.mjs \
+                     apps/web/app/_ui/kvqueue.generated.mjs \
                      apps/web/public)"
           if [ -n "$stale" ]; then
             echo "$stale"
