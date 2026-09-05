@@ -17,7 +17,7 @@
  */
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
 import { CardDetails } from "./CardDetails";
-import { Act, ActionIcon } from "./actions";
+import { Act, ActionIcon, ApplyWithConfirm } from "./actions";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -242,11 +242,16 @@ export function PostingRow(row: Row) {
              body={{ postingId: row.id, decision: "watch" }}>
           Watch
         </Act>
-        <Act className="jb-btn primary" subject={row.id} rowId={row.id} icon="apply"
-             title="Start work on this one"
-             body={{ postingId: row.id, decision: "apply" }}>
-          Apply
-        </Act>
+        {/* **Apply asks first, and the question names the job.** It is the one
+            decision on this card that cannot be taken back: Watch and Pass are
+            reversible from Watching and Dropped, and Apply hands a real
+            application to an agent that fills a real employer's form under a
+            real name. See ApplyWithConfirm for why it moves the target rather
+            than relabelling in place. */}
+        <ApplyWithConfirm subject={row.id} rowId={row.id}
+                          company={s(row.company) ?? undefined}
+                          role={s(row.role) ?? undefined}
+                          body={{ postingId: row.id, decision: "apply" }} />
         <Act className="jb-btn danger" subject={row.id} rowId={row.id} icon="pass"
              title="Never offer this one again"
              body={{ postingId: row.id, decision: "pass" }}>

@@ -576,6 +576,14 @@
   .jb-acts { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin-top:auto;
     padding-top:.9rem; border-top:1px solid var(--hair); }
 
+  /* Apply's confirmation, which names the job rather than asking "are you
+     sure". It takes the row it stands in, so the two buttons beside it land
+     where Watch and Pass were and not where Apply was: a second click of an
+     impatient double lands on Cancel, never on the confirm. That is layout
+     doing a job a timing guard would otherwise do badly. */
+  .jb-confirm { flex:1 1 100%; font-size:.82rem; line-height:1.35;
+    color:var(--ink); font-weight:600; }
+
   /* The disclosure. Small, lowercase, no button chrome: it is a way in, not an
      action, and it sat under Posting looking like a fifth control. */
   .jb-det { display:inline-flex; align-items:center; gap:.35rem; background:none;
