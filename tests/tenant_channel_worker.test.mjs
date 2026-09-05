@@ -13,11 +13,41 @@ import worker, { accountFromPath, channelFor } from '../apps/worker/src/index.mj
 
 const ACCOUNT = 'a56bbd42-97be-4198-ba7f-63141323a4c7';
 
+// **Node's `Response` refuses status 101 and the Workers runtime requires it.**
+// A 101 with a `webSocket` is how a Worker completes an upgrade; the fetch spec
+// has no such thing, so `new Response(null, {status: 101})` throws
+// `RangeError` here. The shim is narrow on purpose -- 101 only, everything else
+// straight through -- because a broad fake Response would let a real status bug
+// pass. This is a runtime difference, not a behaviour under test.
+const RealResponse = globalThis.Response;
+globalThis.Response = class extends RealResponse {
+  constructor(body, init = {}) {
+    if (init && init.status === 101) {
+      super(null, { ...init, status: 200 });
+      Object.defineProperty(this, 'status', { value: 101 });
+      this.webSocket = init.webSocket;
+      return;
+    }
+    super(body, init);
+  }
+};
+
+// Node has no WebSocketPair. The shell only accepts and closes, so a recorder
+// is enough -- and recording the close is the point of the test below.
+let lastClose = null;
+globalThis.WebSocketPair = function () {
+  const server = { accept() {}, close(code, reason) { lastClose = { code, reason }; },
+                   addEventListener() {} };
+  return { 0: {}, 1: server };
+};
+
 /** A binding that records which name each side asked for. */
 function stubEnv({ token = 'secret' } = {}) {
   const asked = [];
+  lastClose = null;
   return {
     asked,
+    get closed() { return lastClose; },
     JOBBY_CHANNEL_TOKEN: token,
     TENANT_CHANNEL: {
       idFromName(name) { asked.push(name); return { name }; },
@@ -61,12 +91,21 @@ test('both sides derive the same Durable Object name', () => {
   assert.equal(fromSocket, `account:${ACCOUNT}`);
 });
 
-test('a socket with no account in the path is refused, not defaulted', async () => {
+test('a socket with no account is closed with a reason, not left at 1006', async () => {
+  // **The failure mode matters as much as the refusal.** A non-101 answer
+  // reaches the browser as close code 1006 -- an abnormal closure, the same
+  // thing a dropped network gives -- so `useLive` draws "the live connection
+  // dropped, reconnecting" and backs off forever against a URL that will never
+  // work. That happened: the board showed the banner on every page because the
+  // env var was the bare origin, and the message sent the reader looking for a
+  // network fault.
   const env = stubEnv();
   const res = await worker.fetch(
     new Request('https://channel.example/', { headers: { Upgrade: 'websocket' } }), env);
-  assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /must name an account/);
+  assert.equal(res.status, 101, 'it must complete the handshake to say anything at all');
+  assert.equal(env.closed?.code, 4400, 'application range, so it cannot read as a protocol code');
+  assert.match(env.closed?.reason ?? '', /NEXT_PUBLIC_JOBBY_CHANNEL_WS/,
+               'the reason must name the variable, or it sends the reader hunting');
   assert.deepEqual(env.asked, [], 'no Durable Object should have been touched');
 });
 
