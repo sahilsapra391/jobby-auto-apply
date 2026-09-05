@@ -1,10 +1,14 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
+import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
 import { LocationPicker } from "./LocationPicker";
 import {
-  DEGREE_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_OPTIONS, JOB_TYPES,
-  ROLE_CATEGORIES, SCOPE_OPTIONS, UNKNOWN_TOGGLES, WORKPLACES, type Option,
+  // DEGREE_OPTIONS, EMPLOYMENT_TYPES, JOB_TYPES and ROLE_CATEGORIES are
+  // deliberately not imported: nothing populates the columns behind them. See
+  // the note above the Max experience row.
+  EXPERIENCE_OPTIONS,
+  SCOPE_OPTIONS, UNKNOWN_TOGGLES, WORKPLACES, type Option,
 } from "../search.generated";
 import { READ_ONLY } from "./actions";
 
@@ -144,11 +148,17 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             the reader found the Filter button; the old board applies instantly
             and the count moves. `SubmitOnChange` submits the form the control
             is in, so this stays one GET form and gains no state of its own. */}
+        {/* **"Any time" is offered, because the default is 30 days.** A
+            default the reader cannot turn off is a filter they cannot see, and
+            that is worse than one they could not turn on. It is a real radio
+            value rather than "clear the parameter", so it round-trips and
+            stays checked like every other choice here. */}
         <div className="jb-radios">
-          {Object.entries(WINDOWS).map(([v, label]) => (
+          {([[ANY_WINDOW, "Any time"], ...Object.entries(WINDOWS)] as [string, string][])
+            .map(([v, label]) => (
             <label className="jb-radio" key={v}>
               <input type="radio" name="within" value={v}
-                     defaultChecked={v === (within ?? "")} />
+                     defaultChecked={v === (within ?? DEFAULT_WINDOW)} />
               <span>{label}</span>
             </label>
           ))}
@@ -276,12 +286,30 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                   </div>
                 </div>
               </div>
+              {/* **Degree, Role, Employment and Job type are gone, and their
+                  absence is the honest state.** Measured 2026-09-05 over all
+                  25,204 pool records: `extracted.degree`,
+                  `extracted.employmentType` and `extracted.roleCategory` are
+                  populated in 0 of them, and Postgres has no column for any of
+                  the three -- `postings` carries no `extracted` at all. Job
+                  type (permanent, temporary, volunteer) has neither a column
+                  nor an extracted key.
+
+                  So all four could only ever match nothing. A control that
+                  cannot match is the 433-disabled-controls problem wearing a
+                  better costume: it looks like a filter, and it reads as
+                  broken to the first person who tries it. The old board shows
+                  the same emptiness behind a note saying so, which is better
+                  than a live control and worse than no control.
+                  `found_lane.py` says it plainly: "degree, role and job type
+                  are not extracted yet".
+                  
+                  Bringing them back is an ingest change, not a filter change,
+                  and it is logged as such in docs/plans/phase3-inputs.md.
+                  Max experience stays: `years_min`/`years_max` are populated
+                  in 9,826 of 25,204, 39.0%, so it has something to filter. */}
               <div className="jb-row">
-                {([["Max experience", EXPERIENCE_OPTIONS],
-                   ["Degree", DEGREE_OPTIONS],
-                   ["Role", ROLE_CATEGORIES],
-                   ["Employment", EMPLOYMENT_TYPES],
-                   ["Job type", JOB_TYPES]] as [string, Option[]][])
+                {([["Max experience", EXPERIENCE_OPTIONS]] as [string, Option[]][])
                   .map(([label, options]) => (
                     <label className="jb-lab" key={label}>{label}
                       <select>

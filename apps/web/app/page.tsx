@@ -17,6 +17,7 @@ import {
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
 import { writesEnabled } from "./_ui/writes";
+import { ANY_WINDOW, DEFAULT_WINDOW } from "./_ui/window";
 import { READ_ONLY } from "./_ui/actions";
 
 /**
@@ -60,17 +61,23 @@ export default async function Board({
   // lane behind it.
   // Found takes all three; every other lane takes the keyword search only,
   // which is what its own search row offers.
+  // **Found defaults to the last 30 days.** An unfiltered Found is 20,330
+  // postings deep and the reader meets the oldest of them as readily as
+  // today's; the board's own default was never "everything ever ingested".
+  // `all` is the explicit way to ask for that, so the default is a default
+  // rather than a ceiling.
+  const window = active === "found" ? (within ?? DEFAULT_WINDOW) : within;
   const filters = active === "found"
-    ? { q, within, direct: direct === "1" }
+    ? { q, within: window === ANY_WINDOW ? undefined : window, direct: direct === "1" }
     : (q ? { q } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const [tally, first, writes, meta, pool, scope, archive, reader] =
     await Promise.all([
-    counts(filters), page(active, null, 50, sort, filters),
+    counts(active, filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
     // The unfiltered pool, so the count can say what it matched against.
-    active === "found" && filters ? counts().then((t) => t.found) : undefined,
+    active === "found" && filters ? counts(active).then((t) => t.found) : undefined,
     active === "found" ? savedSearch() : undefined,
     // The archive's first page. It is a dialog on this document rather than a
     // route, so it renders with the board or not at all.

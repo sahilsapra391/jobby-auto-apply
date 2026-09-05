@@ -177,16 +177,28 @@ function cursorValue(at: unknown): string | null {
   return new Date(at as string).toISOString();
 }
 
-export async function counts(filters?: Filters): Promise<Record<Lane, number>> {
+export async function counts(active: Lane,
+                             filters?: Filters): Promise<Record<Lane, number>> {
   const account = await accountId();
   const out = {} as Record<Lane, number>;
-  const values = { account, ...filterValues(filters) };
+  // **The filter counts the lane it was typed into, and no other.** The
+  // comment here used to say the other lanes "ask for the account alone", and
+  // that was not true of the generated SQL: every lane's `countParams`
+  // declares `q`, so `argsFor` supplied it and every badge moved. Typing
+  // "engineer" into Found collapsed Watching to 2, which is the kind of thing
+  // that makes a reader distrust the whole board -- a number they did not ask
+  // to change, changing.
+  //
+  // Each lane has its own search row, so a keyword still filters the lane it
+  // belongs to. It is `active` that decides which one that is, not the mere
+  // presence of a parameter in a URL every lane shares.
+  const filtered = { account, ...filterValues(filters) };
+  const plain = { account, ...filterValues(undefined) };
   await Promise.all(
     (Object.keys(LANES) as Lane[]).map(async (lane) => {
-      // Only Found's count names the filters; the others ask for the account
-      // alone, and `argsFor` gives each what it declares.
       const { rows } = await pool().query(
-        LANES[lane].count, argsFor(LANES[lane].countParams, values));
+        LANES[lane].count,
+        argsFor(LANES[lane].countParams, lane === active ? filtered : plain));
       out[lane] = Number(rows[0].count);
     }),
   );

@@ -653,6 +653,47 @@ resolver's "both have a domain and they differ" refusal is containing this
 defect rather than fixing it, and the two must not be confused.
 
 
+## 12. Four filter controls were removed, and here is what brings them back
+
+Re-measured 2026-09-05 over all **25,204** pool records, which is up from the
+22,762 of section "The three attributes nothing extracts":
+
+```
+extracted.degree            0    0.0%
+extracted.employmentType    0    0.0%
+extracted.roleCategory      0    0.0%
+extracted.yearsMin       9,826   39.0%
+```
+
+And in Postgres it is stronger than a low percentage: `postings` has **no
+`extracted` column at all**, so the three are not sparse, they are absent.
+"Job type" -- permanent, temporary, volunteer -- has neither a column nor an
+extracted key anywhere.
+
+So v2's Degree, Role, Employment and Job type selects are removed rather than
+left. They could only ever match nothing, and **a control that cannot match is
+worse than a note saying the data is missing**: it looks like a filter and it
+reads as broken to the first person who tries it. That is the
+433-disabled-controls finding in a better costume, and the reason it took a
+user report to surface is that a filter returning nothing is indistinguishable
+from a filter working on an empty result.
+
+The old board is honest about this in `found_lane.py` -- "degree, role and job
+type are not extracted yet" -- and shows the emptiness behind that note.
+
+**This is an ingest item and always was.** `extract.extract()` returns
+`{yearsMin, yearsMax, yearsText}` and attempts nothing else. Bringing the
+controls back means an extractor that reads a description for a degree
+requirement, an employment type and a role category, and it belongs with the
+connector work rather than with the board. The controls go back the day the
+column is populated, not before.
+
+What survives and is worth wiring: **Max experience** (`years_min`/`years_max`,
+39.0%), **Locations** (`location_raw` 99.7%, plus `city`/`region`/`country`),
+**workplace** (`workplace` 30.2%, `remote` 100%), and the two free-text
+filters, hide-mentioning and company include/exclude, which read columns that
+are fully populated.
+
 ## The three attributes nothing extracts, measured 2026-09-02
 
 `extracted.degree`, `extracted.employmentType` and `extracted.roleCategory` are
