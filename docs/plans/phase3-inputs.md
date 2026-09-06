@@ -789,6 +789,73 @@ row draws what was sent, what the store holds, and the store's own words. That
 is the honest failure rather than a silent overwrite of a newer answer, but it
 is a failure.
 
+### 11e. Parity could not see the employer edge at all, 2026-09-06
+
+**Closed before the resolver, because it is the check the resolver needs.**
+`mirror_fields.EXEMPT[("postings","employer_id")]` excused the column as "a
+uuid Postgres assigns... the employer is compared through
+`employers.canonical_name` instead". The first clause is true and the second
+described a comparison that did not exist: `posting_row` returns thirty columns
+and none is the employer, and `compared()["employers"]` is that table's own
+four. Parity asked "does employer row E have the right name" and never "does
+posting P point at the right employer".
+
+Measured by driving `verify_parity.compare`: a posting under the wrong employer
+with every compared column identical produced no finding; changing `title`
+produced one. So the resolver's correct run and its catastrophic run were the
+same green.
+
+Comparing on `canonical_name` is 307 false positives of 23,633, all one
+employer under two spellings (249 are Davies against Davies Group). Through
+`norm_company` against `norm_name` it is 16, in two named allowances. Landed in
+#201, mutation-verified against production by repointing one posting inside a
+transaction.
+
+**Every exemption now carries a `GIVES UP:` clause** naming the property it
+surrenders rather than only why the column differs. Three exemptions have had
+that shape; this is the one that cost.
+
+### 11f. What the multi-agent pass established, and what it did not
+
+A five-lens pass produced 38 claims, each put to three independent refuters.
+It is recorded here with its coverage rather than as a set of conclusions,
+because 35 of 120 agents died on a session limit including the synthesizer,
+and **a claim whose verifiers did not run is not a refuted claim.**
+
+Coverage: the `ordering`, `carry-set` and `winner-rule` lenses completed. Every
+one of their 24 claims was refuted, overwhelmingly in the useful shape --
+the refuter reproduces the measurement exactly and then shows the derivation
+from it is wrong. `observability` and most of `blast-radius`, 14 claims, lost
+their verifiers. **Those are unverified. Do not cite them.**
+
+Two survived, and both were re-measured by hand before being written here:
+
+**The rule and the backfill have different lifetimes, so "budget the backfill
+with the rule" hides two budgets.** A repointed `employer_id` is never
+re-derived, so the backfill is permanent and irreversible. A new posting's
+employer is derived fresh on every arrival from one line --
+`backfill.py:512`, `norm = norm_company(record.get("company")) or
+UNKNOWN_EMPLOYER` -- so the corpus refills with wrong rows whether or not the
+backfill ran. Verified: that line is the sole site deciding a posting's
+employer; every other mention of `employer_id` in `packages/` and `scripts/` is
+a read or the INSERT that carries it. The consequence is that the rule must be
+installed at that line and not only inside a module the backfill calls, and the
+two halves need different evidence: the backfill is verified once by reading
+rows, the arrival path by watching wrongly-attributed arrivals not grow.
+
+**§11c's witness method has no witness here.** Its rule is "when a change
+rewrites a row, find a table that references it and was written earlier". That
+worked for the fold because `job_scores` and `applications` reference
+`postings.id`. Nothing anywhere references the posting-to-employer edge:
+verified against the device database, exactly two foreign keys reference
+`employers` (`postings_employer_id_fkey` and `employers_merged_into_fkey`),
+`job_scores` carries no employer material, and there is no audit table. So the
+method §11c calls general fails on its very next case, and §9a's scale is why
+nobody noticed -- at six rows the stdout print *is* the before-image. At
+thousands it is not.
+
+The consequence is the next section.
+
 ## 12. Four filter controls were removed, and here is what brings them back
 
 Re-measured 2026-09-05 over all **25,204** pool records, which is up from the

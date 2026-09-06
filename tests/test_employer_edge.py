@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO / "tests"))
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "packages" / "schema"))
 
+import pgtest          # noqa: E402
 import store_isolation  # noqa: E402
 
 
@@ -49,6 +50,7 @@ def tearDownModule():
 
 
 import backfill        # noqa: E402
+import migrate         # noqa: E402
 import mirror_fields   # noqa: E402
 import verify_parity   # noqa: E402
 
@@ -165,3 +167,101 @@ class TheExemptionSaysWhatItGivesUp(unittest.TestCase):
             [k for k in row if "employ" in k.lower() or "company" in k.lower()],
             [], "a posting row now carries its employer, so the edge comparison "
                 "and the field comparison are two answers to one question")
+
+
+class ProvenanceIsRecordedOnTheArrivalPath(pgtest.SchemaCase):
+    prefix = "empedge"
+
+    """`postings.employer_decided_by`, driven against a real database.
+
+    **Added before the resolver, because the write it will make is the one
+    nothing can take back.** Measured 2026-09-06 against production: exactly
+    two foreign keys reference `employers` and neither is a witness to the
+    posting-to-employer edge, so §11c's verification method -- find a table
+    that references the row and was written earlier -- has nothing to find.
+
+    Two properties, and the second is the one the resolver depends on.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.assert_isolated()
+        migrate.run(self.conn, migrate.MIGRATIONS)
+
+    def record(self, legacy, company):
+        return {"id": legacy, "company": company, "title": "T",
+                "canonicalSource": "greenhouse",
+                "canonicalUrl": f"https://boards.greenhouse.io/x/jobs/{legacy}",
+                "state": "new", "firstSeenAt": "2026-09-01T00:00:00Z",
+                "lastSeenAt": "2026-09-06T00:00:00Z"}
+
+    def store(self, records):
+        employers = backfill.upsert_employers(self.conn, records)
+        if isinstance(employers, tuple):
+            employers = employers[0]
+        backfill.upsert_postings(self.conn, records, employers)
+
+    def employer_of(self, legacy):
+        with self.conn.cursor() as cur:
+            cur.execute("""select e.norm_name, p.employer_decided_by,
+                                  p.employer_decided_at is not null
+                             from postings p
+                             join employers e on e.id = p.employer_id
+                            where p.legacy_id = %s""", (legacy,))
+            return cur.fetchone()
+
+    def test_an_arriving_posting_records_which_rule_chose_its_employer(self):
+        self.store([self.record("prov-1", "Acme")])
+        norm, by, stamped = self.employer_of("prov-1")
+        self.assertEqual(norm, "acme")
+        self.assertEqual(by, backfill.DECIDED_BY_INGEST)
+        self.assertTrue(stamped)
+
+    def test_a_stored_posting_keeps_its_employer_when_the_pool_is_corrected(self):
+        """**The finding that reshapes the resolver, as a test.**
+
+        `employer_id` and its provenance lead the INSERT tuple and are absent
+        from the `on conflict do update` assignments, so a posting's employer
+        is decided once. Correcting the pool's `company` and re-running the
+        real upsert does not move the stored row.
+
+        Verified against production the same way before it was written here,
+        inside a transaction that was rolled back: a posting filed under
+        `appcast enterprise` stayed there after its record's company was
+        corrected to Johnson Controls and `upsert_postings` re-ran on it.
+
+        So the resolver cannot work by fixing ingest, and it cannot work by
+        fixing the pool. It needs its own write against `postings.employer_id`,
+        exactly as it needs its own write for `employers.domain`, and for the
+        same reason: the upsert path is deliberately not a correction path.
+        """
+        self.store([self.record("prov-2", "Appcast Enterprise")])
+        self.assertEqual(self.employer_of("prov-2")[0], "appcast enterprise")
+
+        self.store([self.record("prov-2", "Johnson Controls")])
+        norm, _, _ = self.employer_of("prov-2")
+        self.assertEqual(
+            norm, "appcast enterprise",
+            "a corrected pool moved the stored employer, which would mean the "
+            "resolver could ship as an ingest fix. It cannot; if this ever "
+            "passes the other way, the resolver's design changes with it")
+
+    def test_the_provenance_column_is_not_backfilled(self):
+        """A row written before this column existed reads null, and null means
+        'decided before provenance was recorded'. Inventing 'ingest' for it
+        would be a claim about how 25,000 rows were decided, reconstructed
+        from the fact that nothing is complaining."""
+        with self.conn.cursor() as cur:
+            cur.execute("""insert into employers (canonical_name, norm_name)
+                           values ('Old', 'old') returning id""")
+            employer = cur.fetchone()[0]
+            cur.execute(
+                """insert into postings (employer_id, legacy_id, source,
+                                         board_slug, external_id, title,
+                                         apply_url, first_seen_at, last_seen_at)
+                   values (%s, 'prov-3', 'greenhouse', 'x', 'prov-3', 'T',
+                           'https://boards.greenhouse.io/x/jobs/3', now(), now())""",
+                (employer,))
+            cur.execute("select employer_decided_by from postings "
+                        "where legacy_id = 'prov-3'")
+            self.assertIsNone(cur.fetchone()[0])
