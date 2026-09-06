@@ -689,6 +689,89 @@ because new collisions would resolve correctly.
 
 Budget the backfill with the rule, not after it.
 
+### 11c. A row that references a uuid is a witness the comparison cannot be
+
+**Parity cannot prove a uuid survived a fold, and the scores table can.**
+
+The fold rewrites which record a `postings` row holds. The question afterwards
+is whether the row kept its uuid or got a new one, because `applications.
+posting_id` and `job_scores.posting_id` both point at it and §5 is about
+building more of those links. Parity compares the device's pool against the
+mirror, and the device's pool has no uuids in it at all -- they are minted on
+the Postgres side -- so a green parity run is silent about exactly this.
+
+The proof is a third table that already holds the answer. A `job_scores` row
+can only carry a uuid that existed when the row was written, so a score
+computed *before* the fold and still joining afterwards is a uuid that did not
+move. Measured 2026-09-06, after `backfill_fold_winners.py --apply`:
+
+```
+3c12eb512130a4bb  4d55ecc6-3fb8-431f-9f58-176fec9cba26  closed=false
+                  score computed 2026-09-02 22:28:56Z
+f4ca7580de7eacac  5b3fdbdc-e4df-46d5-8d23-2a00a1d0660e  closed=false
+                  score computed 2026-09-02 22:28:56Z
+d0710a7fb465bcff  aac3d5e0-aa3f-4997-9bba-1e231b568554  closed=false
+                  score computed 2026-09-03 20:16:57Z
+
+job_scores rows pointing at a uuid postings no longer has:  0 of 25,199
+applications with a posting_id pointing at a missing posting: 0 of 97
+```
+
+All three now read `closed=false` under the live title, which is the fold, and
+all three kept a score row from three days before it, which is the uuid.
+
+**The method generalises past this fix.** When a change rewrites a row, the
+thing to look for is a table that references it and was written earlier: the
+reference is evidence about identity that neither the row nor a comparison of
+two copies of the row can give. Same shape as reading the pool's mtime rather
+than the publish time to answer "is the board current", and the opposite of
+asking parity, which by construction answers only "did the two copies agree".
+
+### 11d. v2 cannot edit an answer that has been edited before
+
+**`answer_bank` does not carry the entry's version, so v2 has nothing to send,
+and `store.py` is right to refuse an edit that guesses.**
+
+Every Memory Bank action carries the version it was made against --
+`answer-edit`, `answer-delete`, `answer-dismiss` and `answer-restore` all take
+`--version`, and `store.bank_version` compares it against the stored entry.
+Matching applies the edit; not matching is either a replay of the same
+`editId` or something else moved first, which is refused as `conflict`. That
+is the guarantee, and it is the right one.
+
+`class_b.answer_row` carries question, value, state, tags, sensitive, kind and
+category. Not version. So v2 sends 0 for every row. Measured 2026-09-06 over
+all 195 entries:
+
+```
+version 0   156    editable from v2 today
+version 1    38    refused: "the entry moved to version 1"
+version 3     1    refused: "the entry moved to version 3"
+```
+
+**And 156 is a ceiling that falls to zero with use**, because the first
+successful edit of any entry takes it to version 1 and v2 still says 0. So
+this is not a 20% gap, it is a gap that closes the feature after one use of
+each row.
+
+The Python board does not have it: `profile_panel.py` reads `answers.json`
+directly and has the version in hand. This is v2-only, introduced by which
+fields the mirror carries rather than by anything about the write path.
+
+**The fix is one column and it is a mirror change**, which is why it is written
+here rather than made: `version integer` on `answer_bank`, one key on
+`answer_row`, and v2 sends what it read. `mirror_fields` discovers the column
+from the INSERT and parity compares it without anyone listing it twice, the
+same way `edit_outcomes` landed. Nothing else changes: no store contract, no
+new queue field, no backfill -- the device's own file already holds every
+value, so the first sweep after the migration fills the column from what is
+there.
+
+Until then the refusal is at least visible: `edit_outcomes` records it, and the
+row draws what was sent, what the store holds, and the store's own words. That
+is the honest failure rather than a silent overwrite of a newer answer, but it
+is a failure.
+
 ## 12. Four filter controls were removed, and here is what brings them back
 
 Re-measured 2026-09-05 over all **25,204** pool records, which is up from the
