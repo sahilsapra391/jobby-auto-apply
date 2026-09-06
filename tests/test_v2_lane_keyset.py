@@ -23,7 +23,6 @@ import unittest
 #: names them now, and psycopg raises on a missing key rather than defaulting,
 #: which is the behaviour to want: a walk that silently filtered would report a
 #: smaller lane as correct.
-NO_FILTERS = {"q": None, "within": None, "direct": None}
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +34,13 @@ sys.path.insert(0, str(REPO / "packages" / "schema"))
 
 import pgtest    # noqa: E402
 import v2_lanes  # noqa: E402
+
+#: The whole lane, unfiltered. **Derived, because the hand-written version was
+#: three names and the query grew to ten.** Every test here then raised "query
+#: parameter missing" in CI, where the database exists; locally the module
+#: skips entirely, so the list was wrong on the machine that edited it and
+#: right nowhere.
+NO_FILTERS = v2_lanes.no_filters()
 
 PAGE = 7          # deliberately not a divisor of any lane size below
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)

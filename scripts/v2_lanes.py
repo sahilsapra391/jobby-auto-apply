@@ -385,7 +385,15 @@ FILTERS = """
    and (%(exclude)s::text is null
         or (p.title not ilike '%%' || %(exclude)s::text || '%%'
             and coalesce(p.summary, '') not ilike '%%' || %(exclude)s::text || '%%'))
-   and (%(q)s::text is null or %(scope)s::text <> 'title'
+   -- **`coalesce`, because `NULL <> 'title'` is NULL and NULL is not true.**
+   -- With no scope chosen the clause read `false or NULL or (title ilike ...)`,
+   -- so a row survived only when the reader's raw text was a literal substring
+   -- of the title. `product manager` is one and passed; `manager -warehouse`
+   -- and `"product manager"` are not, so both drew an empty lane while the
+   -- full-text index underneath was answering perfectly. Caught before it
+   -- deployed, by running the suite against a database rather than watching
+   -- twenty-six modules skip.
+   and (%(q)s::text is null or coalesce(%(scope)s::text, '') <> 'title'
         or p.title ilike '%%' || %(q)s::text || '%%')
    and (%(loc)s::text[] is null or p.country = any(%(loc)s::text[]))
    and (%(wp)s::text[] is null
@@ -531,6 +539,38 @@ select count(*)
 """.strip()
 
 
+#: Every parameter any query here can take, in a fixed order so the numbering
+#: is deterministic. Which of them a given query actually uses is read off that
+#: query, not assumed.
+#:
+#: **Module-level so a caller can derive its own parameter dict from it.** It
+#: was local to `as_typescript` and `tests/test_v2_lane_keyset.py` restated the
+#: filter half as a three-name `NO_FILTERS`; adding six filters left that list
+#: three names long, and every query in that file raised "query parameter
+#: missing" in CI. Locally the whole module skips for want of a database, so
+#: the list could not be seen to be wrong on the machine it was edited on.
+PARAMS = ["account", "after_at", "after_id", "limit", "q", "within",
+          "direct", "row_id",
+          # The advanced card. Every one reads a column measured populated
+          # on 2026-09-05: country 99.7%, remote 100%, workplace 30.2%,
+          # years_min 39.0%, canonical_name on every employer.
+          "exclude", "scope", "loc", "wp", "exp", "cos", "conames"]
+
+#: The four that are not a filter: who is asking, where the page starts, and
+#: how much of it. Everything else in `PARAMS` narrows the lane, so
+#: `no_filters()` is the rest of it set to null.
+NOT_A_FILTER = ("account", "after_at", "after_id", "limit", "row_id")
+
+
+def no_filters():
+    """Every filter parameter, off.
+
+    For a caller that wants the whole lane. Derived rather than listed, so a
+    filter added tomorrow is supplied without anyone remembering.
+    """
+    return {name: None for name in PARAMS if name not in NOT_A_FILTER}
+
+
 def as_typescript():
     """The same strings, for `apps/web`, with psycopg's named placeholders
     rewritten to node-postgres' positional ones.
@@ -539,15 +579,7 @@ def as_typescript():
     thing `LogoContractTests` exists to prevent, and a lane predicate is
     exactly the kind of text that gets edited on one side only.
     """
-    #: Every parameter any query here can take, in a fixed order so the
-    #: numbering is deterministic. Which of them a given query actually uses is
-    #: read off that query, not assumed.
-    known = ["account", "after_at", "after_id", "limit", "q", "within",
-             "direct", "row_id",
-             # The advanced card. Every one reads a column measured populated
-             # on 2026-09-05: country 99.7%, remote 100%, workplace 30.2%,
-             # years_min 39.0%, canonical_name on every employer.
-             "exclude", "scope", "loc", "wp", "exp", "cos", "conames"]
+    known = PARAMS
 
     def positional(sql):
         """`(sql, params)` with **contiguous** numbering for this query alone.
