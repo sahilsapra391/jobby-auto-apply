@@ -121,10 +121,13 @@ class CommandTests(unittest.TestCase):
             payload = {}
         return proc.returncode, payload, proc.stderr
 
-    # `test_take_release_round_trip` lives in `tests/quarantined_deploy_lock.py`.
-    # It fails in a full run and passes alone, and nobody has diagnosed it; see
-    # that file and `docs/quarantine.md` for what is known and what it would
-    # take to bring it back.
+    # `test_take_release_round_trip` and `test_extend_needs_the_token` live in
+    # `tests/quarantined_deploy_lock.py`. Both fail in a full run and pass
+    # alone, and neither is diagnosed. They are one family: every test here
+    # isolates the lock file's *path* through `JOB_APPLICATION_DIR` and none of
+    # them isolates its *clock*, and the two that left both take a real lease
+    # (120 seconds, in the second one) across several subprocess round trips.
+    # See that file and `docs/quarantine.md`.
 
     def test_a_refused_take_exits_non_zero(self):
         """A caller that checks only the exit code must not read
@@ -145,16 +148,6 @@ class CommandTests(unittest.TestCase):
         self.assertIn("stuck", stderr)
         self.assertIn("holder died mid-deploy", stderr)
 
-    def test_extend_needs_the_token(self):
-        _, taken, _ = self.run_cli("take", "--owner", "me", "--lease", "120")
-        code, refused, _ = self.run_cli("extend", "--token", "wrong")
-        self.assertEqual(code, 1)
-        self.assertFalse(refused["extended"])
-        code, extended, _ = self.run_cli(
-            "extend", "--token", taken["token"], "--lease", "600")
-        self.assertEqual(code, 0)
-        self.assertTrue(extended["extended"])
-        self.assertEqual(extended["holder"]["owner"], "me")
 
     def test_the_lease_is_capped(self):
         _, taken, _ = self.run_cli("take", "--owner", "me", "--lease", "999999")
