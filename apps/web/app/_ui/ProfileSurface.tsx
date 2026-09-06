@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { BANK_CATEGORIES } from "../bank.generated";
 import type { BankEntry, BaseResume } from "./db";
 import { EditStateLine, slotOf, useEdits } from "./ProfileEdits";
 
@@ -21,7 +22,22 @@ import { EditStateLine, slotOf, useEdits } from "./ProfileEdits";
  * exactly where an impatient double click is already landing, so the question
  * replaces the row of controls and the confirming button is somewhere the
  * second click was never going.
+ *
+ * **The category label is looked up here, not handed in.** `page.tsx` is a
+ * server component and had been passing its own `catLabel` closure down as a
+ * prop; a function cannot cross the RSC boundary, so every render carrying a
+ * row threw `Functions cannot be passed directly to Client Components`. It
+ * only threw when there *was* a row, which is why CI never saw it: the
+ * throwaway container has an empty `answer_bank`, `rows.map` produced nothing,
+ * and the prop was never serialized. `bank.generated.ts` is a plain constant
+ * module, so importing it on this side costs nothing and removes the boundary
+ * crossing rather than working around it.
  */
+
+/** The display name for a category slug, or the slug when it has none. */
+export function categoryLabel(slug: string): string {
+  return BANK_CATEGORIES.find(([k]) => k === slug)?.[1] ?? slug;
+}
 
 /** Why a control is dark. Read from the account's own flag, not assumed. */
 const OFF = "Writes are off for this account.";
@@ -50,9 +66,7 @@ function Confirm({ question, verb, onYes, onNo }: {
  * that still holds an answer, and the wording here says which is which rather
  * than offering two buttons that look interchangeable.
  */
-export function BankRow({ entry, catLabel }: {
-  entry: BankEntry; catLabel: (slug: string) => string;
-}) {
+export function BankRow({ entry }: { entry: BankEntry }) {
   const { enabled, send } = useEdits();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(entry.value ?? "");
@@ -65,13 +79,13 @@ export function BankRow({ entry, catLabel }: {
     setLocal(null);
     setAsking(null);
     setEditing(false);
-    // **The version travels with the edit and v2 sends what it read.**
-    // `answer_bank` does not carry it, so this is 0 for every row until the
-    // mirror does, and an entry already past 0 comes back refused naming the
-    // version it moved to. That is the honest failure -- visible, with all
-    // three facts -- rather than an edit that silently overwrites a newer one.
+    // **The version travels with the edit, and it is the one that was read.**
+    // `store.py` compares it against what it holds and refuses a mismatch as
+    // `conflict`, which is what stops this board overwriting an answer that
+    // moved while the page was open. Sending a constant would defeat that
+    // check rather than satisfy it.
     setLocal(await send({ kind: "answer", slot, key: entry.key,
-                          version: 0, ...body }));
+                          version: entry.version, ...body }));
   };
 
   return (
@@ -100,7 +114,8 @@ export function BankRow({ entry, catLabel }: {
           {entry.state === "needs-you" ? "needs you" : (entry.state ?? "confirmed")}
         </span>
         {entry.category && entry.kind === "question"
-          ? <span className="bank-tag">{catLabel(entry.category)}</span> : null}
+          ? <span className="bank-tag">{categoryLabel(entry.category)}</span>
+          : null}
         {entry.tags.map((t) => <span className="bank-tag" key={t}>{t}</span>)}
         {entry.updatedAt ? (
           <span className="bank-when">
