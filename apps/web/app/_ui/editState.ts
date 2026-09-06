@@ -9,14 +9,20 @@
  * inspected in a component is a rule nobody has executed.
  */
 
-/** One edit this browser sent, remembered until an outcome for it arrives. */
+/**
+ * One edit this browser sent, remembered until an outcome for it arrives.
+ *
+ * **It does not carry what was submitted, on purpose.** The outcome does, from
+ * the device's own record of what it claimed, and a local copy beside it would
+ * be a second answer to "what did I send" that could disagree with the first.
+ * A local hope is a claim about timing and nothing else.
+ */
 export type Sent = {
   editId: string;
   /** `queue:target`, so a row asks about its own edit rather than the newest
    *  edit of anything. */
   slot: string;
   at: number;
-  submitted: unknown;
 };
 
 /** What the device recorded, as `edit_outcomes` holds it. */

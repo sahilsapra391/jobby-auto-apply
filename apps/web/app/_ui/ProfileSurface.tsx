@@ -61,7 +61,7 @@ export function BankRow({ entry, catLabel }: {
   const [local, setLocal] = useState<string | null>(null);
   const slot = slotOf("answerEdits", entry.key);
 
-  const dispatch = async (body: Record<string, unknown>, submitted: unknown) => {
+  const dispatch = async (body: Record<string, unknown>) => {
     setLocal(null);
     setAsking(null);
     setEditing(false);
@@ -70,8 +70,8 @@ export function BankRow({ entry, catLabel }: {
     // mirror does, and an entry already past 0 comes back refused naming the
     // version it moved to. That is the honest failure -- visible, with all
     // three facts -- rather than an edit that silently overwrites a newer one.
-    setLocal(await send({ kind: "answer", slot, submitted,
-                          key: entry.key, version: 0, ...body }));
+    setLocal(await send({ kind: "answer", slot, key: entry.key,
+                          version: 0, ...body }));
   };
 
   return (
@@ -129,7 +129,7 @@ export function BankRow({ entry, catLabel }: {
             <button className="btn" type="button" onClick={() => dispatch({
               action: "save", question: entry.question ?? entry.key, value,
               state: sensitive ? "sensitive" : "confirmed",
-            }, value)}>Save answer</button>
+            })}>Save answer</button>
           </div>
         </div>
       ) : asking === "delete" ? (
@@ -137,13 +137,13 @@ export function BankRow({ entry, catLabel }: {
           question={`Forget the answer to "${entry.question ?? entry.key}"? The
                      question stays and Jobby will ask again.`}
           verb="Forget it" onNo={() => setAsking(null)}
-          onYes={() => dispatch({ action: "delete" }, null)} />
+          onYes={() => dispatch({ action: "delete" })} />
       ) : (
         <div className="bank-act">
           {entry.state === "dismissed" ? (
             <button className="btn ghost" type="button" disabled={!enabled}
                     title={enabled ? "Let Jobby ask this again" : OFF}
-                    onClick={() => dispatch({ action: "restore" }, null)}>
+                    onClick={() => dispatch({ action: "restore" })}>
               Ask me again
             </button>
           ) : (
@@ -156,7 +156,7 @@ export function BankRow({ entry, catLabel }: {
               <button className="btn ghost" type="button" disabled={!enabled}
                       title={enabled
                         ? "Refuse the question, without answering it" : OFF}
-                      onClick={() => dispatch({ action: "dismiss" }, null)}>
+                      onClick={() => dispatch({ action: "dismiss" })}>
                 Never ask
               </button>
               {entry.value ? (
@@ -195,8 +195,7 @@ export function ResumeCard({ resume, fallback, children }: {
 
   const dispatch = async (action: string) => {
     setAsking(false);
-    setLocal(await send({ kind: "resume", slot, action, key: resume.key ?? "",
-                          submitted: { action, key: resume.key } }));
+    setLocal(await send({ kind: "resume", slot, action, key: resume.key ?? "" }));
   };
 
   return (
@@ -247,7 +246,10 @@ export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
   const [countries, setCountries] = useState("");
   const [copyFrom, setCopyFrom] = useState(resumes[0]?.key ?? "");
   const [local, setLocal] = useState<string | null>(null);
-  const slot = slotOf("resumeEdits", key || "new");
+  // **Frozen when the form is sent, not read from the field.** The key is what
+  // names the slot, and a reader who clears the box after pressing Create
+  // would otherwise watch the state line move to a slot nothing was sent on.
+  const [slot, setSlot] = useState<string | null>(null);
 
   const codes = countries.toUpperCase().split(/[^A-Z]+/).filter(Boolean);
 
@@ -280,10 +282,12 @@ export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
             <button className="btn ghost" type="button"
                     onClick={() => setOpen(false)}>Cancel</button>
             <button className="btn" type="button" onClick={async () => {
-              const body = { key, label, countries: codes, copyFrom };
-              setLocal(await send({ kind: "resume", slot, action: "add",
-                                    submitted: body, ...body }));
+              const sending = slotOf("resumeEdits", key);
+              setSlot(sending);
               setOpen(false);
+              setLocal(await send({ kind: "resume", slot: sending,
+                                    action: "add", key, label,
+                                    countries: codes, copyFrom }));
             }}>Create</button>
           </div>
           <p className="bank-note">
@@ -293,7 +297,7 @@ export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
           </p>
         </div>
       ) : null}
-      <EditStateLine slot={slot} local={local} />
+      {slot ? <EditStateLine slot={slot} local={local} /> : null}
     </div>
   );
 }

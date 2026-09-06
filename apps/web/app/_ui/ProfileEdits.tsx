@@ -50,8 +50,8 @@ type Edits = {
   enabled: boolean;
   stateOf: (slot: string) => EditState;
   /** Post one edit. Resolves to the refusal text, or null when it was taken. */
-  send: (edit: { kind: "answer" | "resume"; slot: string;
-                 submitted: unknown } & Record<string, unknown>)
+  send: (edit: { kind: "answer" | "resume"; slot: string }
+              & Record<string, unknown>)
     => Promise<string | null>;
 };
 
@@ -72,6 +72,7 @@ function readSent(): Sent[] {
     // migrated: its POST has already gone out, and believing it now can only
     // mislabel a row.
     return held.filter((e) => e && typeof e.editId === "string"
+                         && typeof e.slot === "string"
                          && typeof e.at === "number");
   } catch {
     return [];
@@ -145,11 +146,11 @@ export function EditsProvider({ enabled, outcomes: initial, children }: {
     [sent, outcomes]);
 
   const send = useCallback(async (edit: {
-    kind: "answer" | "resume"; slot: string; submitted: unknown;
+    kind: "answer" | "resume"; slot: string;
   } & Record<string, unknown>): Promise<string | null> => {
     const editId = mintEditId();
-    const { slot, submitted, ...body } = edit;
-    const entry: Sent = { editId, slot, at: Date.now(), submitted };
+    const { slot, ...body } = edit;
+    const entry: Sent = { editId, slot, at: Date.now() };
     setSent((held) => {
       const next = [...held.filter((s) => Date.now() - s.at < SENT_TTL_MS), entry];
       writeSent(next);

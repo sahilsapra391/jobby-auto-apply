@@ -33,8 +33,7 @@ const { resolveEditState, slotOf, SENT_TTL_MS } =
 
 const SLOT = slotOf('answerEdits', 'salary-expectation');
 const NOW = 1_760_000_000_000;
-const sent = (over = {}) =>
-  ({ editId: 'v2-a', slot: SLOT, at: NOW - 1000, submitted: 'ninety', ...over });
+const sent = (over = {}) => ({ editId: 'v2-a', slot: SLOT, at: NOW - 1000, ...over });
 const recorded = (over = {}) => ({
   editId: 'v2-a', queue: 'answerEdits', state: 'accepted',
   target: 'salary-expectation', submitted: null, held: null, reason: null,
