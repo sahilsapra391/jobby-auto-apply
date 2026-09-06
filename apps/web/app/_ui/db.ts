@@ -86,7 +86,22 @@ export type Row = Record<string, unknown> & { id: string };
  * `nulls last` and the three cases the cursor predicate has are written once.
  */
 /** The Found lane's filters. Absent means off, never "match everything". */
-export type Filters = { q?: string; within?: string; direct?: boolean };
+export type Filters = {
+  q?: string; within?: string; direct?: boolean;
+  /** Words to exclude from title and summary. */
+  not?: string;
+  /** Which columns `q` searches: title, or title and summary. */
+  scope?: string;
+  /** "only" or "hide", against the comma-separated names in `conames`. */
+  cos?: string;
+  conames?: string;
+  /** ISO country codes. Empty is Worldwide, which is the board's contract. */
+  loc?: string[];
+  /** Workplace kinds to keep. */
+  wp?: string[];
+  /** Max years of experience the posting may ask for. */
+  exp?: string;
+};
 
 /**
  * The arguments a generated query asks for, in the order it asks for them.
@@ -106,11 +121,66 @@ function argsFor(params: readonly string[], values: Record<string, unknown>) {
   });
 }
 
+/**
+ * Every filter as a SQL parameter, with the shapes the generated predicates
+ * expect.
+ *
+ * **`null` is the off switch throughout**, because each predicate is written
+ * `(%(x)s is null or <test>)`. A filter that arrived as an empty string or an
+ * empty array would be a predicate that matches nothing rather than one that
+ * does not apply, which is the difference between "no filter" and "no
+ * results" -- the two states this board has already confused once.
+ */
+/**
+ * Every filter, read from one URL, in one place.
+ *
+ * **The lane route hand-listed three of them and `page.tsx` read seven.** So
+ * page one filtered and Load more did not: the same query string produced a
+ * filtered first page from the server component and an unfiltered second page
+ * from `/api/lane`, and the count in the header agreed with neither. Two
+ * readers of one URL is the declared-twice shape this repository has met in
+ * `GATE_PATHS`, `verify_parity.FIELDS`, the migrations list and the generated
+ * file list; here it was caught by checking that a filter changed the rows
+ * rather than only the count.
+ *
+ * Both callers come through this now, so a filter added to `Filters` is read
+ * by both or by neither.
+ */
+export function filtersFrom(params: URLSearchParams): Filters {
+  const one = (k: string) => params.get(k) ?? undefined;
+  const many = (k: string) => {
+    const all = params.getAll(k);
+    return all.length ? all : undefined;
+  };
+  return {
+    q: one("q"), within: one("within"), direct: params.get("direct") === "1",
+    not: one("not"), scope: one("scope"), cos: one("cos"),
+    conames: one("conames"), loc: many("loc"), wp: many("wp"), exp: one("exp"),
+  };
+}
+
 function filterValues(f: Filters | undefined) {
+  const list = (xs?: string[]) => (xs && xs.length ? xs : null);
+  const names = (f?.conames ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return {
     q: f?.q?.trim() || null,
     within: f?.within && f.within in WINDOWS ? WINDOWS[f.within] : null,
     direct: f?.direct ?? false,
+    // `exclude` rather than `not`: the SQL parameter name ends up in
+    // generated statements and `not` is a reserved word there.
+    exclude: f?.not?.trim() || null,
+    // The scope only means anything with a keyword, and "title" is the
+    // narrower of the two, so it is the default the SQL assumes.
+    scope: f?.scope === "all" ? "all" : "title",
+    // A mode with no names is not a filter. Both halves or neither, or "hide"
+    // with an empty box would hide everything.
+    cos: names.length && (f?.cos === "only" || f?.cos === "hide") ? f.cos : null,
+    conames: names.length ? names : null,
+    loc: list(f?.loc),
+    // All three ticked is the same as no opinion, and passing it as a filter
+    // would drop the 69.8% of postings whose workplace is not recorded.
+    wp: f?.wp && f.wp.length && f.wp.length < 3 ? f.wp : null,
+    exp: f?.exp && /^\d+$/.test(f.exp) ? Number(f.exp) : null,
   };
 }
 

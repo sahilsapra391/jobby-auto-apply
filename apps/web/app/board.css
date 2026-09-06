@@ -584,6 +584,12 @@
   .jb-confirm { flex:1 1 100%; font-size:.82rem; line-height:1.35;
     color:var(--ink); font-weight:600; }
 
+  /* The filter card is one form, so every control in it is submitted. The
+     element itself lays out nothing: `display:contents` leaves the rows,
+     the chips and the advanced block exactly where they were when the form
+     wrapped only the first row. */
+  .jb-filter-form { display:contents; }
+
   /* The disclosure. Small, lowercase, no button chrome: it is a way in, not an
      action, and it sat under Posting looking like a fifth control. */
   .jb-det { display:inline-flex; align-items:center; gap:.35rem; background:none;

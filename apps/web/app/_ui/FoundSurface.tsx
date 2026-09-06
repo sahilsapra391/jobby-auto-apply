@@ -104,8 +104,18 @@ export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
  */
 export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                          locations = [], writesEnabled = false,
-                         searchScope = "title", extraLocations = [] }: {
+                         searchScope = "title", extraLocations = [],
+                         not_, cos, conames, wp, exp }: {
   q?: string; within?: string; direct?: boolean; sort?: Sort;
+  /** Words to exclude. `not` is a reserved word, hence the underscore. */
+  not_?: string;
+  /** "all" | "only" | "hide" -- what to do with the company names beside it. */
+  cos?: string;
+  conames?: string;
+  /** Workplace kinds still ticked. Undefined means untouched, so all of them. */
+  wp?: string[];
+  /** Max years of experience, as the option value. */
+  exp?: string;
   shown?: number; total?: number;
   /** Every open posting, before any filter. */
   pool?: number;
@@ -138,7 +148,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           It also makes a filtered lane linkable and survivable across a reload,
           which the board's version is not. Submitting on Enter in the keyword
           box is what a form already does. */}
-      <form className="jb-row jb-basic" method="get" action="/">
+      {/* **One form around every control, because a control outside one is
+          never submitted.** The advanced block used to sit after `</form>`,
+          so none of it reached the server however it was named -- and none of
+          it was named either. The form carries `display:contents`, so the
+          rows lay out exactly as they did when it wrapped only the first one. */}
+      <form className="jb-filter-form" method="get" action="/">
+      <div className="jb-row jb-basic">
         <input type="hidden" name="lane" value="found" />
         <input type="search" name="q" defaultValue={q ?? ""}
                placeholder="Add a keyword and press Enter…"
@@ -198,7 +214,7 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             </>
           )}
         </span>
-      </form>
+      </div>
       <SubmitOnChange />
       {/* The keyword chips the old board renders under the input. Each is a
           link that removes its own term, which is what a chip's × does. */}
@@ -252,18 +268,22 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           {writesEnabled ? (
             <>
               <div className="jb-row">
-                <input type="search" placeholder="Hide jobs mentioning…"
+                <input type="search" name="not" defaultValue={not_ ?? ""}
+                       placeholder="Hide jobs mentioning…"
                        aria-label="Hide jobs mentioning" />
-                <select aria-label="Where to search" defaultValue={searchScope}>
+                <select name="scope" aria-label="Where to search"
+                        defaultValue={searchScope}>
                   {SCOPE_OPTIONS.map(([v, label]) => (
                     <option value={v} key={v}>{label}</option>))}
                 </select>
-                <select aria-label="Companies">
+                <select name="cos" aria-label="Companies"
+                        defaultValue={cos ?? "all"}>
                   <option value="all">All companies</option>
                   <option value="only">Only these companies</option>
                   <option value="hide">Hide these companies</option>
                 </select>
-                <input type="search" placeholder="Company names, comma separated"
+                <input type="search" name="conames" defaultValue={conames ?? ""}
+                       placeholder="Company names, comma separated"
                        aria-label="Company names" />
               </div>
               <div className="jb-row">
@@ -273,14 +293,23 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                                   extra={extraLocations} />
                 </div>
                 <div className="jb-stack">
+                  {/* **Decorative until the location filter it modifies is
+                      doing something worth modifying.** "Include remote for
+                      this selection" widens `loc`, and a control that widens
+                      an unset filter is a control with no effect -- naming it
+                      would make it submit a parameter no predicate reads,
+                      which is the inert-control problem with a name on it. It
+                      goes in with the locations work. */}
                   <label className="jb-check">
-                    <input type="checkbox" defaultChecked />
+                    <input type="checkbox" defaultChecked
+                           data-decorative="widens the location filter; wired with it" />
                     <span>include remote for this selection</span>
                   </label>
                   <div className="jb-checks">
                     {WORKPLACES.map(([v, label]) => (
                       <label className="jb-check" key={v}>
-                        <input type="checkbox" defaultChecked />
+                        <input type="checkbox" name="wp" value={v}
+                               defaultChecked={wp === undefined || wp.includes(v)} />
                         <span>{label}</span>
                       </label>))}
                   </div>
@@ -312,20 +341,32 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                 {([["Max experience", EXPERIENCE_OPTIONS]] as [string, Option[]][])
                   .map(([label, options]) => (
                     <label className="jb-lab" key={label}>{label}
-                      <select>
+                      <select name="exp" defaultValue={exp ?? ""}>
                         {options.map(([v, text]) => (
                           <option value={v} key={v}>{text}</option>))}
                       </select>
                     </label>))}
               </div>
               <div className="jb-row jb-checks">
-                {UNKNOWN_TOGGLES.map(([key, label]) => (
+                {/* **These widen the filters beside them, so they wait for
+                    those.** "unknown experience" means "keep postings whose
+                    years are not stated", which is a modifier on Max
+                    experience and means nothing on its own; submitting a
+                    parameter no predicate reads is the inert control again
+                    wearing a name. They go in with the filters they modify.
+
+                    The note under them named degree, role and job type, which
+                    are no longer offered at all -- a note explaining controls
+                    that are gone is worse than none. */}
+                {UNKNOWN_TOGGLES.filter(([key]) => key !== "degree")
+                  .map(([key, label]) => (
                   <label className="jb-check" key={key}>
-                    <input type="checkbox" defaultChecked />
+                    <input type="checkbox" defaultChecked
+                           data-decorative="widens the filter beside it; wired with that filter" />
                     <span>unknown {label}</span>
                   </label>))}
-                <span className="jb-note">degree, role and job type are not
-                  extracted yet, so they filter the unknown bucket honestly</span>
+                <span className="jb-note">postings that do not state a value
+                  are kept; the filters beside these are what narrow them</span>
               </div>
             </>
           ) : (
@@ -347,6 +388,7 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           )}
         </div>
       </details>
+      </form>
       {/* The board's own actions row, which v2 had not at all. Save search is
           the write; Clear is a link because a reset would restore the form's
           defaults and leave the URL filtered, so the count would not move. */}
@@ -378,7 +420,12 @@ export function AddLink({ writesEnabled }: { writesEnabled: boolean }) {
       <h4>Found something yourself?</h4>
       <p>Paste a posting and the next sweep starts there.</p>
       <div className="jb-row">
+        {/* Not a filter and not in the filter form: this enqueues a posting
+            onto the scan queue, which `board.js` already accepts and v2 has no
+            route for yet. It is a build of its own, not a name away from
+            working. */}
         <input type="url" placeholder="https://…" aria-label="Posting link"
+               data-decorative="enqueues to the scan queue; v2 has no route for it yet"
                disabled={!writesEnabled}
                title={writesEnabled ? undefined : READ_ONLY} />
         <button className="jb-btn" type="button" disabled={!writesEnabled}

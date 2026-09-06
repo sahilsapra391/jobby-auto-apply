@@ -83,7 +83,11 @@ function everyControl() {
   const out = [];
   for (const name of readdirSync(UI)) {
     if (!name.endsWith('.tsx')) continue;
-    for (const c of controlsUnderForms(join(UI, name))) out.push({ file: name, ...c });
+    const src = readFileSync(join(UI, name), 'utf8');
+    const fileHasForm = /<form[\s>]/.test(src);
+    for (const c of controlsUnderForms(join(UI, name))) {
+      out.push({ file: name, fileHasForm, ...c });
+    }
   }
   return out;
 }
@@ -105,8 +109,13 @@ test('every control is submitted, or says why not', () => {
   // every one were named. A guard that passes against the bug it was written
   // for is the vacuous check this repository has now met a dozen times, and
   // the only reason it was caught is that it went green when it should not.
+  // **A file with no form of its own cannot decide where its controls land.**
+  // `LocationPicker` is a fragment the Found card renders inside its form;
+  // asking it to contain one would be asking the wrong component. What it does
+  // control is the name, so that is what is required of it. A file that does
+  // have a form is judged on both, because there the placement is its choice.
   const inert = everyControl().filter(
-    (c) => !c.decorative && (!c.inForm || !c.named));
+    (c) => !c.decorative && (!c.named || (c.fileHasForm && !c.inForm)));
   assert.deepEqual(
     inert, [],
     'these controls cannot reach the server. A control outside a form is ' +
@@ -114,7 +123,8 @@ test('every control is submitted, or says why not', () => {
     'submission -- both render, take a value, and do nothing, which is ' +
     'indistinguishable from a filter that works and matches nothing:\n' +
     inert.map((c) => `  ${c.file}:${c.line} <${c.tag}${c.type ? ' type=' + c.type : ''}>` +
-                     `${c.inForm ? ' has no name' : ' is outside any form'}`)
+                     `${!c.named ? ' has no name'
+                                  : ' is outside its file\'s form'}`)
       .join('\n') +
     `\n\nPut it in the form and name it, or mark it ` +
     `${DECORATIVE}="why it is not submitted".`);

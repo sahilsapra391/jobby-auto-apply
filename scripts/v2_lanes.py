@@ -363,6 +363,13 @@ WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
 #: keyword box takes phrases in quotes and `-word` to exclude, and the reader
 #: who types them should get what they asked for rather than a token soup.
 #:
+#: **The company predicate names no alias.** `FILTERS` is shared by the page
+#: query, the count and the row lookup, and only the first joins `employers e`.
+#: Writing `e.canonical_name` here compiled fine in the generator and answered
+#: "missing FROM-clause entry for table e" on the first count -- a 500 on the
+#: board rather than a build failure. An `exists` against `employers em` is
+#: self-contained, so every query that shares this block can carry it.
+#:
 #: "direct listings only" is `sourceClass = 'ats'`, which is `direct_rank` 0.
 #: The board draws the same chip on the same rows: `canonical_rank` puts ats at
 #: 0, aggregator and feed at 2, and employer and other at 3, and the card's
@@ -374,7 +381,24 @@ FILTERS = """
         or (p.posted_at is not null
             and p.posted_at >= now() - %(within)s::interval))
    and (not coalesce(%(direct)s::boolean, false)
-        or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)"""
+        or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)
+   and (%(exclude)s::text is null
+        or (p.title not ilike '%%' || %(exclude)s::text || '%%'
+            and coalesce(p.summary, '') not ilike '%%' || %(exclude)s::text || '%%'))
+   and (%(q)s::text is null or %(scope)s::text <> 'title'
+        or p.title ilike '%%' || %(q)s::text || '%%')
+   and (%(loc)s::text[] is null or p.country = any(%(loc)s::text[]))
+   and (%(wp)s::text[] is null
+        or p.workplace = any(%(wp)s::text[])
+        or ('remote' = any(%(wp)s::text[]) and p.remote))
+   and (%(exp)s::int is null
+        or p.years_min is null or p.years_min <= %(exp)s::int)
+   and (%(cos)s::text is null
+        or (%(cos)s::text = 'only') = exists (
+              select 1 from employers em
+               where em.id = p.employer_id
+                 and lower(em.canonical_name) = any(
+                       select lower(x) from unnest(%(conames)s::text[]) as x)))"""
 
 
 def page_sql(lane, sort="new"):
@@ -519,7 +543,11 @@ def as_typescript():
     #: numbering is deterministic. Which of them a given query actually uses is
     #: read off that query, not assumed.
     known = ["account", "after_at", "after_id", "limit", "q", "within",
-             "direct", "row_id"]
+             "direct", "row_id",
+             # The advanced card. Every one reads a column measured populated
+             # on 2026-09-05: country 99.7%, remote 100%, workplace 30.2%,
+             # years_min 39.0%, canonical_name on every employer.
+             "exclude", "scope", "loc", "wp", "exp", "cos", "conames"]
 
     def positional(sql):
         """`(sql, params)` with **contiguous** numbering for this query alone.
