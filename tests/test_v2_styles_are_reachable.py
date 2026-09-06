@@ -159,16 +159,22 @@ UNRENDERED = {
     "the resume wording editor: the fields, the role blocks and the rendered "
     "frame beside them": {
         "state": "gated",
-        "why": "**not the flag.** `class_b._PROFILE_EXCLUDED` keeps "
-               "`resume-content.json` out of the mirror on purpose -- the same "
-               "wording in two places with no rule about which wins is the "
-               "fault that served one application's wording in place of "
-               "another's for as long as the feature existed -- so Postgres "
-               "holds nothing for v2 to render, and an editor over nothing is "
-               "worse than a stage saying why. The write half of the Profile "
-               "page landed without it: the bank, the registry and "
-               "`edit_outcomes` are live. This one waits on a mirror decision "
-               "the owner has to take.",
+        "why": "**not the flag, and not a mirror decision anybody may take.** "
+               "`class_b._PROFILE_EXCLUDED` keeps `resume-content.json` out of "
+               "`profiles` for two reasons and only one was written down. The "
+               "recorded one is integrity: the same wording in two places with "
+               "no rule about which wins is the fault that served one "
+               "application's wording in place of another's for as long as the "
+               "feature existed. The other is that the wording travels to a "
+               "provider inside the AES-256-GCM job bundle, so mirroring it "
+               "puts a person's employment history in their own words in the "
+               "clear in Postgres, on a connection that is the database owner "
+               "today. That is Class 1 plaintext where the plan puts Class 2 "
+               "ciphertext. Gated on Phase 5's per-account encryption keys, "
+               "written as a requirement in `docs/plans/"
+               "jobby-v2-rebuild-plan.md`. The rest of the Profile write half "
+               "landed without it: the bank, the registry and `edit_outcomes` "
+               "are live.",
         "classes": {"wording-field", "wording-list", "wording-role",
                     "resume-frame"},
     },

@@ -28,10 +28,15 @@ import { categoryLabel } from "../_ui/bankLabels";
  * `edit_outcomes`. Nothing on this page draws a change it has not been told
  * happened.
  *
- * **The wording editor is the one control still dark, and not because of the
- * flag.** `class_b._PROFILE_EXCLUDED` keeps the resume content out of the
- * mirror, so there is nothing in Postgres for v2 to render and edit. That is a
- * mirror decision rather than a UI one, and the stage says so.
+ * **The wording editor is the one control still dark, and it is a security
+ * property rather than unfinished work.** The resume wording travels to a
+ * provider inside the AES-256-GCM job bundle;
+ * `class_b._PROFILE_EXCLUDED` keeps it out of `profiles`, so mirroring it to
+ * make it editable here would put a person's employment history in their own
+ * words in the clear in Postgres, on a connection that is the database owner
+ * today, behind a shared password. That is Class 1 plaintext where the plan
+ * puts Class 2 ciphertext. Reversing it is gated on the per-account
+ * encryption keys in Phase 5, which is where the requirement is written.
  */
 export const dynamic = "force-dynamic";
 
@@ -200,20 +205,18 @@ export default async function Profile({ searchParams }: {
                 </div>
                 <div className="resume-stage">
                   <p className="bank-note">
-                    The wording lives on your device, in
-                    <code> resume-content.json</code>, and it is deliberately
-                    not mirrored: the same words in two places with no rule
-                    about which wins is the fault that served one
-                    application&apos;s wording in place of another&apos;s for as
-                    long as the feature existed. So there is nothing here to
-                    edit until that decision is revisited. Editing it on the
-                    device still works.
+                    Not shown here, and that is deliberate. Your resume wording
+                    is your employment history in your own words, and it
+                    reaches an AI provider inside an encrypted bundle rather
+                    than sitting in the board&apos;s database. Putting it here
+                    would mean storing it in the clear, so it waits for
+                    per-account encryption. Editing it on your device still
+                    works, and nothing about your applications is affected.
                   </p>
                 </div>
                 <div className="wording-act">
                   <span className="profile-message" role="status">
-                    Not editable here. The wording is not in the mirror v2
-                    reads.
+                    Not editable here, by design. It stays encrypted.
                   </span>
                 </div>
               </div>
