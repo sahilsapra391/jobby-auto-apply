@@ -1258,6 +1258,116 @@ declared in a module that is not `"use client"`.** Constants shared across the
 boundary belong in a plain module both sides import, never in the client file
 that happens to use them most.
 
+#### The same rule, both directions, one afternoon, 2026-09-06
+
+**The rule above says where a shared value goes. Getting it wrong in either
+direction took the Profile page down twice in an hour.**
+
+    page.tsx held `catLabel` and passed    Functions cannot be passed directly
+    it to a client row component            to Client Components
+    ProfileSurface held it and page.tsx    Attempted to call categoryLabel()
+    called it on the server                 from the server but categoryLabel
+                                            is on the client
+
+A function is the loud case of the constant above, and it is worse in one
+respect: **it throws only on a render that carries a row.** `tsc` types it
+correctly on both sides, because the boundary is a bundler transform rather
+than a type-level one. `next build` compiles it, because it fails at
+serialization. And the deployed-shape crawl passed it, because CI's Postgres
+had no rows: `rows.map` produced nothing, the component was never created, and
+the prop was never serialized. Production has 195.
+
+The fix for the instance is `_ui/bankLabels.ts`, a module that is neither side.
+The fix for the class is the fixture below.
+
+### An empty database is a check that covers a fraction of the page, 2026-09-06
+
+**`check_deployed_shape.mjs` builds the traced bundle, serves it, and crawls
+every route, and against CI's throwaway container every lane drew its empty
+state.** Three faults have now reached production through that one gap, and
+each was invisible for the identical reason:
+
+    /api/company-logo   came across in the markup and not in the code. Fifty
+                        Found cards asked for it per page load and 404'd. CI
+                        emitted no logo URLs because it had no postings.
+    the RSC boundary    throws at serialization, so only a render carrying a
+                        row throws, and there were no rows.
+    .gitignore          `applications/` unanchored swallowed the write
+                        endpoint's route file. A route git ignores and a route
+                        nobody wrote answer identically from CI.
+
+This is `test_v2_matches_the_board`'s empty-fixture finding one directory over,
+and the same correction applies: **"not zero" is not "complete."** That check
+asserted the board rendered *some* classes and passed on 99 when a real render
+emits 164. This one asserted the route answered 200 and passed on a page
+missing every row-bearing branch it exists to exercise.
+
+`packages/schema/seed_shape_fixture.py` puts one row of everything in --
+employer, posting, score, an application per lane, a bank entry per kind, a
+profile with a base resume -- under sentinel names nobody could mistake for
+real data, and writes the markers it used. The crawl reads that file rather
+than restating the strings, and **a missing fixture fails**: crawling an
+unseeded page and reporting a pass is precisely the failure being closed.
+Measured: 74 asset URLs before, 94 after, and it caught a second boundary error
+on its first run.
+
+**Its own guard was wrong first, in the instructive direction.** It refused to
+seed a database holding more than 50 postings, on the theory that a real store
+has thousands and a throwaway has none. Measured on a container that had just
+run the suite: 300 postings and 229 applications, from tests that create their
+own accounts and rows. So it would have refused in CI, on the one database it
+exists to run against -- and a row count was never going to answer the question
+anyway, because the question is *whose* database this is. It compares the URL
+against `migrate._device_url` now, pooled endpoint normalised, and an
+unparseable URL refuses rather than seeds. Provenance is the property the thing
+itself cannot answer, which this file already says about `activity.json` and
+about which kind of checkout you are standing in.
+
+### SQL comparison is three-valued, and the false branch is silent, 2026-09-06
+
+**`NULL <> 'title'` is NULL, and NULL is not true.** A disjunct written to mean
+"this filter is off, so let every row through" instead lets nothing through,
+and no error is raised anywhere.
+
+The clause was Found's title-scope filter:
+
+```sql
+and (%(q)s::text is null or %(scope)s::text <> 'title'
+     or p.title ilike '%' || %(q)s::text || '%')
+```
+
+With no scope chosen, which is every default page load, the middle term is NULL
+rather than true, so a row survived only when the reader's raw keyword was a
+literal substring of the title. Full-text search underneath was answering
+perfectly and the lane came back empty.
+
+**The corpus decided which third of it looked broken.** Three keyword tests
+existed. `product manager` passed, because it is a substring of "Product
+Manager" and a stemming index and a raw `ilike` agree on it. `manager
+-warehouse` and `"product manager"` are substrings of nothing and both failed.
+That is the substring-matching entry's shape from the other end: the rule read
+correctly and the fixture decided what it meant.
+
+**And nothing would have run those tests.** `test_found_filters` skips without
+a database, so it runs in CI only, and it only ran at all because a *different*
+fault broke first -- a hand-written parameter list that had not learned about
+six new filters. The real defect was underneath a mechanical one, and the
+mechanical one is what made anybody look.
+
+So, for any SQL a filter is compiled into: **a parameter compared with an
+operator rather than `is null` must be `coalesce`d, or guarded by an explicit
+`is null` disjunct that short-circuits before it.** The failure direction is
+silent removal, never an error, which is why it cannot be left to be noticed.
+Measured across all eleven generated lane queries after the fix: one site
+remains comparing a parameter with an operator, `(%(cos)s::text = 'only')`, and
+it sits behind `%(cos)s::text is null or`, which short-circuits.
+
+The general form outlives SQL. Any three-valued logic -- SQL predicates,
+`NaN` comparisons, an `Option` compared with `==` -- has a middle value that is
+neither branch, and a condition written as a two-way choice will take the
+branch its author was not thinking about. Write the null case, do not let it
+fall out.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

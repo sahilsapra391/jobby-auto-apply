@@ -651,6 +651,45 @@ would not report. So no POST route, no mutation and no ORM convenience that
 writes lands before the parity gate closes. The credential will not stop any of
 them, and nothing else is standing there.
 
+**The resume wording stays out of Postgres until per-account encryption
+exists, and the Profile page's editor stays dark until then.** This is a
+requirement of this phase, not a feature waiting on effort.
+
+`class_b._PROFILE_EXCLUDED` keeps `resume-content.json` and `writingSamples`
+out of the `profiles` mirror. That was recorded as an integrity decision -- the
+same wording in two places with no rule about which wins is the fault that
+served one application's wording in place of another's for as long as the
+feature existed -- and it is also a security property, which is the half that
+was not written down. The wording travels to a provider inside the
+AES-256-GCM job bundle. Mirroring it would put it in the clear in Postgres, on
+a connection that is the database owner today (see above), behind a shared
+password, for a document that carries a person's employment history in their
+own words.
+
+So the trade is not "one more mirrored column against a nicer editor". It is
+Class 1 plaintext against Class 2 ciphertext, and the plan's §6 already puts
+resume content on the Class 2 side. **Per-account encryption keys for the
+document bundle** is listed as work in this phase; reversing the exclusion is
+gated on that key existing, not on anybody wanting the editor.
+
+Two things follow for whoever picks this up:
+
+- The editor is buildable the moment the wording is readable, and the CSS for
+  it is already in v2's stylesheet: `wording-field`, `wording-list`,
+  `wording-role`, `resume-frame` are declared `gated` in
+  `tests/test_v2_styles_are_reachable.py` with this as their stated reason.
+  That is deliberately the third state -- not a gap, and not architectural
+  either.
+- Editing the wording is destructive and the confirm wording is already
+  decided, because `store.cmd_resume_content_put` overwrites with no history:
+  **"this replaces your base resume and the previous wording is not kept."**
+  Do not soften it into a generic "are you sure" when the editor lands, and do
+  not add a version history instead without saying so, because the sentence is
+  only true while that remains the behaviour.
+
+Until then the Profile page says why the editor is dark in its own words,
+rather than rendering a disabled control that reads as unfinished work.
+
 **Negative tests:** the cross-tenant read matrix from §8.2 — authenticate as A, attempt every account-scoped table and every R2 prefix for B, assert zero rows and 403s. Assert the API's DB role cannot bypass RLS, which takes **two** assertions and not one: `pg_roles.rolbypassrls` is false, *and* the role does not own any policied table (`pg_class.relowner`). §3's RLS section measures why the first alone passes on a connection with no isolation at all.
 
 **Gate:** create a real second account end to end, from signup to a submitted application, using a different provider account, without any manual server-side setup.
