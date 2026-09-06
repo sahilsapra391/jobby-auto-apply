@@ -195,6 +195,12 @@ EXEMPT = {
     ("applications", "legacy_id"):
         "the join key. The comparison is keyed on it, so it cannot disagree "
         "with itself.",
+    ("edit_outcomes", "account_id"):
+        "the tenant key, not content. It scopes the comparison rather than "
+        "being a field within it.",
+    ("edit_outcomes", "edit_id"):
+        "the join key. Both sides are keyed on it, so comparing it to itself "
+        "is vacuous.",
     ("application_events", "account_id"):
         "the tenant key, not content. It scopes the comparison rather than "
         "being a field within it.",
