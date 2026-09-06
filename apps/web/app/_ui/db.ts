@@ -500,6 +500,54 @@ export type BankEntry = {
 };
 
 /**
+ * What happened to one edit the reader submitted.
+ *
+ * **Three facts that do not share a field**, per migration 0016: what was
+ * sent, what the store held instead, and the store's own words. A refusal the
+ * reader cannot compare against is a refusal they cannot act on.
+ */
+export type EditOutcome = {
+  editId: string;
+  queue: string;
+  state: "pending" | "accepted" | "refused";
+  target: string | null;
+  submitted: unknown;
+  held: unknown;
+  reason: string | null;
+  at: string | null;
+};
+
+/** How many outcomes a page carries. The device keeps 200; this is a page. */
+const OUTCOMES_SHOWN = 60;
+
+/**
+ * The account's recent edit outcomes, newest first.
+ *
+ * **An absent row is not an accepted edit**, and nothing here turns one into
+ * the other. Edits made before migration 0016 have no row, edits still in the
+ * queue have no row, and a device that stopped has no row: all three read as
+ * "the board has not heard", which is what they are. The page says so rather
+ * than filling the silence in.
+ */
+export async function editOutcomes(): Promise<EditOutcome[]> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select edit_id, queue, state, target, submitted, held, reason, at
+       from edit_outcomes where account_id = $1
+      order by at desc limit $2`, [account, OUTCOMES_SHOWN]);
+  return rows.map((r) => ({
+    editId: r.edit_id,
+    queue: r.queue,
+    state: r.state,
+    target: r.target ?? null,
+    submitted: r.submitted ?? null,
+    held: r.held ?? null,
+    reason: r.reason ?? null,
+    at: r.at ?? null,
+  }));
+}
+
+/**
  * The Profile page's data: the resume registry and the Memory Bank.
  *
  * **The answer's own value travels and is drawn plainly.** CLAUDE.md settles
@@ -510,16 +558,17 @@ export type BankEntry = {
  * question text alone would lose every row the answer store's own state caught.
  */
 export async function profile(): Promise<{
-  resumes: BaseResume[]; bank: BankEntry[];
+  resumes: BaseResume[]; bank: BankEntry[]; outcomes: EditOutcome[];
 }> {
   const account = await accountId();
-  const [profileRows, bankRows] = await Promise.all([
+  const [profileRows, bankRows, outcomes] = await Promise.all([
     pool().query("select resumes from profiles where account_id = $1", [account]),
     pool().query(
       `select key, question, value, state, tags, sensitive, kind, category,
               updated_at
          from answer_bank where account_id = $1
         order by updated_at desc nulls last, key`, [account]),
+    editOutcomes(),
   ]);
   const raw = (profileRows.rows[0]?.resumes ?? []) as Record<string, unknown>[];
   return {
@@ -550,6 +599,7 @@ export async function profile(): Promise<{
       category: r.category ?? null,
       updatedAt: r.updated_at ?? null,
     })),
+    outcomes,
   };
 }
 

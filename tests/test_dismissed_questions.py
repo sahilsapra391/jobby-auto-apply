@@ -30,6 +30,37 @@ import unittest
 from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _node():
+    spec = importlib.util.spec_from_file_location(
+        "toolpath", ROOT / "scripts" / "toolpath.py")
+    toolpath = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(toolpath)
+    return toolpath.find("node", required=False)
+
+
+def _plan_answer_edit(body):
+    """Run `deploy/profile_edits.mjs` on one body, in node.
+
+    The rules are JavaScript because both boards are, and running them beats
+    restating them in Python: a Python copy of the action list would be the
+    third declaration of it, which is the thing that module exists to prevent.
+    """
+    node = _node()
+    if node is None:
+        raise unittest.SkipTest("node is not installed")
+    src = ROOT / "deploy" / "profile_edits.mjs"
+    result = subprocess.run(
+        [node, "--input-type=module", "-e",
+         f"import {{ planAnswerEdit }} from {json.dumps(str(src))};"
+         "let raw='';process.stdin.on('data',c=>{raw+=c;})"
+         ".on('end',()=>{console.log("
+         "JSON.stringify(planAnswerEdit(JSON.parse(raw))));});"],
+        input=json.dumps(body), capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        raise AssertionError(f"the planner would not run: {result.stderr[:400]}")
+    return json.loads(result.stdout or "{}")
 sys.path.insert(0, str(ROOT / "tests"))
 import store_isolation  # noqa: E402
 
@@ -397,13 +428,29 @@ class TheBoardIsToldWhichRowsAreDismissed(BankCase):
         self.assertIn("'dismissedAt'", fields)
 
     def test_the_route_accepts_both_actions_and_wants_the_key(self):
-        route = (ROOT / "deploy" / "api" / "board.js").read_text(encoding="utf-8")
-        actions = route.split("const ANSWER_ACTIONS = ")[1].split(";")[0]
-        for action in ("'save'", "'delete'", "'dismiss'", "'restore'"):
-            self.assertIn(action, actions)
-        keyed = route.split("const ANSWER_KEYED = ")[1].split(";")[0]
-        for action in ("'delete'", "'dismiss'", "'restore'"):
-            self.assertIn(action, keyed)
+        """Both boards plan an edit the same way, and the planner is run.
+
+        **This used to read `board.js` for `const ANSWER_ACTIONS = ` and split
+        on it.** The rules moved to `deploy/profile_edits.mjs` when v2 grew a
+        write half -- two boards writing one queue, so one validator -- and the
+        check broke on a refactor that improved exactly what it guards. That is
+        the `GATE_PATHS` equality test again: its subject was the arrangement
+        of the source rather than the property the arrangement is for.
+
+        So it calls the planner. `dismiss` and `restore` have to be accepted
+        and each has to insist on the key, because a keyless dismissal is an
+        edit the store cannot file and the queue would carry it anyway.
+        """
+        plan = _plan_answer_edit
+        for action in ("save", "delete", "dismiss", "restore"):
+            body = {"editId": "e1", "action": action, "key": "k",
+                    "question": "Q", "value": "V"}
+            self.assertNotIn("error", plan(body),
+                             f"{action} is not accepted by the planner")
+        for action in ("delete", "dismiss", "restore"):
+            refused = plan({"editId": "e1", "action": action})
+            self.assertEqual(refused.get("error"), f"{action} needs the key")
+        self.assertIn("error", plan({"editId": "e1", "action": "invent"}))
 
     def counts(self):
         state = {"answers": store.cmd_answer_list(self.ns())}

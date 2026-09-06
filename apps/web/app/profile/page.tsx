@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
-import { profile } from "../_ui/db";
+import { accountId, profile } from "../_ui/db";
+import { writesEnabled } from "../_ui/writes";
 import { BANK_CATEGORIES, BANK_KINDS } from "../bank.generated";
-import { READ_ONLY } from "../_ui/actions";
+import { EditsProvider } from "../_ui/ProfileEdits";
+import { AddBaseResume, BankRow, ResumeCard } from "../_ui/ProfileSurface";
 
 /**
  * Profile: what every tailored resume starts from, and what Jobby answers with.
@@ -18,11 +20,17 @@ import { READ_ONLY } from "../_ui/actions";
  * strip instead, which is why it looked substantially different from the board
  * while being made of the board's CSS.
  *
- * **The write half is deliberately absent, not forgotten.** `details.wording`
- * (edit the resume in place) and `div.base-form` (add a base resume) are both
- * writes and both go behind `live_board` with item 21. The button that opens
- * the form renders disabled carrying its reason, rather than as a control with
- * nothing behind it.
+ * **The write half is enqueue-only and lives in `_ui/ProfileSurface`.** An
+ * answer belongs to `answers.json` on the device and reaches `answer_bank`
+ * through the Class B mirror, so the device is the only writer; a control here
+ * puts the edit on the queue and shows what the device decided, read back from
+ * `edit_outcomes`. Nothing on this page draws a change it has not been told
+ * happened.
+ *
+ * **The wording editor is the one control still dark, and not because of the
+ * flag.** `class_b._PROFILE_EXCLUDED` keeps the resume content out of the
+ * mirror, so there is nothing in Postgres for v2 to render and edit. That is a
+ * mirror decision rather than a UI one, and the stage says so.
  */
 export const dynamic = "force-dynamic";
 
@@ -52,7 +60,16 @@ export default async function Profile({ searchParams }: {
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
-  const { resumes, bank } = await profile();
+  const [{ resumes, bank, outcomes }, writes] = await Promise.all([
+    profile(), accountId().then(writesEnabled),
+  ]);
+  // What a removed base's postings fall back to, named rather than described,
+  // because "the default" is not a thing a reader can check against the cards
+  // in front of them.
+  const fallback = resumes.find((r) => r.isDefault);
+  const fallbackName = fallback
+    ? `the ${(fallback.key ?? "").toUpperCase() || "default"} base`
+    : "no base at all, and the application fails";
 
   const tab = TABS.some(([k]) => k === askedTab) ? askedTab! : "question";
   const inTab = bank.filter((e) => tabOf(e) === tab);
@@ -93,6 +110,7 @@ export default async function Profile({ searchParams }: {
   return (
     <>
       <AppBar here="profile" theme={theme} home={home} />
+      <EditsProvider enabled={writes} outcomes={outcomes}>
       <div className="wrap">
         <section className="profile-page">
           {/* **Eyebrow then title, in that order.** v2 had them swapped: an
@@ -124,7 +142,8 @@ export default async function Profile({ searchParams }: {
 
             <div className="identity-grid">
               {resumes.map((r) => (
-                <article className="identity-card" key={r.key ?? r.document}>
+                <ResumeCard key={r.key ?? r.document} resume={r}
+                            fallback={fallbackName}>
                   <div className="identity-head">
                     <div>
                       <h4>{(r.key ?? "").toUpperCase() || "Base"}</h4>
@@ -147,76 +166,20 @@ export default async function Profile({ searchParams }: {
                         </div>
                       ))}
                   </dl>
-                  {!r.isDefault ? (
-                    <div className="identity-act">
-                      <button className="btn ghost" type="button" disabled
-                              title={READ_ONLY}>Make default</button>
-                    </div>
-                  ) : null}
-                </article>
+                </ResumeCard>
               ))}
               {resumes.length === 0 ? (
                 <p className="bank-note">No base resumes recorded.</p>
               ) : null}
             </div>
 
-            <div className="identity-add">
-              <button className="btn ghost" type="button" disabled
-                      title={READ_ONLY}>Add a base resume</button>
-              {/* **The form the button opens, rendered dark rather than
-                  absent.** Creating a base writes `profiles.resumes`, which is
-                  a write, so it is behind `live_board`. Present because a
-                  button that opens nothing is worse than a form you can see and
-                  cannot submit: the reader learns what the board will ask for,
-                  and wiring it later is one step rather than two. */}
-              <div className="base-form">
-                <label>Name
-                  <input type="text" placeholder="Europe" disabled
-                         title={READ_ONLY} /></label>
-                <label>Key
-                  <input type="text" placeholder="eu" disabled
-                         title={READ_ONLY} /></label>
-                <label>Countries
-                  <input type="text" placeholder="GB, DE, FR, NL" disabled
-                         title={READ_ONLY} /></label>
-                <label>Copy from<span className="vh"> an existing base</span>
-                  <select disabled title={READ_ONLY}>
-                    {resumes.map((r) => (
-                      <option key={r.key ?? ""} value={r.key ?? ""}>
-                        {(r.key ?? "").toUpperCase() || "Base"}
-                      </option>))}
-                  </select></label>
-                <label>Document
-                  <span className="base-file">
-                    <input type="file" accept="application/pdf,.pdf" disabled
-                           title={READ_ONLY} />
-                    <span className="bank-note">
-                      Using the copied base&apos;s PDF. Choose a file to use
-                      your own instead.
-                    </span>
-                  </span></label>
-                <div className="bank-act">
-                  <button className="btn" type="button" disabled
-                          title={READ_ONLY}>Create</button>
-                  <button className="btn ghost" type="button" disabled
-                          title={READ_ONLY}>Cancel</button>
-                </div>
-                <p className="bank-note">
-                  Contact details always come from the base you copy. A PDF you
-                  upload becomes what this base is <em>based on</em>: the text a
-                  tailored resume is written against. The wording itself still
-                  starts from the copied base, because the layout a resume
-                  renders through is the template&apos;s, not the uploaded
-                  file&apos;s.
-                </p>
-                <span className="profile-message">{READ_ONLY}</span>
-              </div>
-            </div>
+            <AddBaseResume resumes={resumes} />
 
-            {/* **The resume editor, open and read-only.** Editing the wording
-                writes it, so the controls are dark; the document itself is a
-                read and v2 does not carry it yet, which the stage says rather
-                than pretending to load forever. */}
+            {/* **The resume editor is dark because the wording is not
+                mirrored, not because writes are off.** `_PROFILE_EXCLUDED`
+                keeps `resume-content.json` out of `profiles`, so Postgres has
+                nothing for v2 to render and an editor over nothing is worse
+                than a stage that says why. The stage says why. */}
             <details className="wording">
               <summary>
                 <span>Edit your resume</span>
@@ -234,18 +197,20 @@ export default async function Profile({ searchParams }: {
                 </div>
                 <div className="resume-stage">
                   <p className="bank-note">
-                    The wording is on your device. v2 reads what the mirror
-                    carries, and the resume text is not mirrored yet, so there
-                    is nothing here to edit.
+                    The wording lives on your device, in
+                    <code> resume-content.json</code>, and it is deliberately
+                    not mirrored: the same words in two places with no rule
+                    about which wins is the fault that served one
+                    application&apos;s wording in place of another&apos;s for as
+                    long as the feature existed. So there is nothing here to
+                    edit until that decision is revisited. Editing it on the
+                    device still works.
                   </p>
                 </div>
                 <div className="wording-act">
-                  <button className="btn" type="button" disabled
-                          title={READ_ONLY}>Save resume</button>
-                  <button className="btn ghost" type="button" disabled
-                          title={READ_ONLY}>Revert</button>
                   <span className="profile-message" role="status">
-                    {READ_ONLY}
+                    Not editable here. The wording is not in the mirror v2
+                    reads.
                   </span>
                 </div>
               </div>
@@ -313,59 +278,10 @@ export default async function Profile({ searchParams }: {
                   holds one value, so these are exclusive rather than
                   combinable. */}
               {rows.map((entry) => (
-                <article key={entry.key}
-                         className={entry.state === "needs-you" ? "bank-row open"
-                           : entry.state === "dismissed" ? "bank-row struck"
-                           : "bank-row"}>
-                  <p className="bank-q">{entry.question ?? entry.key}</p>
-                  {/* **Drawn plainly, including the sensitive ones.**
-                      CLAUDE.md settles this: one reader, who knows his own
-                      salary and his own demographics, and a tap to reveal was
-                      friction protecting nobody. The flag stays on the row
-                      because it is what a second account will mask on. */}
-                  {entry.value ? (
-                    <p className="bank-a">{entry.value}</p>
-                  ) : (
-                    <p className="bank-a none">
-                      {entry.state === "dismissed"
-                        ? "You dismissed this. Jobby will not ask again."
-                        : "No answer yet."}
-                    </p>
-                  )}
-                  <p className="bank-meta">
-                    {/* **The three states written out, not composed.**
-                        `"bank-tag state-" + state` reads the same and is
-                        invisible to both guards: `test_v2_matches_the_board`
-                        proves no class is invented and
-                        `test_v2_styles_are_reachable` proves none is
-                        unreachable, and neither can resolve a name that only
-                        exists once the expression has run. Concatenating it
-                        made all three `state-*` rules look dead. These are
-                        also exactly the three the stylesheet defines. */}
-                    <span className={
-                      entry.state === "sensitive" ? "bank-tag state-sensitive"
-                      : entry.state === "dismissed" ? "bank-tag state-dismissed"
-                      : entry.state === "missing" ? "bank-tag state-missing"
-                      : "bank-tag"}>
-                      {entry.state === "needs-you"
-                        ? "needs you" : (entry.state ?? "confirmed")}
-                    </span>
-                    {entry.category && entry.kind === "question" ? (
-                      <span className="bank-tag">{catLabel(entry.category)}</span>
-                    ) : null}
-                    {entry.tags.map((t) => (
-                      <span className="bank-tag" key={t}>{t}</span>
-                    ))}
-                    {entry.updatedAt ? (
-                      <span className="bank-tag">
-                        Updated {String(entry.updatedAt).slice(0, 10)}
-                      </span>
-                    ) : null}
-                  </p>
-                </article>
+                <BankRow key={entry.key} entry={entry} catLabel={catLabel} />
               ))}
               {rows.length === 0 ? (
-                <p className="bank-note">
+                <p className="bank-empty">
                   {needle || cat
                     ? "No entry in this tab matches. Clear the filter to see the rest."
                     : "Answers arrive as employers ask them."}
@@ -383,6 +299,7 @@ export default async function Profile({ searchParams }: {
           </p>
         </section>
       </div>
+      </EditsProvider>
     </>
   );
 }

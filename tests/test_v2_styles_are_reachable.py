@@ -121,8 +121,10 @@ OBSERVED_ON_THE_PAGE = frozenset({
 #: list a sequence rather than an inventory.** Three states, and the third is
 #: not a smaller version of the second:
 #:
-#:   "gated"        needs writes. Cannot be built until the parity gate closes,
-#:                  the file store is deleted and `live_board` flips.
+#:   "gated"        needs something on the write path that does not exist yet.
+#:                  `live_board` flipping on 2026-09-05 was the first half of
+#:                  this and is done; what is left is per-feature, and each
+#:                  group has to name its own.
 #:   "buildable"    reads only. Nothing is stopping it now.
 #:   "architectural" v2 does this another way and the class will never be
 #:                  rendered. **Not a gap**, and counting it as one overstates
@@ -154,17 +156,51 @@ UNRENDERED = {
                "wrong in the other direction.",
         "classes": {'ans-src-provided', 'ans-src-profile', 'ans-src-generated', 'ans-src-stored'},
     },
-    "Profile's write half: the answer bank and the resume wording editor": {
+    "the resume wording editor: the fields, the role blocks and the rendered "
+    "frame beside them": {
         "state": "gated",
-        "why": "every control here saves. The wording editor writes "
-               "`profiles.base_resume_text` and the bank writes "
-               "`answer_bank`, both of which parity compares, so the first "
-               "one to land before the gate closes is a real divergence that "
-               "resets the clock. Sequence it after `live_board` flips.",
-        "classes": {"bank-alts", "bank-edit", "bank-empty", "bank-group",
-                    "bank-list", "bank-more", "bank-sensitive", "bank-when",
-                    "wording-field", "wording-list", "wording-role",
+        "why": "**not the flag.** `class_b._PROFILE_EXCLUDED` keeps "
+               "`resume-content.json` out of the mirror on purpose -- the same "
+               "wording in two places with no rule about which wins is the "
+               "fault that served one application's wording in place of "
+               "another's for as long as the feature existed -- so Postgres "
+               "holds nothing for v2 to render, and an editor over nothing is "
+               "worse than a stage saying why. The write half of the Profile "
+               "page landed without it: the bank, the registry and "
+               "`edit_outcomes` are live. This one waits on a mirror decision "
+               "the owner has to take.",
+        "classes": {"wording-field", "wording-list", "wording-role",
                     "resume-frame"},
+    },
+    "the Memory Bank's alternative answers, and the button that reveals them": {
+        "state": "buildable",
+        "why": "a read, and the column is the work. `class_b.answer_row` "
+               "carries question, value, state, tags, sensitive, kind and "
+               "category, and an entry's `alternatives` is not among them, so "
+               "there is nothing in `answer_bank` to list. One field on the "
+               "row and one column, then markup. No write in it.",
+        "classes": {"bank-alts", "bank-more"},
+    },
+    "the board's Memory Bank grouped under category headings": {
+        "state": "buildable",
+        "why": "a layout the board chose and v2 did not: the board groups the "
+               "bank under headings and v2 filters it with the category chips "
+               "above the list, over the same rows from the same query. "
+               "Buildable at any time and deliberately not built, because two "
+               "ways of narrowing the same list on one page is worse than "
+               "either.",
+        "classes": {"bank-group", "bank-list"},
+    },
+    "uploading your own PDF for a new base resume": {
+        "state": "buildable",
+        "why": "the form is live and copies an existing base, which is what "
+               "supplies the contact block and the document. Uploading a file "
+               "instead needs the other half of `watch.install_uploaded_"
+               "resume`: the board writes the PDF to its own KV key and the "
+               "device takes it from there, and v2 has no route that writes "
+               "that key. A file control before that route exists is a button "
+               "with nothing behind it.",
+        "classes": {"base-file"},
     },
     "provider connection state on the Settings page": {
         "state": "buildable",
@@ -190,7 +226,7 @@ UNRENDERED = {
                "finding from the other side: the same CSS that rendered a "
                "blank page there is correct to be inert here.",
         "classes": {"settings-view", "profile-view", "back-board",
-                    "settings-link", "profile-error", "nav-n", "ui-separator"},
+                    "settings-link", "nav-n", "ui-separator"},
     },
     "board-only affordances with no v2 equivalent decided yet": {
         "state": "buildable",
