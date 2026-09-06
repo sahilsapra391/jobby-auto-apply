@@ -720,6 +720,23 @@ applications with a posting_id pointing at a missing posting: 0 of 97
 All three now read `closed=false` under the live title, which is the fold, and
 all three kept a score row from three days before it, which is the uuid.
 
+**That witness has since been spent, deliberately, and the note says so rather
+than reading as reproducible.** The same fold left `job_scores` describing the
+record that had just *lost* the row -- a freshness point each, because the two
+were posted on different days -- and parity reported six divergences on two of
+the three pairs. `backfill_fold_winners.py` now rewrites the score with the
+posting, and `on conflict do update` sets `computed_at = now()`, so the
+timestamps above are today's on any re-reading. The uuids are unchanged and
+were compared against the values recorded here before the rewrite, which is the
+claim; the pre-fold timestamp is gone.
+
+Which is its own small lesson about this kind of evidence: **a witness drawn
+from a mutable row is consumed by the next write to it.** Record the value, not
+the query, and say when the query stopped answering.
+
+The other witness survives untouched and is the stronger one for §5's purposes:
+97 applications carry a `posting_id` and 0 of them point at a missing posting.
+
 **The method generalises past this fix.** When a change rewrites a row, the
 thing to look for is a table that references it and was written earlier: the
 reference is evidence about identity that neither the row nor a comparison of

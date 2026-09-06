@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPO / "packages" / "schema"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import backfill  # noqa: E402
+import dual_write  # noqa: E402
 import migrate  # noqa: E402
 
 #: The three folds measured on 2026-09-05, each a Breezy posting under two
@@ -117,8 +118,18 @@ def main(argv=None):
             print("\ndry run: nothing written. Re-run with --apply.")
             return 0
         with conn.transaction():
-            _postings, merged = backfill.upsert_postings(conn, records, employers)
+            postings, merged = backfill.upsert_postings(conn, records, employers)
+            # **The score has to follow the record, and the first version left
+            # it behind.** A fold changes which record a `postings` row holds;
+            # `job_scores` is keyed on that row's uuid, so the score sitting
+            # there was computed for the record that just lost. Parity read it
+            # as six divergences on two of the three pairs -- a freshness point
+            # each, because the loser was posted on a different day -- and the
+            # delta path would never have touched them again.
+            scored = backfill.upsert_scores(
+                conn, records, postings, dual_write.account_id(conn))
         print(f"\nupsert_postings folded: {merged}")
+        print(f"job_scores rewritten for the winners: {scored}")
         print("after:")
         show(conn, "after")
         print("\nRead those, not this exit code.")
