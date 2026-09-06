@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BANK_CATEGORIES } from "../bank.generated";
+import { categoryLabel } from "./bankLabels";
 import type { BankEntry, BaseResume } from "./db";
 import { EditStateLine, slotOf, useEdits } from "./ProfileEdits";
 
@@ -23,21 +23,10 @@ import { EditStateLine, slotOf, useEdits } from "./ProfileEdits";
  * replaces the row of controls and the confirming button is somewhere the
  * second click was never going.
  *
- * **The category label is looked up here, not handed in.** `page.tsx` is a
- * server component and had been passing its own `catLabel` closure down as a
- * prop; a function cannot cross the RSC boundary, so every render carrying a
- * row threw `Functions cannot be passed directly to Client Components`. It
- * only threw when there *was* a row, which is why CI never saw it: the
- * throwaway container has an empty `answer_bank`, `rows.map` produced nothing,
- * and the prop was never serialized. `bank.generated.ts` is a plain constant
- * module, so importing it on this side costs nothing and removes the boundary
- * crossing rather than working around it.
+ * **The category label comes from `_ui/bankLabels`, which is neither side.**
+ * It was a prop from the server component first and an export from this file
+ * second, and both threw. That file records why.
  */
-
-/** The display name for a category slug, or the slug when it has none. */
-export function categoryLabel(slug: string): string {
-  return BANK_CATEGORIES.find(([k]) => k === slug)?.[1] ?? slug;
-}
 
 /** Why a control is dark. Read from the account's own flag, not assumed. */
 const OFF = "Writes are off for this account.";
