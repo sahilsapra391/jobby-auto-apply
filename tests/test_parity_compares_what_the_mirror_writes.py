@@ -191,8 +191,13 @@ class DiscoveryFailsLoudRatherThanEmpty(unittest.TestCase):
         so if that route is ever swapped for a parsed one that finds less."""
         columns = mirror_fields.written()["postings"]
         self.assertGreaterEqual(len(columns), 28)
+        # **`PREPENDED_COLUMNS`, not a list written here.** This said
+        # `{"employer_id"}`, and when the INSERT grew two provenance columns
+        # the assertion was one short in the same direction discovery was:
+        # both restated the same thing and both went stale together, so the
+        # test could not catch the gap it was written to catch.
         self.assertEqual(
-            columns - {"employer_id"},
+            columns - set(backfill.PREPENDED_COLUMNS),
             frozenset(backfill.posting_row({
                 "id": "x", "canonicalSource": "s",
                 "canonicalUrl": "https://x/y"})))

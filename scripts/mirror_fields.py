@@ -91,9 +91,13 @@ def _posting_columns():
     import backfill
     row = backfill.posting_row({
         "id": "x", "canonicalSource": "s", "canonicalUrl": "https://x/y"})
-    # `employer_id` is prepended to the INSERT by hand and is not part of the
-    # row dict, so it is added here to match what actually reaches the table.
-    return set(row) | {"employer_id"}
+    # The INSERT prepends columns of its own, outside the row dict. Read from
+    # `backfill` rather than listed here: this was `{"employer_id"}` written
+    # out, and when the INSERT grew `employer_decided_by` and
+    # `employer_decided_at` the list went one short without failing -- a
+    # smaller discovered set is a smaller comparison, not an error, which is
+    # the exact silence this module was built to end.
+    return set(row) | set(backfill.PREPENDED_COLUMNS)
 
 
 def _provider_columns():
@@ -205,6 +209,20 @@ def written():
 #: `tests/test_mirror_fields.py` requires it.
 EXEMPT = {
     # -- keys, which are what the comparison is keyed on ------------------
+    ("postings", "employer_decided_by"):
+        "a literal this writer stamps, naming the rule that chose the "
+        "employer -- 'ingest' from the arrival path at backfill.py:512, or a "
+        "resolver rule's own name. The store has no counterpart, so there is "
+        "nothing to compare it against. GIVES UP: nothing about the employer "
+        "edge itself, which `verify_parity.compare` now compares directly. It "
+        "gives up only cross-checking the label, and the label exists so a "
+        "reader can tell which rule decided a row once there are two.",
+    ("postings", "employer_decided_at"):
+        "stamped as now() by the insert that decides an employer, so there is "
+        "nothing on the file side it could disagree with. GIVES UP: nothing "
+        "the file store knows. It is not a freshness check either -- see the "
+        "updated_at entries for why a column written by the write cannot "
+        "report a write that is not happening.",
     ("postings", "legacy_id"):
         "the join key. Both sides are keyed on it, so comparing it to itself "
         "is vacuous. GIVES UP: nothing. A row missing from either side is "

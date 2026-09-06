@@ -434,6 +434,29 @@ def upsert_employers(conn, records, batch=500):
         return ids, contested
 
 
+#: What stamps `postings.employer_decided_by` on the arrival path.
+#:
+#: **The name of the rule, not the name of the writer.** `job_decisions.
+#: decided_from` records which code path wrote a row ('backfill' or 'v2') and
+#: gives up nothing much; this records which *rule* chose an employer, because
+#: the resolver is going to introduce a second one and the question afterwards
+#: will be "which of them decided this row", not "which process ran".
+DECIDED_BY_INGEST = "ingest"
+
+#: The columns the `postings` INSERT supplies itself, outside `posting_row`.
+#:
+#: **Declared here because two things read it and one of them is a coverage
+#: check.** `mirror_fields._posting_columns` hand-added `{"employer_id"}` to
+#: what `posting_row` returns, and the moment this INSERT grew two more the
+#: list was short -- silently, because a shorter set is a smaller comparison
+#: rather than an error. Exported so the discovery reads the writer instead of
+#: restating it, which is the whole premise of that module.
+#:
+#: None of these appears in `assignments`, so none moves on a later sweep. A
+#: posting's employer is decided once, at insert.
+PREPENDED_COLUMNS = ("employer_id", "employer_decided_by", "employer_decided_at")
+
+
 def upsert_postings(conn, records, employers, batch=500):
     """Insert or update every record. Returns (legacy_id -> id, merged ids).
 
@@ -557,11 +580,20 @@ def upsert_postings(conn, records, employers, batch=500):
             folded.setdefault(row["legacy_id"], []).append(holder)
         seen[key] = row["legacy_id"]      # see BOARD_KEY_WINNER
         closed_of[row["legacy_id"]] = record.get("closedAt")
-        prepared.append([employer_id] + [row[c] for c in columns])
+        prepared.append([employer_id, DECIDED_BY_INGEST]
+                        + [row[c] for c in columns])
 
     assignments = ", ".join(f"{c} = excluded.{c}" for c in columns
                             if c != "legacy_id")
-    one = "(" + ", ".join(["%s"] * (len(columns) + 1)) + ")"
+    # `employer_id` and its provenance lead the tuple and are absent from
+    # `assignments` below, so neither moves on a later sweep. That is not an
+    # oversight and the resolver depends on it: measured 2026-09-06 against
+    # production, repointing a posting and re-running this function on its own
+    # record left the repointing in place, and correcting the pool's `company`
+    # and re-running it did NOT move the stored row. A posting's employer is
+    # decided once, at insert, by the line above.
+    one = "(" + ", ".join(["%s", "%s", "now()"]
+                          + ["%s"] * len(columns)) + ")"
 
     mapping = {}
     with conn.cursor() as cur:
@@ -576,7 +608,8 @@ def upsert_postings(conn, records, employers, batch=500):
                 [field for row in chunk for field in row])
         for chunk in _chunks(prepared, batch):
             cur.execute(
-                f"insert into postings (employer_id, {', '.join(columns)}) "
+                f"insert into postings ({', '.join(PREPENDED_COLUMNS)}, "
+                f"{', '.join(columns)}) "
                 f"values {', '.join([one] * len(chunk))} "
                 f"on conflict (legacy_id) do update set {assignments} "
                 f"returning legacy_id, id",
