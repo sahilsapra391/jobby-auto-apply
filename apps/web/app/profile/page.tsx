@@ -5,9 +5,8 @@ import { accountId, profile } from "../_ui/db";
 import { writesEnabled } from "../_ui/writes";
 import { BANK_KINDS } from "../bank.generated";
 import { EditsProvider } from "../_ui/ProfileEdits";
-import {
-  AddBaseResume, BankRow, ResumeCard, categoryLabel,
-} from "../_ui/ProfileSurface";
+import { AddBaseResume, BankRow, ResumeCard } from "../_ui/ProfileSurface";
+import { categoryLabel } from "../_ui/bankLabels";
 
 /**
  * Profile: what every tailored resume starts from, and what Jobby answers with.
@@ -85,9 +84,9 @@ export default async function Profile({ searchParams }: {
     counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1);
   }
   const cats = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  // The label lookup lives in `ProfileSurface` because the rows that use it
-  // are client components, and a function passed across that boundary throws
-  // at serialization time rather than at build time.
+  // From `_ui/bankLabels`, which is not a client module. Both this component
+  // and the client rows read it, and it has been in the wrong place in both
+  // directions already; that file records what each one threw.
   const catLabel = categoryLabel;
   // Categories only classify questions, so the strip is absent on the tabs
   // where every chip would read zero.

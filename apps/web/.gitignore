@@ -1,0 +1,5 @@
+
+# Written by packages/schema/seed_shape_fixture.py for the deployed-shape
+# crawl, which reads the markers rather than restating them. Per-run, and it
+# names rows in a throwaway database.
+/.shape-fixture.json

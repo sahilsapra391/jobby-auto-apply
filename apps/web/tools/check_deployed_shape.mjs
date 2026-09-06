@@ -32,7 +32,7 @@
  */
 import { spawn, execFileSync } from "node:child_process";
 import net from "node:net";
-import { existsSync, cpSync, rmSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, cpSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -457,6 +457,37 @@ for (const [label, query, want] of [
 
 // ---------------------------------------------------------------- check
 
+// **What the page must contain, not merely that it answered.**
+//
+// This crawl used to assert `res.ok` and then read the markup for assets, and
+// against CI's database that was a page with no rows in it: every lane drew
+// its empty state and the Memory Bank drew nothing. Three faults reached
+// production through the gap, and the sharpest was a function prop passed
+// from a server component into a client one -- it throws at serialization, so
+// only a render *carrying a row* throws, and there were no rows.
+//
+// `packages/schema/seed_shape_fixture.py` puts one row of everything in and
+// writes the sentinel strings here. The file is read rather than the strings
+// restated, because a marker list written twice is the class this repository
+// has paid for six times.
+//
+// **A missing file fails.** Crawling an unseeded page and reporting a pass is
+// the failure being closed, so "no fixture" is louder than "wrong fixture".
+const FIXTURE = join(WEB, ".shape-fixture.json");
+let MARKERS = {};
+if (!existsSync(FIXTURE)) {
+  fail(`no shape fixture at ${FIXTURE}. Run ` +
+       `'python3 packages/schema/seed_shape_fixture.py --out apps/web/.shape-fixture.json' ` +
+       `first: without it every lane renders its empty state and this crawl ` +
+       `covers a fraction of the page it appears to cover.`);
+} else {
+  MARKERS = JSON.parse(readFileSync(FIXTURE, "utf8")).markers || {};
+  if (!Object.keys(MARKERS).length) {
+    fail(`the shape fixture at ${FIXTURE} names no markers, so the crawl ` +
+         `cannot tell a rendered row from an empty lane.`);
+  }
+}
+
 const seen = new Set();
 
 for (const route of ROUTES) {
@@ -469,6 +500,16 @@ for (const route of ROUTES) {
     continue;
   }
   const html = await res.text();
+
+  // The row-bearing branches ran, and this is how anyone knows.
+  for (const marker of MARKERS[route] || []) {
+    if (!html.includes(marker)) {
+      fail(`${route} rendered without "${marker}", which the seeded fixture ` +
+           `puts in the database. Either the row-bearing branch did not run ` +
+           `or it rendered nothing, and every other assertion about this ` +
+           `route is about a page smaller than the real one.`);
+    }
+  }
 
   // Hazard 2, and the reason basePath is used rather than a route group: an
   // absolute URL without the prefix resolves against a dev server sitting at

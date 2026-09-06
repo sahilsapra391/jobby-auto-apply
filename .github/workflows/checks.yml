@@ -203,6 +203,17 @@ jobs:
           with conn.cursor() as cur:
               cur.execute(\"insert into accounts (email) values ('ci@example.com') on conflict do nothing\")
           conn.commit()"
+          # **One row of everything, or the crawl covers a fraction of the
+          # page.** With an empty database every lane draws its empty state and
+          # the Memory Bank draws nothing, so the row-bearing branches never
+          # run. Three faults reached production through that gap, the sharpest
+          # being a function prop passed from a server component into a client
+          # one: it throws at serialization, so only a render carrying a row
+          # throws. The crawl reads the markers this writes and fails outright
+          # if the file is absent, because crawling an unseeded page and
+          # reporting a pass is the failure being closed.
+          python3 packages/schema/seed_shape_fixture.py \
+            --out apps/web/.shape-fixture.json
           cd apps/web
           node tools/check_deployed_shape.mjs
 
