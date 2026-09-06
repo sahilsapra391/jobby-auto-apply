@@ -653,6 +653,42 @@ resolver's "both have a domain and they differ" refusal is containing this
 defect rather than fixing it, and the two must not be confused.
 
 
+## 11b. A deployed decision rule reaches only what the next sweep touches
+
+**The mirror writes a delta, so changing a rule does not change the rows the
+rule already decided.** `dual_write.persist` computes `added | changed` and
+passes only those to `backfill.upsert_postings`; a record that did not move is
+never re-decided.
+
+Measured 2026-09-06, and it is written here because the prediction was wrong in
+public. §9a's fix to `BOARD_KEY_WINNER` -- prefer a live posting over a closed
+one -- was verified by driving `upsert_postings` with the three real pairs, and
+reported as "self-corrects on the next sweep". The next sweep ran for 1443
+seconds, completed normally, and flipped **0 of 3**. All six records were last
+seen 2026-09-04; none was in that sweep's delta, so none reached the new rule.
+
+The verification was sound and the conclusion drawn from it was not. Driving
+the function proves the decision; it says nothing about what the pipeline
+feeds the function. Those are different claims and only the first was checked.
+
+**So any change to a decision rule needs a backfill step, or it applies to new
+collisions only.** `scripts/backfill_fold_winners.py` is that step for one
+named set: it re-runs `upsert_postings` over the six records alone, reads
+employer ids rather than upserting them, and prints before and after because
+an exit code is not evidence. It is deliberately not a general re-mirror -- the
+delta path is correct and a script that re-mirrors everything to fix three rows
+is a standing invitation to bypass it.
+
+**Phase 3's employer resolver meets this on day one.** Its whole purpose is to
+decide differently about employers already stored: `Appcast Enterprise` under
+two spellings, the 11 pinned domains, the 34 hosts that are not the employer.
+Every one of those is a record the next sweep has no reason to touch, so a
+resolver shipped without a backfill would correct new arrivals and leave the
+corpus that motivated it exactly as it is -- and would look like it worked,
+because new collisions would resolve correctly.
+
+Budget the backfill with the rule, not after it.
+
 ## 12. Four filter controls were removed, and here is what brings them back
 
 Re-measured 2026-09-05 over all **25,204** pool records, which is up from the
