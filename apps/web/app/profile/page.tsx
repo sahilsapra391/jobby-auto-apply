@@ -3,9 +3,11 @@ import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { accountId, profile } from "../_ui/db";
 import { writesEnabled } from "../_ui/writes";
-import { BANK_CATEGORIES, BANK_KINDS } from "../bank.generated";
+import { BANK_KINDS } from "../bank.generated";
 import { EditsProvider } from "../_ui/ProfileEdits";
-import { AddBaseResume, BankRow, ResumeCard } from "../_ui/ProfileSurface";
+import {
+  AddBaseResume, BankRow, ResumeCard, categoryLabel,
+} from "../_ui/ProfileSurface";
 
 /**
  * Profile: what every tailored resume starts from, and what Jobby answers with.
@@ -83,8 +85,10 @@ export default async function Profile({ searchParams }: {
     counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1);
   }
   const cats = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  const catLabel = (slug: string) =>
-    BANK_CATEGORIES.find(([k]) => k === slug)?.[1] ?? slug;
+  // The label lookup lives in `ProfileSurface` because the rows that use it
+  // are client components, and a function passed across that boundary throws
+  // at serialization time rather than at build time.
+  const catLabel = categoryLabel;
   // Categories only classify questions, so the strip is absent on the tabs
   // where every chip would read zero.
   const showCats = ["question", "needs", "dismissed"].includes(tab);
@@ -278,7 +282,7 @@ export default async function Profile({ searchParams }: {
                   holds one value, so these are exclusive rather than
                   combinable. */}
               {rows.map((entry) => (
-                <BankRow key={entry.key} entry={entry} catLabel={catLabel} />
+                <BankRow key={entry.key} entry={entry} />
               ))}
               {rows.length === 0 ? (
                 <p className="bank-empty">

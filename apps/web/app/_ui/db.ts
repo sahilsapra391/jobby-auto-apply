@@ -497,6 +497,16 @@ export type BankEntry = {
   kind: string | null;
   category: string | null;
   updatedAt: string | null;
+  /**
+   * The version an edit must be made against.
+   *
+   * **Sent back on every write, never guessed.** `store.py` compares it and
+   * refuses a mismatch as `conflict`, which is the guarantee that stops one
+   * board overwriting an answer another has moved. Until migration 0017 this
+   * column did not exist, so v2 sent 0: right once per entry and wrong every
+   * time after, since the first successful edit takes a row to 1.
+   */
+  version: number;
 };
 
 /**
@@ -565,7 +575,7 @@ export async function profile(): Promise<{
     pool().query("select resumes from profiles where account_id = $1", [account]),
     pool().query(
       `select key, question, value, state, tags, sensitive, kind, category,
-              updated_at
+              version, updated_at
          from answer_bank where account_id = $1
         order by updated_at desc nulls last, key`, [account]),
     editOutcomes(),
@@ -598,6 +608,7 @@ export async function profile(): Promise<{
       kind: r.kind ?? null,
       category: r.category ?? null,
       updatedAt: r.updated_at ?? null,
+      version: Number(r.version ?? 0),
     })),
     outcomes,
   };

@@ -339,6 +339,20 @@ def _mirror_edit_outcomes(conn, account_id, outcomes, force=False):
     return len(rows)
 
 
+def _bank_version(entry):
+    """`store.bank_version`, without importing the store into the mirror.
+
+    Absent means never edited, which is 0, and that is the value
+    `cmd_answer_edit` compares against. Pinned to the store's own definition by
+    `tests/test_answer_version.py` rather than left as two readings of the same
+    rule that happen to agree today.
+    """
+    try:
+        return int((entry or {}).get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def answer_row(entry):
     """What `answer_bank` holds for one stored answer.
 
@@ -358,6 +372,14 @@ def answer_row(entry):
         "sensitive": bool(entry.get("sensitive")),
         "kind": answer_categories.kind_of(entry),
         "category": answer_categories.category_of(entry),
+        # **The version a board has to send back, not decoration.** Every bank
+        # action carries the version it was made against and `store.py`
+        # refuses a mismatch as `conflict`; a board that cannot read the
+        # version can only send 0, which is right once per entry and wrong
+        # every time after. Read through `bank_version` rather than
+        # `entry.get`, so a missing or unparseable key resolves the way the
+        # store's own comparison resolves it instead of two ways.
+        "version": _bank_version(entry),
     }
 
 
@@ -546,7 +568,7 @@ def _mirror_answers(conn, account_id, payload, force=False):
         rows.append((
             account_id, key, built["question"], built["value"],
             built["state"], built["tags"], built["sensitive"],
-            built["kind"], built["category"],
+            built["kind"], built["category"], built["version"],
         ))
 
     keep = set(payload)
@@ -571,11 +593,11 @@ def _mirror_answers(conn, account_id, payload, force=False):
                     f"that far.")
 
         for chunk in _chunks(rows, 500):
-            values = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())"] * len(chunk))
+            values = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())"] * len(chunk))
             cur.execute(
                 f"""insert into answer_bank (account_id, key, question, value,
                                          state, tags, sensitive, kind,
-                                         category, updated_at)
+                                         category, version, updated_at)
                     values {values}
                     on conflict (account_id, key) do update
                       set question = excluded.question,
@@ -585,6 +607,7 @@ def _mirror_answers(conn, account_id, payload, force=False):
                           sensitive = excluded.sensitive,
                           kind = excluded.kind,
                           category = excluded.category,
+                          version = excluded.version,
                           updated_at = now()""",
                 [field for row in chunk for field in row])
 
