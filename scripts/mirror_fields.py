@@ -181,52 +181,111 @@ def written():
 #: the reason is the point**: an exemption without one is a hole with a
 #: comment. Every entry here is a column whose value cannot disagree, because
 #: nothing on the file side produced it.
+#:
+#: **And every entry states the property it gives up, not only why the column
+#: is different.** Those are different sentences, and the difference has now
+#: cost three times. A reason can be perfectly true of the *column* and false
+#: of the *property* the column stands for, and when it is, the exemption reads
+#: as caution while a class of fault walks through it.
+#:
+#: The one that cost most: `("postings", "employer_id")` read "a uuid Postgres
+#: assigns. The store has no such id, and the employer is compared through
+#: `employers.canonical_name` instead." The first sentence is true. The second
+#: was not. `posting_row` returns thirty columns and none of them is the
+#: employer, so parity asked "does employer row E have the right name" and
+#: never "does posting P point at the right employer". Measured 2026-09-06 by
+#: driving `verify_parity.compare`: a posting filed under the wrong employer,
+#: with all thirty compared columns identical, produced no finding at all,
+#: while changing `title` produced one. The employer resolver's entire output
+#: is repointing postings.
+#:
+#: So each entry ends with a `GIVES UP:` clause naming what is now unchecked,
+#: or saying that nothing is. Writing that sentence is what forces the author
+#: to notice when the honest answer is "quite a lot", and
+#: `tests/test_mirror_fields.py` requires it.
 EXEMPT = {
     # -- keys, which are what the comparison is keyed on ------------------
     ("postings", "legacy_id"):
         "the join key. Both sides are keyed on it, so comparing it to itself "
-        "is vacuous.",
+        "is vacuous. GIVES UP: nothing. A row missing from either side is "
+        "reported as only_in_file or only_in_postgres before the field loop "
+        "runs.",
     ("postings", "employer_id"):
-        "a uuid Postgres assigns. The store has no such id, and the employer "
-        "is compared through `employers.canonical_name` instead.",
+        "a uuid Postgres assigns. The store has no such id of its own, so the "
+        "column cannot disagree with anything. GIVES UP: nothing, since "
+        "2026-09-06. It used to give up the entire employer edge -- which "
+        "posting points at which employer -- on the strength of a second "
+        "sentence claiming the employer was compared through "
+        "`employers.canonical_name`. That compares an employer's name, not a "
+        "posting's employer. `verify_parity.compare` now compares the edge "
+        "itself, normalised through `norm_company` against "
+        "`employers.norm_name`, with two named allowances.",
     ("applications", "account_id"):
         "the tenant key, not content. One account today; it is the thing the "
-        "comparison is scoped by rather than a field within it.",
+        "comparison is scoped by rather than a field within it. GIVES UP: "
+        "cross-tenant attribution, that this row belongs to the account the "
+        "comparison is scoped to. Vacuous with one account and load-bearing "
+        "with two, so this belongs on Phase 5's list rather than being "
+        "permanent.",
     ("applications", "legacy_id"):
         "the join key. The comparison is keyed on it, so it cannot disagree "
-        "with itself.",
+        "with itself. GIVES UP: nothing, for the same reason. Presence on "
+        "each side is compared; a key's equality with itself is not.",
     ("edit_outcomes", "account_id"):
         "the tenant key, not content. It scopes the comparison rather than "
-        "being a field within it.",
+        "being a field within it. GIVES UP: cross-tenant attribution, as "
+        "above.",
     ("edit_outcomes", "edit_id"):
         "the join key. Both sides are keyed on it, so comparing it to itself "
-        "is vacuous.",
+        "is vacuous. GIVES UP: nothing. It is the key both sides are read by, "
+        "so a row on one side only is reported as a presence difference.",
     ("application_events", "account_id"):
         "the tenant key, not content. It scopes the comparison rather than "
-        "being a field within it.",
+        "being a field within it. GIVES UP: cross-tenant attribution, as "
+        "above.",
     ("application_events", "application_id"):
         "a uuid join key. The event is reached through its application, so "
-        "the link is exercised by the lookup rather than by a comparison.",
+        "the link is exercised by the lookup rather than by a comparison. "
+        "GIVES UP: nothing. Events are compared within an application, so one "
+        "filed under the wrong application is a missing event on one and an "
+        "extra on the other.",
     ("answer_bank", "account_id"):
         "the tenant key, not content. It scopes the comparison rather than "
-        "being a field within it.",
+        "being a field within it. GIVES UP: cross-tenant attribution, as "
+        "above.",
     ("answer_bank", "key"):
-        "the join key. Both sides are keyed on it, so comparing it is vacuous.",
+        "the join key. Both sides are keyed on it, so comparing it is "
+        "vacuous. GIVES UP: nothing. An answer present on one side only is "
+        "reported by the key comparison, and the delete ceiling refuses a "
+        "mass disappearance before it could be mistaken for one.",
     ("profiles", "account_id"):
         "the tenant key. There is one profile row per account and it is what "
-        "the lookup is scoped by.",
+        "the lookup is scoped by. GIVES UP: cross-tenant attribution, as "
+        "above.",
     ("job_scores", "account_id"):
         "the tenant key. A score is per reader, so this scopes the row rather "
-        "than describing the job.",
+        "than describing the job. GIVES UP: cross-tenant attribution, as "
+        "above.",
     ("job_scores", "posting_id"):
-        "a uuid join key Postgres assigns. The store has no such id; the score "
-        "is reached through the posting's legacy id instead.",
+        "a uuid join key Postgres assigns. The store has no such id; the "
+        "score is reached through the posting's legacy id instead. GIVES UP: "
+        "nothing, and this is the edge worth stating rather than assuming, "
+        "because `postings.employer_id` looked identical and gave up the "
+        "employer edge entirely. The difference is that this edge IS the join "
+        "the comparison runs over: a score attached to the wrong posting is "
+        "read back against that posting's file record and shows as a score "
+        "mismatch. The employer edge had no such join, which is why nothing "
+        "caught it.",
     ("job_decisions", "account_id"):
         "the tenant key. A decision is one reader's opinion, so this scopes "
-        "the row rather than describing it.",
+        "the row rather than describing it. GIVES UP: cross-tenant "
+        "attribution, as above.",
     ("job_decisions", "posting_id"):
         "a uuid join key Postgres assigns. The decision is compared through "
-        "the posting's own legacy id, as `__state__`.",
+        "the posting's own legacy id, as `__state__`. GIVES UP: nothing, for "
+        "the reason above. The decision is resolved through this edge to "
+        "produce `__state__` for a legacy id, so a decision on the wrong "
+        "posting surfaces as a state mismatch on both of them.",
 
     # -- written as now(), so there is nothing on the file side ------------
     ("applications", "updated_at"):
@@ -235,35 +294,51 @@ EXEMPT = {
         "not a timestamp any lane may display**: v2's Submitted column drew "
         "it and showed the backfill time for all 104 rows, against a "
         "completed event three days to two weeks earlier. The submitted date "
-        "lives in application_events.at.",
+        "lives in application_events.at. GIVES UP: whether the mirror is "
+        "current. Nothing here would catch a mirror that stopped, because the "
+        "column is stamped by the write that is not happening. "
+        "`stale_sweep_warning` answers that from the pool's own mtime "
+        "instead, which is the right place for it.",
     ("answer_bank", "updated_at"):
-        "written as now(). The store's own entries carry no update time.",
+        "written as now(). The store's own entries carry no update time. "
+        "GIVES UP: whether the mirror is current, as above.",
     ("profiles", "updated_at"):
         "written as now() on every mirror pass, so there is nothing on the "
-        "file side it could disagree with.",
+        "file side it could disagree with. GIVES UP: whether the mirror is "
+        "current, as above.",
 
     # -- provenance the mirror invents ------------------------------------
     ("provider_links", "account_id"):
         "the tenant key. One reader's connections, and it is what the lookup "
-        "is scoped by rather than a field within it.",
+        "is scoped by rather than a field within it. GIVES UP: cross-tenant "
+        "attribution, as above.",
     ("provider_links", "updated_at"):
         "written as now() on every mirror pass, so there is nothing on the "
-        "file side it could disagree with.",
+        "file side it could disagree with. GIVES UP: whether the mirror is "
+        "current, as above.",
     ("provider_links", "provider"):
         "the join key. Both sides are keyed on the provider id, so comparing "
-        "it is vacuous.",
+        "it is vacuous. GIVES UP: nothing. Presence is compared per provider "
+        "id, so a link filed under the wrong provider is a missing row and an "
+        "extra one.",
 
     ("board_meta", "account_id"):
         "the tenant key. One board_meta row per account, and it is what the "
-        "lookup is scoped by.",
+        "lookup is scoped by. GIVES UP: cross-tenant attribution, as above.",
     ("board_meta", "updated_at"):
         "written as now() on every mirror pass, so there is nothing on the "
-        "file side it could disagree with.",
+        "file side it could disagree with. GIVES UP: whether the mirror is "
+        "current, as above.",
 
     ("job_decisions", "decided_from"):
         "a literal the writer stamps ('backfill' from the backfill, 'v2' from "
         "the board), naming which code path wrote the row. The store has no "
-        "such field, so there is nothing to compare it against.",
+        "such field, so there is nothing to compare it against. GIVES UP: the "
+        "provenance of a decision, whether the board or a backfill wrote it. "
+        "Named rather than waved past, because provenance is the one property "
+        "an artefact cannot answer about itself and this project has been "
+        "wrong about it three times. If a second writer of job_decisions ever "
+        "matters, this is where it would have to be checked.",
 }
 
 

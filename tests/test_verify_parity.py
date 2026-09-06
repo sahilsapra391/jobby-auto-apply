@@ -55,6 +55,14 @@ class TheComparisonIsFieldByField(unittest.TestCase):
         row = {name: backfill.posting_row(rec).get(name)
                for name in verify_parity.FIELDS}
         row["__state__"] = rec.get("state")
+        # **Derived from the record, not omitted.** The employer edge is not a
+        # column, so it is not in `FIELDS`, and a helper that simply left it
+        # out made every agreeing pair here report a divergence the moment the
+        # edge was compared. Deriving it through the mirror's own
+        # `norm_company` is what `postgres_state` does with `employers.
+        # norm_name`, so a test that agrees on everything else agrees here too
+        # -- and an override still lets a case disagree deliberately.
+        row["__employer__"] = backfill.norm_company(rec.get("company") or "")
         row.update(overrides)
         return row
 

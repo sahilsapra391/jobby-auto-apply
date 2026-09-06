@@ -110,6 +110,44 @@ class EveryExemptionCarriesAReason(unittest.TestCase):
                     f"{table}.{column} is exempt with no reason worth the "
                     f"name. An exemption without one is a hole with a comment.")
 
+    def test_each_entry_says_what_property_it_gives_up(self):
+        """A reason that is true of the column and false of the property.
+
+        **Three exemptions have now had that shape and one of them cost the
+        employer edge.** `("postings", "employer_id")` said "a uuid Postgres
+        assigns. The store has no such id, and the employer is compared
+        through `employers.canonical_name` instead." The first sentence is
+        true of the column. The second is a claim about a *property* -- that
+        which employer a posting points at is checked somewhere -- and it was
+        false: `posting_row` returns thirty columns and none of them is the
+        employer. Measured by driving `verify_parity.compare`, a posting under
+        the wrong employer with every compared column identical produced no
+        finding.
+
+        The failure mode is that such an exemption reads as caution. Nobody
+        re-reads it, because it is obviously correct about the column.
+
+        So the requirement is a sentence about the property: what is now
+        unchecked, or that nothing is. It is not a formality -- writing "GIVES
+        UP: nothing" forces the author to work out whether that is true, which
+        for `job_scores.posting_id` means noticing the edge is the join the
+        comparison already runs over, and for `postings.employer_id` meant
+        noticing it was not.
+        """
+        for (table, column), reason in mirror_fields.EXEMPT.items():
+            with self.subTest(table=table, column=column):
+                self.assertIn(
+                    "GIVES UP:", reason,
+                    f"{table}.{column} says why the column is different and "
+                    f"not what property that gives up. Those are different "
+                    f"sentences and the second is the one that goes wrong.")
+                after = reason.split("GIVES UP:", 1)[1]
+                self.assertGreaterEqual(
+                    len(after.split()), 3,
+                    f"{table}.{column}'s GIVES UP clause says nothing. "
+                    f"'nothing' on its own is a claim that needs its reason "
+                    f"beside it.")
+
     def test_an_exemption_names_a_column_the_mirror_writes(self):
         written = mirror_fields.written()
         for table, column in mirror_fields.EXEMPT:

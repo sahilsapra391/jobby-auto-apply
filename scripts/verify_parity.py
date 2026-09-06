@@ -164,18 +164,22 @@ def postgres_state(conn, account_id):
     with conn.cursor() as cur:
         cur.execute(
             f"""select p.legacy_id, p.closed_at, d.state,
-                       p.merged_legacy_ids, {columns}
+                       p.merged_legacy_ids, e.norm_name, {columns}
                 from postings p
                 left join job_decisions d
-                  on d.posting_id = p.id and d.account_id = %s""",
+                  on d.posting_id = p.id and d.account_id = %s
+                left join employers e on e.id = p.employer_id""",
             (account_id,))
         rows = cur.fetchall()
 
     state, real, folded_into = {}, set(), {}
     for row in rows:
         legacy_id, closed_at, decision, folded = row[0], row[1], row[2], row[3]
-        values = dict(zip(FIELDS, row[4:]))
+        values = dict(zip(FIELDS, row[5:]))
         values["__state__"] = backfill.legacy_state(closed_at, decision)
+        # **Which employer this posting points at, which no column carries.**
+        # See `compare` for why this is not one of FIELDS.
+        values["__employer__"] = row[4]
         state[legacy_id] = values
         real.add(legacy_id)
         # A legacy record folded into this posting by the board key has no row
@@ -472,6 +476,38 @@ def states_disagree(records, group):
     return len(seen) > 1
 
 
+#: The two employer-edge disagreements that stand on 2026-09-06, each with the
+#: property it gives up. Measured over all 23,633 postings the two stores
+#: share; everything else agrees exactly.
+#:
+#: An allowance here is narrower than it looks: it suppresses one *pair*, not a
+#: posting and not an employer, so a genuine repointing involving either side
+#: is still reported.
+EMPLOYER_EDGE_ALLOWED = {
+    ("", "(unknown employer)"):
+        "15 postings whose feed named no company at all. `backfill` files them "
+        "under a sentinel whose parentheses are load-bearing -- `norm_company` "
+        "emits only lowercase alphanumerics and spaces, so no real employer "
+        "can normalise to it -- and the pool simply holds an empty string. "
+        "GIVES UP: that a posting with no company is filed under the sentinel "
+        "rather than under some real employer. Nothing else about those 15 is "
+        "unchecked, and `real_employer_count` already excludes the bucket.",
+    ("honeycomb io", "honeycomb"):
+        "1 posting. The pool says Honeycomb.io and the employer row says "
+        "Honeycomb, and `norm_company` does not collapse a `.io` suffix the "
+        "way it collapses Inc and Ltd. GIVES UP: nothing about the edge, "
+        "because this is one company under two spellings rather than a "
+        "posting pointing at the wrong employer. It is a finding about "
+        "`norm_company` parked here rather than a decision about parity, and "
+        "the staleness test below is what stops it outliving that.",
+}
+
+
+def employer_edge_allowed(want, got):
+    """Whether this exact (pool, database) pair is a named allowance."""
+    return (want or "", got or "") in EMPLOYER_EDGE_ALLOWED
+
+
 def compare(records, database):
     """Every difference, as a list of dicts. Never a boolean."""
     findings = []
@@ -518,6 +554,39 @@ def compare(records, database):
                 findings.append({"kind": "field_mismatch", "id": legacy_id,
                                  "field": "state", "file": expected_state,
                                  "postgres": row["__state__"]})
+
+        # **The employer edge, which nothing compared until 2026-09-06.**
+        #
+        # `mirror_fields.EXEMPT` excuses `postings.employer_id` as "a uuid
+        # Postgres assigns... the employer is compared through
+        # `employers.canonical_name` instead". The first half is true and the
+        # second is not: `posting_row` returns thirty columns and none of them
+        # is the employer, and `compared()["employers"]` is that table's own
+        # four columns. So parity asked "does employer row E have the right
+        # name" and never "does posting P point at the right employer". Two
+        # different claims, and the exemption's reason blended them.
+        #
+        # Measured by driving this function: a row whose employer edge was
+        # wrong and whose thirty compared columns were identical produced no
+        # finding at all, while changing `title` produced one. The employer
+        # resolver's whole output is repointing postings, so its correct and
+        # its catastrophic runs would have been the same green.
+        #
+        # **Normalised, because the naive comparison is 307 false positives.**
+        # `canonical_name` against the pool's `company` disagrees on 307 of
+        # 23,633 rows, and every one is a single employer under two spellings
+        # -- 249 are Davies against Davies Group. `norm_company` is what the
+        # mirror itself keys employers on, so comparing through it asks whether
+        # the posting points at the same *employer* rather than at the same
+        # string. That is 16 of 23,633, in the two groups EMPLOYER_EDGE_ALLOWED
+        # names.
+        want_employer = backfill.norm_company(record.get("company") or "")
+        got_employer = row.get("__employer__")
+        if want_employer != (got_employer or "") and not employer_edge_allowed(
+                want_employer, got_employer):
+            findings.append({"kind": "employer_edge", "id": legacy_id,
+                             "field": "employer",
+                             "file": want_employer, "postgres": got_employer})
 
         expected = backfill.posting_row(record)
         for name in FIELDS:
