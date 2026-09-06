@@ -149,8 +149,17 @@ class FilterBehaviourTests(pgtest.SchemaCase):
                      days, sources))
 
     def found(self, **filters):
+        """The lane, with the named filters on and every other one off.
+
+        **The off-state comes from `v2_lanes.no_filters()` rather than from a
+        list here.** A hand-written one held `q`, `within` and `direct` while
+        the query grew to ten parameters, and every test in this file then
+        raised "query parameter missing" -- in CI only, because the module
+        skips without a database and so was wrong on the machine that edited
+        it.
+        """
         args = dict(account=self.account, after_at=None, after_id=None,
-                    limit=50, q=None, within=None, direct=None)
+                    limit=50, **v2_lanes.no_filters())
         args.update(filters)
         with self.conn.cursor() as cur:
             cur.execute(v2_lanes.page_sql("found"), args)
@@ -168,6 +177,26 @@ class FilterBehaviourTests(pgtest.SchemaCase):
         """`websearch_to_tsquery`, so `-word` means what the reader typed."""
         self.assertEqual(self.found(q="operative -warehouse"), [])
         self.assertEqual(self.found(q="manager -warehouse"), ["pm-new", "pm-old"])
+
+    def test_a_keyword_the_title_does_not_literally_contain_still_matches(self):
+        """The bug the other keyword tests could not see.
+
+        **`NULL <> 'title'` is NULL, and NULL is not true.** The title-scope
+        clause read `q is null or scope <> 'title' or title ilike ...`, so with
+        no scope chosen -- which is every default page load -- a row survived
+        only if the reader's raw text was a literal substring of the title.
+
+        Three keyword tests existed and two of them failed on that. The one
+        that passed, `product manager`, passed because it happens to be a
+        substring of "Product Manager", so full-text search and a raw ilike
+        agree on it and nothing distinguishes them. This one is a query the
+        index answers and a substring cannot: stemming makes `managers` match
+        `Manager`, and no title contains the letters `managers`.
+        """
+        self.assertEqual(self.found(q="managers"), ["pm-new", "pm-old"])
+        # And with the scope actually on, the same query is a title substring
+        # test and finds nothing, which is the branch the clause is for.
+        self.assertEqual(self.found(q="managers", scope="title"), [])
 
     def test_a_quoted_phrase_is_a_phrase(self):
         self.assertEqual(self.found(q='"product manager"'), ["pm-new", "pm-old"])

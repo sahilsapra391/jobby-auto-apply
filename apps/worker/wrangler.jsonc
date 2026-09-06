@@ -1,0 +1,23 @@
+{
+  // The tenant event channel. See src/index.mjs for why the account rides the
+  // socket URL and why both sides must derive the Durable Object identically.
+  //
+  // `new_sqlite_classes`, not `new_classes`: the Workers Free plan can only
+  // create SQLite-backed Durable Objects, and Cloudflare's own docs say the
+  // key-value backend is paid-only and cannot be created new at all. Checked
+  // against the documentation rather than assumed, because getting it wrong is
+  // a deploy that fails on the plan rather than a bug that surfaces later.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jobby-channel",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "TENANT_CHANNEL", "class_name": "TenantChannel" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["TenantChannel"] }
+  ]
+}

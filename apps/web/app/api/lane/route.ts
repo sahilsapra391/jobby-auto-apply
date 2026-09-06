@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { page, type Cursor } from "../../_ui/db";
+import { filtersFrom, page, type Cursor } from "../../_ui/db";
 import { LANES, SORT_LABELS, type Lane, type Sort } from "../../lanes.generated";
 
 /**
@@ -71,11 +71,12 @@ export async function GET(request: NextRequest) {
     ? { id: afterId, at: afterAt }
     : null;
   try {
-    return NextResponse.json(await page(lane as Lane, after, 50, sort, {
-      q: params.get("q") ?? undefined,
-      within: params.get("within") ?? undefined,
-      direct: params.get("direct") === "1",
-    }));
+    // **Read through `filtersFrom`, not listed here.** This block named three
+    // filters while the page read seven, so page one filtered and Load more
+    // did not -- the same URL, two answers, and a header count agreeing with
+    // neither.
+    return NextResponse.json(
+      await page(lane as Lane, after, 50, sort, filtersFrom(params)));
   } catch (err) {
     console.error("lane page failed", err);
     return NextResponse.json({ error: "lane page failed" }, { status: 500 });

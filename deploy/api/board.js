@@ -34,6 +34,7 @@ const text = (body, status, extra = {}) =>
 
 import { readQueue, enqueue as kvEnqueue, claimOne, putConfig, takeConfig, configured, CONFIG_FIELD } from '../kvqueue.mjs';
 import { kvPut } from '../kv.mjs';
+import { LIMITS, boundedString, planAnswerEdit, planResumeEdit } from '../profile_edits.mjs';
 
 // Vercel Blob suspended this store once the watcher started polling it. The
 // queue now lives in Cloudflare Workers KV under a single key, because KV
@@ -292,112 +293,37 @@ function profilePayload(state) {
   };
 }
 
-// Bounded because every one of these rides the single queue key the watcher
-// polls every few seconds, and an unbounded field there is a way to make the
-// whole board slow for everyone.
-const LIMITS = { editId: 120, key: 120, question: 600, value: 4000, state: 20 };
-
-function boundedString(value, limit) {
-  if (typeof value !== 'string') return null;
-  return value.length <= limit ? value : null;
-}
-
-// `dismiss` and `restore` carry the key and the version, the same shape as
-// `delete`, and are refusing a question rather than removing an answer.
-const ANSWER_ACTIONS = new Set(['save', 'delete', 'dismiss', 'restore']);
-const ANSWER_KEYED = new Set(['delete', 'dismiss', 'restore']);
-const RESUME_ACTIONS = new Set(['default', 'content', 'remove', 'add', 'update']);
+// The rules an edit has to satisfy live in `profile_edits.mjs`, because there
+// are two boards and one device: this one and v2 both write the same
+// `answerEdits` / `resumeEdits` arrays that `watch.py` claims, and a second
+// copy of the rules is the one that drifts.
 
 async function handleAnswerEdit(request) {
+  return handleEdit(request, planAnswerEdit);
+}
+
+/**
+ * One claimed edit, planned and put on the queue.
+ *
+ * 202 rather than 200 on purpose: the queue has it and the device has not
+ * decided yet, which is exactly what Accepted means. `edit_outcomes` is where
+ * the decision lands.
+ */
+async function handleEdit(request, plan) {
   if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
   if (request.method !== 'POST') return text('Method not allowed.\n', 405, { allow: 'POST' });
   try {
-    const body = await request.json().catch(() => ({}));
-    const editId = boundedString(body.editId, LIMITS.editId);
-    if (!editId || !/^[A-Za-z0-9._-]+$/.test(editId)) {
-      return json({ ok: false, error: 'bad editId' }, 400);
-    }
-    const action = String(body.action || 'save');
-    if (!ANSWER_ACTIONS.has(action)) return json({ ok: false, error: 'unknown action' }, 400);
-    const version = Number.isInteger(body.version) && body.version >= 0 ? body.version : 0;
-    const extra = { action, version };
-    const key = boundedString(body.key, LIMITS.key);
-    if (key !== null && key !== '') extra.key = key;
-    if (action === 'save') {
-      const question = boundedString(body.question, LIMITS.question);
-      const value = boundedString(body.value, LIMITS.value);
-      if (!question || !question.trim()) return json({ ok: false, error: 'the question is required' }, 400);
-      if (value === null) return json({ ok: false, error: 'that answer is too long' }, 400);
-      extra.question = question;
-      extra.value = value;
-      const state = boundedString(body.state, LIMITS.state);
-      if (state) extra.state = state;
-      if (Array.isArray(body.tags)) {
-        extra.tags = body.tags.filter((t) => typeof t === 'string').slice(0, 20)
-          .map((t) => t.slice(0, 60));
-      }
-    } else if (ANSWER_KEYED.has(action) && !extra.key) {
-      return json({ ok: false, error: `${action} needs the key` }, 400);
-    }
-    return json({ ok: true, ...(await kvEnqueue(process.env, 'answerEdits', editId, extra)) }, 202);
+    const planned = plan(await request.json().catch(() => ({})));
+    if (planned.error) return json({ ok: false, error: planned.error }, planned.status);
+    return json({ ok: true, ...(await kvEnqueue(
+      process.env, planned.queue, planned.editId, planned.extra)) }, 202);
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) }, 502);
   }
 }
 
 async function handleResumeEdit(request) {
-  if (!configured(process.env)) return json({ ok: false, error: 'queue not configured' }, 503);
-  if (request.method !== 'POST') return text('Method not allowed.\n', 405, { allow: 'POST' });
-  try {
-    const body = await request.json().catch(() => ({}));
-    const editId = boundedString(body.editId, LIMITS.editId);
-    if (!editId || !/^[A-Za-z0-9._-]+$/.test(editId)) {
-      return json({ ok: false, error: 'bad editId' }, 400);
-    }
-    const action = String(body.action || '');
-    if (!RESUME_ACTIONS.has(action)) return json({ ok: false, error: 'unknown action' }, 400);
-    const extra = { action };
-    if (action === 'add' || action === 'update') {
-      const key = boundedString(body.key, LIMITS.key);
-      if (!key || !/^[A-Za-z0-9._-]+$/.test(key)) return json({ ok: false, error: 'bad base resume key' }, 400);
-      extra.key = key;
-      const label = boundedString(body.label, LIMITS.key);
-      if (label) extra.label = label;
-      // Two-letter codes only. The store validates again; this keeps anything
-      // unbounded out of the queue every poll has to read.
-      const countries = Array.isArray(body.countries) ? body.countries : [];
-      const codes = countries.filter((c) => typeof c === 'string' && /^[A-Za-z]{2}$/.test(c))
-        .slice(0, 64).map((c) => c.toUpperCase());
-      if (action === 'add' && !codes.length) {
-        return json({ ok: false, error: 'a new base resume needs at least one country' }, 400);
-      }
-      if (codes.length) extra.countries = codes;
-      const copyFrom = boundedString(body.copyFrom, LIMITS.key);
-      if (copyFrom) extra.copyFrom = copyFrom;
-      // The name of the key holding an uploaded document, never the document.
-      const uploadId = boundedString(body.uploadId, LIMITS.editId);
-      if (uploadId && /^[A-Za-z0-9._-]+$/.test(uploadId)) extra.uploadId = uploadId;
-      if (Number.isInteger(body.priority)) extra.priority = body.priority;
-    } else if (action === 'default' || action === 'remove') {
-      const key = boundedString(body.key, LIMITS.key);
-      if (!key || !/^[A-Za-z0-9._-]+$/.test(key)) return json({ ok: false, error: 'bad base resume key' }, 400);
-      extra.key = key;
-    } else {
-      // The wording, not the layout. Validated against the template's own slot
-      // counts on the machine that owns the template; refused here only for
-      // size, because the queue is shared and a huge value slows every poll.
-      const content = body.content;
-      if (!content || typeof content !== 'object' || Array.isArray(content)) {
-        return json({ ok: false, error: 'resume content must be an object' }, 400);
-      }
-      const encoded = JSON.stringify(content);
-      if (encoded.length > 64 * 1024) return json({ ok: false, error: 'that resume content is too large' }, 400);
-      extra.content = content;
-    }
-    return json({ ok: true, ...(await kvEnqueue(process.env, 'resumeEdits', editId, extra)) }, 202);
-  } catch (err) {
-    return json({ ok: false, error: String(err.message || err) }, 502);
-  }
+  return handleEdit(request, planResumeEdit);
 }
 
 // An uploaded base resume, on its way to the device.

@@ -195,6 +195,7 @@ thought about.
 | `store` | `cmd_resume_remove` | `write_private` | removes an entry from that same unmodelled registry |
 | `store` | `cmd_resume_default` | `write_private` | marks a default in that same unmodelled registry |
 | `store` | `cmd_resume_content_put` | `write_private` | the Profile page's wording; travels in the job bundle, not the board |
+| `store` | `cmd_edit_outcome_put` | `write_private` | what happened to one submitted edit; mirrored class B to `edit_outcomes`, and the device is its only writer so parity's premise holds |
 | `document_job` | `_save_state` | `write_private` | document-job state; the KV transport owns it and Phase 4 replaces it |
 | `document_job` | `_archive_failure` | `write_private` | archives a failed document job, same transport and same Phase 4 replacement |
 | `seed_companies` | `main` | `save_companies` | a one-off seeding script, not a runtime path |

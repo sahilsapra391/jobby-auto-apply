@@ -72,3 +72,8 @@ apps/web/node_modules/
 apps/web/.next/
 apps/web/next-env.d.ts
 apps/web/tsconfig.tsbuildinfo
+
+# Wrangler's local cache. It holds the Cloudflare account id and the account
+# holder's email address, which is why the pre-commit guard refused it before
+# this line existed. Nothing here is build output anyone else needs.
+.wrangler/

@@ -981,6 +981,29 @@ every runner on this project connects as `neondb_owner`, so a column that looks
 like attribution carried none: eight migrations, one value, and no way to say
 whose the two unexplained ones were.
 
+**Fifth instance, 2026-09-06, and its hiding place is the lesson.** The Found
+lane's filters were read in two places: `page.tsx` destructured seven of them
+and `/api/lane` hand-listed three. So the server component served a filtered
+page one and the route served an unfiltered page two, from the same URL, with
+a header count agreeing with neither. Nothing errored; Load more simply
+returned rows the filter excluded.
+
+**One URL, two answers, and the second reader was the one nobody looks at.** A
+page component is where anybody debugging a filter starts. The route that
+serves page two is a different file, reached only by scrolling, and it had been
+correct for the three filters that existed when it was written.
+
+**What found it was checking rows rather than counts.** Every new filter moved
+the count -- the count comes from `counts()`, which the page calls -- so a
+count-only check passed on all six. Comparing the row *sets* between filtered
+and unfiltered showed 0 rows added and 0 removed for every filter but the one
+that predated the route. A predicate that moves the count and not the rows is
+the same shape as a cursor that pages nowhere: the summary is right and the
+thing it summarises is not.
+
+So when verifying a filter, a sort, or anything else that narrows: compare the
+set, not its size. `filtersFrom` is the single derivation now.
+
 `scripts/mirror_fields.py` discovers the field set from the mirror: `postings`
 by calling `posting_row`, everything else by reading its INSERT. Parity's
 expected side is now the mirror's own transform -- `posting_row`, `score_row`,

@@ -1862,6 +1862,41 @@ def install_uploaded_resume(upload_id, key):
     return path
 
 
+def _edit_subject(queue, item):
+    """(target, submitted) for an edit, so a refusal can show both.
+
+    The target is what the reader was editing -- an answer key, a base resume
+    key -- and is None for the resume wording, which is one document with no
+    key. `submitted` is what they sent, kept whole: an answer is a string and
+    the wording is an object, and a refusal that could only show one of those
+    would be useless for the other.
+    """
+    if queue == "answerEdits":
+        return item.get("key"), item.get("value", item.get("answer"))
+    action = item.get("action")
+    if action == "content":
+        return None, item.get("content")
+    return item.get("key"), {k: item[k] for k in
+                             ("label", "countries", "copyFrom", "priority")
+                             if item.get(k) is not None} or None
+
+
+def _record_outcome(entry):
+    """Write one edit outcome through the store. Never raises.
+
+    **Best effort on purpose.** This records what happened to an edit; it must
+    not become a second way for the edit itself to fail. A lost outcome leaves
+    the board saying "pending", which is the honest reading of "the device
+    stopped telling me" and is what an unfinished edit looks like anyway.
+    """
+    try:
+        run([sys.executable, str(STORE), "edit-outcome-put", "--input", "-"],
+            input=json.dumps(entry))
+    except Exception as exc:                                # noqa: BLE001
+        print(f"{now_stamp()} could not record edit outcome "
+              f"{entry.get('editId')}: {exc!r}", file=sys.stderr, flush=True)
+
+
 def _resume_command(item):
     action = item.get("action")
     if action in ("add", "update"):
@@ -1956,24 +1991,41 @@ def apply_profile_edits(q):
         for item in claimed:
             if not isinstance(item, dict):
                 continue
+            # **Pending on claim, not on enqueue.** The board enqueues, so a
+            # row written there would make `edit_outcomes` the one
+            # dual-written table and force a permanent exemption on parity for
+            # the table whose job is the truth about writes. The board carries
+            # its own "sent" for the seconds in between, and a "sent" that
+            # never becomes "pending" says nothing heard.
+            edit_id = item.get("applicationId")
+            target, submitted = _edit_subject(queue, item)
+            if edit_id:
+                _record_outcome({"editId": edit_id, "queue": queue,
+                                 "state": "pending", "target": target,
+                                 "submitted": submitted})
             argv, stdin = build(item)
             if argv is None:
                 refused.append({"editId": item.get("applicationId"),
                                 "why": "the edit named no action this store knows"})
+                _record_outcome({"editId": edit_id, "state": "refused",
+                                 "reason": "the edit named no action this store knows"})
                 continue
             result = subprocess.run(
                 [sys.executable, str(REPO / "scripts" / "store.py")] + argv,
                 input=stdin, capture_output=True, text=True,
                 timeout=SUBPROCESS_TIMEOUT_SECONDS)
             if result.returncode != 0:
-                refused.append({"editId": item.get("applicationId"),
-                                "why": (result.stderr or "").strip()[:200] or "the store refused it"})
+                why = (result.stderr or "").strip()[:200] or "the store refused it"
+                refused.append({"editId": item.get("applicationId"), "why": why})
+                _record_outcome({"editId": edit_id, "state": "refused", "reason": why})
                 continue
             try:
                 out = json.loads(result.stdout or "{}")
             except json.JSONDecodeError:
                 refused.append({"editId": item.get("applicationId"),
                                 "why": "the store returned junk"})
+                _record_outcome({"editId": edit_id, "state": "refused",
+                                 "reason": "the store returned junk"})
                 continue
             # Each command names its own verb (`applied`, `dismissed`,
             # `restored`, `deleted`), so a refusal is any of them coming back
@@ -1990,7 +2042,13 @@ def apply_profile_edits(q):
                 elif out.get("hint"):
                     why = f"{why}: {out['hint']}"
                 refused.append({"editId": item.get("applicationId"), "why": why})
+                # The store's own words reach the reader unchanged, and what it
+                # holds instead goes beside them: a refusal the reader cannot
+                # compare against is a refusal they cannot act on.
+                _record_outcome({"editId": edit_id, "state": "refused",
+                                 "reason": why, "held": out.get("value", out.get("held"))})
                 continue
+            _record_outcome({"editId": edit_id, "state": "accepted"})
             done.append(out.get("key") or out.get("default") or out.get("removed") or True)
             if queue == "answerEdits" and out.get("stored"):
                 answered_keys.append(out.get("key"))

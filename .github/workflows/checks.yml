@@ -88,6 +88,20 @@ jobs:
       - name: Python dependencies
         run: python3 -m pip install --quiet 'psycopg[binary]==3.3.4'
 
+      - name: v2 dependencies
+        # **Before the node tests, not after them.** Three of those tests read
+        # source with the TypeScript compiler -- a regex over TSX cannot tell a
+        # `<select>` in a comment from one in the tree -- and `typescript` is a
+        # devDependency of `apps/web`. They passed on every laptop, where
+        # node_modules is already sitting there, and failed on the first clean
+        # checkout with "Cannot find module".
+        #
+        # With the lockfile, so the tree CI tests is the tree the lockfile pins
+        # and a drift fails here rather than at deploy time.
+        run: |
+          cd apps/web
+          npm ci
+
       - name: The deployed renderer matches scripts/
         run: |
           # Scoped to the two directories sync_vercel_renderer.py generates.
@@ -148,6 +162,7 @@ jobs:
                      apps/web/app/_ui/r2.generated.mjs \
                      apps/web/app/_ui/kv.generated.mjs \
                      apps/web/app/_ui/kvqueue.generated.mjs \
+                     apps/web/app/_ui/profileEdits.generated.mjs \
                      apps/web/public)"
           if [ -n "$stale" ]; then
             echo "$stale"
@@ -168,9 +183,8 @@ jobs:
 
       - name: The /v2 board builds and deploys the shape it was tested in
         # The Next.js half of the renderer-sync check above, and it exists for
-        # the same two reasons. `npm ci` rather than `npm install`, so the tree
-        # CI tests is the tree the lockfile pins and a drifted lockfile fails
-        # here rather than at deploy time. Then the deployed-shape check builds,
+        # the same two reasons. Dependencies are installed further up, before
+        # the node tests that also need them. The deployed-shape check builds,
         # strips the source tree away, and serves the traced bundle: an asset
         # URL that forgets the basePath or a file the server reads that the
         # tracer never carried fails the PR instead of the board.
@@ -190,7 +204,6 @@ jobs:
               cur.execute(\"insert into accounts (email) values ('ci@example.com') on conflict do nothing\")
           conn.commit()"
           cd apps/web
-          npm ci
           node tools/check_deployed_shape.mjs
 
       - name: The migrations can rebuild the schema

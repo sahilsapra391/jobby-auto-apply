@@ -50,6 +50,7 @@ _BY_NAME = {
     "providers.json": "providers",
     "meta.json": "meta",
     "search-config.json": "search",
+    "edit-outcomes.json": "editOutcomes",
 }
 
 
@@ -253,6 +254,89 @@ def history_row(payload):
         "payload": payload,
         "at": payload.get("at"),
     }
+
+
+def outcome_row(entry):
+    """What `edit_outcomes` holds for one submitted edit.
+
+    Three facts a refusal carries and they do not share a field: what was
+    submitted, what the store held instead, and the store's own reason. A
+    reader deciding what to do needs all three at once, and
+    `answer_record.py`'s rule -- five claims about a question, none sharing a
+    field -- is the same rule one table over.
+
+    `submitted` and `held` are stored as given. An answer is a string and the
+    resume wording is an object, so a column that had to be one of them would
+    need a second column for the other.
+    """
+    entry = entry or {}
+    return {
+        "queue": entry.get("queue"),
+        "state": entry.get("state"),
+        "target": entry.get("target"),
+        "submitted": entry.get("submitted"),
+        "held": entry.get("held"),
+        "reason": entry.get("reason"),
+        "at": entry.get("at"),
+    }
+
+
+def _mirror_edit_outcomes(conn, account_id, outcomes, force=False):
+    """Push the device's record of what happened to each edit.
+
+    **The device is the only writer, which is what keeps this table inside
+    parity's premise.** `pending` is written when the edit is claimed, not when
+    it is enqueued: a row originating with the board would make this the one
+    dual-written table and force a permanent exemption on parity for the table
+    whose whole job is the truth about writes. So all three states come from
+    the file and all three are mirrored.
+
+    It never deletes. An outcome is a fact about a moment rather than a
+    projection of a file, so the file-shrank ceiling `answer_bank` needs has
+    nothing to protect here -- and the file is bounded at its own end, where
+    the oldest are dropped once the store is past its ceiling.
+
+    Nothing is backfilled. Edits made before this table existed have no row,
+    and writing `accepted` for them would be a claim about what the store did
+    reconstructed from its silence -- the fiction `answer_record.py`'s salvage
+    refuses by name.
+    """
+    import json as _json
+    rows = []
+    for edit_id, entry in sorted((outcomes or {}).items()):
+        built = outcome_row(entry)
+        if built["state"] not in ("pending", "accepted", "refused"):
+            # A state nobody defined. Skipping it keeps the check constraint
+            # from deciding, which would fail the whole transaction over one
+            # bad row.
+            continue
+        rows.append((
+            account_id, edit_id, built["queue"], built["state"], built["target"],
+            _json.dumps(built["submitted"]) if built["submitted"] is not None else None,
+            _json.dumps(built["held"]) if built["held"] is not None else None,
+            built["reason"], built["at"],
+        ))
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        for chunk in _chunks(rows, 500):
+            values = ", ".join(
+                ["(%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,coalesce(%s::timestamptz, now()))"]
+                * len(chunk))
+            cur.execute(
+                f"""insert into edit_outcomes (account_id, edit_id, queue, state,
+                                           target, submitted, held, reason, at)
+                    values {values}
+                    on conflict (account_id, edit_id) do update
+                      set queue = excluded.queue,
+                          state = excluded.state,
+                          target = excluded.target,
+                          submitted = coalesce(excluded.submitted, edit_outcomes.submitted),
+                          held = excluded.held,
+                          reason = excluded.reason,
+                          at = excluded.at""",
+                [field for row in chunk for field in row])
+    return len(rows)
 
 
 def answer_row(entry):
@@ -671,6 +755,7 @@ _HANDLERS = {
     "providers": _mirror_providers,
     "meta": _mirror_meta,
     "search": _mirror_search,
+    "editOutcomes": _mirror_edit_outcomes,
 }
 
 

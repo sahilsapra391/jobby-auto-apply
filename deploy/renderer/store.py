@@ -71,6 +71,7 @@ def paths(root):
         # tracked in the repository and the board cannot write there, so an edit
         # lands here and the document worker prefers it when it exists.
         "resumeContent": str(root / "resume-content.json"),
+        "editOutcomes": str(root / "edit-outcomes.json"),
     }
 
 
@@ -1742,6 +1743,63 @@ def _same_shape(base, candidate):
     return None
 
 
+#: How many decided edits the device keeps.
+#:
+#: An outcome answers "what happened to the edit I just made", and that
+#: question has a short life. The file is read whole and mirrored whole on
+#: every write, so an unbounded one turns a single edit into a growing write;
+#: `answer_record.py` made the same call about what a per-application artifact
+#: may carry. Oldest go first, and the row already in Postgres stays -- the
+#: mirror never deletes, because an outcome is a fact about a moment rather
+#: than a projection of the file.
+EDIT_OUTCOMES_KEPT = 200
+
+
+def cmd_edit_outcome_put(args):
+    """Record what happened to one edit. File first, mirrored after.
+
+    **The device is the only writer**, which is what keeps this table inside
+    parity's premise. `pending` is written when the edit is claimed, not when
+    it is enqueued: the enqueuer is the board, and a row originating there
+    would make this the one dual-written table and force a permanent exemption
+    on the table whose whole job is telling the truth about writes. The board
+    shows its own local "sent" for the few seconds in between, and a "sent"
+    that never becomes "pending" is itself the signal that nothing heard.
+    """
+    entry = load_input(args.input)
+    if not isinstance(entry, dict) or not str(entry.get("editId") or "").strip():
+        raise StoreError("an edit outcome needs an editId")
+    state = entry.get("state")
+    if state not in ("pending", "accepted", "refused"):
+        raise StoreError(f"unknown edit state {state!r}")
+    root = root_dir(args.root)
+    path = paths(root)["editOutcomes"]
+    held = read_json(path, {})
+    if not isinstance(held, dict):
+        held = {}
+    edit_id = str(entry["editId"]).strip()
+    before = held.get(edit_id) or {}
+    record = {
+        "queue": entry.get("queue") or before.get("queue"),
+        "state": state,
+        "target": entry.get("target", before.get("target")),
+        # Kept from the pending row when a decision does not restate it: what
+        # was submitted is the same fact either way, and losing it would leave
+        # a refusal that cannot show the reader what they typed.
+        "submitted": entry.get("submitted", before.get("submitted")),
+        "held": entry.get("held"),
+        "reason": entry.get("reason"),
+        "at": now(),
+    }
+    held[edit_id] = record
+    if len(held) > EDIT_OUTCOMES_KEPT:
+        oldest = sorted(held.items(), key=lambda kv: (kv[1] or {}).get("at") or "")
+        for stale, _ in oldest[:len(held) - EDIT_OUTCOMES_KEPT]:
+            held.pop(stale, None)
+    write_private(path, held)
+    return {"recorded": edit_id, "state": state}
+
+
 def cmd_resume_content_put(args):
     candidate = load_input(args.input)
     if not isinstance(candidate, dict):
@@ -2325,6 +2383,7 @@ COMMANDS = {
     "answer-restore": cmd_answer_restore,
     "resume-content-get": cmd_resume_content_get,
     "resume-content-put": cmd_resume_content_put,
+    "edit-outcome-put": cmd_edit_outcome_put,
     "resume-default": cmd_resume_default,
     "resume-add": cmd_resume_add,
     "resume-update": cmd_resume_update,
@@ -2365,6 +2424,7 @@ def build_parser():
         sp = sub.add_parser(name); sp.add_argument("--key", required=True)
         sp.add_argument("--version", default=0); sp.add_argument("--edit-id")
     sp = sub.add_parser("resume-content-put"); sp.add_argument("--input", required=True)
+    sp = sub.add_parser("edit-outcome-put"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("resume-default"); sp.add_argument("--key", required=True)
     sp = sub.add_parser("resume-add"); sp.add_argument("--input", required=True)
     sp = sub.add_parser("resume-update"); sp.add_argument("--input", required=True)

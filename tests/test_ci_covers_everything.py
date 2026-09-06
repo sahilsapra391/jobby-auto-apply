@@ -172,6 +172,36 @@ class TheStalenessCheckNamesEveryGeneratedFile(unittest.TestCase):
         start = block.index("--porcelain")
         self.block = block[start:start + block[start:].index(')"')]
 
+    def test_the_node_tests_run_after_their_dependencies_are_installed(self):
+        """A test that needs `typescript` needs somebody to have installed it.
+
+        **Three node tests read source with the TypeScript compiler**, because
+        a regex over TSX cannot tell a `<select>` in a comment from one in the
+        tree and this repository has three separate afternoons lost to exactly
+        that. `typescript` is a devDependency of `apps/web`, so those tests
+        pass on any laptop -- `node_modules` is already sitting there -- and
+        failed on the first clean checkout with `Cannot find module`.
+
+        The property is an ordering, so it is checked as one: the step that
+        installs has to come before the step that runs. Asserting the presence
+        of an `npm ci` anywhere in the file would have passed while it sat
+        below the node tests, which is where it was.
+        """
+        text = WORKFLOW.read_text(encoding="utf-8")
+        steps = [line for line in text.splitlines()
+                 if "- name: " in line or "npm ci" in line]
+        installs = [i for i, line in enumerate(steps) if "npm ci" in line]
+        self.assertTrue(installs,
+                        "nothing in CI installs apps/web's dependencies, so "
+                        "every node test that reads source with the "
+                        "TypeScript compiler fails on a clean checkout")
+        runs = [i for i, line in enumerate(steps) if "Node tests" in line]
+        self.assertTrue(runs, "the workflow no longer names a Node tests step")
+        self.assertLess(min(installs), min(runs),
+                        "apps/web's dependencies are installed after the node "
+                        "tests run, so the tests that need typescript cannot "
+                        "find it")
+
     def test_the_workflow_watches_every_file_the_generator_writes(self):
         written = {str(path.relative_to(REPO))
                    for path, _ in self.generator.outputs()}

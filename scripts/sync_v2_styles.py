@@ -695,6 +695,8 @@ KV_SOURCE = REPO / "deploy" / "kv.mjs"
 KV_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "kv.generated.mjs"
 KVQUEUE_SOURCE = REPO / "deploy" / "kvqueue.mjs"
 KVQUEUE_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "kvqueue.generated.mjs"
+EDITS_SOURCE = REPO / "deploy" / "profile_edits.mjs"
+EDITS_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "profileEdits.generated.mjs"
 R2_SOURCE = REPO / "deploy" / "r2.mjs"
 R2_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "r2.generated.mjs"
 
@@ -748,6 +750,25 @@ def kvqueue_module():
         "beside it: deploy/ is outside v2's traced bundle.") + body.replace(before, after)
 
 
+def profile_edits_module():
+    """`deploy/profile_edits.mjs` verbatim: one validator for two boards.
+
+    The Python board and v2 write the same two queue arrays, and `watch.py`
+    claims them without knowing which board sent what. So the rules an edit has
+    to satisfy are one implementation and this is a copy of it, for the reason
+    every other generated module here exists: `deploy/` is outside v2's traced
+    bundle, so the file has to be present under `apps/web` at build time, and
+    `--check` fails the PR when the two part.
+
+    It has no imports, so unlike `kvqueue_module` nothing is rewritten.
+    """
+    return _generated_header(
+        "profile_edits.mjs",
+        "Verbatim. Two boards write the same queue and one device claims\n"
+        "it, so the rules an edit has to satisfy are written once.",
+    ) + EDITS_SOURCE.read_text(encoding="utf-8")
+
+
 def r2_module():
     """`deploy/r2.mjs` verbatim, so v2 does not become the third SigV4.
 
@@ -792,6 +813,7 @@ def outputs():
         (R2_TARGET, r2_module),
         (KV_TARGET, kv_module),
         (KVQUEUE_TARGET, kvqueue_module),
+        (EDITS_TARGET, profile_edits_module),
     ]
 
 

@@ -261,9 +261,24 @@ def order_by(column, ident=None):
 #: What the Found lane may be ordered by, and the type its cursor walks. The
 #: board offers exactly these two (`found_lane.SORT_OPTIONS`), so v2 offers
 #: exactly these two: "Newest" and "Match %".
+#: **The row key is named, not inferred from the expression.** It used to be
+#: `expression.split(".")[-1]`, which is right for `p.posted_at` and wrong for
+#: `s.total`, because the SELECT aliases that one `s.total as score`. So the
+#: cursor named a column the row does not carry, `row["total"]` was undefined,
+#: page one handed out `{at: null}`, and page two matched only the null branch
+#: and came back empty with `done: true`.
+#:
+#: That broke Load more on Found's *default* sort, and it broke it in the shape
+#: that reads as working: the button did nothing and the lane said "and that is
+#: all of them" over 5,792 matching rows.
+#:
+#: `APPLICATION_ORDER` below is the same table one struct over and it already
+#: names its key, under a comment reading "a cursor can only carry a value the
+#: row actually returned". The rule was written down, held in one table, and
+#: not in its neighbour.
 SORTS = {
-    "new": ("p.posted_at", "timestamptz"),
-    "score": ("s.total", "int"),
+    "new": ("p.posted_at", "posted_at", "timestamptz"),
+    "score": ("s.total", "score", "int"),
 }
 
 #: How a lane of applications is ordered, and the row key its cursor walks.
@@ -348,6 +363,13 @@ WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
 #: keyword box takes phrases in quotes and `-word` to exclude, and the reader
 #: who types them should get what they asked for rather than a token soup.
 #:
+#: **The company predicate names no alias.** `FILTERS` is shared by the page
+#: query, the count and the row lookup, and only the first joins `employers e`.
+#: Writing `e.canonical_name` here compiled fine in the generator and answered
+#: "missing FROM-clause entry for table e" on the first count -- a 500 on the
+#: board rather than a build failure. An `exists` against `employers em` is
+#: self-contained, so every query that shares this block can carry it.
+#:
 #: "direct listings only" is `sourceClass = 'ats'`, which is `direct_rank` 0.
 #: The board draws the same chip on the same rows: `canonical_rank` puts ats at
 #: 0, aggregator and feed at 2, and employer and other at 3, and the card's
@@ -359,7 +381,32 @@ FILTERS = """
         or (p.posted_at is not null
             and p.posted_at >= now() - %(within)s::interval))
    and (not coalesce(%(direct)s::boolean, false)
-        or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)"""
+        or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)
+   and (%(exclude)s::text is null
+        or (p.title not ilike '%%' || %(exclude)s::text || '%%'
+            and coalesce(p.summary, '') not ilike '%%' || %(exclude)s::text || '%%'))
+   -- **`coalesce`, because `NULL <> 'title'` is NULL and NULL is not true.**
+   -- With no scope chosen the clause read `false or NULL or (title ilike ...)`,
+   -- so a row survived only when the reader's raw text was a literal substring
+   -- of the title. `product manager` is one and passed; `manager -warehouse`
+   -- and `"product manager"` are not, so both drew an empty lane while the
+   -- full-text index underneath was answering perfectly. Caught before it
+   -- deployed, by running the suite against a database rather than watching
+   -- twenty-six modules skip.
+   and (%(q)s::text is null or coalesce(%(scope)s::text, '') <> 'title'
+        or p.title ilike '%%' || %(q)s::text || '%%')
+   and (%(loc)s::text[] is null or p.country = any(%(loc)s::text[]))
+   and (%(wp)s::text[] is null
+        or p.workplace = any(%(wp)s::text[])
+        or ('remote' = any(%(wp)s::text[]) and p.remote))
+   and (%(exp)s::int is null
+        or p.years_min is null or p.years_min <= %(exp)s::int)
+   and (%(cos)s::text is null
+        or (%(cos)s::text = 'only') = exists (
+              select 1 from employers em
+               where em.id = p.employer_id
+                 and lower(em.canonical_name) = any(
+                       select lower(x) from unnest(%(conames)s::text[]) as x)))"""
 
 
 def page_sql(lane, sort="new"):
@@ -369,7 +416,7 @@ def page_sql(lane, sort="new"):
     if lane not in LANES:
         raise KeyError(f"no lane {lane!r}")
     if lane in POSTING_LANES:
-        column, cast = SORTS[sort]
+        column, _key, cast = SORTS[sort]
         # Postings are the row here whatever the ordering reads.
         return f"""
 select {POSTING_COLUMNS}
@@ -492,6 +539,38 @@ select count(*)
 """.strip()
 
 
+#: Every parameter any query here can take, in a fixed order so the numbering
+#: is deterministic. Which of them a given query actually uses is read off that
+#: query, not assumed.
+#:
+#: **Module-level so a caller can derive its own parameter dict from it.** It
+#: was local to `as_typescript` and `tests/test_v2_lane_keyset.py` restated the
+#: filter half as a three-name `NO_FILTERS`; adding six filters left that list
+#: three names long, and every query in that file raised "query parameter
+#: missing" in CI. Locally the whole module skips for want of a database, so
+#: the list could not be seen to be wrong on the machine it was edited on.
+PARAMS = ["account", "after_at", "after_id", "limit", "q", "within",
+          "direct", "row_id",
+          # The advanced card. Every one reads a column measured populated
+          # on 2026-09-05: country 99.7%, remote 100%, workplace 30.2%,
+          # years_min 39.0%, canonical_name on every employer.
+          "exclude", "scope", "loc", "wp", "exp", "cos", "conames"]
+
+#: The four that are not a filter: who is asking, where the page starts, and
+#: how much of it. Everything else in `PARAMS` narrows the lane, so
+#: `no_filters()` is the rest of it set to null.
+NOT_A_FILTER = ("account", "after_at", "after_id", "limit", "row_id")
+
+
+def no_filters():
+    """Every filter parameter, off.
+
+    For a caller that wants the whole lane. Derived rather than listed, so a
+    filter added tomorrow is supplied without anyone remembering.
+    """
+    return {name: None for name in PARAMS if name not in NOT_A_FILTER}
+
+
 def as_typescript():
     """The same strings, for `apps/web`, with psycopg's named placeholders
     rewritten to node-postgres' positional ones.
@@ -500,11 +579,7 @@ def as_typescript():
     thing `LogoContractTests` exists to prevent, and a lane predicate is
     exactly the kind of text that gets edited on one side only.
     """
-    #: Every parameter any query here can take, in a fixed order so the
-    #: numbering is deterministic. Which of them a given query actually uses is
-    #: read off that query, not assumed.
-    known = ["account", "after_at", "after_id", "limit", "q", "within",
-             "direct", "row_id"]
+    known = PARAMS
 
     def positional(sql):
         """`(sql, params)` with **contiguous** numbering for this query alone.
@@ -546,8 +621,7 @@ def as_typescript():
             # A cursor naming the wrong column does not error: it compares the
             # wrong values and restarts the lane at the top on every page.
             column, key, cast = (
-                (*[SORTS[name][0], SORTS[name][0].split(".")[-1]],
-                 SORTS[name][1]) if k in POSTING_LANES
+                SORTS[name] if k in POSTING_LANES
                 else application_order(k))
             emitted[name] = {"sql": text, "params": params, "cursor": key,
                              "cursorType": CURSOR_TYPES[cast]}
@@ -560,9 +634,9 @@ def as_typescript():
             "row": row_text,
             "rowParams": row_params,
             "sorts": emitted,
-            "cursor": (SORTS["new"][0].split(".")[-1] if k in POSTING_LANES
+            "cursor": (SORTS["new"][1] if k in POSTING_LANES
                        else application_order(k)[1]),
-            "cursorType": CURSOR_TYPES[SORTS["new"][1] if k in POSTING_LANES
+            "cursorType": CURSOR_TYPES[SORTS["new"][2] if k in POSTING_LANES
                                        else application_order(k)[2]],
         }
     return (

@@ -17,6 +17,7 @@ import {
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
 import { writesEnabled } from "./_ui/writes";
+import { ANY_WINDOW, DEFAULT_WINDOW } from "./_ui/window";
 import { READ_ONLY } from "./_ui/actions";
 
 /**
@@ -40,10 +41,20 @@ export default async function Board({
   searchParams,
 }: {
   searchParams: Promise<{ lane?: string; sort?: string; q?: string;
-                          within?: string; direct?: string }>;
+                          within?: string; direct?: string; not?: string;
+                          scope?: string; cos?: string; conames?: string;
+                          exp?: string;
+                          // Checkbox groups: one name, many values, so Next
+                          // hands back a string when one is ticked and an
+                          // array when several are. Treating the string case
+                          // as an array would filter on its characters.
+                          loc?: string | string[]; wp?: string | string[] }>;
 }) {
-  const { lane: asked, sort: askedSort, q, within, direct } =
+  const { lane: asked, sort: askedSort, q, within, direct,
+          not: not_, scope: searchIn, cos, conames, exp, loc, wp } =
     await searchParams;
+  const many = (v?: string | string[]) =>
+    v === undefined ? undefined : (Array.isArray(v) ? v : [v]);
   const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
     ? (asked as Lane)
     : "found";
@@ -60,17 +71,25 @@ export default async function Board({
   // lane behind it.
   // Found takes all three; every other lane takes the keyword search only,
   // which is what its own search row offers.
+  // **Found defaults to the last 30 days.** An unfiltered Found is 20,330
+  // postings deep and the reader meets the oldest of them as readily as
+  // today's; the board's own default was never "everything ever ingested".
+  // `all` is the explicit way to ask for that, so the default is a default
+  // rather than a ceiling.
+  const window = active === "found" ? (within ?? DEFAULT_WINDOW) : within;
   const filters = active === "found"
-    ? { q, within, direct: direct === "1" }
+    ? { q, within: window === ANY_WINDOW ? undefined : window,
+        direct: direct === "1", not: not_, scope: searchIn, cos, conames,
+        loc: many(loc), wp: many(wp), exp }
     : (q ? { q } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const [tally, first, writes, meta, pool, scope, archive, reader] =
     await Promise.all([
-    counts(filters), page(active, null, 50, sort, filters),
+    counts(active, filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
     // The unfiltered pool, so the count can say what it matched against.
-    active === "found" && filters ? counts().then((t) => t.found) : undefined,
+    active === "found" && filters ? counts(active).then((t) => t.found) : undefined,
     active === "found" ? savedSearch() : undefined,
     // The archive's first page. It is a dialog on this document rather than a
     // route, so it renders with the board or not at all.
@@ -182,9 +201,13 @@ export default async function Board({
                        sort={sort} shown={first.rows.length}
                        total={tally[active]} pool={pool}
                        scope={scope?.words ?? undefined}
-                       locations={scope?.locations ?? []}
-                       searchScope={scope?.scope ?? "title"}
+                       // The URL wins over the saved search, so the picker shows what is
+                       // being filtered rather than what was stored.
+                       locations={many(loc) ?? scope?.locations ?? []}
+                       searchScope={searchIn ?? scope?.scope ?? "title"}
                        extraLocations={scope?.extra ?? []}
+                       not_={not_} cos={cos} conames={conames}
+                       wp={many(wp)} exp={exp}
                        writesEnabled={writes} />
             </>
           ) : null}

@@ -435,6 +435,7 @@ def coverage():
         "profiles": set(class_b.profile_row({})),
         "provider_links": set(mirror_fields.compared()["provider_links"]),
         "board_meta": set(mirror_fields.compared()["board_meta"]),
+        "edit_outcomes": set(class_b.outcome_row({})),
     }
 
 
@@ -617,8 +618,20 @@ def class_b_file_state(root=None):
         keep = mirror_fields.compared()["profiles"]
         profile = {k: v for k, v in built.items() if k in keep}
 
+    # What happened to each submitted edit. The device is the only writer of
+    # this file, which is the whole reason the table stays inside parity's
+    # premise -- see class_b._mirror_edit_outcomes.
+    outcomes = {}
+    path = Path(paths["editOutcomes"])
+    if path.exists():
+        keep = mirror_fields.compared()["edit_outcomes"]
+        for edit_id, entry in json.loads(path.read_text(encoding="utf-8")).items():
+            if isinstance(entry, dict):
+                built = class_b.outcome_row(entry)
+                outcomes[edit_id] = {k: v for k, v in built.items() if k in keep}
+
     return {"sessions": sessions, "events": events, "answers": answers,
-            "profile": profile}
+            "profile": profile, "outcomes": outcomes}
 
 
 def class_b_postgres_state(conn, account_id):
@@ -655,8 +668,14 @@ def class_b_postgres_state(conn, account_id):
                     f"where account_id = %s", (account_id,))
         row = cur.fetchone()
         profile = dict(zip(profile_columns, row)) if row else None
+
+        outcome_columns = sorted(mirror_fields.compared()["edit_outcomes"])
+        cur.execute(
+            f"select edit_id, {', '.join(outcome_columns)} from edit_outcomes "
+            f"where account_id = %s", (account_id,))
+        outcomes = {r[0]: dict(zip(outcome_columns, r[1:])) for r in cur.fetchall()}
     return {"sessions": sessions, "events": events, "answers": answers,
-            "profile": profile}
+            "profile": profile, "outcomes": outcomes}
 
 
 def compare_class_b(files, database):
@@ -668,6 +687,7 @@ def compare_class_b(files, database):
     # deleted once an application completes and the role index outlives it.
     # Only the other direction is a divergence.
     for group, key in (("sessions", "session"), ("events", "event"),
+                       ("outcomes", "editOutcome"),
                        ("answers", "answer")):
         ours, theirs = files[group], database[group]
         for name in sorted(set(ours) - set(theirs)):

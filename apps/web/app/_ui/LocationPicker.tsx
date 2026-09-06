@@ -61,7 +61,11 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
       <div className="jb-location-menu">
         <div className="jb-location-actions">
           <label className="jb-world">
+            {/* An aggregate over the country boxes below, not a value of its
+                own. Worldwide is the storage contract's empty selection, which
+                is what submitting no `loc` already means. */}
             <input type="checkbox" checked={worldwide} readOnly
+                   data-decorative="aggregate over the country boxes; empty loc already means worldwide"
                    disabled={!writesEnabled} title={dark} />
             <span>Worldwide</span>
           </label>
@@ -75,8 +79,11 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
               <details className="jb-continent" data-continent-panel={key} key={key}>
                 <summary>
                   <span className="jb-continent-main">
+                    {/* Also an aggregate: it selects and clears its children,
+                        and the children are what carry the value. */}
                     <input type="checkbox" checked={picked === codes.length}
                            readOnly disabled={!writesEnabled} title={dark}
+                           data-decorative="selects and clears its children; the countries carry the value"
                            aria-label={`Select all countries in ${label}`} />
                     <span>{label}</span>
                   </span>
@@ -94,7 +101,12 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                     return (
                       <div className="jb-country-row" key={code}>
                         <label className="jb-country">
-                          <input type="checkbox" checked={chosen.has(code)}
+                          {/* **The country boxes are the ones that submit.**
+                              An empty selection is Worldwide, which is the
+                              storage contract the board already holds, so no
+                              `loc` at all is a legal and meaningful state. */}
+                          <input type="checkbox" name="loc" value={code}
+                                 checked={chosen.has(code)}
                                  readOnly disabled={!writesEnabled} title={dark}
                                  data-loc={code} data-continent-country={key}
                                  data-country-name={name} />

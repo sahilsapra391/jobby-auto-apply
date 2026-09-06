@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import { ICONS } from "../icons.generated";
 
 /**
@@ -74,6 +74,75 @@ export const useActions = () => useContext(ActionsContext);
 /** Why a control is dark while the gate is still running. */
 export const READ_ONLY =
   "This is a write. v2 stays read-only until the parity gate closes.";
+
+/**
+ * Apply, with a confirmation that names the job it is about to apply to.
+ *
+ * **Apply is the one control here that cannot be taken back.** Watch and Pass
+ * are a decision the reader can reverse from Watching or Dropped; Drop is
+ * archival. Apply hands a real application to an agent that fills a real
+ * employer's form under a real name, and `finish.py`'s submission nonce exists
+ * because that is the step nothing downstream can undo.
+ *
+ * **The confirmation names the company and role, because the misclick worth
+ * catching is the right button on the wrong row.** A bare "are you sure"
+ * catches nothing a second click would not also wave through: the reader
+ * already meant to press Apply, they just meant a different card.
+ *
+ * **And it moves the target rather than relabelling in place.** A button that
+ * turns into its own confirmation is armed exactly where an impatient double
+ * click is already landing. The three decisions are replaced by a question and
+ * two buttons, so the confirming control is somewhere the second click of a
+ * double was never going. That is a layout decision doing a job a timing guard
+ * would otherwise have to do badly.
+ */
+export function ApplyWithConfirm({
+  subject, rowId, company, role, body,
+}: {
+  subject: string;
+  rowId: string;
+  company?: string;
+  role?: string;
+  body: unknown;
+}) {
+  const { enabled, act, busy, draw } = useActions();
+  const [asking, setAsking] = useState(false);
+  const waiting = busy(subject);
+
+  // The question is the whole point, so it is built from what the card shows
+  // and falls back to something honest rather than to "this job".
+  const named = [role, company].filter(Boolean).join(" at ");
+
+  if (!asking) {
+    return (
+      <button className="jb-btn primary" type="button" disabled={!enabled || waiting}
+              title={enabled ? "Start work on this one" : READ_ONLY}
+              onClick={() => setAsking(true)}>
+        <ActionIcon name="apply" />
+        <span>Apply</span>
+      </button>
+    );
+  }
+  return (
+    <>
+      <span className="jb-confirm" role="status">
+        {named ? `Apply to ${named}?` : "Apply to this posting?"}
+      </span>
+      <button className="jb-btn" type="button" autoFocus
+              onClick={() => setAsking(false)}>
+        <span>Cancel</span>
+      </button>
+      <button className="jb-btn primary" type="button" disabled={waiting}
+              onClick={() => {
+                setAsking(false);
+                void act({ subject, body, undo: draw(rowId) });
+              }}>
+        <ActionIcon name="apply" />
+        <span>Yes, apply</span>
+      </button>
+    </>
+  );
+}
 
 /**
  * One control that changes something.

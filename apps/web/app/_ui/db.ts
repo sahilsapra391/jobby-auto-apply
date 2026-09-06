@@ -86,7 +86,22 @@ export type Row = Record<string, unknown> & { id: string };
  * `nulls last` and the three cases the cursor predicate has are written once.
  */
 /** The Found lane's filters. Absent means off, never "match everything". */
-export type Filters = { q?: string; within?: string; direct?: boolean };
+export type Filters = {
+  q?: string; within?: string; direct?: boolean;
+  /** Words to exclude from title and summary. */
+  not?: string;
+  /** Which columns `q` searches: title, or title and summary. */
+  scope?: string;
+  /** "only" or "hide", against the comma-separated names in `conames`. */
+  cos?: string;
+  conames?: string;
+  /** ISO country codes. Empty is Worldwide, which is the board's contract. */
+  loc?: string[];
+  /** Workplace kinds to keep. */
+  wp?: string[];
+  /** Max years of experience the posting may ask for. */
+  exp?: string;
+};
 
 /**
  * The arguments a generated query asks for, in the order it asks for them.
@@ -106,11 +121,66 @@ function argsFor(params: readonly string[], values: Record<string, unknown>) {
   });
 }
 
+/**
+ * Every filter as a SQL parameter, with the shapes the generated predicates
+ * expect.
+ *
+ * **`null` is the off switch throughout**, because each predicate is written
+ * `(%(x)s is null or <test>)`. A filter that arrived as an empty string or an
+ * empty array would be a predicate that matches nothing rather than one that
+ * does not apply, which is the difference between "no filter" and "no
+ * results" -- the two states this board has already confused once.
+ */
+/**
+ * Every filter, read from one URL, in one place.
+ *
+ * **The lane route hand-listed three of them and `page.tsx` read seven.** So
+ * page one filtered and Load more did not: the same query string produced a
+ * filtered first page from the server component and an unfiltered second page
+ * from `/api/lane`, and the count in the header agreed with neither. Two
+ * readers of one URL is the declared-twice shape this repository has met in
+ * `GATE_PATHS`, `verify_parity.FIELDS`, the migrations list and the generated
+ * file list; here it was caught by checking that a filter changed the rows
+ * rather than only the count.
+ *
+ * Both callers come through this now, so a filter added to `Filters` is read
+ * by both or by neither.
+ */
+export function filtersFrom(params: URLSearchParams): Filters {
+  const one = (k: string) => params.get(k) ?? undefined;
+  const many = (k: string) => {
+    const all = params.getAll(k);
+    return all.length ? all : undefined;
+  };
+  return {
+    q: one("q"), within: one("within"), direct: params.get("direct") === "1",
+    not: one("not"), scope: one("scope"), cos: one("cos"),
+    conames: one("conames"), loc: many("loc"), wp: many("wp"), exp: one("exp"),
+  };
+}
+
 function filterValues(f: Filters | undefined) {
+  const list = (xs?: string[]) => (xs && xs.length ? xs : null);
+  const names = (f?.conames ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return {
     q: f?.q?.trim() || null,
     within: f?.within && f.within in WINDOWS ? WINDOWS[f.within] : null,
     direct: f?.direct ?? false,
+    // `exclude` rather than `not`: the SQL parameter name ends up in
+    // generated statements and `not` is a reserved word there.
+    exclude: f?.not?.trim() || null,
+    // The scope only means anything with a keyword, and "title" is the
+    // narrower of the two, so it is the default the SQL assumes.
+    scope: f?.scope === "all" ? "all" : "title",
+    // A mode with no names is not a filter. Both halves or neither, or "hide"
+    // with an empty box would hide everything.
+    cos: names.length && (f?.cos === "only" || f?.cos === "hide") ? f.cos : null,
+    conames: names.length ? names : null,
+    loc: list(f?.loc),
+    // All three ticked is the same as no opinion, and passing it as a filter
+    // would drop the 69.8% of postings whose workplace is not recorded.
+    wp: f?.wp && f.wp.length && f.wp.length < 3 ? f.wp : null,
+    exp: f?.exp && /^\d+$/.test(f.exp) ? Number(f.exp) : null,
   };
 }
 
@@ -177,16 +247,28 @@ function cursorValue(at: unknown): string | null {
   return new Date(at as string).toISOString();
 }
 
-export async function counts(filters?: Filters): Promise<Record<Lane, number>> {
+export async function counts(active: Lane,
+                             filters?: Filters): Promise<Record<Lane, number>> {
   const account = await accountId();
   const out = {} as Record<Lane, number>;
-  const values = { account, ...filterValues(filters) };
+  // **The filter counts the lane it was typed into, and no other.** The
+  // comment here used to say the other lanes "ask for the account alone", and
+  // that was not true of the generated SQL: every lane's `countParams`
+  // declares `q`, so `argsFor` supplied it and every badge moved. Typing
+  // "engineer" into Found collapsed Watching to 2, which is the kind of thing
+  // that makes a reader distrust the whole board -- a number they did not ask
+  // to change, changing.
+  //
+  // Each lane has its own search row, so a keyword still filters the lane it
+  // belongs to. It is `active` that decides which one that is, not the mere
+  // presence of a parameter in a URL every lane shares.
+  const filtered = { account, ...filterValues(filters) };
+  const plain = { account, ...filterValues(undefined) };
   await Promise.all(
     (Object.keys(LANES) as Lane[]).map(async (lane) => {
-      // Only Found's count names the filters; the others ask for the account
-      // alone, and `argsFor` gives each what it declares.
       const { rows } = await pool().query(
-        LANES[lane].count, argsFor(LANES[lane].countParams, values));
+        LANES[lane].count,
+        argsFor(LANES[lane].countParams, lane === active ? filtered : plain));
       out[lane] = Number(rows[0].count);
     }),
   );
@@ -418,6 +500,54 @@ export type BankEntry = {
 };
 
 /**
+ * What happened to one edit the reader submitted.
+ *
+ * **Three facts that do not share a field**, per migration 0016: what was
+ * sent, what the store held instead, and the store's own words. A refusal the
+ * reader cannot compare against is a refusal they cannot act on.
+ */
+export type EditOutcome = {
+  editId: string;
+  queue: string;
+  state: "pending" | "accepted" | "refused";
+  target: string | null;
+  submitted: unknown;
+  held: unknown;
+  reason: string | null;
+  at: string | null;
+};
+
+/** How many outcomes a page carries. The device keeps 200; this is a page. */
+const OUTCOMES_SHOWN = 60;
+
+/**
+ * The account's recent edit outcomes, newest first.
+ *
+ * **An absent row is not an accepted edit**, and nothing here turns one into
+ * the other. Edits made before migration 0016 have no row, edits still in the
+ * queue have no row, and a device that stopped has no row: all three read as
+ * "the board has not heard", which is what they are. The page says so rather
+ * than filling the silence in.
+ */
+export async function editOutcomes(): Promise<EditOutcome[]> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select edit_id, queue, state, target, submitted, held, reason, at
+       from edit_outcomes where account_id = $1
+      order by at desc limit $2`, [account, OUTCOMES_SHOWN]);
+  return rows.map((r) => ({
+    editId: r.edit_id,
+    queue: r.queue,
+    state: r.state,
+    target: r.target ?? null,
+    submitted: r.submitted ?? null,
+    held: r.held ?? null,
+    reason: r.reason ?? null,
+    at: r.at ?? null,
+  }));
+}
+
+/**
  * The Profile page's data: the resume registry and the Memory Bank.
  *
  * **The answer's own value travels and is drawn plainly.** CLAUDE.md settles
@@ -428,16 +558,17 @@ export type BankEntry = {
  * question text alone would lose every row the answer store's own state caught.
  */
 export async function profile(): Promise<{
-  resumes: BaseResume[]; bank: BankEntry[];
+  resumes: BaseResume[]; bank: BankEntry[]; outcomes: EditOutcome[];
 }> {
   const account = await accountId();
-  const [profileRows, bankRows] = await Promise.all([
+  const [profileRows, bankRows, outcomes] = await Promise.all([
     pool().query("select resumes from profiles where account_id = $1", [account]),
     pool().query(
       `select key, question, value, state, tags, sensitive, kind, category,
               updated_at
          from answer_bank where account_id = $1
         order by updated_at desc nulls last, key`, [account]),
+    editOutcomes(),
   ]);
   const raw = (profileRows.rows[0]?.resumes ?? []) as Record<string, unknown>[];
   return {
@@ -468,6 +599,7 @@ export async function profile(): Promise<{
       category: r.category ?? null,
       updatedAt: r.updated_at ?? null,
     })),
+    outcomes,
   };
 }
 
