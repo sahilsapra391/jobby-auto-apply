@@ -67,13 +67,38 @@ export const DECISION_QUEUE: Record<string, string> = {
 /**
  * The queue a status change goes to, for the lanes that are not Found.
  *
- * Only `dropped`, and the omissions are the point. `review`, `active` and
- * `inflight` are stages the daemon itself moves an application through; a
- * board does not order them, it observes them. Enqueueing one would be v2
- * inventing a work order the Python board has no button for.
+ * **`inflight` is here because three buttons send it, and for five days none
+ * of them reached the device.** This map held `dropped` alone, under a comment
+ * saying `review`, `active` and `inflight` are stages the daemon moves an
+ * application through and a board observes rather than orders. That is true of
+ * the daemon's own transitions and false of a button labelled Apply: Watching's
+ * Apply and both Retry controls post `status: "inflight"`, so `order` was never
+ * called, `applications.status` was written anyway, and the daemon heard
+ * nothing.
+ *
+ * Found by parity, on one row: Scale Media / Data Analyst, session file
+ * `watch`, Postgres `inflight`, apply queue empty, POST recorded at
+ * 2026-09-07T00:18:36Z with a 200. The board said it had started work on a
+ * real application and no machine had.
+ *
+ * It maps to `apply` rather than to a queue of its own, which is what the
+ * Python board does: `/api/retry` is deliberately the apply queue, because
+ * re-running the agent after a blocker is cleared is the same operation as
+ * applying. Three controls, one work order.
+ *
+ * **The omissions that remain are still omissions.** `review` and `active` are
+ * genuinely daemon-owned and no control sends them;
+ * `tests/status_writes_reach_the_daemon.test.mjs` is what keeps that true, by
+ * failing when a control sends a status this map does not carry.
  */
 export const STATUS_QUEUE: Record<string, string> = {
   dropped: "drop",
+  inflight: "apply",
+  // Undrop, in the Dropped lane. The guard found this one, not a person: it
+  // was stranded the same way and for the same reason, and it is the queue the
+  // Python board has always sent it to (`/api/restore` -> `restore`, claimed
+  // at `watch.py:2465`). One bug reported, two found.
+  watch: "restore",
 };
 
 function env() {

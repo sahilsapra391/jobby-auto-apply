@@ -18,6 +18,16 @@ import base  # noqa: E402
 
 SOURCE = "jooble"
 SOURCE_CLASS = "aggregator"
+#: The hosts this connector's postings actually live on, which is not
+#: the API host above and is what the board derives a logo from.
+#: One host, all 308 postings.
+#:
+#: **Declared so it can be checked.** An aggregator whose host is not in
+#: `company_logos.INFRA_HOST_PARTS` has the board drawing the job
+#: board's own mark on every employer card it supplies, and that is
+#: invisible precisely because it is consistent.
+#: `tests/test_aggregator_hosts.py` fails when the two part.
+POSTING_HOSTS = ("jooble.org",)
 TIER = "1b"
 KEY_VAR = "JOBBY_JOOBLE_KEY"
 SEARCH_URL = "https://jooble.org/api/{key}"

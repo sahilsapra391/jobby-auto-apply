@@ -53,6 +53,10 @@ INFRA_HOST_PARTS = (
     # here: Rippling is an employer as well as an ATS, so the trade is not the
     # same one, and it should be measured rather than assumed.
     "reed.co.uk",
+    # Found by the guard rather than by anyone looking: both declare
+    # `SOURCE_CLASS = "aggregator"` and neither host was here. 343 and 32
+    # postings.
+    "usajobs.gov", "themuse.com",
 )
 
 
