@@ -36,6 +36,23 @@ import base  # noqa: E402
 
 SOURCE = "greenhouse"
 SOURCE_CLASS = "ats"
+#: This connector emits the §3 record key. It fetches one board per registry
+#: token, so the token *is* the tenant slug, and the list response carries each
+#: job's own id: both halves in hand, with nothing derived from a URL.
+#:
+#: **It is the one that moves the most records.** Measured against the live pool
+#: on 2026-09-07: 7,465 greenhouse records, of which 4,206 parse a slug out of
+#: their URL and 3,259 do not and are keyed on this device's own pool id, which
+#: means nothing off this machine. The 3,259 are the postings on an employer's
+#: own domain -- `stripe.com/jobs/search?gh_jid=...` carries the job id and not
+#: the slug -- which `board_key.py` refuses to guess at, correctly, because a
+#: wrong slug splits one board in two forever.
+#:
+#: And nothing already keyed correctly moves: of the 4,131 records where both a
+#: derived slug and a registry token exist, the two agree on **all** of them,
+#: and disagree on none. `id`, not `internal_job_id`, for the same reason the
+#: module docstring gives: the other one 404s.
+EMITS_BOARD_KEY = True
 TIER = "1a"
 LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
 JOB_URL = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{job}"
@@ -49,6 +66,8 @@ def boards(companies):
 
 def parse_job(entry, company_name, token):
     location = base.parse_location((entry.get("location") or {}).get("name"))
+    job_id = entry.get("id")
+    job_id = str(job_id).strip() if job_id not in (None, "") else None
     return base.posting(
         SOURCE, SOURCE_CLASS, TIER,
         entry.get("company_name") or company_name,
@@ -64,6 +83,11 @@ def parse_job(entry, company_name, token):
         posted_at=entry.get("first_published"),
         description=entry.get("content") or "",
         lang=entry.get("language"),
+        # The token this board was fetched by, not a parse of the URL it
+        # returned. Both or neither: a board with no token never reaches here
+        # (`boards()` filters on it) and a job with no id falls back.
+        board_slug=token if job_id else None,
+        external_id=job_id,
     )
 
 

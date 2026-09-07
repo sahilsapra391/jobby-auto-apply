@@ -55,6 +55,8 @@ import sources  # noqa: E402
 #: Connectors that emit the key today, and the fixture proving it.
 EMITS = {
     "reed": ("reed_search.json", lambda d: d["results"][0]),
+    "greenhouse": ("greenhouse_board.json", lambda d: d["jobs"][0],
+                   {"company_name": "Vercel", "token": "vercel"}),
 }
 
 #: Connectors that cannot, with the reason. "Cannot" means the fetch itself
@@ -71,9 +73,6 @@ NOT_YET = {
     "breezy": "the board json carries an id per position, and the slug is\n              the tenant the connector already fetched by",
     "careerjet": "aggregator; the search result carries a job id",
     "gem": "the board response carries the posting id and the company\n           slug the connector fetched by, so both halves are in hand",
-    "greenhouse": "the connector fetches by slug and the board json carries "
-                  "each job's numeric id, so both halves are in hand and this "
-                  "is the one that would move the most records",
     "himalayas": "the feed carries a per-posting id",
     "jazzhr": "scraped html; the posting id is in the link and would have to "
               "come from the same parse that builds the url",
@@ -145,13 +144,16 @@ class EmissionTests(unittest.TestCase):
 
     def test_each_claimed_emitter_actually_emits(self):
         self.assertTrue(EMITS, "no connector claims to emit, so this is vacuous")
-        for name, (fixture_name, pick) in sorted(EMITS.items()):
+        for name, spec in sorted(EMITS.items()):
+            fixture_name, pick = spec[0], spec[1]
+            extra = spec[2] if len(spec) > 2 else {}
             with self.subTest(connector=name):
                 module = __import__(f"sources.{name}", fromlist=[name])
                 self.assertIs(getattr(module, "EMITS_BOARD_KEY", False), True,
                               f"{name} is declared here and does not declare "
                               f"EMITS_BOARD_KEY on the module")
-                record = module.parse_job(pick(self.fixture(fixture_name)))
+                record = module.parse_job(pick(self.fixture(fixture_name)),
+                                          **extra)
                 stored = board_key.stored(record)
                 self.assertIsNotNone(
                     stored, f"{name} claims to emit and its fixture produced "
@@ -166,6 +168,36 @@ class EmissionTests(unittest.TestCase):
         record = reed.parse_job(raw)
         self.assertEqual(board_key.stored(record),
                          ("reed", str(raw["jobId"])))
+
+    def test_greenhouse_emits_the_token_it_fetched_by_not_a_parse_of_the_url(self):
+        # The distinction is the whole contract. The URL happens to agree here;
+        # for the 3,259 pool records on an employer's own domain it carries the
+        # job id and no slug at all, and `board_key` refuses to guess one.
+        from sources import greenhouse
+        raw = self.fixture("greenhouse_board.json")["jobs"][0]
+        record = greenhouse.parse_job(raw, company_name="Vercel",
+                                      token="vercel-eng")
+        self.assertEqual(board_key.stored(record), ("vercel-eng", str(raw["id"])))
+        # And the URL would have said something else, so this is not passing by
+        # accident.
+        self.assertEqual(board_key.parse("greenhouse", raw["absolute_url"]),
+                         ("vercel", str(raw["id"])))
+
+    def test_greenhouse_uses_id_and_never_internal_job_id(self):
+        # `internal_job_id` is a real field on every entry and the per-job
+        # endpoint 404s on it, which the module docstring already records.
+        from sources import greenhouse
+        raw = self.fixture("greenhouse_board.json")["jobs"][0]
+        self.assertNotEqual(raw["id"], raw["internal_job_id"])
+        record = greenhouse.parse_job(raw, company_name="Vercel", token="v")
+        self.assertEqual(board_key.stored(record)[1], str(raw["id"]))
+
+    def test_a_greenhouse_job_with_no_id_falls_back_rather_than_half_keying(self):
+        from sources import greenhouse
+        raw = dict(self.fixture("greenhouse_board.json")["jobs"][0])
+        raw.pop("id")
+        record = greenhouse.parse_job(raw, company_name="Vercel", token="v")
+        self.assertIsNone(board_key.stored(record))
 
     def test_a_record_with_no_key_still_resolves_the_old_way(self):
         # Every record written before this contract existed, which is all of
