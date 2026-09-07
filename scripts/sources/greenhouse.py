@@ -93,6 +93,7 @@ def parse_job(entry, company_name, token):
 
 def fetch(fetcher, companies=None, limit=None, **_):
     postings, errors, dead = [], [], 0
+    unchanged = []
     targets = boards(companies)
     if not targets:
         return base.skipped(SOURCE, "no Greenhouse boards in the company registry")
@@ -101,7 +102,10 @@ def fetch(fetcher, companies=None, limit=None, **_):
         token = company["token"]
         data, response = fetcher.get_json(LIST_URL.format(token=token))
         if response.unchanged:
-            continue                       # nothing has changed on this board
+            # Named rather than only counted, so the canary check can
+            # tell an unchanged board from a broken one.
+            unchanged.append(token)
+            continue
         if data is None:
             if response.status == 404:
                 dead += 1
@@ -121,7 +125,10 @@ def fetch(fetcher, companies=None, limit=None, **_):
         return base.failed(SOURCE, f"every board failed ({len(errors)})", requests, errors)
     # The board endpoint returns every open requisition for the tenant,
     # so a posting missing from it has been taken down.
-    return base.ok(SOURCE, postings, requests, errors, note, complete=True)
+    if unchanged:
+        note += f", {len(unchanged)} unchanged since the last run"
+    return base.ok(SOURCE, postings, requests, errors, note, complete=True,
+                   unchanged=len(unchanged), unchanged_slugs=unchanged)
 
 
 def fetch_body(fetcher, entry_url, token, job_id):

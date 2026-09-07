@@ -3387,6 +3387,72 @@ And it is a sixth entry in `PING_REASONS`, not a new alarm. Observed firing on
 the real store before it merged: `SOURCING: jooble failed: jooble any '': HTTP
 400. read the failure and fix scripts/sources/jooble.py.`
 
+### Two sources get a stricter standard, and one failure no count can see
+
+**48 of 52 submitted applications came through greenhouse and ashby.** "Detected
+within two sweeps" is a reasonable guarantee for a source contributing a hundred
+postings and too slow for the two carrying the pipeline: eight hours of a dead
+greenhouse looks, from the board, exactly like a quiet day. Both are held to one
+sweep at 70%, which is the coverage gate's own floor, so for these two the sweep
+whose absences stop being believed is the sweep the user is told about.
+Refusing to close on a source and not mentioning it is the quiet half of a
+fault this file has already been bitten by.
+
+**A source-level number cannot see one board break, so each gets a canary.**
+spacex holds 583 greenhouse records, the largest of 353 boards; snowflake holds
+148 ashby records and is preferred over the larger airwallex for being the more
+durable institution. Largest matters because a partial break shows as a
+fraction. The canary is read off the §3 record key rather than asked of the
+connector, which is why ashby's contract had to land first, and it is the first
+real use of that contract beyond the key itself.
+
+**The 10% tolerance is a specification and not a measurement, and that is said
+rather than implied.** Per-board history does not exist -- `ingest-runs.log`
+records per-channel totals only -- so there is no distribution to take a
+percentile of. What is measurable is arrivals: spacex first-saw a mean 38
+postings a day against 583 held and snowflake 9.4 against 148, roughly 1.1% of
+the board per four-hour sweep, and gross arrivals bound net movement from above.
+So 10% is about nine times the largest observed movement. It is also a lower
+bound, because the pool is search-gated and the canary sees the whole response.
+The `canaryYield` series is the data to re-derive it from.
+
+**A 304 canary is not a broken one, and getting that wrong would have been the
+same fault inside its own fix.** A board that answers 304 returns no postings
+legitimately, so the connectors name the tokens that were unchanged rather than
+only counting them, and the check excuses exactly those. Found by mutation:
+removing `unchanged_slugs=` from greenhouse's `base.ok` left every test green.
+
+#### What could take either down that the alerting would not see in one sweep
+
+Asked directly, and worth writing down because the answer is mostly reassuring
+and the exception is not.
+
+    url scheme change      every board 404s      channel_failed, immediately
+    auth requirement added every board 401s      channel_failed, immediately
+    response shape change  `jobs` empties        anchor at 70% AND canary_silent
+    new pagination default count truncates       anchor at 70%
+    registry emptied       count goes to zero    anchor, but misnamed as yield
+    rate limiting          boards error          channel_failed or the anchor
+
+Every one of those moves a number, and every one is caught inside a sweep.
+
+**A field change moves nothing.** `absolute_url` renamed, `location.name`
+becoming `location.text`, `first_published` dropped: the response still parses,
+the count is identical, the canary is happy, and the postings enter the pool
+with no link, no location or no date -- where the search gate quietly filters
+them or the board draws a card that goes nowhere. **The count is right and the
+thing the count summarises is not**, which is the sixth place this project has
+met that shape.
+
+So the canary checks fields as well as count: the share of its postings
+carrying a url, a title and a record key, against thresholds a real board
+clears with room. Not 100%, because a real board has the occasional posting
+with a blank field and a check at 100% is a check somebody turns off.
+
+The one gap left is honest and stated: a field this list does not name can
+still change silently. `CANARY_FIELDS` is the place to add one, and the cost of
+adding is one entry.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

@@ -127,7 +127,8 @@ class EnvelopeTests(unittest.TestCase):
         for shape in shapes:
             self.assertEqual(sorted(shape),
                              ["errors", "listingComplete", "postings", "reason",
-                              "requests", "source", "status", "unchanged"])
+                              "requests", "source", "status", "unchanged",
+                              "unchangedSlugs"])
 
     def test_a_skip_is_never_an_empty_success(self):
         # This is the whole rule. If a skipped channel returned status "ok" with

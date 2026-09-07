@@ -311,7 +311,7 @@ def rfc822_date(value):
 
 
 def ok(source, postings, requests=0, errors=None, note="", complete=False,
-       unchanged=0):
+       unchanged=0, unchanged_slugs=None):
     """A channel that answered.
 
     `complete` says whether what came back is the whole of every board asked
@@ -333,6 +333,13 @@ def ok(source, postings, requests=0, errors=None, note="", complete=False,
             # tell "nothing changed" from "we were told less than usual",
             # which are opposite facts that both show up as a smaller `found`.
             "unchanged": int(unchanged),
+            # **Which boards said "unchanged", not just how many.** A canary
+            # board that 304s legitimately returns no postings, and a check
+            # that could not tell that from a canary that broke would be the
+            # 304 fault one layer down. Held in memory for the length of one
+            # sweep and never persisted: `ingest.run` reads it and the report
+            # keeps only the count.
+            "unchangedSlugs": sorted(unchanged_slugs or ()),
             "postings": list(postings), "requests": requests,
             "listingComplete": bool(complete),
             "errors": list(errors or [])}
@@ -345,13 +352,13 @@ def skipped(source, reason, requests=0):
     # anything is gone. Same reason for `failed` below. The three envelopes
     # carry identical keys on purpose, and False is the only safe value here.
     return {"source": source, "status": "skipped", "reason": reason,
-            "unchanged": 0, "postings": [], "requests": requests,
+            "unchanged": 0, "unchangedSlugs": [], "postings": [], "requests": requests,
             "listingComplete": False, "errors": []}
 
 
 def failed(source, reason, requests=0, errors=None):
     return {"source": source, "status": "error", "reason": reason,
-            "unchanged": 0, "postings": [], "requests": requests,
+            "unchanged": 0, "unchangedSlugs": [], "postings": [], "requests": requests,
             "listingComplete": False, "errors": list(errors or [])}
 
 
