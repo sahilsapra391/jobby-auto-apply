@@ -1744,10 +1744,57 @@ them apart, so it now takes its candidates from `watch.free_apply_slots` rather
 than restating what free means: `reserve` writes the slot lock before spawning
 `run_apply`, the watcher's definition is the one that has to be right, and
 borrowing it means the test follows if it ever changes. Parked slots are
-excluded by it too, for a better reason than tidiness, since a parked slot
-keeps its page state precisely so its application can retry into it. The skip
+excluded by it too, for a better reason than tidiness: a parked application is
+one somebody was told to come back to, and driving a test through its browser
+is the same intrusion as driving through a live run's. (**This used to say a
+parked slot keeps its page state so its application can retry into it. That
+stopped being true when `reconcile_browser_slots` was changed** -- a parked
+application is `review` rather than `inflight`, so the next tick releases the
+slot and closes every page. See the correction below.) The skip
 message names which case it is, because "no browser at all" and "every browser
 is busy" stop the suite identically and mean opposite things.
+
+### A parked slot is released within a tick, and this file said otherwise
+
+**Two passages above described behaviour that had been removed, and one of them
+was quoted as current on 2026-09-07 while diagnosing a live application.**
+
+`reconcile_browser_slots` holds a slot while its application is `inflight` and
+at no other time. A parked application is `review`, so the next tick calls
+`release_browser_slot`, which calls `browser.clear_slot` and closes every page.
+Its own comment gives the reason, and the reason is good:
+
+> A parked application kept its slot so a Retry could reuse the filled tab,
+> which is a real convenience and it deadlocked the pool: five parked
+> applications held all five slots, four queued retries could never get one,
+> and three Drops drained into a fleet that had nothing to give them. Twenty
+> hours, and every application involved looked healthy.
+
+Observed rather than reasoned about: a Chainguard run parked at 02:50:55Z on a
+verification code, and the tick log recorded
+`{"browserSlots": {"released": [{"applicationId": "31c8aa9c1e988c56", "slot":
+"apply-1"}]}}` at 02:54:29Z. `tabs` was 0 afterwards.
+
+**The rule this earns is about documents rather than about slots.** A docstring
+or a CLAUDE.md entry describes the code *at the time it was written*, and the
+code is the only authority on what it does now. That is not a reason to write
+fewer of them -- this file is the reason most of the last month's faults were
+found quickly -- but a claim from here that decides an action gets checked
+against the code first, exactly like a claim from a peer.
+
+The failure mode is specific and it happened today: an entry is *correct*, then
+a later change is *also correct*, and nobody re-reads the entry because nothing
+about the change points at it. The two passages above were written when parking
+held a slot. The reconciler was rewritten to fix a twenty-hour outage. Neither
+author was wrong and the file became wrong anyway.
+
+Three that have now had this shape, so it is a class rather than an accident:
+`brief.py` as "the exception" to spawned-versus-imported when fourteen other
+scripts were the same; `STATUS_QUEUE`'s docstring asserting `inflight` is
+daemon-owned while three controls sent it; and this. **Each was a confident
+sentence about a mechanism, and each stopped anybody looking.** Prefer "as of
+<date>" on a mechanism claim, and prefer naming the function that decides so
+the next reader can open it.
 
 ## No agent Chrome consults the keychain, and none runs a deleted binary
 
@@ -1808,8 +1855,10 @@ fleet.
 A drifted slot with no lock on it is stopped, and not restarted. `serve()` runs
 before every apply and again inside `run_apply`, so it comes back correct when
 it is next needed, and eight windows do not appear on the user's screen for
-maintenance nobody asked for. **A slot holding a live run or a parked
-application is never closed.** A form being filled and a form the user was told
+maintenance nobody asked for. **A slot holding a live run is never closed, and
+a parked one is closed within a tick** -- see the correction below; this
+paragraph said "or a parked application" and that has been false since
+`reconcile_browser_slots` was rewritten. A form being filled and a form the user was told
 to come back to are each worth more than retiring a browser early. Those are
 named in `watch.py --status` and in the tick log, and
 `browser.py --stop --slot apply-N` retires one by hand.
