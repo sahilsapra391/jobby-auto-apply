@@ -3,7 +3,9 @@
 import hashlib
 import io
 import json
+import contextlib
 import pathlib
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -13,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 import sys
 
 sys.path.insert(0, str(ROOT / "scripts"))
+import application_mcp  # noqa: E402
 import browser
 
 
@@ -205,3 +208,92 @@ class BrowserMcpSecurityTests(unittest.TestCase):
 
         self.assertFalse(result["cleared"])
         self.assertTrue(marker.exists())
+
+
+class AFailedToolCallNamesWhatWentWrong(unittest.TestCase):
+    """`except Exception: raise ToolExecutionError("...failed")` discards it.
+
+    **Observed on a real run rather than imagined.** 2026-09-07, the live
+    Chainguard application: 75 MCP calls, and `set_phase` failed once. The
+    whole record of it was "the local application operation failed". The phase
+    reached "Filling the form" a moment later so nothing stopped, and what
+    happened is not knowable, because `raise ... from exc` keeps the chain for
+    a traceback nobody prints.
+
+    The contrast in the same log is the point. `record_answers` failed twice
+    and said `fields[11].sourceKey 'sponsorship-states' is not in the answer
+    store` -- a field, a value and a reason, and the agent corrected itself
+    from it. Two error paths in one process, one diagnosable and one not.
+
+    **The type and nothing else from the body.** The message reaches a
+    provider's context; an `OSError` carries a path and a store `ValueError`
+    can carry a value. The class name separates the four kinds of fault
+    without carrying any of them.
+    """
+
+    def _server(self):
+        import types
+        ctx = types.SimpleNamespace(root=None)
+        server = application_mcp.ApplicationTools.__new__(application_mcp.ApplicationTools)
+        server.context = ctx
+        return server
+
+    def test_the_message_names_the_exception_type(self):
+        server = self._server()
+        for exc in (OSError(2, "no such file", "/tmp/nope"),
+                    ValueError("a value the store rejected"),
+                    json.JSONDecodeError("bad", "{}", 0),
+                    RuntimeError("something else entirely")):
+            with self.subTest(exc=type(exc).__name__):
+                buf = io.StringIO()
+                with contextlib.redirect_stderr(buf):
+                    said = application_mcp.ApplicationTools._named("set_phase", exc)
+                self.assertIn(type(exc).__name__, said,
+                              "the failure does not say which kind it was, so "
+                              "'the store rejected it' and 'the disk did' are "
+                              "the same sentence")
+                self.assertIn("set_phase", buf.getvalue(),
+                              "the detail did not reach stderr, which the "
+                              "proxy drains and the run log keeps")
+
+    def test_the_message_carries_no_detail_from_the_exception(self):
+        """A path or a stored value must not ride into a provider's context."""
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            said = application_mcp.ApplicationTools._named(
+                "record_answers", OSError(2, "no such file",
+                                          "/Users/someone/.job-application/secret"))
+        self.assertNotIn("secret", said)
+        self.assertNotIn(".job-application", said)
+        # `OSError(2, ...)` constructs a FileNotFoundError, and reporting the
+        # concrete subclass is better than the base: "the file was not there"
+        # and "the disk refused" are different faults with different fixes.
+        self.assertIn("FileNotFoundError", said)
+        # And the full detail is still recoverable, on stderr.
+        self.assertIn("secret", buf.getvalue())
+
+    def test_the_generic_sentence_alone_is_gone(self):
+        """The exact string that made a real failure unreadable.
+
+        **The first version of this check was vacuous and a mutation found
+        it.** It stripped comments and docstrings with
+        `re.sub(r"#.*|\"\"\".*?\"\"\"", "", source, flags=re.S)`, and
+        `re.S` makes `.` match a newline for *both* branches of the
+        alternation, so `#.*` ate everything from the first comment to the end
+        of the file. The body it scanned was seven characters long, and
+        restoring the sentence it exists to forbid left it green.
+
+        That is this repository's scanner lesson twice over: a check whose
+        subject is text needs to know which regions are code, and a check that
+        cannot fail is worse than no check. The branches are separated now, and
+        the mutation that exposed it is the one that verifies it.
+        """
+        source = (ROOT / "scripts" / "application_mcp.py").read_text(encoding="utf-8")
+        body = re.sub(r'""".*?"""', "", re.sub(r"#.*$", "", source, flags=re.M),
+                      flags=re.S)
+        self.assertIn("ToolExecutionError", body,
+                      "the comment strip ate the file; every assertion below "
+                      "is about seven characters of it")
+        self.assertNotIn('"the local application operation failed")', body,
+                         "a branch again returns the sentence that named "
+                         "nothing on the Chainguard run")
