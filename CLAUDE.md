@@ -3502,6 +3502,44 @@ have been lost here to a green run that armed nothing -- a Vercel build that
 never fired, a pull without a restart, a check pointed at a stale server -- and
 a warning is a green run.
 
+#### The image was clean and the context was not, 2026-09-07
+
+**`applications/` reached a remote builder, and no line of the Dockerfile was
+wrong.** It copies three paths. The *context* is uploaded whole regardless, and
+the first real `flyctl deploy` shipped 118 MB across 11,704 files: `.git` 49 MB,
+`.claude` 33 MB, and `applications/` 9.4 MB of real resumes and cover letters
+carrying a real name, address, phone number and email.
+
+The distinction is the lesson. **What an image contains and what a build
+transfers are different questions**, and every artifact you would inspect to
+answer the first one says nothing about the second. Nothing was in the image;
+everything was on the builder.
+
+`.dockerignore` denies everything and allows three paths back, rather than
+listing what to exclude. A denylist is a list somebody has to remember to
+extend and what it forgets is by definition what nobody thought of -- which is
+exactly how `applications/` unanchored in `.gitignore` once swallowed an API
+route. Verified by asking Docker rather than by reading the patterns: the
+surviving context is `docs`, `packages`, `scripts`, 176 files, and
+`applications`, `.git` and `.claude` are absent.
+
+**And `fly deploy` created two machines against a config with no service
+block.** `--ha` defaults to true, "Create spare machines that increases app
+availability", so HA is a deploy-time flag rather than a consequence of
+`[[services]]`. Leaving the service block out was correct and did nothing about
+it. For this app a standby is a second sweeper running in parallel with the
+first, so CI builds with `--build-only --push` and updates the machine that
+exists; nothing in it creates one.
+
+**The check that caught the second one was itself the comment fault, twice in
+one hour.** A throwaway `'machine run' not in workflow` reported that the
+workflow creates a machine, on the error message telling a reader how to create
+one. The real test strips comments *and quoted strings*, and has a control
+proving the strip does not hide a genuine creation. That is the third instance
+this session of a scanner reading text about a thing as the thing, after the
+`[[services]]` comment in `fly.toml` and the two before it -- and each was
+written by someone who had just read the entry warning about it.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

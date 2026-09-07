@@ -138,7 +138,13 @@ class BoardCountTests(unittest.TestCase):
 
 
 class ImageContractTests(unittest.TestCase):
-    """What the image must carry, checked against what the code reads."""
+    """What the image must carry, checked against what the code reads.
+
+    The *workflow* is not checked here. `tests/test_build_context.py` owns it,
+    along with the `.dockerignore` it depends on, because two files asserting
+    on one workflow is two things to update in step and one of them will not
+    be -- which is the declared-twice shape this repository has met five times.
+    """
 
     def dockerfile(self):
         return (REPO / "deploy" / "sourcing" / "Dockerfile").read_text()
@@ -194,31 +200,6 @@ class ImageContractTests(unittest.TestCase):
         self.assertNotIn("[http_service]", code)
         # And the strip has to leave something, or this passes on an empty file.
         self.assertIn("primary_region", code)
-
-
-class DeployWorkflowTests(unittest.TestCase):
-    """The step that stops a green run meaning nothing."""
-
-    def workflow(self):
-        return (REPO / ".github" / "workflows" / "sourcing.yml").read_text()
-
-    def test_the_deploy_reads_back_what_is_actually_running(self):
-        text = self.workflow()
-        self.assertIn("flyctl machines list", text)
-        self.assertIn("flyctl image show", text)
-
-    def test_it_fails_the_run_when_a_machine_is_stale(self):
-        # Not a warning. Three deploys have been lost to a green run that armed
-        # nothing, and a warning is a green run.
-        self.assertIn("::error::machine running", self.workflow())
-
-    def test_it_refuses_when_no_machine_exists_at_all(self):
-        # Zero machines would otherwise satisfy a loop over every machine,
-        # which is the anti-vacuity hole this repository keeps meeting.
-        self.assertIn("no machines exist", self.workflow())
-
-    def test_deploys_do_not_overlap(self):
-        self.assertIn("concurrency:", self.workflow())
 
 
 class DatabaseUrlTests(unittest.TestCase):

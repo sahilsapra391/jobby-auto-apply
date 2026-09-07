@@ -1,12 +1,21 @@
-# Deploy the sourcing worker on merge to main, and prove it actually moved.
+# Push the sourcing image on merge to main, point the worker machine at it, and
+# prove it actually moved.
 #
-# **The last step is the point.** This project has lost three deploys to a
-# green run that did not arm anything: a Vercel build that never fired, a pull
-# without a restart, and a check pointed at a stale server. A workflow that
-# reports success while the machine still runs last week's image is the same
-# failure with a different host, so the deploy ends by reading the digest Fly
-# is actually running and comparing it to the one this run built. It fails the
-# workflow when they differ.
+# **`flyctl deploy` is the wrong verb for this app and created two machines.**
+# `--ha` defaults to true -- "Create spare machines that increases app
+# availability" -- so the first deploy made a worker and a standby, and no
+# amount of leaving `[[services]]` out of fly.toml prevents that: HA is a
+# deploy-time flag, not a service-block consequence. This app has one machine,
+# started on demand by the device, and a spare would sweep in parallel with it.
+#
+# So: build and push the image, then update the machines that exist. Nothing
+# here creates one.
+#
+# **The last step is the point.** This project has lost three deploys to a green
+# run that armed nothing: a Vercel build that never fired, a pull without a
+# restart, and a check pointed at a stale server. A workflow that reports
+# success while the machine still runs last week's image is the same failure
+# with a different host.
 name: sourcing
 
 on:
@@ -17,50 +26,68 @@ on:
       - 'packages/schema/**'
       - 'docs/write-paths.md'
       - 'deploy/sourcing/**'
+      - '.dockerignore'
       - '.github/workflows/sourcing.yml'
   workflow_dispatch:
 
 concurrency:
-  # One deploy at a time. Two overlapping `fly deploy` runs is the half-deploy
-  # this repository already has a lock for on the device side.
+  # One at a time. Two overlapping pushes is the half-deploy this repository
+  # already has a lock for on the device side.
   group: sourcing-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: jobby-sourcing
     steps:
       - uses: actions/checkout@v4
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy
+      - name: Build and push the image, creating nothing
         working-directory: deploy/sourcing
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         # The build context is the repository root: the Dockerfile copies
         # scripts/ and packages/, which do not live under deploy/sourcing.
-        run: flyctl deploy --config fly.toml --dockerfile Dockerfile
-             --remote-only ../..
+        # `.dockerignore` at that root is what keeps `applications/`, `.git`
+        # and `.claude` off the builder.
+        #
+        # The label is the commit, so an image can be traced to a merge without
+        # reading a timestamp. flyctl's own default is
+        # `deployment-{timestamp}`, which cannot be.
+        run: |
+          flyctl deploy --build-only --push \
+            --config fly.toml --dockerfile Dockerfile \
+            --image-label "sha-${GITHUB_SHA}" \
+            ../..
 
-      - name: Read back the digest Fly is running
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Point every machine at it
         run: |
           set -euo pipefail
-          # What the release says it deployed.
-          want=$(flyctl image show --app jobby-sourcing --json \
-                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["Digest"])')
-          # What every machine is actually running. A release can succeed while
-          # a machine fails to replace, which is exactly the state this exists
-          # to refuse.
-          running=$(flyctl machines list --app jobby-sourcing --json \
+          ref="registry.fly.io/${FLY_APP}:sha-${GITHUB_SHA}"
+          ids=$(flyctl machines list --app "$FLY_APP" --json \
+                | python3 -c 'import json,sys; print(" ".join(m["id"] for m in json.load(sys.stdin)))')
+          if [ -z "$ids" ]; then
+            echo "::error::no machines exist for ${FLY_APP}. Create one with 'flyctl machine run', then re-run this workflow."
+            exit 1
+          fi
+          for id in $ids; do
+            echo "updating $id -> $ref"
+            flyctl machine update "$id" --app "$FLY_APP" --image "$ref" --yes --skip-health-checks
+          done
+
+      - name: Read back what every machine is actually running
+        run: |
+          set -euo pipefail
+          want="sha-${GITHUB_SHA}"
+          running=$(flyctl machines list --app "$FLY_APP" --json \
                     | python3 -c 'import json,sys; print("\n".join(sorted({m["config"]["image"] for m in json.load(sys.stdin)})))')
-          echo "release digest : $want"
-          echo "machines run   :"
-          echo "$running" | sed 's/^/  /'
+          echo "wanted  : $want"
+          echo "running :"; echo "$running" | sed 's/^/  /'
           if [ -z "$running" ]; then
-            echo "::error::no machines exist for jobby-sourcing, so nothing is running this image"
+            echo "::error::no machines are running any image"
             exit 1
           fi
           # Every machine, not any machine: one stale machine still sweeps.
@@ -70,4 +97,4 @@ jobs:
               *) echo "::error::machine running $image, not $want"; exit 1 ;;
             esac
           done
-          echo "every machine is on the digest this run built"
+          echo "every machine is on the image this run built"
