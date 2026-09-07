@@ -1,0 +1,33 @@
+# What the build context may contain, as an allowlist.
+#
+# **`applications/` went to a remote builder before this existed.** The image
+# was clean -- the Dockerfile copies three paths and nothing else -- but the
+# *context* is uploaded whole, and that context was 118 MB across 11,704 files:
+# `.git` 49 MB, `.claude` 33 MB, and `applications/` 9.4 MB of real resumes and
+# cover letters carrying a real name, address, phone number and email. None of
+# it belonged on a builder disk.
+#
+# **Deny everything, then allow, rather than the other way round.** A denylist
+# is a list somebody has to remember to extend, and the thing it forgets is by
+# definition the thing nobody thought of. `.gitignore` in this repository is a
+# denylist and it is exactly why `applications/` unanchored once swallowed an
+# API route: a pattern written for one purpose matching somewhere else. Here
+# the default is out, and a new directory of anything is out until named.
+*
+
+# The three paths the Dockerfile copies, and nothing else. Each needs its
+# parent un-ignored before its contents can be.
+!scripts/
+!scripts/**
+!packages/
+!packages/**
+!docs/
+docs/*
+!docs/write-paths.md
+
+# And re-deny what should never travel even from inside those, because
+# `scripts/` holds working files the repository does not track.
+scripts/_*
+scripts/**/__pycache__/
+scripts/**/*.pyc
+**/.DS_Store

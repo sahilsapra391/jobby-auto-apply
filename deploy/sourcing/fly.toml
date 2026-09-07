@@ -19,6 +19,14 @@ primary_region = "iad"
 # No [[services]] and no [http_service] on purpose. A machine with a service
 # block is one Fly keeps alive and load-balances to; this one should be stopped
 # except when it is sweeping, which is about 3 hours a day.
+#
+# **And leaving them out does not stop `fly deploy` creating machines.** `--ha`
+# defaults to true -- "Create spare machines that increases app availability" --
+# so the first deploy against this file made a worker *and* a standby, both of
+# which would have swept in parallel. HA is a deploy-time flag rather than a
+# consequence of the service block, so the answer is not to configure `deploy`
+# differently but not to use it: the workflow builds with `--build-only --push`
+# and updates the one machine that exists. Nothing in CI creates one.
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
