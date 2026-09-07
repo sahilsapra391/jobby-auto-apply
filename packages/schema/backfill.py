@@ -241,7 +241,11 @@ def posting_row(record):
     if not source or not url:
         raise BackfillError(f"{legacy_id} has no source or no url")
 
-    slug, external = board_key.derive(source, url, legacy_id)
+    # **The connector's own key wins over a parse of its URL.** `for_record`
+    # falls back to `derive(source, url, legacy_id)` for every record written
+    # before the contract existed, so this is the same value for all of them
+    # and the real one for anything a connector emitted.
+    slug, external = board_key.for_record(record)
     extracted = record.get("extracted") or {}
     location = record.get("location") or {}
     workplace = _text(record.get("workplace"))
