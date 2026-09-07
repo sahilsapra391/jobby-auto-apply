@@ -5,7 +5,10 @@ The only connector here that POSTs: the key is part of the path and the query
 is a JSON body. Its country coverage is the widest of any free-key channel, so
 it is what reaches the regions Adzuna does not.
 
-Endpoint shape not verified live: no key is installed on this machine. Written
+Verified live 2026-09-07 and it FAILED: `jooble any '': HTTP 400`, status
+error, 0 found. That is a live fault to fix, not an unverified endpoint. The
+docstring said no key was installed while the key sat in config.env, which is
+exactly how a real 400 gets read as "expected, never tried". Written
 to the published contract; the first real run confirms it.
 """
 
@@ -53,7 +56,14 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
           cursor=0, **_):
     key = base.api_key(KEY_VAR, settings)
     if not key:
-        return base.skipped(SOURCE, f"no key ({KEY_VAR} is not set)")
+    # **A missing key is a fault, not a choice.** `skipped` is for a channel
+    # this run had no reason to ask -- reed on a search that excludes the UK --
+    # and it is absent from the report's error list, so a channel configured to
+    # run and unable to run looked identical to one deliberately left out. In a
+    # container, where the key arrives as an environment variable, that is the
+    # difference between a sweep that says it is missing five sources and one
+    # that looks healthy while missing them.
+        return base.failed(SOURCE, f"no key: set {KEY_VAR}")
 
     config = config or {}
     terms = config.get("keywords") or [""]

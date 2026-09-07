@@ -33,6 +33,7 @@ such.
 """
 
 import json
+import os
 import re
 import sys
 import time
@@ -309,7 +310,8 @@ def rfc822_date(value):
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def ok(source, postings, requests=0, errors=None, note="", complete=False):
+def ok(source, postings, requests=0, errors=None, note="", complete=False,
+       unchanged=0):
     """A channel that answered.
 
     `complete` says whether what came back is the whole of every board asked
@@ -327,6 +329,10 @@ def ok(source, postings, requests=0, errors=None, note="", complete=False):
     feature working. Completeness has to be claimed, not assumed.
     """
     return {"source": source, "status": "ok", "reason": note,
+            # Boards that answered 304. Carried so the coverage ratchet can
+            # tell "nothing changed" from "we were told less than usual",
+            # which are opposite facts that both show up as a smaller `found`.
+            "unchanged": int(unchanged),
             "postings": list(postings), "requests": requests,
             "listingComplete": bool(complete),
             "errors": list(errors or [])}
@@ -339,13 +345,13 @@ def skipped(source, reason, requests=0):
     # anything is gone. Same reason for `failed` below. The three envelopes
     # carry identical keys on purpose, and False is the only safe value here.
     return {"source": source, "status": "skipped", "reason": reason,
-            "postings": [], "requests": requests,
+            "unchanged": 0, "postings": [], "requests": requests,
             "listingComplete": False, "errors": []}
 
 
 def failed(source, reason, requests=0, errors=None):
     return {"source": source, "status": "error", "reason": reason,
-            "postings": [], "requests": requests,
+            "unchanged": 0, "postings": [], "requests": requests,
             "listingComplete": False, "errors": list(errors or [])}
 
 
@@ -369,9 +375,29 @@ def describe(response, what):
 
 
 def api_key(name, settings=None):
-    """A key from ~/.job-application/config.env, or "" when it is not installed."""
-    values = settings if settings is not None else toolpath.settings()
-    return str(values.get(name) or "").strip()
+    """A key from the process environment or the config files, or "".
+
+    **The environment is consulted first and was not consulted at all**, which
+    is what would have taken five channels off a cloud sweep without saying so.
+    `toolpath.settings()` merges two files, `deploy/.env.local` and the store's
+    `config.env`. A container handed `JOBBY_ADZUNA_KEY` as an ordinary
+    environment variable got an empty string back, `fetch` returned
+    `base.skipped(SOURCE, "no key")`, and the run reported a healthy sweep with
+    adzuna, careerjet, jooble, reed and usajobs simply absent.
+
+    Environment before files, deliberately. A container has no files and the
+    environment is the only channel it has; on the device an exported variable
+    is a deliberate act by whoever exported it, and one that is meant to
+    override the configured value for that process. An explicit `settings=`
+    argument still wins over both, because a caller that passed one has already
+    decided.
+    """
+    if settings is not None:
+        return str(settings.get(name) or "").strip()
+    found = os.environ.get(name)
+    if found and found.strip():
+        return found.strip()
+    return str(toolpath.settings().get(name) or "").strip()
 
 
 # --- normalisation ----------------------------------------------------------

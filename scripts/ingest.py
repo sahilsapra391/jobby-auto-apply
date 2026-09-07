@@ -369,7 +369,9 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         # is brake 1 in `jobs_store.close_missing` applied deliberately instead
         # of by accident.
         total = len(result["postings"])
-        believed, why_not = sweep_runs.gate(name, total, ledger.get(name))
+        believed, why_not = sweep_runs.gate(
+            name, total, ledger.get(name),
+            unchanged=int(result.get("unchanged") or 0))
         if believed:
             believed_now[name] = total
         else:

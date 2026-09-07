@@ -375,6 +375,14 @@ def _record_timing(entry, root=None):
     fail the write it is timing.
     """
     try:
+        # **Derived from the pool path the caller is writing, not from
+        # `Path.home()`.** Both call sites are inside `persist`, which takes no
+        # root and does take `path` -- `paths(root)["jobs"]`, so its parent is
+        # the store root by construction. The old fallback wrote a class A
+        # write's timing into the device store whichever store the write was
+        # for, and `NoStorePathIsAFrozenDefaultTests` cannot see it because it
+        # walks module-level constants and this is a fallback inside a
+        # function. The parameter is kept for callers that have a root to give.
         base = Path(root) if root else Path("~/.job-application").expanduser()
         log = base / "logs" / "mirror-timing.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -448,7 +456,8 @@ def persist(conn, account_id, path, before, jobs, on_file_failure=None,
         _record_timing({"mirrorSeconds": round(mirror_seconds, 3),
                         "fileSeconds": None, "records": len(jobs),
                         "added": report["added"], "changed": report["changed"],
-                        "removed": report["removed"], "fileWriteFailed": True})
+                        "removed": report["removed"], "fileWriteFailed": True},
+                       root=Path(path).parent)
         raise
 
     file_seconds = time.time() - file_started
@@ -463,7 +472,7 @@ def persist(conn, account_id, path, before, jobs, on_file_failure=None,
         "records": len(jobs),
         "added": report["added"], "changed": report["changed"],
         "removed": report["removed"],
-    })
+    }, root=Path(path).parent)
     return report
 
 

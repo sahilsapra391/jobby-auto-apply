@@ -478,3 +478,135 @@ class IngestGateTests(unittest.TestCase):
         self.assertEqual(self.ledger(), before,
                          "the anchor moved for a sweep whose postings never "
                          "reached the store")
+
+
+class UnchangedBoardTests(unittest.TestCase):
+    """A 304 is an answer, and it is the opposite of a shortfall.
+
+    **pinpoint and teamtailor recorded one as a failure.** `get_json` returns
+    `(None, response)` for anything that is not a 200, and neither connector
+    had an `unchanged` branch, so an unchanged board fell into the error arm:
+    36 of pinpoint's 39 boards and 18 of teamtailor's 23 on the 2026-09-07
+    sweep, 54 of the run's 67 errors. Those boards went unread while the channel
+    reported "39 boards" and claimed completeness, and the error list became
+    80% noise, which is how a real error stops being visible.
+
+    Fixing it creates a second problem that has to be fixed with it. A 304
+    board contributes no postings, so `found` drops by exactly what it would
+    have repeated -- and the yield ratchet reads that as truncation. lever gets
+    304s by design and would have been refused every sweep, which is the
+    channels with the best HTTP manners being punished for them.
+    """
+
+    def test_an_unchanged_board_is_not_an_error(self):
+        import sources.base as base
+        from sources import enterprise_boards
+
+        class R:
+            def __init__(self, unchanged): self.unchanged = unchanged; self.status = 304
+        class F:
+            requests = 0
+            def get_json(self, url, **kw): return None, R(True)
+        companies = {f"c{i}": {"name": f"C{i}", "ats": "pinpoint",
+                               "token": f"t{i}"} for i in range(30)}
+        out = enterprise_boards.pinpoint(F(), companies=companies)
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["unchanged"], 30)
+        self.assertIn("30 unchanged", out["reason"])
+
+    def test_the_same_is_true_of_teamtailor(self):
+        from sources import enterprise_boards
+
+        class R:
+            unchanged = True
+            status = 304
+        class F:
+            requests = 0
+            def get_json(self, url, **kw): return None, R()
+        companies = {f"c{i}": {"name": f"C{i}", "ats": "teamtailor",
+                               "token": f"t{i}"} for i in range(20)}
+        out = enterprise_boards.teamtailor(F(), companies=companies)
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["unchanged"], 20)
+
+    def test_a_real_failure_is_still_an_error(self):
+        # The control. A connector that called everything unchanged would pass
+        # both tests above and report a healthy sweep on a dead platform.
+        from sources import enterprise_boards
+
+        class R:
+            unchanged = False
+            status = 500
+            url = "https://x/postings.json"
+            reason = "Server Error"
+            error = ""
+            body = ""
+        class F:
+            requests = 0
+            def get_json(self, url, **kw): return None, R()
+        companies = {"c": {"name": "C", "ats": "pinpoint", "token": "t"}}
+        out = enterprise_boards.pinpoint(F(), companies=companies)
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["unchanged"], 0)
+
+    def test_all_three_envelopes_carry_the_count(self):
+        # Otherwise a caller reading `result["unchanged"]` on a skipped or
+        # failed channel gets a KeyError, and the ratchet reads it on every
+        # channel.
+        import sources.base as base
+        for env in (base.ok("x", []), base.skipped("x", "w"), base.failed("x", "w")):
+            with self.subTest(status=env["status"]):
+                self.assertEqual(env["unchanged"], 0)
+
+    def test_the_ratchet_does_not_punish_a_well_cached_channel(self):
+        # A channel whose boards mostly 304'd has not under-delivered; it has
+        # been told nothing changed.
+        self.assertTrue(sweep_runs.gate("pinpoint", 40, {"found": 900},
+                                        unchanged=36)[0])
+
+    def test_a_truncation_with_no_caching_is_still_refused(self):
+        # The control for the control. If `unchanged` waived the ratchet
+        # unconditionally the 2026-08-30 case would pass.
+        self.assertFalse(sweep_runs.gate("greenhouse", 3209, {"found": 5909},
+                                         unchanged=0)[0])
+
+
+class KeyedChannelTests(unittest.TestCase):
+    """A channel configured to run and unable to run is a fault, not a choice."""
+
+    def test_a_missing_key_is_an_error_not_a_skip(self):
+        import sources.base as base
+        from sources import adzuna, careerjet, jooble, reed, usajobs
+
+        class F:
+            requests = 0
+            def get_json(self, url, **kw):
+                raise AssertionError("called out with no key")
+        for name, fn in (("adzuna", adzuna.fetch), ("careerjet", careerjet.fetch),
+                         ("jooble", jooble.fetch), ("reed", reed.fetch),
+                         ("usajobs", usajobs.fetch)):
+            with self.subTest(channel=name):
+                out = fn(F(), config={}, settings={}, countries=["US", "GB"])
+                self.assertEqual(out["status"], "error")
+                self.assertIn("key", out["reason"])
+
+    def test_the_key_is_read_from_the_process_environment(self):
+        # The container's only channel. `toolpath.settings()` merges two files
+        # and a container has neither, so without this five channels go quiet
+        # and the sweep reports healthy.
+        import os
+        from unittest import mock
+        import sources.base as base
+        with mock.patch.dict(os.environ, {"JOBBY_TEST_KEY_XYZ": "  secret  "}):
+            self.assertEqual(base.api_key("JOBBY_TEST_KEY_XYZ"), "secret")
+
+    def test_an_explicit_settings_argument_still_wins(self):
+        import os
+        from unittest import mock
+        import sources.base as base
+        with mock.patch.dict(os.environ, {"JOBBY_TEST_KEY_XYZ": "from-env"}):
+            self.assertEqual(
+                base.api_key("JOBBY_TEST_KEY_XYZ", {"JOBBY_TEST_KEY_XYZ": "explicit"}),
+                "explicit")
+            self.assertEqual(base.api_key("JOBBY_TEST_KEY_XYZ", {}), "")
