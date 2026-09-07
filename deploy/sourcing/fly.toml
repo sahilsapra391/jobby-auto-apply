@@ -1,0 +1,27 @@
+# The sourcing worker. A scheduled machine, not a server: it has no ports, no
+# health check and no http service, because nothing calls it. Fly starts it,
+# it fetches, it writes to Postgres, it exits.
+app = "jobby-sourcing"
+
+# **iad, because the write is what matters.** Neon is on
+# ep-weathered-rice-ayyav4uq-pooler.c-5.us-east-2.aws.neon.tech -- AWS Ohio --
+# and this container's job ends in a multi-thousand-row insert there. The
+# connectors are HTTP-bound against two dozen third parties whose latency this
+# cannot influence anyway: the measured sweep was 19.2 seconds for 3,441
+# postings over four requests, and almost all of that was waiting on Greenhouse.
+# iad (Ashburn) is Fly's conventional pairing with AWS us-east; ord (Chicago)
+# is the alternate and is no closer to Ohio in practice.
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# No [[services]] and no [http_service] on purpose. A machine with a service
+# block is one Fly keeps alive and load-balances to; this one should be stopped
+# except when it is sweeping, which is about 3 hours a day.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[env]
+  JOB_APPLICATION_DIR = "/var/lib/jobby"

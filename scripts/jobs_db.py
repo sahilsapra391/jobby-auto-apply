@@ -70,24 +70,56 @@ class DatabaseError(Exception):
 def database_url(config_path=None):
     """The connection URL, or None when the store is still file-backed.
 
-    Read from config.env rather than the environment, for the same reason the
-    Healthchecks URL is: a launchd service inherits almost nothing, and a
-    secret that only works when someone's shell exported it is a secret that
-    works interactively and fails at 3am.
+    **The file first, and the reason is still the right one.** A launchd
+    service inherits almost nothing, and a secret that only works when
+    someone's shell exported it is a secret that works interactively and fails
+    at 3am. Worse than failing: a service that picked up a stray exported URL
+    would write to whatever database that names, which on this machine is the
+    difference between the mirror and production.
+
+    **Then the environment, because a container has no file.** The sourcing
+    worker runs the same connectors in an image with no `config.env` and no
+    home directory worth the name, and the environment is the only channel a
+    platform has for a secret. File-first keeps every guarantee the device
+    had -- with a file present the environment is never consulted -- and adds
+    the one the container needs.
+
+    **The environment path refuses under a test runner**, on exactly the
+    reasoning `migrate.device_url_refusal` sets out: a test that reached the
+    device's database wrote 39 rows into `applications`, emptied
+    `answer_bank`, and restarted the parity clock. `HOME=$(mktemp -d)` covered
+    that only incidentally, by making the file unreadable, and reading the
+    environment would have walked straight past it. There is deliberately no
+    variable to switch this off; a variable set once and forgotten is how a
+    guard stops existing.
     """
     path = Path(config_path) if config_path else config_path_default()
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return None
+        text = ""
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("#") or "=" not in line:
             continue
         name, _, value = line.partition("=")
-        if name.strip() == URL_NAME:
-            return value.strip() or None
-    return None
+        if name.strip() == URL_NAME and value.strip():
+            return value.strip()
+    found = (os.environ.get(URL_NAME) or "").strip()
+    if not found:
+        return None
+    if _under_a_test_runner():
+        sys.stderr.write(
+            f"jobs_db: refusing to read {URL_NAME} from the environment under a "
+            f"test runner. Point JOBBY_TEST_DATABASE_URL at a throwaway "
+            f"database, or pass an explicit url=.\n")
+        sys.stderr.flush()
+        return None
+    return found
+
+
+def _under_a_test_runner():
+    return "unittest" in sys.modules or "pytest" in sys.modules
 
 
 def connect(url=None):

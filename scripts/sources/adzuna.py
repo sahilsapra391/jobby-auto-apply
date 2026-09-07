@@ -87,7 +87,6 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
           cursor=0, **_):
     app_id = base.api_key(ID_VAR, settings)
     app_key = base.api_key(KEY_VAR, settings)
-    if not app_id or not app_key:
     # **A missing key is a fault, not a choice.** `skipped` is for a channel
     # this run had no reason to ask -- reed on a search that excludes the UK --
     # and it is absent from the report's error list, so a channel configured to
@@ -95,6 +94,7 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
     # container, where the key arrives as an environment variable, that is the
     # difference between a sweep that says it is missing five sources and one
     # that looks healthy while missing them.
+    if not app_id or not app_key:
         return base.failed(SOURCE, f"no key: set {ID_VAR} and {KEY_VAR}")
 
     config = config or {}

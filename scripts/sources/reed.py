@@ -81,7 +81,6 @@ def _uk_date(value):
 
 def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
     key = base.api_key(KEY_VAR, settings)
-    if not key:
     # **A missing key is a fault, not a choice.** `skipped` is for a channel
     # this run had no reason to ask -- reed on a search that excludes the UK --
     # and it is absent from the report's error list, so a channel configured to
@@ -89,6 +88,7 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
     # container, where the key arrives as an environment variable, that is the
     # difference between a sweep that says it is missing five sources and one
     # that looks healthy while missing them.
+    if not key:
         return base.failed(SOURCE, f"no key: set {KEY_VAR}")
     if countries and COUNTRY not in [c.upper() for c in countries]:
         return base.skipped(SOURCE, "the saved search does not include the UK")
