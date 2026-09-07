@@ -344,6 +344,44 @@ TOOLS = [
 ]
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
+#: The two tools that can put an application in front of an employer.
+#:
+#: **A fill-only run is one this server refuses to advertise them to.** The
+#: mode exists because an application that reached `submitting` and parked on
+#: something only a person can do -- an emailed code, an account, a CAPTCHA --
+#: cannot be re-filled by a normal run: `do_not_start` refuses it, and that
+#: refusal is right, because a second run of a form that already reached
+#: Submit is how an application goes in twice under a real name.
+#:
+#: So the way to re-fill it safely is to make submitting impossible rather than
+#: forbidden. **Not a flag in the prompt.** A prompt is advice to one model; a
+#: tool that is not in the set cannot be called by any of them, which is the
+#: same argument `cover_letter.validate_content` makes about greetings and the
+#: reason the browser firewall removes navigation rather than asking for it not
+#: to be used. The mode is set from the trusted runner's argv and reaches this
+#: process on its command line, where nothing the agent can say touches it.
+SUBMISSION_TOOLS = frozenset({"pre_submit", "record_completed"})
+
+
+def tools_for(fill_only: bool) -> list[dict[str, Any]]:
+    """The advertised tool set for this run's mode."""
+    if not fill_only:
+        return TOOLS
+    return [tool for tool in TOOLS if tool["name"] not in SUBMISSION_TOOLS]
+
+
+def tool_names_for(fill_only: bool) -> frozenset[str]:
+    """The callable tool set for this run's mode.
+
+    Separate from `tools_for` on purpose, and both are enforced. A client that
+    read `tools/list` once and kept the answer -- or one that was told a tool
+    name by anything other than this server -- reaches `call` with a name that
+    was never advertised, and an advertised-only guard would run it. Two
+    surfaces, the same rule, in the shape `FenceSurfaceContractTests` already
+    pins for the browser firewall.
+    """
+    return frozenset(TOOL_NAMES - SUBMISSION_TOOLS) if fill_only else frozenset(TOOL_NAMES)
+
 
 @dataclass(frozen=True)
 class ApplicationContext:
@@ -352,6 +390,8 @@ class ApplicationContext:
     cover: Path
     resume_html: Path | None = None
     root: Path | None = None
+    #: Whether this run may reach Submit. See `SUBMISSION_TOOLS`.
+    fill_only: bool = False
 
     @classmethod
     def create(
@@ -361,6 +401,7 @@ class ApplicationContext:
         cover: str,
         resume_html: str | None = None,
         root: str | None = None,
+        fill_only: bool = False,
     ) -> "ApplicationContext":
         fixed_resume = _pdf(resume, "resume")
         fixed_cover = _pdf(cover, "cover letter")
@@ -382,12 +423,17 @@ class ApplicationContext:
                 raise ToolInputError(
                     "store root must be an absolute regular directory"
                 ) from exc
+        # `is True`, not truthiness. The value arrives from argv and from a
+        # JSON context, and a mode that turns itself on for the string "false"
+        # would disarm the submission gate; a mode that fails to turn on merely
+        # refuses a re-fill, which is the safe direction of a wrong answer.
         return cls(
             _fixed_application_id(application_id),
             fixed_resume,
             fixed_cover,
             source,
             fixed_root,
+            fill_only is True,
         )
 
 
@@ -396,7 +442,21 @@ class ApplicationTools:
         self.context = context
 
     def call(self, name: str, arguments: Any) -> dict[str, Any]:
-        if name not in TOOL_NAMES:
+        if name not in tool_names_for(self.context.fill_only):
+            # A withheld tool is named rather than called unknown, because the
+            # two need different behaviour from the reader: an unknown name
+            # invites a retry under a spelling variation, and this one has to
+            # stop the run and park. Saying so costs nothing -- the tool is
+            # gone either way -- and it is the difference between an agent that
+            # parks with the handoff and one that spends its turns guessing.
+            if name in SUBMISSION_TOOLS:
+                raise ToolInputError(
+                    f"{name} is not available on this run. This is a fill-only "
+                    "run: it exists to put the form back in front of the user, "
+                    "who submits it themselves. Fill and read back every field, "
+                    "call record_answers, then park with what is left for them "
+                    "to do."
+                )
             raise ToolInputError("unknown tool")
         args = _object(arguments)
         method = getattr(self, "_" + name)
@@ -758,8 +818,11 @@ def handle_message(message: Any, tools: ApplicationTools) -> dict[str, Any] | No
             "supportedVersions": [MODERN_PROTOCOL_VERSION],
             "capabilities": {"tools": {"listChanged": False}},
             "instructions": (
-                "Seven typed tools operate only on the application and artifacts "
-                "fixed when this server started."
+                f"{len(tools_for(tools.context.fill_only))} typed tools operate "
+                "only on the application and artifacts fixed when this server "
+                "started."
+                + (" This run cannot submit: the submission tools are absent."
+                   if tools.context.fill_only else "")
             ),
         }, modern=True, cacheable=True))
     if method == "initialize":
@@ -775,7 +838,8 @@ def handle_message(message: Any, tools: ApplicationTools) -> dict[str, Any] | No
         return _response(request_id, _complete_result({}, modern=modern))
     if method == "tools/list":
         return _response(request_id, _complete_result(
-            {"tools": TOOLS}, modern=modern, cacheable=modern
+            {"tools": tools_for(tools.context.fill_only)},
+            modern=modern, cacheable=modern
         ))
     if method == "tools/call":
         name = params.get("name")
@@ -822,6 +886,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", required=True)
     parser.add_argument("--cover", required=True)
     parser.add_argument("--resume-html")
+    parser.add_argument(
+        "--fill-only", action="store_true",
+        help="withhold the submission tools; this run fills and hands back")
     parser.add_argument("--root", help=argparse.SUPPRESS)
     return parser
 
@@ -835,6 +902,7 @@ def main() -> int:
             args.cover,
             args.resume_html,
             args.root,
+            args.fill_only,
         )
     except ToolInputError as exc:
         print(f"jobby application MCP: {exc}", file=sys.stderr)

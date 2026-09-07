@@ -21,24 +21,51 @@ Standard library only, and it starts nothing the run would not have started.
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import application_mcp  # noqa: E402
 
 # The proxy's whole advertised surface. Requiring all thirteen rather than a
 # couple is deliberate: a partial list is the same fault as an empty one, and
 # an agent that discovers the gap mid-form has already opened the posting.
-REQUIRED = {
-    "browser": (
-        "browser_snapshot", "browser_find", "browser_click", "browser_hover",
-        "browser_fill_form", "browser_type", "browser_press_key",
-        "browser_select_option", "browser_handle_dialog", "browser_file_upload",
-        "browser_attach_file", "browser_tabs", "browser_wait_for",
-    ),
-    "jobby": (
-        "set_phase", "resolve_answers", "experience_plan", "salary_midpoint",
-        "park_application", "pre_submit", "record_completed",
-    ),
-}
+BROWSER_REQUIRED = (
+    "browser_snapshot", "browser_find", "browser_click", "browser_hover",
+    "browser_fill_form", "browser_type", "browser_press_key",
+    "browser_select_option", "browser_handle_dialog", "browser_file_upload",
+    "browser_attach_file", "browser_tabs", "browser_wait_for",
+)
+
+
+def required_for(fill_only: bool = False):
+    """What each server must advertise for a run of this mode to start.
+
+    **The jobby half is derived rather than listed, and that closed a drift
+    nobody had noticed.** It was seven hand-written names against the nine
+    `application_mcp.TOOLS` advertises: `story_facts` and `record_answers` were
+    missing, so a server that had lost the tool writing every application's
+    answer manifest would have passed the fence. Same shape as `GATE_PATHS`
+    naming the caller and not the writer, and as the eleven-of-twenty-eight
+    parity comparison -- a list beside the thing it describes, drifting in the
+    direction nobody deletes from.
+
+    The browser half stays written out. There is no module here to derive it
+    from: `browser_mcp_proxy._tool_definitions` is the other copy and
+    `tests/test_apply_capability_contract.py` compares the two in both
+    directions, which is the same guarantee by a different route.
+    """
+    return {
+        "browser": BROWSER_REQUIRED,
+        "jobby": tuple(sorted(
+            tool["name"] for tool in application_mcp.tools_for(fill_only))),
+    }
+
+
+#: The normal mode, for callers that predate fill-only.
+REQUIRED = required_for(False)
 
 HANDSHAKE_TIMEOUT_SECONDS = 45
 MAX_CAPTURE = 2000

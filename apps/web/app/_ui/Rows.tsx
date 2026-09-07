@@ -428,11 +428,32 @@ export function DoneRow(row: Row) {
             </a>
           );
         }
-        return said ? <span className="chip ready" title={said}>confirmed</span>
-                    : <span className="chip hold"
-                            title="No confirmation was recorded for this application">
-                        unverified
-                      </span>;
+        if (said) {
+          return <span className="chip ready" title={said}>confirmed</span>;
+        }
+        // **Three states, because "a person says so" is neither of the other
+        // two.** `confirmation` is the employer's own words and this cell
+        // renders it as proof. `apply_marks.py` used to put the sentence
+        // "marked submitted by the user on the board" in that field, so 11 of
+        // the 104 completed events drew a green `confirmed` chip whose proof
+        // text was a claim about a button press. It writes `confirmedBy` now
+        // and no `confirmation`, and the 11 legacy rows are read by the
+        // sentence they carry, because that is what they actually say.
+        //
+        // A fill-only handoff ends here every time: the run cannot submit, the
+        // person does, and this is the honest chip for it. Green would claim
+        // an employer said something. Grey would claim nobody did.
+        const sentinel = "marked submitted by the user on the board";
+        if (s(p.confirmedBy) === "user" || s(p.confirmation) === sentinel) {
+          return <span className="chip warm"
+                       title="Submitted by hand and marked on the board. No page text was captured.">
+                   marked
+                 </span>;
+        }
+        return <span className="chip hold"
+                    title="No confirmation was recorded for this application">
+                 unverified
+               </span>;
       })()}</td>
       <td><DocLink row={row} kind="resume" label="Resume"
             value={(row.completed_payload as Record<string, unknown> | null)

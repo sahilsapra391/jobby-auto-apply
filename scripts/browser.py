@@ -504,7 +504,7 @@ def application_server_config(application_context):
     unknown = sorted(
         set(application_context) - {
             "applicationId", "resume", "cover", "resumeHtml",
-            "uploadResume", "uploadCover",
+            "uploadResume", "uploadCover", "fillOnly",
         }
     )
     if unknown:
@@ -529,6 +529,18 @@ def application_server_config(application_context):
         if not Path(resume_html).expanduser().is_absolute():
             raise ValueError("resumeHtml must be an absolute path")
         args.extend(["--resume-html", resume_html])
+    # **The mode is argv, which is the whole point of it.** A fill-only run is
+    # one whose MCP server never advertises `pre_submit` or `record_completed`,
+    # and the only thing that decides it is this command line, written by the
+    # trusted runner before any provider starts. Nothing the agent says reaches
+    # it. `is True` because a context arriving as JSON could carry the string
+    # "false", and a mode that turns itself on for that would take the
+    # submission tools away from a real application.
+    fill_only = application_context.get("fillOnly", False)
+    if fill_only is not False and fill_only is not True:
+        raise ValueError("fillOnly must be a boolean")
+    if fill_only:
+        args.append("--fill-only")
     return {
         "command": str(Path(sys.executable).resolve()),
         "args": args,

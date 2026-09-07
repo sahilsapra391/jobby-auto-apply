@@ -5,6 +5,16 @@ The board cannot write to the store on this machine, so the button queues the
 mark and this claims it: logs a `completed` event, retires the watch-list
 session, and republishes so Needs you and Submitted agree.
 
+**This is the second half of a fill-only handoff and the only half a person
+can see.** A fill-only run has no `pre_submit` and no `record_completed` on its
+MCP server (`application_mcp.SUBMISSION_TOOLS`), so it fills the form, parks
+with the handoff, and stops. The person presses the form's own Submit and then
+Confirm submitted, and this is what turns that into a record. No nonce, and
+that is right rather than a shortcut: the nonce proves the agent that clicked
+Submit is the agent that recorded the confirmation, and on this path no agent
+clicked anything. `finish.py --completed` stays nonce-gated for the agent path
+and nothing here touches it.
+
 Reads the queue directly with the Blob token in deploy/.env.local rather than
 through the password-gated endpoint, so the poller never needs the board's
 password and can run unattended.
@@ -70,6 +80,25 @@ def apply_one(aid):
     if loaded.returncode == 0:
         detail = json.loads(loaded.stdout or "{}")
 
+    # **Who says it went in, and what was seen, are two claims and they no
+    # longer share a field.**
+    #
+    # `confirmation` means "the employer's own words on the page the agent
+    # read", and both boards render a green `confirmed` chip from it with that
+    # text as the proof. This path put the sentence "marked submitted by the
+    # user on the board" in it, so 11 of the 104 completed events on this
+    # machine (measured 2026-09-07, against 69 with real page text and 24 with
+    # none) rendered as confirmed with a claim about a button press standing in
+    # for the employer's confirmation. That is the salvaged-answer join in
+    # miniature: a record presented as evidence of a thing it is not evidence
+    # of.
+    #
+    # So this writes `confirmedBy` and no `confirmation`. Nobody read a page.
+    # The application really was submitted -- a person did it by hand, which is
+    # the whole point of a fill-only handoff -- and a board that says so in its
+    # own words is telling the truth, where one that borrows the employer's is
+    # not. Third state, named, rather than the convenient empty answer or the
+    # convenient full one.
     event = {
         "event": "completed",
         "applicationId": aid,
@@ -77,7 +106,7 @@ def apply_one(aid):
         "role": detail.get("role", ""),
         "ats": detail.get("ats", ""),
         "source": detail.get("ats") or "board",
-        "confirmation": "marked submitted by the user on the board",
+        "confirmedBy": "user",
     }
     folder = REPO / "applications" / event["company"] if event["company"] else None
     if folder and folder.exists():

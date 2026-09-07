@@ -155,9 +155,14 @@ SESSION_PUBLIC_FIELDS = {
     "sponsorshipStance", "status", "step", "sweptAt", "updatedAt", "url",
     "verifiedLive", "workSite", "yearsMin", "yearsText",
 }
+#: What `apply_marks.py` wrote into `confirmation` before `confirmedBy`
+#: existed. 11 rows on this machine, 2026-09-07. Matched literally because
+#: that is literally what they carry; nothing new is written with it.
+MARKED_BY_HAND = "marked submitted by the user on the board"
+
 HISTORY_PUBLIC_FIELDS = {
-    "applicationId", "at", "company", "confirmation", "coverLetter",
-    "event", "resumeVariant", "role", "url",
+    "applicationId", "at", "company", "confirmation", "confirmedBy",
+    "coverLetter", "event", "resumeVariant", "role", "url",
 }
 ROLE_PUBLIC_FIELDS = {
     "applicationId", "ats", "canonicalUrl", "company", "companyWebsite",
@@ -777,10 +782,28 @@ def build(state, generated):
                     "interview": ("warm", "interview"), "offer": ("ready", "offer"),
                     "rejected": ("", "rejected")}
     def proof_cell(entry):
-        """Evidence the submission actually landed, or an honest gap."""
+        """Evidence the submission actually landed, or an honest gap.
+
+        **Three states, because "a person says so" is neither of the other
+        two.** `confirmation` holds the employer's own words off the page the
+        agent read, and this cell renders them as proof. `apply_marks.py` used
+        to write the sentence "marked submitted by the user on the board" into
+        that field, so a board click drew the same green chip as an employer's
+        confirmation with a claim about a button press as its evidence. It
+        writes `confirmedBy` now; the 11 rows carrying the old sentence
+        (measured 2026-09-07 against 69 with real page text and 24 with none)
+        are read by the sentence itself, which is what they say.
+
+        Every fill-only handoff lands here: the run cannot submit, a person
+        does, and neither of the old two chips was true of that.
+        """
         aid = entry.get("applicationId")
         r = roles.get(aid, {}) if aid else {}
         conf = (r.get("confirmation") or entry.get("confirmation") or "").strip()
+        by = (r.get("confirmedBy") or entry.get("confirmedBy") or "").strip()
+        if by == "user" or conf == MARKED_BY_HAND:
+            return ('<span class="chip warm" title="Submitted by hand and marked '
+                    'on the board. No page text was captured.">marked</span>')
         if not conf:
             return '<span class="chip hold" title="No confirmation was recorded for this application">unverified</span>'
         url = r.get("confirmedAt")
