@@ -379,6 +379,79 @@ def park_slot(name, aid):
     })
 
 
+#: How long "Open & finish" keeps a slot after the run parks, in seconds.
+#:
+#: **Bounded is the whole property**, and it is what the hold this replaces did
+#: not have. `reconcile_browser_slots` used to keep a slot while its
+#: application was parked, with no expiry, and five parked applications took
+#: the pool to zero for twenty hours. A hold that ends on its own cannot do
+#: that: five slots held at once cost fifteen minutes of capacity, not a day,
+#: and the pool heals without anybody noticing.
+#:
+#: Fifteen minutes, and the number comes from the thing it exists for. An ATS
+#: verification code is the block this is for and those expire in about ten to
+#: fifteen minutes, so holding a browser longer than the code is useful for
+#: nothing: the form behind it cannot be finished either. The lower bound is a
+#: person walking to the laptop and typing eight characters.
+#:
+#: It is one number with a stated basis rather than a tuned one. If it moves,
+#: move it because a code lifetime changed or because somebody measured how
+#: long they actually take, not because a run felt slow.
+HOLD_SECONDS = 15 * 60
+
+
+def hold_slot(name, aid, seconds=HOLD_SECONDS):
+    """Keep a slot for a person who is about to look at it, until a deadline.
+
+    **A third state, distinct from parked, and the distinction is the fix.**
+    `reconcile_browser_slots` releases a slot the moment its application stops
+    being `inflight`, which is correct and is why a parked application loses
+    its filled form within a tick. This says "somebody pressed Open & finish
+    and is walking to the laptop", which is a different claim with an end.
+
+    The deadline is written into the lock rather than kept in memory, because
+    the watcher restarts and a hold that a restart forgets is a hold that
+    releases early -- and one a restart *extends* would be the old bug back.
+    """
+    _write_lock(name, {
+        "pid": 0,
+        "at": now_stamp(),
+        "note": aid,
+        "parked": True,
+        # Read by `hold_expired`. `parked` stays true so every existing reader
+        # -- `free_apply_slots`, `candidate_apply_slots`, the end-to-end
+        # test's slot picker -- goes on treating it as unavailable without
+        # being taught a new word.
+        "heldUntil": iso_after(seconds),
+        "heldFor": "open-and-finish",
+    })
+
+
+def iso_after(seconds):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def hold_expired(held):
+    """Whether a lock's hold has run out. True when there is no hold at all.
+
+    **The default is expired, not held.** An unreadable or missing deadline
+    must not pin a slot for ever, which is the failure this whole mechanism is
+    a fix for; a hold nobody can read is a hold nobody can end.
+    """
+    from datetime import datetime, timezone
+    until = (held or {}).get("heldUntil")
+    if not until:
+        return True
+    try:
+        deadline = datetime.strptime(until, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+    return datetime.now(timezone.utc) >= deadline
+
+
 def reserve(name, note=""):
     """Claim a slot atomically. False if somebody already holds it.
 
@@ -630,6 +703,21 @@ def reconcile_browser_slots():
         # returning to a filled form. A convenience that can take throughput to
         # zero is not a convenience.
         if entry.get("status") != "inflight":
+            # **A live "Open & finish" hold is the one exception, and it ends
+            # by itself.** The rule above is right and the outage behind it was
+            # real: an unbounded hold on a parked application took the pool to
+            # zero for twenty hours. This is not that. It is set by a person
+            # pressing a button, it carries a deadline in the lock, and
+            # `hold_expired` answers True for a hold it cannot read, so the
+            # worst case is a slot released too early rather than one held for
+            # ever.
+            #
+            # Without it the button cannot do its job: the form the person
+            # pressed it to look at is closed by this branch within a tick.
+            held = lock_holder(slot)
+            if held and not hold_expired(held):
+                handled.add(slot)
+                continue
             if release_browser_slot(aid, slot, entry):
                 released.append({"applicationId": aid, "slot": slot})
             handled.add(slot)
@@ -2454,10 +2542,39 @@ def tick(force_publish=False):
             # form. serve() is headless now, and focus() answers
             # {"focused": true} against a headless target, so the board would
             # set its label to "Check your browser" with nothing to check.
+            # **Hold the slot before anything else, because the reconciler
+            # runs every few seconds.** Without this the browser comes up and
+            # the very next tick closes it: a parked application is `review`,
+            # and that branch releases the slot and clears every page.
+            hold_slot(slot, aid)
+
             browser.show(slot)
+            focused = browser.focus(url, slot=slot)
+
+            # **An empty form is not what the button is for.** The park that
+            # sent the user here happened minutes ago and the reconciler has
+            # already closed the tab, so `focus` opened the posting fresh.
+            # Re-filling is what makes the window worth walking to, and it is
+            # an ordinary apply: the agent fills, reaches the same block, and
+            # parks -- only now the slot is held, so the filled form survives
+            # for the person to finish.
+            #
+            # Enqueued rather than spawned here, so it goes through
+            # `choose_apply_head` and every guard that stops a duplicate
+            # submission. `candidate_apply_slots` returns this application's
+            # own slot when it holds one, which is what keeps the re-fill in
+            # the window the user is about to look at.
+            refill = None
+            if not browser.tabs(slot):
+                refill = subprocess.run(
+                    [toolpath.node(), "queue.mjs", "enqueue", "apply/", aid],
+                    cwd=DEPLOY, capture_output=True, text=True,
+                    env=toolpath.queue_env(), timeout=60).returncode == 0
             changed["focus"] = {
                 "applicationId": aid,
-                **browser.focus(url, slot=slot),
+                "heldSeconds": HOLD_SECONDS,
+                "refillQueued": refill,
+                **focused,
             }
 
     if q.get("restore"):
