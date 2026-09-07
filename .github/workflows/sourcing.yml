@@ -1,0 +1,73 @@
+# Deploy the sourcing worker on merge to main, and prove it actually moved.
+#
+# **The last step is the point.** This project has lost three deploys to a
+# green run that did not arm anything: a Vercel build that never fired, a pull
+# without a restart, and a check pointed at a stale server. A workflow that
+# reports success while the machine still runs last week's image is the same
+# failure with a different host, so the deploy ends by reading the digest Fly
+# is actually running and comparing it to the one this run built. It fails the
+# workflow when they differ.
+name: sourcing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'packages/schema/**'
+      - 'docs/write-paths.md'
+      - 'deploy/sourcing/**'
+      - '.github/workflows/sourcing.yml'
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time. Two overlapping `fly deploy` runs is the half-deploy
+  # this repository already has a lock for on the device side.
+  group: sourcing-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        working-directory: deploy/sourcing
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # The build context is the repository root: the Dockerfile copies
+        # scripts/ and packages/, which do not live under deploy/sourcing.
+        run: flyctl deploy --config fly.toml --dockerfile Dockerfile
+             --remote-only ../..
+
+      - name: Read back the digest Fly is running
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # What the release says it deployed.
+          want=$(flyctl image show --app jobby-sourcing --json \
+                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["Digest"])')
+          # What every machine is actually running. A release can succeed while
+          # a machine fails to replace, which is exactly the state this exists
+          # to refuse.
+          running=$(flyctl machines list --app jobby-sourcing --json \
+                    | python3 -c 'import json,sys; print("\n".join(sorted({m["config"]["image"] for m in json.load(sys.stdin)})))')
+          echo "release digest : $want"
+          echo "machines run   :"
+          echo "$running" | sed 's/^/  /'
+          if [ -z "$running" ]; then
+            echo "::error::no machines exist for jobby-sourcing, so nothing is running this image"
+            exit 1
+          fi
+          # Every machine, not any machine: one stale machine still sweeps.
+          echo "$running" | while read -r image; do
+            case "$image" in
+              *"$want"*) ;;
+              *) echo "::error::machine running $image, not $want"; exit 1 ;;
+            esac
+          done
+          echo "every machine is on the digest this run built"

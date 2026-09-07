@@ -65,7 +65,6 @@ def parse_job(entry, country):
 def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
           cursor=0, **_):
     key = base.api_key(KEY_VAR, settings)
-    if not key:
     # **A missing key is a fault, not a choice.** `skipped` is for a channel
     # this run had no reason to ask -- reed on a search that excludes the UK --
     # and it is absent from the report's error list, so a channel configured to
@@ -73,6 +72,7 @@ def fetch(fetcher, config=None, settings=None, limit=None, countries=None,
     # container, where the key arrives as an environment variable, that is the
     # difference between a sweep that says it is missing five sources and one
     # that looks healthy while missing them.
+    if not key:
         return base.failed(SOURCE, f"no key: set {KEY_VAR}")
     config = config or {}
     wanted = [c.upper() for c in (countries or [])] or ["US"]

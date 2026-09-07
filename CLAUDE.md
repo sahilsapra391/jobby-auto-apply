@@ -3453,6 +3453,55 @@ The one gap left is honest and stated: a field this list does not name can
 still change silently. `CANARY_FIELDS` is the place to add one, and the cost of
 adding is one entry.
 
+### The sourcing container, and what running it found, 2026-09-07
+
+**The fetch moves and the merge does not, because the pool cannot.**
+`jobs_store` contains zero SELECTs, `run()` reads the whole 98 MB pool file, and
+`_persist_pool` derives its Postgres delta by re-reading that same file. Making
+the pool live in Postgres is Phase 4. What can move is the half that is already
+pure: measured 2026-09-07, every connector takes its device state as plain
+arguments and the only device state any of them writes is the HTTP validator
+cache. `scripts/sweep_worker.py` runs them and stages the result; the gate, the
+merge, the closure and the prune stay where the pool is.
+
+**And the reason to move it is not the laptop's CPU.** `jobs_store.POOL_LOCK`
+is the string `"scan"`: the sweep's lock *is* the pool's write lock. Eight
+non-sweep callers take it, two on the apply path, and across `watch.log` from
+2026-08-26 to 2026-09-07 there are 176 ticks that skipped their board reconcile
+with LockBusy on it, 9 to 21 on every one of those 13 days. A sweep runs a
+median 26.8 minutes, six times a day, and the fetch is nearly all of it.
+
+**Running it in the container found what reading it had not.**
+`jobs_db.connect()` resolves the URL from `config.env` and never from the
+environment, which is the `api_key` fault one module over and was invisible
+until the image ran. The file still wins -- a launchd service that picked up a
+stray exported URL would write to whatever database that names, and that
+docstring's reasoning is right -- but the environment is now the fallback,
+because a container has no file. It carries `migrate.device_url_refusal`'s own
+guard, because an environment read is exactly how a test run reaches
+production, and `HOME=$(mktemp -d)` covered that only by making the file
+unreadable.
+
+**That refusal is the one a mutation found untested.** Five mutations were run
+against the worker and four failed as they should; removing the test-runner
+refusal left every test green, on the guard with the highest consequence of the
+five. Six tests now cover it.
+
+**And the container's own test tripped the scanner rule while writing it.**
+`test_it_is_a_scheduled_machine_and_not_a_server` asserts `[[services]]` is
+absent from `fly.toml`, and failed on the comment explaining why there is no
+`[[services]]` block. That is the entry above about a scanner reading a comment
+as if it were code, hit within minutes of writing the file it scans -- which is
+what that entry says: knowing the shape does not prevent repeating it. Comments
+are stripped, and a second test proves the strip does not hide a real block.
+
+**The deploy step ends by reading back the digest every machine is running.**
+Not the release's digest, which a failed machine replacement leaves untouched,
+and not any machine's, because one stale machine still sweeps. Three deploys
+have been lost here to a green run that armed nothing -- a Vercel build that
+never fired, a pull without a restart, a check pointed at a stale server -- and
+a warning is a green run.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,
