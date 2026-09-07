@@ -32,6 +32,18 @@ correction. It writes `postings.employer_id` itself, exactly as it will have to
 write `employers.domain` itself, and for the same reason: the upsert path is
 deliberately not a correction path.
 
+**`apply` corrects the pool as well, and the guard is what proved it had to.**
+Moving `postings.employer_id` alone left the device's own record still saying
+"Appcast Enterprise", so the two stores genuinely disagreed and
+`verify_parity` reported exactly 47 `employer_edge` divergences, one per
+repointing and nothing else. That is the guard working: the device is the
+system of record, and a resolver that corrects only the mirror has corrected
+the copy and left the original wrong.
+
+The pool write goes **after** the commit. If it fails, parity is red and names
+the 47 rows, which is a self-describing state somebody can finish by hand. The
+other order risks a corrected pool with no audit row behind it.
+
 THE ORDER INSIDE `apply` IS NOT A PREFERENCE. Every edge's before-image goes
 into `employer_decisions` in the same transaction and before the update, so a
 crash between them leaves a record of an edge that did not move rather than a
@@ -264,6 +276,42 @@ def apply_confirmed(conn, account_id, confirmed, dry_run=True):
     return moves
 
 
+def correct_the_pool(confirmed, root=None):
+    """Set the pool's `company` for every posting whose edge moved.
+
+    **The device is the system of record and this is the half that makes it
+    true.** Without it the mirror holds the corrected employer and the device
+    still holds the feed publisher's name, which is a real disagreement rather
+    than a reporting artefact -- `verify_parity` said so, 47 times, the first
+    time this ran.
+
+    Through `jobs_store.edit`, so it takes the pool lock rather than racing a
+    sweep that is rewriting 36MB. A record that has since left the pool is
+    counted and named, not skipped: the edge moved in Postgres and did not move
+    here, and that difference is the only thing that would explain a leftover
+    divergence afterwards.
+    """
+    import jobs_store
+    names = {c["id"]: c["name"] for c in confirmed}
+    if not names:
+        return {"corrected": 0, "already": 0, "missing": []}
+    corrected, already, missing = 0, 0, []
+    with jobs_store.edit(jobs_store.root_dir(root),
+                         note="employer_resolve") as (jobs, edit):
+        for legacy in sorted(names):
+            record = jobs.get(legacy)
+            if not isinstance(record, dict):
+                missing.append(legacy)
+                continue
+            if (record.get("company") or "") == names[legacy]:
+                already += 1
+                continue
+            record["company"] = names[legacy]
+            corrected += 1
+        edit["write"] = corrected > 0
+    return {"corrected": corrected, "already": already, "missing": missing}
+
+
 def cmd_apply(args):
     import dual_write
     import jobs_db
@@ -281,8 +329,17 @@ def cmd_apply(args):
     finally:
         conn.close()
     moved = [m for m in moves if "to" in m]
+    pool = {"corrected": 0, "already": 0, "missing": []}
+    if args.apply:
+        # After the commit. A failure here leaves parity red and naming the
+        # rows, which somebody can finish; the other order would risk a
+        # corrected pool with no audit row behind it.
+        pool = correct_the_pool(confirmed, args.root)
     print(json.dumps({"confirmed": len(confirmed), "moved": len(moved),
                       "skipped": len(moves) - len(moved),
+                      "pool_corrected": pool["corrected"],
+                      "pool_already": pool["already"],
+                      "pool_missing": pool["missing"],
                       "committed": bool(args.apply)}, indent=1))
     for m in moves:
         print("   ", json.dumps(m))
