@@ -349,13 +349,45 @@ for (const [label, headers, body] of MUTATIONS) {
           const after = await pool.query(
             "select count(*) from applications where legacy_id = 'shape-check'");
           const wrote = Number(after.rows[0].count) === 1;
-          if (res.status === 503 || !wrote) {
+
+          // **Every v2 write now orders work, so "the row exists" is not
+          // available without a queue.** `STATUS_QUEUE` used to carry
+          // `dropped` alone, so this control's `status: "watch"` skipped
+          // `order` entirely and wrote a row on a runner with no Cloudflare
+          // credentials. That was the bug: three controls wrote
+          // `applications.status` and told the device nothing. Fixing it took
+          // the control's own evidence away with it.
+          //
+          // So there are two proofs and which one runs depends on the
+          // environment, named rather than silently chosen:
+          const said = await res.json().catch(() => ({}));
+          const reason = String(said.error ?? "");
+          const queueRefused = res.status === 503 && /work queue/i.test(reason);
+
+          if (wrote) {
+            // A queue is configured and the whole path ran.
+            note(`flag-on control: answered ${res.status} and the row exists`);
+          } else if (queueRefused) {
+            // **No queue, so the refusal must name the queue and not the
+            // flag.** That is a real control: a route that refused everything
+            // for one reason would give the same words with the flag on and
+            // off, and these two must differ. The flag-off refusal above says
+            // "writes are off for this account"; this one names the missing
+            // variables. Two gates, two sentences, neither a blanket refusal.
+            if (/writes are off/i.test(reason)) {
+              fail(`with live_board ON the route still refused for the flag: ` +
+                   `${reason}. The flag is not what should be refusing here.`);
+            } else {
+              note("flag-on control: no work queue on this runner, so the " +
+                   "route refused naming the queue rather than the flag, " +
+                   "which is the distinction the 503s above need");
+            }
+          } else {
             fail(`with live_board ON the route answered ${res.status} and ` +
-                 `${wrote ? "wrote" : "wrote nothing"}. The 503s above are ` +
+                 `wrote nothing, and did not name the work queue: ` +
+                 `${reason || "(no reason given)"}. The 503s above are ` +
                  `therefore not evidence the flag gates anything: a route ` +
                  `that always refuses passes them identically.`);
-          } else {
-            note(`flag-on control: answered ${res.status} and the row exists`);
           }
         } finally {
           await pool.query(
