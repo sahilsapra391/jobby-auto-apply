@@ -1368,6 +1368,58 @@ neither branch, and a condition written as a two-way choice will take the
 branch its author was not thinking about. Write the null case, do not let it
 fall out.
 
+### A confident rule renaming a real employer after its competitor, 2026-09-06
+
+**The rule was going to be right about the corpus it was written for and wrong
+about the corpus next to it, and only running it on the second one showed
+that.**
+
+An extraction rule reads a posting's description and proposes the employer it
+introduces. Written for 222 postings filed under a feed publisher, where the
+employer's name exists nowhere else in the record, it produced 59 proposals and
+163 refusals and **would have passed those 222 clean**. Every proposal on that
+slice was a real company.
+
+Run against a different list -- employers whose *domain* was wrong, which is a
+separate defect entirely -- it proposed, at **high** confidence:
+
+    Deliveroo -> Doordash     "At Doordash, Deliveroo and Wolt, we're building"
+    Toast     -> Bengaluru.   "in Bengaluru. We are seeking an Engineering..."
+
+The first is the one worth remembering. The opening sentence is a comparison,
+naming three competitors in a row, and `At X,` is the strongest frame the rule
+has. So the rule was **most confident exactly where it was most wrong**, and
+the output was a real employer renamed after its competitor, on a board that
+generates job applications under a real name.
+
+**Three things generalise, and the third is the point.**
+
+A rule validated on the corpus that motivated it has been validated against the
+distribution that motivated it. The 122 Appcast rows are UK job-board listings
+with a house style; Deliveroo's careers copy is not, and nothing about the
+first predicts the second. **Running it on a second corpus was worth more than
+any amount of further work on the first.**
+
+Confidence measured how the name was found, not how likely it was to be right.
+`At X,` in the opening sentence is the rule's strongest signal and it is exactly
+what a comparison sentence looks like. A confidence score that rises with the
+feature that also produces the worst error is not a safety margin, it is an
+amplifier.
+
+And the fix was a distinction rather than a rule. "In `At X,` the keyword leads,
+so a period inside X means the pattern ran on and the name is cut back; in
+`X is seeking` the verb identifies the frame, so a period between them means
+the frame never applied." Cutting in both places proposes the city; refusing in
+both refuses "Warner Bros. Discovery". **Neither uniform answer is available**,
+which is what makes it a distinction, and finding it took reading the two
+failures side by side rather than generalising from either.
+
+The narrow version, for anyone writing an extractor here: **a rule that
+proposes gets run against a corpus it was not written for, before it is
+allowed to propose anything.** Not to measure its accuracy there -- it may
+legitimately refuse everything -- but to find out what it is confident about
+when it is out of its depth.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,
