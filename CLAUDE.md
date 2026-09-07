@@ -3330,6 +3330,63 @@ places, so making the reader store-relative without the writer splits them. It
 does not block the container, which carries no config file at all and reads its
 credentials from the environment.
 
+### Two lines about checks that read as correctness, 2026-09-07
+
+**A field that exists and is never written is the design version of the alarm
+that never fired.** `companies.json` has carried `lastFetchAt` and `lastStatus`
+since it was seeded, and the only two writers are both at seed time: null on
+895 of 895 and "unfetched" on 890. Nothing was broken, nothing complained, and
+a reader opening the file would reasonably conclude board health was tracked.
+The absent writer is invisible in a way an absent field is not.
+
+**`root=root` compiled, passed 3,331 tests, and would have raised on the first
+real write**, because `persist` has no `root` parameter. Same class as
+`py_compile` passing a `NameError`: a check that reads as correctness and is
+not. What separates it from the ordinary case is that the *repair* was the
+thing that was wrong, and it was wrong in the one branch the suite does not
+reach.
+
+### 27 problems, one problem, 2026-09-07
+
+**The board derived its own problems list with `c.status === "error" ||
+c.why`, and every channel carries a `why`.** "353 boards". "1 of 1 countries x
+1 terms". Measured over the real `lastIngest`: 27 channels listed, 1 actually
+errored, 26 present for having a note. Third signal in a week that existed and
+said the wrong thing, after the error list that was 80% 304s and the registry
+fields nothing wrote, and the same failure each time -- a check whose subject
+is wider than the thing it is named for.
+
+The list is derived on the device now, for two reasons rather than tidiness. A
+rule living in the renderer is a rule the device cannot alarm on, and this one
+is a reason on the dead-man ping. And the interesting problems need the yield
+ledger and the board registry, neither of which the renderer has. A sweep from
+before this existed carries no `problems` key, and the board says "problems not
+recorded" rather than falling back to the old derivation, which would put the
+27 back on the first load after a deploy.
+
+**Every entry says what it is and what it would take**, because a line a reader
+cannot act on is a log entry wearing a problem's clothes. A failed channel
+names the connector file; a missing key names the variable; a source under its
+anchor names the ratio and its usual yield; a retired board names the board.
+
+**Detection is per source, two sweeps, at a different floor from the coverage
+gate, and the two floors are different because the questions are.** 70% is "do
+not believe this sweep's absences", which is cheap and reversible and should
+fire readily. 50% is "tell the user", which costs their attention and should
+not. One low sweep is a bad afternoon and the gate already refuses its
+closures; two consecutive is a source that has changed, which at the tier-1
+interval is eight hours to detection. The 2026-08-30 Greenhouse sweep sits
+deliberately between them at 54%: refused, and not an alert on its own.
+
+The counter is moved against the anchor **as it stood before the sweep**, and
+that is load-bearing rather than fussy. `sweep_runs.note_refusal` re-anchors
+after two refusals, so a counter reading the new anchor would clear itself at
+the exact moment it was supposed to fire.
+
+And it is a sixth entry in `PING_REASONS`, not a new alarm. Observed firing on
+the real store before it merged: `SOURCING: jooble failed: jooble any '': HTTP
+400. read the failure and fix scripts/sources/jooble.py.`
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

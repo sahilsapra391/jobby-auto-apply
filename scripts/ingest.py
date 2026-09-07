@@ -44,6 +44,7 @@ import match_score  # noqa: E402
 import runlock  # noqa: E402
 import search_config  # noqa: E402
 import seed_companies
+import source_health
 import sweep_runs  # noqa: E402
 import sources  # noqa: E402
 
@@ -328,7 +329,7 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # written once, after the postings are committed.
     ledger = read_store(root, ["meta-get", "--key", sweep_runs.STORE_KEY],
                         {}).get(sweep_runs.STORE_KEY) or {}
-    believed_now, refused_now = {}, {}
+    believed_now, refused_now, low_runs = {}, {}, {}
 
     for name, connector in sorted(selected.items()):
         try:
@@ -369,9 +370,18 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         # is brake 1 in `jobs_store.close_missing` applied deliberately instead
         # of by accident.
         total = len(result["postings"])
+        anchor_before = (ledger.get(name) or {}).get("found")
         believed, why_not = sweep_runs.gate(
             name, total, ledger.get(name),
             unchanged=int(result.get("unchanged") or 0))
+        # Against the anchor as it stood before this sweep, and moved whether
+        # the sweep was believed or refused. `note_refusal` re-anchors after
+        # two refusals, and a counter reading the new anchor would clear itself
+        # at the moment it was meant to fire. A 304-heavy channel is exempt for
+        # the same reason the gate exempts it: it was told nothing changed.
+        if not result.get("unchanged"):
+            low_runs[name] = source_health.observe(
+                ledger.get(name), total, anchor_before)
         if believed:
             believed_now[name] = total
         else:
@@ -527,6 +537,20 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
                                                     report["at"])
             if again:
                 report.setdefault("closureGateReanchored", []).append(channel)
+        # After both, because `remember` and `note_refusal` rewrite the row and
+        # would drop a counter written before them.
+        for channel, observed in low_runs.items():
+            if channel in ledger:
+                ledger[channel]["lowRuns"] = observed.get("lowRuns", 0)
+                if "lastRatio" in observed:
+                    ledger[channel]["lastRatio"] = observed["lastRatio"]
+
+    # **What is actually wrong, rather than every channel that carried a note.**
+    # The board built this list itself with `status === "error" || c.why`, and
+    # every channel has a `why`, so it read 27 problems against 1 real one.
+    # Derived here because this is where the ledger and the report both are,
+    # and because a rule in the renderer is a rule the device cannot alarm on.
+    report["problems"] = source_health.problems(report.get("byChannel"), ledger)
 
     if not dry_run:
         jobs_store.save_jobs(root, jobs)

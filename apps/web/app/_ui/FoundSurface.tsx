@@ -38,10 +38,33 @@ export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
   const ingest = (meta?.lastIngest ?? {}) as Record<string, unknown>;
   const n = (key: string) =>
     typeof ingest[key] === "number" ? (ingest[key] as number) : null;
-  const channels = (ingest.byChannel ?? {}) as Record<string, Record<string, unknown>>;
-  const problems = Object.entries(channels)
-    .filter(([, c]) => c && (c.status === "error" || c.why))
-    .map(([source, c]) => ({ source, detail: String(c.why ?? c.status ?? "") }));
+  // **This list said 27 and meant 1.** It was built here, from
+  // `c.status === "error" || c.why`, and every channel carries a `why` --
+  // "353 boards", "1 of 1 countries x 1 terms". Measured 2026-09-07: 27
+  // channels listed, 1 actually errored, 26 there for having a note. A
+  // problems list containing everything is a list nobody reads, which is the
+  // same fault as the error list that was 80% 304s.
+  //
+  // It is derived on the device now (`scripts/source_health.py`), for two
+  // reasons. A rule living in the renderer is a rule the device cannot alarm
+  // on, and this one is a reason on the dead-man ping. And the interesting
+  // problems need the yield ledger and the board registry, which the renderer
+  // does not have.
+  //
+  // A sweep from before that existed carries no `problems`, and that is said
+  // rather than reconstructed: the old derivation is exactly what is being
+  // removed, and falling back to it would put the 27 back on the first load
+  // after a deploy.
+  const raw = Array.isArray(ingest.problems) ? ingest.problems : null;
+  const problems = (raw ?? []).map((p) => {
+    const row = (p ?? {}) as Record<string, unknown>;
+    return {
+      key: [row.kind, row.source, row.board].filter(Boolean).join(":"),
+      source: String(row.source ?? ""),
+      what: String(row.what ?? ""),
+      takes: String(row.takes ?? ""),
+    };
+  }).filter((p) => p.what);
   const version = typeof ingest.configVersion === "number"
     ? ingest.configVersion : null;
 
@@ -70,20 +93,24 @@ export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
         {n("pruned") != null ? <> &middot; {n("pruned")} closed by the employer</> : null}
         {meta?.blocked ? <> &middot; <b>{meta.blocked}</b></> : null}
         {meta?.slotsParked ? <> &middot; <b>{meta.slotsParked}</b></> : null}
-        {problems.length ? (
+        {raw === null ? (
+          <> &middot; <span className="muted">problems not recorded</span></>
+        ) : problems.length ? (
           <>
             <br />
             <details className="jb-errored jb-probs">
               <summary>
-                {problems.length} problems:{" "}
-                {problems.slice(0, 3)
-                  .map((p) => `${p.source}: ${p.detail}`).join(" \u00b7 ")}
-                {problems.length > 3 ? ` \u00b7 and ${problems.length - 3} more` : ""}
+                {problems.length === 1 ? "1 problem: " : `${problems.length} problems: `}
+                {problems.slice(0, 2).map((p) => p.what).join(" \u00b7 ")}
+                {problems.length > 2 ? ` \u00b7 and ${problems.length - 2} more` : ""}
               </summary>
               <ul className="jb-problist">
+                {/* What it is, and what it would take. A line a reader cannot
+                    act on is a log entry wearing a problem's clothes. */}
                 {problems.map((p) => (
-                  <li key={p.source}>
-                    <b>{p.source}</b><span>{p.detail}</span>
+                  <li key={p.key}>
+                    <b>{p.source}</b>
+                    <span>{p.what}{p.takes ? ` \u2014 ${p.takes}` : ""}</span>
                   </li>
                 ))}
               </ul>
