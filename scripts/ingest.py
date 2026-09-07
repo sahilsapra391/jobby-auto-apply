@@ -43,7 +43,8 @@ import jobs_store  # noqa: E402
 import match_score  # noqa: E402
 import runlock  # noqa: E402
 import search_config  # noqa: E402
-import seed_companies  # noqa: E402
+import seed_companies
+import sweep_runs  # noqa: E402
 import sources  # noqa: E402
 
 # The watcher's own lock, on purpose, not one of our own. `watch.spawn` takes
@@ -323,6 +324,11 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     selected = select_channels(channels)
     bodies_fetched = 0
     discovered_companies = []
+    # What each channel returned the last time anybody believed it. Read once,
+    # written once, after the postings are committed.
+    ledger = read_store(root, ["meta-get", "--key", sweep_runs.STORE_KEY],
+                        {}).get(sweep_runs.STORE_KEY) or {}
+    believed_now, refused_now = {}, {}
 
     for name, connector in sorted(selected.items()):
         try:
@@ -352,6 +358,25 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         # sweep and complete by default; one reading a recent-items feed says
         # so, and its postings never feed the closure pass.
         listing_complete = result.get("listingComplete", True)
+
+        # **`status: ok` is the connector's opinion of its own HTTP calls, and
+        # coverage is a different claim.** On 2026-08-30 Greenhouse returned
+        # 3,209 against 5,909, reported success, and 435 postings were closed
+        # because they were absent from a fetch nobody could show was whole.
+        #
+        # A refused channel keeps its postings, which arrived and are real. It
+        # loses only the right to have its *absences* read as closures, which
+        # is brake 1 in `jobs_store.close_missing` applied deliberately instead
+        # of by accident.
+        total = len(result["postings"])
+        believed, why_not = sweep_runs.gate(name, total, ledger.get(name))
+        if believed:
+            believed_now[name] = total
+        else:
+            refused_now[name] = total
+            listing_complete = False
+            report.setdefault("closureGated", []).append(
+                {"channel": name, "found": total, "why": why_not})
 
         found = kept = 0
         for posting in result["postings"]:
@@ -489,11 +514,25 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     companies_after, company_summary = seed_companies.seed(companies, discovered_companies)
     report["companiesDiscovered"] = company_summary["added"] + company_summary["updated"]
 
+    # After the postings are committed, never before: a yield recorded first is
+    # a lie the moment the write fails, and the next sweep would ratchet
+    # against a run that did not happen. Same ordering as `writes.publish`.
+    if not dry_run and limit is None:
+        for channel, total in believed_now.items():
+            ledger = sweep_runs.remember(ledger, channel, total, report["at"])
+        for channel, total in refused_now.items():
+            ledger, again = sweep_runs.note_refusal(ledger, channel, total,
+                                                    report["at"])
+            if again:
+                report.setdefault("closureGateReanchored", []).append(channel)
+
     if not dry_run:
         jobs_store.save_jobs(root, jobs)
         if companies_after != companies:
             jobs_store.save_companies(root, companies_after)
         fetcher.save_validators()
+        if limit is None:
+            write_sweep_runs(root, ledger)
         write_last_ingest(root, report)
         if publish:
             report["published"] = _publish()
@@ -631,6 +670,20 @@ def _enrich(fetcher, posting, companies, report):
 def _count_gate(report, reason):
     report["gatedOut"] += 1
     report["gatedOutBy"][reason] = report["gatedOutBy"].get(reason, 0) + 1
+
+
+def write_sweep_runs(root, ledger):
+    """Persist the per-channel yield ledger. See `scripts/sweep_runs.py`."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".json", prefix="sweepruns.")
+    try:
+        with open(fd, "w") as handle:
+            json.dump(ledger, handle)
+        result = store_call(root, ["meta-set-json", "--key",
+                                   sweep_runs.STORE_KEY, "--input", tmp])
+        return result.returncode == 0
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def write_last_ingest(root, report):

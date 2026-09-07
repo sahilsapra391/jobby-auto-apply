@@ -3161,6 +3161,58 @@ another, which is the instance observed here but not the class. The symptom is a
 button that does nothing, intermittently, with a 202 in the log saying it
 worked, so nobody traces it back.
 
+### The closure sweep has five brakes and the docstring said three, 2026-09-07
+
+**A count that disagrees with its own list is how one of them gets deleted by
+somebody tidying up.** `close_missing` said "Three brakes" and enumerated four
+for as long as it has existed. They are now numbered, and brake 1 is called out
+as the structural one: it has no code of its own, it holds only because a key
+absent from `seen` never enters `held`, and it is therefore the one that can
+disappear without anybody deleting anything.
+
+**Brake 5 exists because brake 4 is per board and cannot see a correlated
+failure.** On 2026-08-30 one sweep closed 1,860 records and tripped
+`MAX_CLOSED_SHARE` zero times: 1,358 `oracle_orc` and 435 `greenhouse`, spread
+thin enough that no single board crossed 70%. Nobody noticed for four days.
+Over this device's 72 recorded sweeps, closed as a share of the pool before that
+sweep's own prune runs median 0.269%, p95 0.701%, next 1.052%, and then 9.006%
+for that one event. The canyon is what makes a small sample usable: any
+threshold from 2% to 10% refuses exactly that sweep and nothing else.
+
+**The denominator is the part to get right and it is not the pool.** What is
+held *and could close*: state `new` or `watched`, on an `ats` or `careers`
+board, 14,243 of 24,132 records on 2026-09-07. Tombstones, `applied` and
+`passed` rows brake 2 can never touch, and aggregator records brake 3 can never
+touch would otherwise make the threshold drift with tombstone retention rather
+than with closure. It is counted before `ingest.run` prunes, in the same pass,
+because the same 1,860 reads 9.01% of the pool before, 11.54% after and 15.26%
+of the closeable population -- a 1.7x spread from the denominator alone. When it
+fires it refuses **every** closure in the sweep, because a pool-level anomaly is
+evidence about the sweep rather than about one board and closing selectively
+under it means choosing which boards to trust on no information.
+
+**`sweep_runs` is not about the empty response.** SmartRecruiters returned zero
+that night, reported success, and closed nothing, because a channel that returns
+nothing contributes no keys to `seen` and brake 1 covers it. Greenhouse returned
+**54% and reported success**, and that is the gap: `status: ok` is the
+connector's opinion of its own HTTP calls and coverage is a different claim, and
+the two were sharing a field. A channel below 70% of its own last believed yield
+keeps its postings, which arrived and are real, and loses only the right to have
+its absences read as closures -- brake 1 applied deliberately rather than by
+accident.
+
+**Only a believed run moves the anchor, and that alone would be wrong.** Writing
+a refused run's number makes the ratchet follow a truncation down, so a
+genuinely halved channel is refused once and believed for ever. Writing nothing
+refuses it for ever. So the anchor decays: two refusals running against the same
+anchor re-anchor on the second, because two independent fetches agreeing is
+evidence and one is not. The anchor is written after the postings are committed,
+and the test for that asserts the property -- a sweep whose `save_jobs` raises
+leaves the anchor alone -- rather than which line comes first. The dry-run test
+beside it does not cover that, and passed with the update moved before the
+commit; it was found by mutating the guard and watching the wrong test stay
+green.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

@@ -741,6 +741,33 @@ CLOSED_TOMBSTONE_DAYS = 7
 CLOSEABLE_CLASSES = frozenset(("ats", "careers"))
 MIN_BOARD_FOR_SHARE_CHECK = 5
 
+#: Brake 5: the share of the *closeable population* one sweep may close before
+#: the whole sweep's closures are refused.
+#:
+#: **The per-board brake cannot see a failure correlated across boards, by
+#: construction.** On 2026-08-30 one sweep closed 1,860 records and tripped
+#: `MAX_CLOSED_SHARE` zero times: 1,358 `oracle_orc` and 435 `greenhouse`,
+#: spread thin enough that no single board crossed 70%. Nobody noticed for four
+#: days.
+#:
+#: Measured over all 72 sweeps this device has recorded, closed as a share of
+#: the pool before that sweep's own prune:
+#:
+#:     median 0.269%   p75 0.433%   p90 0.639%   p95 0.701%
+#:     next   1.052%   (2026-08-25)
+#:     max    9.006%   (2026-08-30)
+#:
+#: There is a canyon between the p95 and the one real event, so the value is
+#: robust to 72 sweeps being a small sample. Converted to this denominator at
+#: the pool's measured composition, the event is 15.26% and the highest
+#: ordinary sweep is 1.78%: 5% sits 2.8x above the loudest normal day and 3.1x
+#: below the incident.
+POOL_MAX_CLOSED_SHARE = 0.05
+
+#: Below this the ratio is noise. A pool of thirty closeable records legitimately
+#: loses two in a day, and 6.7% is not evidence of anything.
+MIN_POOL_FOR_SHARE_CHECK = 200
+
 
 def close_missing(jobs, seen, at=None, norm=None):
     """Expire jobs their own board has stopped listing. Returns (jobs, report).
@@ -754,23 +781,48 @@ def close_missing(jobs, seen, at=None, norm=None):
     title "Jobs at Vercel" — so a liveness check on the link calls a dead job
     alive. The board listing is the only thing that actually knows.
 
-    Three brakes, because the failure mode here is mass deletion:
+    **Five brakes, because the failure mode here is mass deletion.** This said
+    "three" and enumerated four for as long as it has existed, which is worth
+    noticing rather than quietly correcting: a count that disagrees with its
+    own list is how one of them gets deleted by somebody tidying up.
 
-    A key absent from `seen` is untouched. A board that 304'd, errored, or was
-    not fetched this run contributes nothing, and silence must never read as
-    "everything closed".
+    1. A key absent from `seen` is untouched. A board that 304'd, errored, or
+       was not fetched this run contributes nothing, and silence must never
+       read as "everything closed". This is the structural one, the one with no
+       code of its own, and therefore the one that can disappear without
+       anybody deleting anything: it holds only because the loop below adds a
+       key to `held` exclusively when `key in seen`.
 
-    `applied` and `passed` are terminal and are never reopened by this. What
-    the user did with a job outlives the employer taking it down; it stays in
-    Submitted, In flight and Needs you exactly as it was.
+    2. `applied` and `passed` are terminal and are never reopened by this. What
+       the user did with a job outlives the employer taking it down; it stays
+       in Submitted, In flight and Needs you exactly as it was.
 
-    Only jobs whose best sighting is an employer board are eligible at all. An
-    aggregator result page is partial by construction and absence from it is
-    not evidence of anything.
+    3. Only jobs whose best sighting is an employer board are eligible at all.
+       An aggregator result page is partial by construction and absence from it
+       is not evidence of anything.
 
-    And no single board may close more than MAX_CLOSED_SHARE of what we hold
-    for it. A truncated fetch looks exactly like a mass closure, and the
-    difference matters more than the handful of stale cards it might leave.
+    4. No single board may close more than MAX_CLOSED_SHARE of what we hold for
+       it. A truncated fetch looks exactly like a mass closure, and the
+       difference matters more than the handful of stale cards it might leave.
+       This is the only brake with a firing record.
+
+    5. No single sweep may close more than POOL_MAX_CLOSED_SHARE of the
+       closeable population, and when it would, **every closure in the sweep is
+       refused rather than some of them**. Brake 4 is per board and a failure
+       correlated across boards is invisible to it: 2026-08-30 closed 1,860
+       records and tripped it zero times. A pool-level anomaly is evidence
+       about the sweep rather than about any one board, so closing selectively
+       under it means choosing which boards to trust on no information.
+
+    **The denominator is what is held *and could close*, not the pool.** State
+    `new` or `watched`, on an `ats` or `careers` board: 14,243 of 24,132
+    records measured 2026-09-07, 59.0%. The rest is expired tombstones plus the
+    `applied` and `passed` rows brake 2 can never touch and the aggregator
+    records brake 3 can never touch, and letting those into the denominator
+    makes the threshold drift with tombstone retention rather than with
+    closure. It is also counted here, before `ingest.run` calls `prune`, which
+    shrinks the pool in the same pass: the same 1,860 reads 9.01% of the pool
+    before, 11.54% after, and 15.26% of the closeable population.
     """
     at = at or datetime.now(timezone.utc)
     stamp = at.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -783,15 +835,26 @@ def close_missing(jobs, seen, at=None, norm=None):
     norm = norm or (lambda name: (name or "").strip().casefold())
 
     held = {}
+    # Brake 5's denominator, counted over the whole pool rather than over the
+    # boards this sweep reached, and counted here because `ingest.run` prunes
+    # immediately afterwards.
+    closeable = 0
     for job_id, job in jobs.items():
         if job.get("state") not in ("new", "watched"):
             continue
         if _class_of(job) not in CLOSEABLE_CLASSES:
             continue
+        closeable += 1
         key = (job.get("canonicalSource"), norm(job.get("company")))
+        # Brake 1, and it is this line. A key the sweep did not return is not
+        # in `seen`, so its records never enter `held` and nothing below can
+        # reach them.
         if key in seen:
             held.setdefault(key, []).append(job_id)
 
+    # Decided before anything is written, because brake 5 is about the sweep as
+    # a whole and cannot be evaluated one board at a time.
+    to_close = []
     for key, ids in held.items():
         missing = [job_id for job_id in ids if job_id not in seen[key]]
         if not missing:
@@ -804,15 +867,31 @@ def close_missing(jobs, seen, at=None, norm=None):
                                    "this as a bad fetch rather than a mass closure"
                                    % int(MAX_CLOSED_SHARE * 100)})
             continue
-        for job_id in missing:
-            job = jobs[job_id]
-            was = job.get("state")
-            jobs[job_id] = transition(job, "expired")
-            jobs[job_id]["closedAt"] = stamp
-            closed.append({"id": job_id, "company": job.get("company"),
-                           "title": job.get("title"), "wasState": was})
+        to_close.extend(missing)
 
-    return jobs, {"closed": closed, "refused": refused}
+    pool_share = len(to_close) / closeable if closeable else 0.0
+    if (closeable >= MIN_POOL_FOR_SHARE_CHECK
+            and pool_share > POOL_MAX_CLOSED_SHARE):
+        # All of them, not the excess. See brake 5 above: under a pool-level
+        # anomaly there is no information about which boards to keep trusting.
+        refused.append({"source": None, "company": None,
+                        "held": closeable, "wouldClose": len(to_close),
+                        "share": round(pool_share, 4),
+                        "poolLevel": True,
+                        "why": "more than %d%% of the closeable population in "
+                               "one sweep; treating this as a bad sweep rather "
+                               "than a mass closure" % int(POOL_MAX_CLOSED_SHARE * 100)})
+        return jobs, {"closed": [], "refused": refused, "closeable": closeable}
+
+    for job_id in to_close:
+        job = jobs[job_id]
+        was = job.get("state")
+        jobs[job_id] = transition(job, "expired")
+        jobs[job_id]["closedAt"] = stamp
+        closed.append({"id": job_id, "company": job.get("company"),
+                       "title": job.get("title"), "wasState": was})
+
+    return jobs, {"closed": closed, "refused": refused, "closeable": closeable}
 
 
 def clear_undecided_watch(job, why):
