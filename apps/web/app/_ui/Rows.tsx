@@ -596,14 +596,23 @@ export function ActCard(row: Row) {
              body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
           Retry
         </Act>
-        {/* **Not a write, and not something v2 can do.** This opens the
-            application in the device's own Chrome slot, which is a runner
-            action; Phase 4 moves the runner and this control with it. Dark
-            with a reason beats a control that posts something else. */}
-        <button className="btn ghost finish" type="button" disabled
-                title={ON_DEVICE}>
+        {/* **The lane's primary action, and it was rendered disabled.** A
+            Needs You card exists to hand a blocked application back to the
+            person; a card whose blocker is "enter the emailed code" with no
+            way to reach the form is a lane that cannot do its one job. It sat
+            dark saying this was "not something v2 can do", which was never
+            true: `watch.py:2432` has always claimed the `focus` queue, and it
+            relaunches the slot with a window (`browser.show`) before opening
+            the page, because the slots run `--headless=new`.
+
+            Found by a real block rather than by review: a Chainguard run
+            parked on a Greenhouse verification code on 2026-09-07 and there
+            was no way to reach the form. */}
+        <Act className="btn ghost finish" subject={row.id} rowId={row.id} keep
+             title="Bring up the browser on your Mac showing this form"
+             body={{ applicationId: s(row.legacy_id), action: "focus" }}>
           Open &amp; finish
-        </button>
+        </Act>
         <Act className="btn mark" subject={row.id} rowId={row.id}
              title="Record that this one went in"
              body={{ applicationId: s(row.legacy_id), event: "completed" }}>
@@ -649,9 +658,6 @@ export function FlightCard(row: Row) {
 
 /* ------------------------------------------------------------------ shared */
 
-/** Controls that drive the device rather than the database. */
-const ON_DEVICE =
-  "This opens a browser on your Mac. The runner moves in Phase 4 and this " +
   "control moves with it.";
 
 /**

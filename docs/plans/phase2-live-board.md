@@ -438,3 +438,38 @@ A third worth adding, from Phase 1's experience: assert the board's Found lane
 ordering puts an undated posting last, against a seeded database, through the
 real API rather than the SQL. The SQL is already pinned; the lane is what the
 user sees, and the two can drift.
+
+## `idempotency_keys` is an audit trail nobody designed as one
+
+**It stores the response, and that is what made a bug diagnosable three hours
+after the Vercel log was gone.**
+
+`writes.remember` keeps `(account, key, request_digest, status, response)` so a
+retried mutation can be answered with its first result. On 2026-09-07 an
+application had `status = inflight` in Postgres and `watch` in the device's
+session file, the apply queue was empty, and the live log had rolled. The row
+recorded at 00:18:36Z read:
+
+```json
+{"kind": "application.changed", "published": true, "applicationId": "01aa..."}
+```
+
+`kind` is returned only by the status path in `api/applications/route.ts`;
+`decide` returns `{postingId, decision, state}`. So the shape of the stored
+response identified which branch ran, which identified the control, which
+identified the bug: three v2 controls posted `status: "inflight"`, `order` was
+never called for it, and the route wrote the row anyway.
+
+**Worth keeping deliberately rather than by accident.** A live tail answers
+"what is happening"; this answers "what happened", and only one of those is
+available afterwards. Two properties make it work and both are easy to lose in
+a tidy-up:
+
+- the **response** is stored, not just the status. A status code would have
+  said 200 and named no branch.
+- rows are kept for `IDEMPOTENCY_HOURS` (24) rather than deleted on success.
+
+It is not a general audit log and should not become one: it is keyed by the
+client's own key, it holds only mutations, and a request that never reached
+`remember` leaves nothing. But for "which route ran, with what answer, when",
+it is the only durable record v2 has, and it cost nothing to have.

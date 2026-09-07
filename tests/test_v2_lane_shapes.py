@@ -200,21 +200,46 @@ class LaneShapeTests(unittest.TestCase):
             self.assertTrue(why and len(why) > 20,
                             f"{name} is excused with no measurement behind it")
 
-    def test_no_control_in_a_lane_is_live(self):
-        """v2 writes nothing until the parity gate closes, and the controls say
-        so by being disabled rather than by being absent.
+    def test_no_lane_control_is_left_inert(self):
+        """The inverse of what this asserted, because the gate has closed.
 
-        **Comments are stripped first, and that is not a convenience.** The
-        scan is a regex over source, so a comment explaining the rule -- "every
+        It used to require every `<button>` in a lane to carry `disabled`: v2
+        wrote nothing until the parity gate closed, and a control that looked
+        live would have been lying. That was right then and is the opposite of
+        right now. `live_board` flipped on 2026-09-05 and the lane controls
+        write.
+
+        **Its own anti-vacuity floor is what retired it.** After "Open &
+        finish" was wired, `Rows.tsx` contains no raw `<button>` at all -- every
+        control is an `<Act>` -- so `assertTrue(buttons)` failed rather than the
+        rule passing on an empty list. A check that goes red when its subject
+        disappears is worth more than one that quietly certifies nothing, and
+        this is the second time this week that a floor rather than an assertion
+        found the real change.
+
+        The property that replaced it lives in
+        `tests/lane_actions_are_driven.test.mjs`, which asks whether anything
+        *drives* each control rather than what it renders as: an `<Act>` must
+        carry a `body`, and a `<button>` with a literal `disabled` must be
+        declared with a reason. That is the check "Open & finish" needed and
+        did not have while it sat dark on every Needs You card since cutover.
+
+        What remains here is the half that is still true: a lane must not
+        contain a control nothing can drive. It is asserted on the source the
+        same way, with comments stripped first for the reason below.
+
+        **Comments are stripped, and that is not a convenience.** The scan is a
+        regex over source, so a comment explaining the rule -- "every
         `<button>` in a lane must carry `disabled`" -- is itself a bare
-        `<button>` and fails the check it documents. Same use-versus-mention
-        defect the reachability check took three attempts to get right, where
-        `fresh`, `loaded` and `over` matched the prose explaining them. A
-        scanner that reads comments is measuring the wrong text.
+        `<button>` and fails the check it documents.
         """
         source = re.sub(r"/\*.*?\*/", " ", self.tsx, flags=re.S)
         source = re.sub(r"(?m)^\s*//.*$", " ", source)
         buttons = re.findall(r"<button[^>]*>", source, re.S)
-        self.assertTrue(buttons, "no buttons found; the check is vacuous")
-        live = [b for b in buttons if "disabled" not in b]
-        self.assertEqual(live, [], f"these controls are not disabled: {live}")
+        inert = [b for b in buttons if re.search(r"\bdisabled(?![=\w])", b)]
+        self.assertEqual(
+            inert, [],
+            "these lane controls are hard-disabled, so they render as finished "
+            "work and post nothing. See tests/lane_actions_are_driven.test.mjs "
+            "for why that is the failure rather than the safe default: "
+            f"{inert}")

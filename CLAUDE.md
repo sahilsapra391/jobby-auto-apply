@@ -2867,6 +2867,76 @@ never the name in between.
 
 ## No diagnostic path is ever discarded
 
+### First: a defect uniform across a class does not look like a defect
+
+**It looks like a design.** Nothing is out of place, nothing contradicts
+anything, and every member of the class agrees with every other. That is what
+makes this the hardest kind to see and the reason it goes at the top rather
+than in the incident list.
+
+Four findings in one week, all this shape:
+
+    reed's favicon        2,577 postings drew a job board's mark as the
+                          employer's. Every reed card was identically wrong,
+                          so no card looked wrong.
+    three of six          usajobs.gov and themuse.com were missing from the
+    aggregators           same list and nobody had noticed either.
+    inflight unbridged    three controls wrote a state and ordered no work,
+                          for five days, identically.
+    the STATUS_QUEUE      `deepEqual(keys, ['dropped'])` -- a test asserting
+    test                  the gap was the intended shape.
+
+**The detection method is the transferable half: measure every member of the
+class against the rule, not the rule against its own list.** The reed defect
+was invisible while anyone asked "does the logo rule work" -- it does, and its
+list was enforced perfectly. It appeared the moment somebody asked "for each
+connector, is its host in the list", which is the same question from the other
+end and the only one with an answer.
+
+That is a different move from the anti-vacuity floors below, and it composes
+with them. A floor asks whether a check is measuring anything. This asks
+whether the check's *subject* is the whole class or the part of it somebody
+remembered to enrol.
+
+Concretely, and each of these found something: enumerate the connectors and
+check the host list, enumerate the controls and check the queue map, enumerate
+the mirror's INSERT columns and check the comparison, enumerate the exemptions
+and check what each gives up. In every case the list was correct and
+incomplete, and only the enumeration said so.
+
+### And a control that renders is not a control that works
+
+**"Open & finish" sat disabled on every Needs You card since cutover.** The
+lane exists to hand a blocked application back to a person. A Chainguard run
+parked on "enter the 8-character code emailed to you", and there was no way to
+reach the form: the slots run `--headless=new`, so nothing was on screen, and
+the one control that would have brought a window up posted nothing.
+
+The card rendered perfectly. Every class it emits is one the board emits,
+`test_v2_matches_the_board` and `test_v2_styles_are_reachable` both passed, and
+the lane could not do its one job.
+
+It is the same family as the Advanced search card, where nine of thirteen
+controls had no `name` attribute and the browser omitted them from the
+submission entirely. **A visual port carries the markup and not the action**,
+and the two are indistinguishable from the markup, which is precisely what
+every check in that area reads.
+
+So the question a markup check cannot ask is whether anything *drives* the
+control. `tests/lane_actions_are_driven.test.mjs` asks it: a `<button>` with a
+literal `disabled` posts nothing and must be declared with a reason, an `<Act>`
+must carry a `body`, and the floor counts both kinds -- because after the fix
+`Rows.tsx` contains no raw `<button>` at all, so a floor on buttons alone would
+have been satisfied by zero. It was, on the first run, and the floor is what
+said so.
+
+**The reason the control carried was worse than no reason.** It read "not
+something v2 can do... Phase 4 moves the runner and this control with it", and
+`watch.py:2432` had been claiming the `focus` queue the whole time. A confident
+sentence about why something is impossible stops anybody checking, which is the
+same failure as `STATUS_QUEUE`'s docstring one file over. Prefer "not built
+yet" to a mechanism nobody has re-read.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

@@ -3,7 +3,9 @@ import {
   accountId, publish, remember, replay, requireWritesEnabled, WriteRefused,
 } from "../../_ui/writes";
 import { pool } from "../../_ui/db";
-import { DECISION_QUEUE, STATUS_QUEUE, QueueRefused, order } from "../../_ui/queue";
+import {
+  ACTION_QUEUE, DECISION_QUEUE, STATUS_QUEUE, QueueRefused, order,
+} from "../../_ui/queue";
 
 /**
  * The board's writes. **Behind `live_board`, which is off.**
@@ -20,6 +22,8 @@ export const dynamic = "force-dynamic";
 
 type Body = {
   applicationId?: string;
+  /** A device action that changes no state. See `ACTION_QUEUE`. */
+  action?: string;
   status?: string;
   phase?: string;
   event?: string;
@@ -96,6 +100,41 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.postingId) return decide(account, key, body);
+
+  // ---- an action, which orders work and writes nothing --------------------
+  //
+  // **No row, on purpose.** "Open & finish" asks the device to put a window on
+  // the user's screen; nothing about the application changed, so there is
+  // nothing to record. A route that wrote a row here would be asserting a
+  // state transition that did not happen, which is what `status: "inflight"`
+  // was doing until #206.
+  if (body.action) {
+    const legacy = (body.applicationId ?? "").trim();
+    if (!legacy) {
+      return NextResponse.json(
+        { error: "an action needs an applicationId" }, { status: 400 });
+    }
+    const queue = ACTION_QUEUE[body.action];
+    if (!queue) {
+      return NextResponse.json(
+        { error: `unknown action ${body.action}`,
+          actions: Object.keys(ACTION_QUEUE) }, { status: 400 });
+    }
+    try {
+      await order(queue, legacy);
+    } catch (err) {
+      if (err instanceof QueueRefused) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+    // 202: the device has been asked and has not acted yet. A 200 would claim
+    // the window is up.
+    const answer = { applicationId: legacy, action: body.action, queue,
+                     state: "sent" };
+    await remember(account, key, body, 202, answer);
+    return NextResponse.json(answer, { status: 202 });
+  }
 
   const legacyId = (body.applicationId ?? "").trim();
   if (!legacyId) {
