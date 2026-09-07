@@ -20,6 +20,13 @@ import base  # noqa: E402
 
 SOURCE = "ashby"
 SOURCE_CLASS = "ats"
+#: Emits the §3 record key. One request per registry token, so the token is the
+#: tenant slug, and each posting carries its own uuid `id` -- which is also the
+#: last path segment of `jobUrl`, so the URL parser and this agree where the
+#: parser can see a URL at all. Second source on the contract after greenhouse
+#: and reed; ashby returned 2,241 postings on the 2026-09-07 sweep against
+#: greenhouse's 14,254 and reed's 100.
+EMITS_BOARD_KEY = True
 TIER = "1a"
 LIST_URL = "https://api.ashbyhq.com/posting-api/job-board/{token}"
 
@@ -32,8 +39,10 @@ def boards(companies):
             if c.get("ats") == SOURCE and c.get("token")]
 
 
-def parse_job(entry, company_name):
+def parse_job(entry, company_name, token=None):
     location = base.parse_location(entry.get("location"))
+    job_id = entry.get("id")
+    job_id = str(job_id).strip() if job_id not in (None, "") else None
     workplace = WORKPLACE.get(str(entry.get("workplaceType") or "").lower())
     if workplace is None and entry.get("isRemote"):
         workplace = "remote"
@@ -48,11 +57,18 @@ def parse_job(entry, company_name):
         posted_at=entry.get("publishedAt"),
         description=entry.get("descriptionPlain") or entry.get("descriptionHtml") or "",
         tags=tags, salary=compensation,
+        # The token this board was fetched by, not a parse of the URL it
+        # returned. `token` is optional so a caller with one entry and no
+        # board context still gets a posting rather than an error, and the key
+        # is simply absent for it -- both halves or neither.
+        board_slug=token if (token and job_id) else None,
+        external_id=job_id if token else None,
     )
 
 
 def fetch(fetcher, companies=None, limit=None, **_):
     postings, errors, dead = [], [], 0
+    unchanged = []
     targets = boards(companies)
     if not targets:
         return base.skipped(SOURCE, "no Ashby boards in the company registry")
@@ -60,6 +76,9 @@ def fetch(fetcher, companies=None, limit=None, **_):
     for company in targets:
         data, response = fetcher.get_json(LIST_URL.format(token=company["token"]))
         if response.unchanged:
+            # Named rather than only counted, so the canary check can
+            # tell an unchanged board from a broken one.
+            unchanged.append(company["token"])
             continue
         if data is None:
             if response.status == 404:
@@ -70,7 +89,8 @@ def fetch(fetcher, companies=None, limit=None, **_):
             # The company has chosen not to list this one publicly.
             if entry.get("isListed") is False:
                 continue
-            postings.append(parse_job(entry, company.get("name")))
+            postings.append(parse_job(entry, company.get("name"),
+                                      company["token"]))
             if limit and len(postings) >= limit:
                 break
         if limit and len(postings) >= limit:
@@ -83,4 +103,7 @@ def fetch(fetcher, companies=None, limit=None, **_):
         return base.failed(SOURCE, f"every board failed ({len(errors)})", requests, errors)
     # The board endpoint returns every open requisition for the tenant,
     # so a posting missing from it has been taken down.
-    return base.ok(SOURCE, postings, requests, errors, note, complete=True)
+    if unchanged:
+        note += f", {len(unchanged)} unchanged since the last run"
+    return base.ok(SOURCE, postings, requests, errors, note, complete=True,
+                   unchanged=len(unchanged), unchanged_slugs=unchanged)

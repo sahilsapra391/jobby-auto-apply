@@ -329,7 +329,7 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # written once, after the postings are committed.
     ledger = read_store(root, ["meta-get", "--key", sweep_runs.STORE_KEY],
                         {}).get(sweep_runs.STORE_KEY) or {}
-    believed_now, refused_now, low_runs = {}, {}, {}
+    believed_now, refused_now, low_runs, canaries = {}, {}, {}, {}
 
     for name, connector in sorted(selected.items()):
         try:
@@ -381,7 +381,20 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         # the same reason the gate exempts it: it was told nothing changed.
         if not result.get("unchanged"):
             low_runs[name] = source_health.observe(
-                ledger.get(name), total, anchor_before)
+                ledger.get(name), total, anchor_before, source=name)
+        # The canary board, checked on its own every sweep for the two sources
+        # 48 of 52 submitted applications came through. A source-level number
+        # can look fine while one board stopped parsing.
+        if name in source_health.CANARIES:
+            seen = source_health.canary_yield(name, result["postings"])
+            canaries[name] = {
+                "count": seen,
+                "problem": source_health.canary_problem(
+                    name, seen, (ledger.get(name) or {}).get("canaryYield"),
+                    result.get("unchangedSlugs"))
+                or source_health.canary_field_problem(
+                    name, source_health.canary_fields(name, result["postings"])),
+            }
         if believed:
             believed_now[name] = total
         else:
@@ -544,6 +557,16 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
                 ledger[channel]["lowRuns"] = observed.get("lowRuns", 0)
                 if "lastRatio" in observed:
                     ledger[channel]["lastRatio"] = observed["lastRatio"]
+        for channel, seen in canaries.items():
+            row = ledger.setdefault(channel, {})
+            # The yield is recorded only when it was actually observed, so an
+            # unchecked sweep leaves the last real number to compare against
+            # rather than replacing it with a None the next sweep cannot use.
+            if isinstance(seen.get("count"), int) and seen["count"] > 0:
+                row["canaryYield"] = seen["count"]
+            row["canaryProblem"] = seen.get("problem") or None
+            if not row["canaryProblem"]:
+                row.pop("canaryProblem", None)
 
     # **What is actually wrong, rather than every channel that carried a note.**
     # The board built this list itself with `status === "error" || c.why`, and
@@ -551,6 +574,7 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     # Derived here because this is where the ledger and the report both are,
     # and because a rule in the renderer is a rule the device cannot alarm on.
     report["problems"] = source_health.problems(report.get("byChannel"), ledger)
+    report["canaries"] = {k: v.get("count") for k, v in canaries.items()}
 
     if not dry_run:
         jobs_store.save_jobs(root, jobs)

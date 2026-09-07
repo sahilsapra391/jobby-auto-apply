@@ -57,6 +57,8 @@ EMITS = {
     "reed": ("reed_search.json", lambda d: d["results"][0]),
     "greenhouse": ("greenhouse_board.json", lambda d: d["jobs"][0],
                    {"company_name": "Vercel", "token": "vercel"}),
+    "ashby": ("ashby_board.json", lambda d: d["jobs"][0],
+              {"company_name": "Zapier", "token": "zapier"}),
 }
 
 #: Connectors that cannot, with the reason. "Cannot" means the fetch itself
@@ -68,8 +70,6 @@ CANNOT = {}
 #: from the registry.
 NOT_YET = {
     "adzuna": "the feed carries an `id` per posting, which is adzuna's own\n               stable identity for it; emit (adzuna, id)",
-    "ashby": "the board response carries the job's own id beside the slug the "
-             "connector already fetched by",
     "breezy": "the board json carries an id per position, and the slug is\n              the tenant the connector already fetched by",
     "careerjet": "aggregator; the search result carries a job id",
     "gem": "the board response carries the posting id and the company\n           slug the connector fetched by, so both halves are in hand",
