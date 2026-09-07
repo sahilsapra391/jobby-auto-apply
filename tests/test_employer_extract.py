@@ -242,3 +242,46 @@ class TheResolverCorrectsTheDeviceToo(unittest.TestCase):
         second = er.correct_the_pool(confirmed, self.root.name)
         self.assertEqual((first["corrected"], first["already"]), (1, 0))
         self.assertEqual((second["corrected"], second["already"]), (0, 1))
+
+
+class ReedIsAJobBoardAndTheLogoRulesNowSaySo(unittest.TestCase):
+    """A job board's favicon drawn as the employer's mark, 2,577 times.
+
+    **Found by asking whether the repointed cards would look right.** The 47
+    postings got their real employers and every one still showed reed's logo,
+    because `reed.co.uk` was absent from `INFRA_HOST_PARTS` while linkedin,
+    indeed, adzuna, jooble and careerjet were all in it. With the host treated
+    as infrastructure the plan falls through to the company name, which is what
+    gives Halfords its own mark.
+
+    Measured over the pool: 2,577 reed postings, all on `PLAN_POSTING_HOST`
+    before, 2,540 on `PLAN_NAME_CORE` after and 37 on a monogram because the
+    name is too short to be a candidate.
+    """
+
+    def setUp(self):
+        import company_logos
+        self.logos = company_logos
+
+    def entry(self, company, url):
+        return {"company": company, "companyWebsite": "", "logoUrl": "",
+                "url": url}
+
+    def test_reed_is_infrastructure(self):
+        self.assertTrue(self.logos._is_infrastructure_host("www.reed.co.uk"))
+        self.assertTrue(self.logos._is_infrastructure_host("reed.co.uk"))
+
+    def test_a_reed_posting_derives_from_the_company_not_the_board(self):
+        url = "https://www.reed.co.uk/jobs/mobile-tyre-technician/57290392"
+        plan = self.logos.logo_plan(self.entry("Halfords", url), url)
+        self.assertEqual(plan, self.logos.PLAN_NAME_CORE)
+        self.assertNotEqual(plan, self.logos.PLAN_POSTING_HOST,
+                            "the board's own favicon would be drawn as the "
+                            "employer's mark")
+
+    def test_a_real_employer_host_is_still_the_employer(self):
+        """The narrowing must not swallow employers who host their own board.
+        `stripe.com` and `careers.hellofresh.com` are 220 and 244 postings."""
+        url = "https://stripe.com/jobs/listing/engineer/1"
+        self.assertEqual(self.logos.logo_plan(self.entry("Stripe", url), url),
+                         self.logos.PLAN_POSTING_HOST)

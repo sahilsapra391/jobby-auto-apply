@@ -41,6 +41,18 @@ INFRA_HOST_PARTS = (
     "jobviewtrack.com", "careerpuck.com",
     "linkedin.com", "indeed.com", "adzuna.", "jooble.", "careerjet.",
     "remotive.com", "remoteok.com", "himalayas.app", "weworkremotely.com",
+    # **reed.co.uk was missing while every other aggregator was here**, and it
+    # is this project's largest single source of postings that name a host at
+    # all: 2,577 of 23,633, every one of which took `PLAN_POSTING_HOST` and
+    # drew reed's own favicon as the employer's mark. Measured 2026-09-06,
+    # after 47 postings were repointed off a feed publisher onto their real
+    # employers and every one of them still showed a job board's logo.
+    #
+    # `rippling.com` (521 postings via ats.rippling.com) and `usajobs.gov`
+    # (343) are the next two of this shape and are deliberately not added
+    # here: Rippling is an employer as well as an ATS, so the trade is not the
+    # same one, and it should be measured rather than assumed.
+    "reed.co.uk",
 )
 
 
