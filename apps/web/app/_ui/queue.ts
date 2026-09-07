@@ -101,6 +101,33 @@ export const STATUS_QUEUE: Record<string, string> = {
   watch: "restore",
 };
 
+/**
+ * The queue an *action* goes to. Not a status, and the distinction is the
+ * design rather than tidiness.
+ *
+ * `STATUS_QUEUE` maps a state the application is moving to. "Open & finish"
+ * moves nothing: it asks the device to put a window on the user's screen
+ * showing the form a parked run left behind. Modelling it as a fourth status
+ * would mean inventing a state to carry an instruction, and then something
+ * would have to write that state into `applications.status` -- which is the
+ * Class B column the device owns, and the exact mistake that left three
+ * controls writing a state and ordering no work.
+ *
+ * So an action enqueues and writes nothing at all. There is no row to update,
+ * because nothing about the application changed.
+ *
+ * **`focus` is not new to the device.** `watch.py:2432` has always claimed
+ * this queue: it resolves the posting URL from the session or `roles.json`,
+ * picks the application's own slot, calls `browser.show(slot)` to relaunch it
+ * with a window -- the slots run `--headless=new` -- and then `browser.focus`
+ * to open the page. The Python board sent it from every card. v2 rendered the
+ * button disabled, saying this was "not something v2 can do", and that was
+ * never true.
+ */
+export const ACTION_QUEUE: Record<string, string> = {
+  focus: "focus",
+};
+
 function env() {
   return {
     CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID,

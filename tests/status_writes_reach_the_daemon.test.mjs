@@ -1,4 +1,4 @@
-// Every status a control sends is one the queue carries to the device.
+// Every status and action a control sends is one a queue carries to the device.
 //
 // **Three buttons sent `status: "inflight"` and none of them reached the
 // daemon.** `STATUS_QUEUE` held `dropped` alone, under a comment explaining
@@ -45,16 +45,36 @@ const OBSERVATIONAL = {
   // with its queue, and deciding which is the whole point of this file.
 };
 
-/** Every `status: "..."` inside a JSX `body={{...}}` prop, from the tree. */
-function statusesSent(file) {
+/**
+ * Every `status:` or `action:` string literal inside a JSX `body={{...}}`
+ * attribute.
+ *
+ * **Scoped to `body`, because `action` is two different namespaces.** The
+ * Profile page's controls send `action: "save" | "delete" | "dismiss"` to
+ * `/api/profile`, where the shared planner in `deploy/profile_edits.mjs`
+ * validates them; the lane controls send theirs to `/api/applications` through
+ * `<Act body={{...}}>`. An unscoped walk reported all five Profile actions as
+ * stranded work orders, which is the region problem this repository has three
+ * afternoons in: the same word means different things in different parts of
+ * the tree, and a scanner that does not know which region it is in reports
+ * confidently on the wrong one.
+ */
+function sentValues(file, key) {
   const tree = ts.createSourceFile(
     file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2022, true);
   const found = new Set();
-  const walk = (node) => {
+  const collect = (node) => {
     if (ts.isPropertyAssignment(node)
-        && node.name && node.name.getText() === 'status'
+        && node.name && node.name.getText() === key
         && ts.isStringLiteral(node.initializer)) {
       found.add(node.initializer.text);
+    }
+    node.forEachChild(collect);
+  };
+  const walk = (node) => {
+    if (ts.isJsxAttribute(node) && node.name.getText() === 'body'
+        && node.initializer) {
+      collect(node.initializer);
     }
     node.forEachChild(walk);
   };
@@ -62,12 +82,12 @@ function statusesSent(file) {
   return found;
 }
 
-function queueMap() {
+function queueMap(name) {
   const src = readFileSync(join(UI, 'queue.ts'), 'utf8');
   const tree = ts.createSourceFile('queue.ts', src, ts.ScriptTarget.ES2022, true);
   const out = {};
   const walk = (node) => {
-    if (ts.isVariableDeclaration(node) && node.name.getText() === 'STATUS_QUEUE'
+    if (ts.isVariableDeclaration(node) && node.name.getText() === name
         && node.initializer && ts.isObjectLiteralExpression(node.initializer)) {
       for (const prop of node.initializer.properties) {
         if (ts.isPropertyAssignment(prop) && ts.isStringLiteral(prop.initializer)) {
@@ -82,11 +102,14 @@ function queueMap() {
 }
 
 const sent = new Set();
+const actions = new Set();
 for (const name of readdirSync(UI)) {
   if (!name.endsWith('.tsx')) continue;
-  for (const s of statusesSent(join(UI, name))) sent.add(s);
+  for (const s of sentValues(join(UI, name), 'status')) sent.add(s);
+  for (const a of sentValues(join(UI, name), 'action')) actions.add(a);
 }
-const carried = queueMap();
+const carried = queueMap('STATUS_QUEUE');
+const carriedActions = queueMap('ACTION_QUEUE');
 
 test('the scan finds the statuses the controls send', () => {
   // The anti-vacuity floor. Every check below passes on an empty set, and this
@@ -96,6 +119,21 @@ test('the scan finds the statuses the controls send', () => {
     `below are about almost nothing. The walker is probably not reaching the ` +
     `body props.`);
   assert.ok(Object.keys(carried).length >= 1, 'STATUS_QUEUE parsed as empty');
+  assert.ok(actions.size >= 1,
+    'no action props found in the lane controls, so the action check below ' +
+    'is about nothing');
+  assert.ok(Object.keys(carriedActions).length >= 1, 'ACTION_QUEUE parsed as empty');
+});
+
+test('every action a control sends reaches the device', () => {
+  // **An action is not a status and gets its own map.** "Open & finish" moves
+  // no state: it asks the device to put a window on the screen. Carrying it as
+  // a fourth status would mean inventing a state for an instruction, and then
+  // writing that state into the Class B column the device owns.
+  const stranded = [...actions].filter((a) => !(a in carriedActions));
+  assert.deepEqual(stranded, [],
+    `these actions are sent by a control and are in no queue, so pressing the ` +
+    `control tells the device nothing: ${stranded.join(', ')}`);
 });
 
 test('every status a control sends reaches the device', () => {
