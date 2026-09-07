@@ -70,13 +70,32 @@ test('the three decisions the board offers on a Found card are all bridged', () 
 });
 
 test('a status the daemon owns is deliberately not enqueued', () => {
+  // **This asserted `deepEqual(keys, ['dropped'])` and listed `inflight` and
+  // `watch` as daemon-owned.** Both were wrong and the test was defending
+  // them: three controls send `inflight` and Undrop sends `watch`, so neither
+  // is a stage the board merely observes, and for five days pressing Apply on
+  // a Watching row wrote `applications.status` and told the device nothing.
+  //
+  // A restatement of a list, protecting the list from being corrected. Same
+  // shape as the `GATE_PATHS` equality test, which would have failed the fix
+  // for the outage it was written about.
+  //
+  // The property is that a status *no control sends* is not in the map, and
+  // `tests/status_writes_reach_the_daemon.test.mjs` holds the other direction
+  // by reading what the controls actually send.
   const v2 = v2Queues('STATUS_QUEUE');
-  assert.deepEqual(Object.keys(v2), ['dropped']);
-  for (const owned of ['review', 'active', 'inflight', 'watch']) {
+  for (const owned of ['review', 'active']) {
     assert.equal(v2[owned], undefined,
-                 `${owned} is a stage the daemon moves an application through. ` +
-                 `Enqueueing it would be v2 inventing a work order the board ` +
-                 `has no button for.`);
+                 `${owned} is a stage the daemon moves an application ` +
+                 `through and no control sends it. Enqueueing it would be v2 ` +
+                 `inventing a work order the board has no button for.`);
+  }
+  // And every queue it does name is one the device claims, so a work order
+  // cannot be sent to a queue nothing reads.
+  for (const [status, queue] of Object.entries(v2)) {
+    assert.ok(Object.values(boardQueues()).includes(queue),
+              `${status} is sent to the ${queue} queue, which the board does ` +
+              `not have and the watcher therefore never claims`);
   }
 });
 

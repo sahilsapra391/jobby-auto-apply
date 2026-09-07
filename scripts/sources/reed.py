@@ -18,6 +18,18 @@ import base  # noqa: E402
 
 SOURCE = "reed"
 SOURCE_CLASS = "aggregator"
+#: The hosts this connector's postings actually live on, which is not
+#: the API host above and is what the board derives a logo from.
+#: All 2,577 postings. This is the one that was missing, and it was the
+#: project's largest single source: every card drew reed's own favicon
+#: as the employer's mark.
+#:
+#: **Declared so it can be checked.** An aggregator whose host is not in
+#: `company_logos.INFRA_HOST_PARTS` has the board drawing the job
+#: board's own mark on every employer card it supplies, and that is
+#: invisible precisely because it is consistent.
+#: `tests/test_aggregator_hosts.py` fails when the two part.
+POSTING_HOSTS = ("www.reed.co.uk",)
 TIER = "1b"
 KEY_VAR = "JOBBY_REED_KEY"
 SEARCH_URL = "https://www.reed.co.uk/api/1.0/search"

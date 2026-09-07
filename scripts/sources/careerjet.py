@@ -14,6 +14,18 @@ import base  # noqa: E402
 
 SOURCE = "careerjet"
 SOURCE_CLASS = "aggregator"
+#: The hosts this connector's postings actually live on, which is not
+#: the API host above and is what the board derives a logo from.
+#: Careerjet's own API hands out `jobviewtrack.com` links rather than
+#: careerjet.co.uk ones, which is why the covering entry does not look
+#: like the source's name. Measured over 956 postings.
+#:
+#: **Declared so it can be checked.** An aggregator whose host is not in
+#: `company_logos.INFRA_HOST_PARTS` has the board drawing the job
+#: board's own mark on every employer card it supplies, and that is
+#: invisible precisely because it is consistent.
+#: `tests/test_aggregator_hosts.py` fails when the two part.
+POSTING_HOSTS = ("jobviewtrack.com",)
 TIER = "1b"
 KEY_VAR = "JOBBY_CAREERJET_KEY"
 # HTTP, not HTTPS. Verified 2026-08-20 during the supervised run: the public

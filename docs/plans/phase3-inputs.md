@@ -856,6 +856,83 @@ thousands it is not.
 
 The consequence is the next section.
 
+### 11g. The largest source drew a job board's mark on every card, 2026-09-06
+
+**`reed.co.uk` was not in `company_logos.INFRA_HOST_PARTS`** while linkedin,
+indeed, adzuna, jooble and careerjet all were. So `logo_plan` returned
+`PLAN_POSTING_HOST` for every reed posting and the client derived the employer's
+mark from the posting's host, which is the job board.
+
+    reed postings in the pool          2,577 of 23,633, the largest single
+                                       source that names a host at all
+    on PLAN_POSTING_HOST before        2,577
+    on PLAN_NAME_CORE after            2,540
+    on a monogram after                   37   the name is too short to be a
+                                             candidate
+
+**It was invisible because it was consistent.** Every reed card carried the
+same wrong mark, so nothing looked out of place. It surfaced only when 47 of
+those postings were repointed onto their real employers and *still* showed a
+job board's logo, which is a different question than "does this card look
+right" and is the question nobody had asked.
+
+That is the general shape and it is worth more than the instance: **a defect
+that is uniform across a class does not look like a defect, it looks like a
+design.** The board had a rule for exactly this failure -- "never use an ATS or
+job aggregator favicon as an employer mark" -- and the rule was right, complete
+and enforced. What was missing was one entry in the list it enforces against.
+
+**So the list is now derived from the connectors rather than remembered.**
+Every module under `scripts/sources/` declaring `SOURCE_CLASS = "aggregator"`
+declares `POSTING_HOSTS`, and `tests/test_aggregator_hosts.py` fails when one
+of them is not covered. Adding a connector without adding its host is a red
+test rather than a discovery months later.
+
+**Writing that test found two more nobody had noticed**: `usajobs.gov` (343
+postings) and `themuse.com` (32). Both are aggregators by their own
+declaration and neither host was listed. Three of six aggregators were
+mis-drawing their cards, and the count of how long is not knowable.
+
+The hosts are not the API hosts, which is why the declaration is measured
+rather than derived from `SEARCH_URL`: careerjet's API is
+`public.api.careerjet.net` and its postings live on `jobviewtrack.com`.
+
+**And the rule change needed a backfill, which it shipped without.**
+`logo_domain` and `logo_alt` are stored columns, `dual_write.persist` mirrors
+`added | changed`, and 2,530 records were not in any delta. Parity reported
+5,060 `field_mismatch` findings within ten minutes of the deploy. That is §11b
+holding on the change made while writing §11b's own section, and
+`scripts/backfill_logo_plans.py` is the pass that closes it.
+
+### 11h. A v2 control that wrote a state and ordered no work, 2026-09-07
+
+**Three controls posted `status: "inflight"` and none of them reached the
+device.** `queue.STATUS_QUEUE` carried `dropped` alone, so `order` was never
+called; the route wrote `applications.status = 'inflight'` regardless, and the
+board reported that work had started on a real application while no machine had
+heard of it.
+
+Found by the employer-edge parity run on one row: Scale Media / Data Analyst,
+session file `watch`, Postgres `inflight`, apply queue empty, POST recorded at
+2026-09-07T00:18:36Z with a 200. The Vercel log was gone by the time anybody
+looked, which is why the durable evidence mattered: `idempotency_keys` stores
+the response, and `{"kind": "application.changed"}` is returned only by the
+status path, never by `decide`. That is what identified the route without a log.
+
+**Its own docstring is what caused it.** The map read: "`review`, `active` and
+`inflight` are stages the daemon itself moves an application through; a board
+does not order them, it observes them." True of the daemon's transitions, false
+of a control labelled Apply, and stated confidently enough that nobody checked
+which controls actually send it.
+
+`inflight` maps to `apply`, which is what the Python board does -- `/api/retry`
+is deliberately the apply queue -- and the guard is
+`tests/status_writes_reach_the_daemon.test.mjs`: every status a control sends
+must be carried by the queue or declared observational with a reason. **It
+found a second one immediately.** Undrop posts `status: "watch"` and was
+stranded the same way; the Python board has always sent it to `restore`. One
+bug reported, two found, and the second had nobody looking for it.
+
 ## 12. Four filter controls were removed, and here is what brings them back
 
 Re-measured 2026-09-05 over all **25,204** pool records, which is up from the
