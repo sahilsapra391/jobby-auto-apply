@@ -80,6 +80,18 @@ and 0003 created.
 | `repair_watch_drift` | `main` | `save_jobs` | repair |
 | `repair_posted_dates` | `main` | `save_jobs` | repair |
 | `backfill_watch_records` | `main` | `edit` | repair |
+| `employer_resolve` | `correct_the_pool` | `edit` | the employer resolver's device half: the confirmed employer name onto the record |
+
+**`employer_resolve.correct_the_pool` is Class A and it is the half that makes
+the device right.** The resolver writes `postings.employer_id` itself, because
+`employer_id` is absent from the upsert's `on conflict` assignments and neither
+an ingest fix nor a pool correction moves a stored row. That write alone leaves
+the mirror correct and the device still holding the feed publisher's name, and
+`verify_parity` says so: the first real run reported exactly 47
+`employer_edge` divergences, one per repointing and nothing else. The pool
+write is what closes them, and it runs after the commit so a failure leaves
+parity red and naming the rows rather than a corrected pool with no audit row
+behind it.
 
 The revive path (`jobs_store.reopen`, expired back to new) and the closure
 sweep (`close_missing`) and the cap (`prune`) do not appear as their own rows:
