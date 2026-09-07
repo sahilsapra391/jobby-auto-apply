@@ -3213,6 +3213,37 @@ beside it does not cover that, and passed with the update moved before the
 commit; it was found by mutating the guard and watching the wrong test stay
 green.
 
+**Two flags from that work, both waiting on Phase 3's observability.** The 1,358
+`oracle_orc` closures of 2026-08-30 are still unexamined, and the only reason
+they look benign is that the channel's total yield held steady while they
+happened -- which is exactly the shape brake 4 cannot see. The query worth
+running once there is somewhere to run it is how many of the 1,358 are open on
+that board again today: if most are, that night closed live postings under a
+per-board brake that never fired because the board's total held. And
+`closureRefused` still has no reader. It is computed, it carries the board and
+the counts, and it sat unread through the one window it had something to say;
+the number worth alarming on is a repeat count, the same board refused N sweeps
+running, because one refusal is a bad fetch and twenty-two is a question. It
+gets its reader when the health machinery moves to the cloud, not before.
+
+### Greenhouse on the record contract, 2026-09-07
+
+**The connector fetches one board per registry token, so the token is the
+tenant slug, and the list response carries each job's own id.** Both halves in
+hand with nothing parsed out of a URL, which is what the §3 contract said all
+along and what no connector was doing.
+
+Measured against the live pool before the change: 7,465 greenhouse records,
+4,206 parsing a slug out of their URL and **3,259 not**, keyed on this device's
+own pool id, which means nothing off this machine. Those 3,259 are the postings
+served from an employer's own domain, where `stripe.com/jobs/search?gh_jid=...`
+carries the job id and no slug, and `board_key.py` refuses to guess one because
+a wrong slug splits one board in two forever.
+
+Nothing already keyed correctly moves. Of the 4,131 records carrying both a
+derived slug and a registry token, the two agree on all 4,131 and disagree on
+none, so the change is additive by measurement rather than by hope.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,
