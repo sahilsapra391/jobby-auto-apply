@@ -410,10 +410,46 @@ class ApplicationTools:
         except SystemExit as exc:
             message = str(exc).strip()
             raise ToolExecutionError(message[:300] or "the local operation failed") from exc
-        except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
-            raise ToolExecutionError("the local application operation failed") from exc
-        except Exception as exc:
-            raise ToolExecutionError("the local application operation failed") from exc
+        except (OSError, subprocess.SubprocessError, ValueError,
+                json.JSONDecodeError) as exc:
+            raise ToolExecutionError(self._named(name, exc)) from exc
+        except Exception as exc:                                 # noqa: BLE001
+            raise ToolExecutionError(self._named(name, exc)) from exc
+
+    @staticmethod
+    def _named(tool, exc):
+        """A failure the reader can act on, without leaking what the store holds.
+
+        **These two branches returned "the local application operation failed"
+        and discarded the exception.** `raise ... from exc` keeps the chain for
+        a traceback nobody prints, so the cause ceased to exist at the moment
+        it was produced -- which is the rule this project has already paid for
+        three times with `DEVNULL`, `ping_health` and `pool_staleness`.
+
+        Observed on a real run, 2026-09-07: `set_phase` failed once against the
+        live Chainguard application and the whole record of it was that
+        sentence. The phase reached "Filling the form" a moment later, so
+        whatever it was did not stop the run, and it is not knowable now.
+
+        **The class name and nothing else from the exception body.** The
+        message travels into a provider's context, and an `OSError` carries a
+        path while a `ValueError` from the store can carry a value. The type
+        says which of the four kinds of thing went wrong, which is what
+        separates "the store rejected it" from "the disk did"; the detail goes
+        to stderr, which `browser_mcp_proxy` drains and the run log keeps.
+        """
+        kind = type(exc).__name__
+        # `str`, not `repr`: `repr(OSError(2, "no such file", path))` drops the
+        # path entirely and only `str` renders it as "[Errno 2] ...: '/path'".
+        # The filename is the single most useful thing about an OSError, and a
+        # line claiming the detail is recoverable while dropping it is worse
+        # than no line. Caught by the test asserting recoverability rather than
+        # by reading this.
+        sys.stderr.write(
+            f"application_mcp: {tool} failed with {kind}: {exc}\n")
+        sys.stderr.flush()
+        return (f"the local application operation failed with {kind}; "
+                f"the detail is in this run's log")
 
     def _set_phase(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, {"phase", "detail"})
