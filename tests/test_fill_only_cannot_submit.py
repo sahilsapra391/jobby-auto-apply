@@ -196,6 +196,73 @@ class DoNotStartTests(unittest.TestCase):
             watch.browser_identity.any_signed_in = real_signed
 
 
+class SlotlessParkTests(unittest.TestCase):
+    """A parked application has no slot, and None must not travel.
+
+    `reconcile_browser_slots` releases a parked application's slot within a
+    tick and `release_browser_slot` clears `browserSlot` off the session, so
+    the application "Open & finish" exists for is precisely the one that has
+    none. Measured on Chainguard `31c8aa9c1e988c56`, 2026-09-07: parked
+    02:50:55Z, released 02:54:29Z, `browserSlot` None afterwards.
+
+    Both of the things None reached resolved it silently to something wrong,
+    which is why they are refused at the entry rather than checked at the call.
+    """
+
+    def test_holding_an_unknown_slot_raises_instead_of_writing_none_lock(self):
+        # `lock_path(None)` is `None.lock`: a real file holding nothing, while
+        # every reader goes on seeing the slot as free.
+        for name in (None, "", "apply-99", "scan"):
+            with self.subTest(name=name):
+                with self.assertRaises(watch.TickError):
+                    watch.hold_slot(name, "31c8aa9c1e988c56")
+        self.assertFalse((watch.LOCK_DIR / "None.lock").exists())
+
+    def test_holding_a_real_slot_still_works(self):
+        # The positive control. Every assertion above is about a refusal, and
+        # a function that refused everything would satisfy all of them.
+        slot = watch.APPLY_LOCKS[-1]
+        try:
+            watch.hold_slot(slot, "31c8aa9c1e988c56")
+            held = watch.lock_holder(slot)
+            self.assertEqual(held.get("note"), "31c8aa9c1e988c56")
+            self.assertTrue(held.get("parked"))
+            self.assertFalse(watch.hold_expired(held))
+        finally:
+            watch.lock_path(slot).unlink(missing_ok=True)
+
+    def test_showing_an_unknown_slot_never_resolves_to_apply_one(self):
+        # `port_for` answers the base port for anything not in SLOTS, so
+        # `show(None)` stopped and relaunched apply-1 headed, taking its pages
+        # with it, whoever was filling a form in there. That is arithmetic and
+        # needs no browser to state.
+        self.assertEqual(browser.port_for(None), browser.port_for(browser.SLOTS[0]))
+
+        # **The lifecycle calls are patched even though the guard returns
+        # before reaching them.** A store redirect moves the profile directory
+        # and not the port: without these, removing the guard to check this
+        # test can fail would send `stop_slot` and `serve` at the real apply-1
+        # on this machine, which is the mutation destroying somebody's
+        # application to prove a test works.
+        calls = []
+        real = (browser.running, browser.is_headed, browser.stop_slot, browser.serve)
+        browser.running = lambda slot=None: calls.append(("running", slot)) or False
+        browser.is_headed = lambda slot=None: calls.append(("is_headed", slot)) or False
+        browser.stop_slot = lambda slot: calls.append(("stop_slot", slot)) or True
+        browser.serve = lambda slot=None, headed=False: (
+            calls.append(("serve", slot)) or {"started": True})
+        try:
+            for name in (None, "apply-99"):
+                with self.subTest(name=name):
+                    answered = browser.show(name)
+                    self.assertEqual(answered.get("error"), "unknown browser slot")
+                    self.assertFalse(answered.get("restarted"))
+            self.assertEqual(calls, [])
+        finally:
+            (browser.running, browser.is_headed,
+             browser.stop_slot, browser.serve) = real
+
+
 class ToolSurfaceTests(unittest.TestCase):
     """What the server advertises, and what it will run."""
 

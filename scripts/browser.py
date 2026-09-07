@@ -247,7 +247,16 @@ def show(slot):
 
     A no-op when it is already headed, so pressing the button twice does not
     take the browser away from the form the user is looking at.
+
+    **An unknown slot is refused rather than resolved.** `port_for` answers the
+    base port for anything not in SLOTS, so `show(None)` stopped and relaunched
+    **apply-1**, taking its pages with it, whoever was filling a form there.
+    A caller that has lost track of the slot is exactly the caller that must
+    not be given somebody else's.
     """
+    if slot not in SLOTS:
+        return {"slot": slot, "headed": False, "restarted": False,
+                "error": "unknown browser slot"}
     # Only a definite True short-circuits. Unknown relaunches, because
     # relaunching an already-headed browser costs a second and the alternative
     # is a button that silently does nothing.

@@ -412,7 +412,15 @@ def hold_slot(name, aid, seconds=HOLD_SECONDS):
     The deadline is written into the lock rather than kept in memory, because
     the watcher restarts and a hold that a restart forgets is a hold that
     releases early -- and one a restart *extends* would be the old bug back.
+
+    **An unknown slot raises rather than writing a lock nothing reads.**
+    `lock_path(None)` is `None.lock`: a real file, holding a real slot's worth
+    of nothing, while every reader goes on seeing the slot as free. A caller
+    that reached here without a slot has a bug one line earlier and needs to be
+    told, not accommodated.
     """
+    if name not in APPLY_LOCKS:
+        raise TickError(f"cannot hold an unknown browser slot {name!r}")
     _write_lock(name, {
         "pid": 0,
         "at": now_stamp(),
@@ -2570,7 +2578,42 @@ def tick(force_publish=False):
             if not url:
                 changed["focus"] = {"applicationId": aid, "error": "no posting url on record"}
                 continue
-            slot = browser_slot_for_application(aid)
+            # **A parked application has no slot, which is the case this
+            # button exists for and the one the first version could not
+            # survive.** `reconcile_browser_slots` releases the slot and
+            # `release_browser_slot` clears `browserSlot` off the session, so
+            # `browser_slot_for_application` answers None minutes later.
+            # Measured on Chainguard `31c8aa9c1e988c56` on 2026-09-07: parked
+            # 02:50:55Z, released 02:54:29Z, `browserSlot` None afterwards.
+            #
+            # None then travelled: `lock_path(None)` writes `None.lock` and
+            # holds nothing, and `browser.port_for(None)` answers the base port
+            # because None is not in SLOTS, so `show` would have relaunched
+            # **apply-1** headed and taken its pages with it, whoever was
+            # filling a form in there.
+            #
+            # `candidate_apply_slots` is the existing answer and is borrowed
+            # rather than restated: this application's own slot when it still
+            # holds one, and a genuinely free slot otherwise. No slot at all is
+            # a refusal that says so.
+            candidates = candidate_apply_slots(aid)
+            if not candidates:
+                changed["focus"] = {
+                    "applicationId": aid,
+                    "error": "every browser slot is busy, so there is nowhere "
+                             "to open this form",
+                }
+                continue
+            slot = candidates[0]
+            try:
+                # Recorded before the lock, so the re-fill enqueued below lands
+                # in this window: `candidate_apply_slots` reads the affinity
+                # off the session, and without it the runner would be given a
+                # different slot and fill a form nobody is looking at.
+                persist_browser_slot(aid, slot)
+            except TickError as exc:
+                changed["focus"] = {"applicationId": aid, "error": str(exc)}
+                continue
             # A window, because this is the board's "Open & finish" button on a
             # parked application: the user pressed it in order to look at the
             # form. serve() is headless now, and focus() answers
@@ -2630,6 +2673,7 @@ def tick(force_publish=False):
                     env=toolpath.queue_env(), timeout=60).returncode == 0
             changed["focus"] = {
                 "applicationId": aid,
+                "slot": slot,
                 "heldSeconds": HOLD_SECONDS,
                 "refillQueued": refill,
                 **focused,

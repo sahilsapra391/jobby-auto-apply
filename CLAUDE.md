@@ -3006,6 +3006,27 @@ is `submitting`, more correctly still: re-running a form that already reached
 Submit is how an application goes in twice under a real name. Chainguard was
 both.
 
+**And the slot it held was nobody's.** A parked application has no slot: the
+reconciler releases it within a tick and `release_browser_slot` clears
+`browserSlot` off the session, so the one application this button exists for is
+precisely the one `browser_slot_for_application` answers None about. Chainguard
+parked 02:50:55Z, was released 02:54:29Z, and read None from then on.
+
+None then travelled, and both things it reached resolved it silently rather
+than refusing it. `lock_path(None)` is `None.lock`: a real file, holding a real
+slot's worth of nothing, while every reader goes on seeing the slot as free.
+And `browser.port_for` answers the **base port** for anything not in `SLOTS`,
+so `show(None)` would have stopped and relaunched apply-1 headed and taken its
+pages with it, whoever was filling a form in there. Neither would have raised.
+Both are refused at the entry now, and the handler asks
+`candidate_apply_slots`, which already encodes "this application's own slot, or
+a genuinely free one, or none".
+
+That is the third fault in one control and it is the same shape as the other
+two: a value that was reasonable when the code was written -- the slot the
+application owned -- and is None by the time the button is pressed, because
+something correct happened in between.
+
 **The fix is not to waive the refusal. It is to make the refused thing
 impossible.** A fill-only run's MCP server never advertises `pre_submit` or
 `record_completed` (`application_mcp.SUBMISSION_TOOLS`), so the guard has
