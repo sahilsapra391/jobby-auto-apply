@@ -54,6 +54,7 @@ import deploy_lock  # noqa: E402
 import document_job  # noqa: E402
 import browser_identity
 import corpus_check
+import source_health
 import provider_login  # noqa: E402
 import providers  # noqa: E402
 import toolpath  # noqa: E402
@@ -3029,6 +3030,38 @@ def tick(force_publish=False):
     return changed
 
 
+def sourcing_warning():
+    """A source that has stopped working, on the alarm that already exists.
+
+    **Reads the store rather than taking an argument**, because
+    `PING_REASONS` calls every reason with no arguments and a reason that
+    needed one would have to be special-cased in the composition -- which is
+    the thing that composition exists to stop.
+
+    Silent when the store cannot be read. That is the one direction this file
+    has been wrong in four times, so it is worth saying why it is right here:
+    the sweep's own staleness is already a ping reason
+    (`stale_sweep_warning`), so a store nobody can read is not silent, it is
+    loud for a better reason than this one could give.
+    """
+    try:
+        last = store(["meta-get", "--key", "lastIngest"])
+        ledger_raw = store(["meta-get", "--key", source_health_key()])
+        report = json.loads(last.stdout or "{}").get("lastIngest") or {}
+        ledger = json.loads(ledger_raw.stdout or "{}").get(
+            source_health_key()) or {}
+    except (json.JSONDecodeError, OSError, ValueError):
+        return ""
+    return source_health.warning(report, ledger)
+
+
+def source_health_key():
+    # One name, imported rather than repeated, so a rename cannot leave the
+    # alarm reading a key nothing writes.
+    import sweep_runs
+    return sweep_runs.STORE_KEY
+
+
 def unhealthy_reason():
     """Every reason the dead-man ping should be red, joined, or "".
 
@@ -3055,7 +3088,8 @@ def unhealthy_reason():
 #: free. Same argument `mirror_fields` makes for deriving parity's field set
 #: from the writer instead of listing it alongside.
 PING_REASONS = (stale_board_warning, stale_sweep_warning, parked_slot_warning,
-                chrome_flag_warning, corpus_check.warning)
+                chrome_flag_warning, corpus_check.warning,
+                sourcing_warning)
 
 
 def heartbeat_due(line, last_line, since_last_ping):
