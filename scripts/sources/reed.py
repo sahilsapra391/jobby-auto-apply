@@ -30,6 +30,17 @@ SOURCE_CLASS = "aggregator"
 #: invisible precisely because it is consistent.
 #: `tests/test_aggregator_hosts.py` fails when the two part.
 POSTING_HOSTS = ("www.reed.co.uk",)
+#: This connector emits the §3 record key rather than leaving it to be parsed
+#: back out of a URL. See `scripts/sources/base.py` and
+#: `tests/test_board_key_contract.py`, which enumerates every connector and
+#: requires each one to either emit or say why it cannot.
+#:
+#: `board_slug` is the source itself, which is the convention
+#: `packages/schema/board_key.py` already states for a feed: reed is not an ATS
+#: tenant, reed is the board the posting came from. `external_id` is reed's own
+#: `jobId`, which is the identity reed uses and is stable across sweeps, where
+#: the fallback used this device's pool id and was therefore local to it.
+EMITS_BOARD_KEY = True
 TIER = "1b"
 KEY_VAR = "JOBBY_REED_KEY"
 SEARCH_URL = "https://www.reed.co.uk/api/1.0/search"
@@ -39,6 +50,10 @@ PAGE_SIZE = 100
 
 def parse_job(entry):
     location = base.parse_location(entry.get("locationName"), fallback_country=COUNTRY)
+    # `jobId` is an int in the payload and the key is text on both sides, so it
+    # is stringified here rather than wherever it is next compared.
+    job_id = entry.get("jobId")
+    job_id = str(job_id).strip() if job_id not in (None, "") else None
     salary = None
     if entry.get("minimumSalary") and entry.get("maximumSalary"):
         salary = f"{entry['minimumSalary']:.0f}-{entry['maximumSalary']:.0f}"
@@ -48,7 +63,8 @@ def parse_job(entry):
         workplace=base.detect_workplace(entry.get("locationName"), entry.get("jobTitle"),
                                         entry.get("jobDescription")),
         posted_at=_uk_date(entry.get("date")),
-        description=entry.get("jobDescription") or "", salary=salary)
+        description=entry.get("jobDescription") or "", salary=salary,
+        board_slug=SOURCE if job_id else None, external_id=job_id)
 
 
 def _uk_date(value):

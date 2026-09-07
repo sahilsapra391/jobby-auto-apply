@@ -43,6 +43,8 @@ from html import unescape
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "schema"))
+import board_key  # noqa: E402
 import extract  # noqa: E402
 import posting_sections  # noqa: E402
 import company_logos  # noqa: E402
@@ -654,9 +656,25 @@ def iso_stamp(value):
 
 def posting(source, source_class, tier, company, title, url, *, location=None,
             workplace=None, posted_at=None, description="", tags=None, salary=None,
-            lang=None, seen_at=None, url_stable=True, logo_url=None):
+            lang=None, seen_at=None, url_stable=True, logo_url=None,
+            board_slug=None, external_id=None):
     """One board's version of a posting, in the one shape everything downstream
-    expects. Connectors differ; this does not."""
+    expects. Connectors differ; this does not.
+
+    **`board_slug` and `external_id` are the §3 record key, emitted by the
+    connector that knows them.** `packages/schema/board_key.py` exists to
+    recover that key from a URL for records written before this existed, and it
+    says in its own docstring that a connector fetching
+    `boards.greenhouse.io/<slug>` knows all three by construction. It was still
+    the only source: every posting went in with a URL and the parser guessed.
+    Measured over the live pool on 2026-08-29 it recovers a real tenant for
+    70.3%, and a large part of the rest is not a parse failure but an
+    aggregator that knows its own posting id and was never asked.
+
+    Both or neither. A key with one real half and one invented one is wrong in
+    the way that looks right, and `board_key.stored` refuses a partial value
+    rather than repairing it, so passing one here quietly buys nothing.
+    """
     seen = seen_at or jobs_store.now_stamp()
     clean_url = identity.canonical_url(url)
     body = strip_html(description)
@@ -695,4 +713,13 @@ def posting(source, source_class, tier, company, title, url, *, location=None,
         "tags": sorted({str(t).strip().lower() for t in (tags or []) if str(t).strip()}),
         "salary": salary,
     })
+    # Absent rather than null when the connector does not know it, so a record
+    # written before the contract and one written by a connector that cannot
+    # emit a key are the same shape, and `board_key.for_record` has one thing
+    # to check rather than two.
+    if board_slug and external_id:
+        record[board_key.RECORD_FIELD] = {
+            "slug": str(board_slug).strip().lower(),
+            "externalId": str(external_id).strip(),
+        }
     return record

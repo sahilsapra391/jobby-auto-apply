@@ -168,6 +168,65 @@ def parse(source, url):
     return None
 
 
+#: Where a connector puts the key it already knows, on the record itself.
+#: One field holding both halves rather than two, because half a key is not a
+#: key and two fields make "one of them is missing" a state somebody has to
+#: handle.
+RECORD_FIELD = "boardKey"
+
+
+def stored(record):
+    """The key a connector emitted for this record, or None.
+
+    **Both halves, both strings, both non-empty, or nothing.** A partial or
+    malformed value falls through to the URL parse rather than being repaired,
+    for the reason this module already gives about guessing a slug: a wrong key
+    costs the identity of the row, and a key assembled from one real half and
+    one invented one is wrong in the way that looks right.
+    """
+    value = (record or {}).get(RECORD_FIELD)
+    if not isinstance(value, dict):
+        return None
+    slug = value.get("slug")
+    external = value.get("externalId")
+    if not isinstance(slug, str) or not isinstance(external, str):
+        return None
+    slug = slug.strip().lower()
+    external = external.strip()
+    if not slug or not external or slug in _NEVER_A_SLUG:
+        return None
+    return slug, external
+
+
+def for_record(record):
+    """`(board_slug, external_id)` for one pool record, preferring what it knows.
+
+    **A connector knows its own key and a URL parser is guessing at it.** The
+    §3 contract is that a connector fetching `boards.greenhouse.io/<slug>`
+    emits all three fields by construction; this module exists for the callers
+    that only have a URL, and it stops being the authority the moment a record
+    carries the real thing. Measured over the live pool on 2026-08-29, the URL
+    parse finds a real tenant for 70.3% of records and falls back to
+    `(source, record_id)` for the rest -- and a large part of that rest is not
+    a parse failure at all but an aggregator, which knows its own posting id
+    perfectly well and was never asked.
+
+    The stored value is checked rather than trusted (`stored`), because it
+    arrives from a connector and a malformed one must degrade to the old
+    behaviour rather than write a corrupt key.
+    """
+    found = stored(record)
+    if found:
+        return found
+    return derive(_text(record.get("canonicalSource")),
+                  _text(record.get("canonicalUrl")),
+                  _text(record.get("id")))
+
+
+def _text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
 def derive(source, url, record_id):
     """Return `(board_slug, external_id)` for one posting, always.
 

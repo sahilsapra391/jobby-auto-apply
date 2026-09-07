@@ -3120,6 +3120,47 @@ out, because `tests/test_apply_capability_contract.py` compares it against
 guarantee by a different route -- and that test covered only the browser half,
 which is why the jobby drift had nowhere to show.
 
+### Two board faults parked with their diagnoses, 2026-09-07
+
+Both are real, both are understood, and neither blocks Phase 3. Recorded here
+rather than fixed so the next person starts from the diagnosis instead of the
+symptom.
+
+**The Open & finish hold does not survive the run it exists to enable.**
+`hold_slot` writes `heldUntil` into the slot lock, and every other writer of
+that lock drops it: `reserve` writes `{pid, at, note}` when the re-fill starts
+and `park_slot` writes `{pid: 0, parked: true}` when it parks. So by the moment
+the form is worth keeping there is no deadline left, `hold_expired` answers True
+on a lock with no `heldUntil`, and `reconcile_browser_slots` releases the slot
+and `browser.clear_slot` closes the filled form. Observed end to end on
+Chainguard `31c8aa9c1e988c56`: hold taken 16:09:11 until 16:24:11, run started
+16:12:55, parked with a correct handoff at 16:22:38, lock read
+`{"pid": 0, "at": "16:22:35", "parked": true}` with no deadline, and apply-1 had
+zero tabs at 16:23:02. The fix is two-sided and neither half is optional: the
+deadline has to survive `reserve` and `park_slot` rather than being a field any
+writer can silently drop, and **the hold has to be re-armed at the park** rather
+than at the press, because the press is before a filled form exists and the park
+is the moment a person starts walking. The arming order was backwards from the
+start.
+
+**The single KV queue key loses presses to its own readers.** Every queue rides
+`jobby:queue` through read-modify-write with no compare-and-swap, and the
+Cloudflare KV REST values endpoint offers no conditional write to build one
+from. Measured 2026-09-07: four Open & finish presses returned 202 at 16:03:22,
+:36, :39 and :48, so KV accepted four writes into `focus`, and the array was
+empty at every subsequent poll. The watcher's tick at 16:03:33 ran
+`claim_one("apply/")`, which reads the whole key and writes the whole key back,
+and a read taken before the presses with a write landing after them replaces
+them with a copy of the queue that predates them. This is the 2026-08-28 fault
+that ate a watch enqueue, one queue over, and it is available to **every**
+button rather than to one. Two candidate fixes, and they are not equivalent: a
+version field with reject-on-mismatch and writer-side retry is a real
+compare-and-swap and fixes the race within a queue as well as across queues; one
+key per queue is cheaper and only stops a claim on one queue eating a press on
+another, which is the instance observed here but not the class. The symptom is a
+button that does nothing, intermittently, with a 202 in the log saying it
+worked, so nobody traces it back.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,
