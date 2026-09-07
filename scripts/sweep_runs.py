@@ -68,7 +68,7 @@ MIN_FOUND_FOR_RATCHET = 50
 STORE_KEY = "sweepRuns"
 
 
-def gate(channel, found, previous):
+def gate(channel, found, previous, unchanged=0):
     """Whether this channel's absences may be read as closures.
 
     Returns `(believed, reason)`. `reason` is empty when believed, and names the
@@ -85,6 +85,16 @@ def gate(channel, found, previous):
         # failed. The pool-level brake still covers the sweep as a whole.
         return True, ""
     if found >= last * YIELD_FLOOR:
+        return True, ""
+    # **A 304 is an answer and it is the opposite of a shortfall.** A board
+    # that says "unchanged since you last asked" is telling us the postings we
+    # already hold for it are current; the connector correctly returns nothing
+    # for it, and `found` drops by exactly the postings it would have repeated.
+    # Without this the ratchet reads a well-cached channel as a truncated one:
+    # lever gets 304s routinely by design, and pinpoint and teamtailor will as
+    # soon as they stop recording them as errors, so the channels with the best
+    # HTTP manners would be the ones refused every sweep.
+    if unchanged:
         return True, ""
     return False, (
         f"returned {found} against {last} last time ("

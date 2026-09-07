@@ -3244,6 +3244,92 @@ Nothing already keyed correctly moves. Of the 4,131 records carrying both a
 derived slug and a registry token, the two agree on all 4,131 and disagree on
 none, so the change is additive by measurement rather than by hope.
 
+### 54 of 67 errors were a 304, and 54 boards went unread, 2026-09-07
+
+**`get_json` returns `(None, response)` for anything that is not a 200, so an
+unchanged board landed in the error branch.** pinpoint and teamtailor had no
+`unchanged` arm; lever, ashby, greenhouse, smartrecruiters and the feeds all
+do. Measured on the 2026-09-07 sweep: 36 of pinpoint's 39 boards and 18 of
+teamtailor's 23, 54 of the run's 67 errors, and both channels still reported
+"39 boards" and claimed completeness. Not a closure hazard, because a 304 board
+contributes no key to `seen` and brake 1 covers what it does not see. The cost
+is that the error list was 80% noise, **which is how a real error stops being
+visible** -- the same argument this file already makes about a loud alarm for
+the wrong thing.
+
+**Fixing it creates a second problem that has to be fixed in the same commit.**
+A 304 board contributes no postings, so `found` drops by exactly what it would
+have repeated, and the yield ratchet added a day earlier reads that as
+truncation. lever takes 304s by design, so the channels with the best HTTP
+manners would have been the ones refused every sweep. The envelope carries an
+`unchanged` count now, on all three shapes rather than only `ok`, and the gate
+treats it as what it is: a positive statement that nothing moved, which is the
+opposite of a shortfall rather than a smaller version of one.
+
+### A missing key was a skip, and a skip is invisible
+
+**`api_key` never consulted `os.environ`.** It resolved every credential
+through `toolpath.settings()`, which merges two files. A container handed
+`JOBBY_ADZUNA_KEY` as an ordinary environment variable got an empty string,
+the connector returned `base.skipped(SOURCE, "no key")`, and `ingest.run` files
+a skip under `channelsSkipped` rather than `errors` -- so five of twenty-seven
+channels would have gone quiet on the first cloud sweep and the report would
+have looked healthy. Eleventh instance in this file of a check whose silence
+means two different things.
+
+The environment is read first and an explicit `settings=` argument still wins
+over both, because a caller that passed one has already decided. And a keyed
+channel with no key now **fails** rather than skipping: a skip is for a channel
+this run had no reason to ask, which is reed on a search excluding the UK, and
+that distinction is the whole reason the two states exist.
+
+Five connector docstrings said "no key is installed on this machine, so this
+connector has never had a real response" while the keys sat in `config.env` and
+the sweep was using them. Measured the same day: adzuna 50 found / 22 kept,
+careerjet 50/0, reed 100/26, usajobs 100/0, all status ok, and jooble a live
+`HTTP 400`. A confident sentence about a mechanism stops anybody checking, and
+this one would have had somebody read a real 400 as an endpoint nobody had
+tried.
+
+### The registry has fields for board health and has never written them
+
+Measured over all 895 `companies.json` entries on 2026-09-07: `lastFetchAt` is
+null on 895 of 895 and `lastStatus` is "unfetched" on 890, written once at seed
+time by `seed_companies.py:747`. So the only failure signal is a per-sweep
+aggregate naming a count and no board -- "6 token(s) 404 and need
+re-resolving", 9 dead boards of 638 registry-driven ones, 54 wasted requests a
+day, and no way to say which nine. `0019_boards.sql` and
+`packages/schema/board_health.py` are the registry and the breaker, with two
+rules. Only a 404 or 410 counts toward it, because a 500 or a timeout is
+evidence about the day rather than about the board and counting them retires
+every board an ATS serves during one outage. And no pass may retire more than
+10% of one source's live boards, because an ATS changing its URL scheme returns
+an honest 404 from a healthy server for every board it has -- the correlated
+failure brake 5 exists for, one layer down and worse, since a retired board
+stops being *asked* rather than merely having its absences believed.
+
+**And the obvious repair for one of them was a `NameError` waiting on a branch
+nothing runs.** `dual_write._record_timing` fell back to
+`Path("~/.job-application")` when given no root, and both call sites gave it
+none, so a class A write logged its timing into the device store whichever
+store it was told to use. The fix that suggests itself is `root=root` --
+which compiles, passes `py_compile`, passes 3,328 tests, and raises the first
+time a file write fails, because `persist` takes `conn, account_id, path,
+before, jobs, on_file_failure, batch` and **no `root`**. `path` is the pool
+path, `paths(root)["jobs"]`, so its parent is the store root by construction.
+Third instance of the entry above about a syntax check not being a name check,
+and this one was caught by reading the signature rather than by any test, so
+the test now pins both call sites through the AST.
+
+`NoStorePathIsAFrozenDefaultTests` cannot see this class at all: it walks
+module-level constants, and this was a fallback inside a function body.
+
+**One finding genuinely parked.** `toolpath.settings` reads `LOCAL_CONFIG` off
+`Path.home()` while `worker_key` writes through the same constant in five
+places, so making the reader store-relative without the writer splits them. It
+does not block the container, which carries no config file at all and reads its
+credentials from the environment.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

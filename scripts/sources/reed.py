@@ -4,7 +4,7 @@
 Only asked when the search actually selects the UK. A UK-only channel swept for
 a US-only search is a request an hour spent on nothing.
 
-Endpoint shape not verified live: no key is installed. Written to the published
+Verified live 2026-09-07: found 100, kept 26, status ok. Written to the published
 contract; the first real run confirms it.
 """
 
@@ -82,7 +82,14 @@ def _uk_date(value):
 def fetch(fetcher, config=None, settings=None, limit=None, countries=None, **_):
     key = base.api_key(KEY_VAR, settings)
     if not key:
-        return base.skipped(SOURCE, f"no key ({KEY_VAR} is not set)")
+    # **A missing key is a fault, not a choice.** `skipped` is for a channel
+    # this run had no reason to ask -- reed on a search that excludes the UK --
+    # and it is absent from the report's error list, so a channel configured to
+    # run and unable to run looked identical to one deliberately left out. In a
+    # container, where the key arrives as an environment variable, that is the
+    # difference between a sweep that says it is missing five sources and one
+    # that looks healthy while missing them.
+        return base.failed(SOURCE, f"no key: set {KEY_VAR}")
     if countries and COUNTRY not in [c.upper() for c in countries]:
         return base.skipped(SOURCE, "the saved search does not include the UK")
 

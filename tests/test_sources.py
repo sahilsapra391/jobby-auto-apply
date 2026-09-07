@@ -127,7 +127,7 @@ class EnvelopeTests(unittest.TestCase):
         for shape in shapes:
             self.assertEqual(sorted(shape),
                              ["errors", "listingComplete", "postings", "reason",
-                          "requests", "source", "status"])
+                              "requests", "source", "status", "unchanged"])
 
     def test_a_skip_is_never_an_empty_success(self):
         # This is the whole rule. If a skipped channel returned status "ok" with
@@ -355,7 +355,18 @@ class FeedTests(unittest.TestCase):
 class KeyedConnectorTests(unittest.TestCase):
     """A missing key is a normal state, and it is never silent."""
 
-    def test_every_keyed_connector_reports_a_visible_skip(self):
+    def test_every_keyed_connector_reports_a_missing_key_as_an_error(self):
+        """A channel configured to run and unable to run is a fault.
+
+        **It used to be `skipped`, and `skipped` is invisible.** A skip is for a
+        channel this run had no reason to ask -- reed on a search that excludes
+        the UK -- and `ingest.run` puts it in `channelsSkipped` rather than in
+        `errors`, so a missing credential looked exactly like a deliberate
+        omission. That is survivable on a laptop where the keys sit in a file
+        somebody edited once. It is not survivable in a container, where the
+        key arrives as an environment variable and five of twenty-seven
+        channels going quiet would read as a healthy sweep.
+        """
         for name, fn, host in (
             ("adzuna", adzuna.fetch, "api.adzuna.com"),
             ("jooble", jooble.fetch, "jooble.org"),
@@ -365,12 +376,22 @@ class KeyedConnectorTests(unittest.TestCase):
         ):
             f = fetcher({host: (200, "{}")})
             result = fn(f, config={}, settings=NO_SETTINGS, countries=["US", "GB"])
-            self.assertEqual(result["status"], "skipped", name)
+            self.assertEqual(result["status"], "error", name)
             self.assertIn("key", result["reason"], name)
             self.assertEqual(len(f.fake_opener.calls), 0,
                              f"{name} must not call out without a key")
 
-    def test_a_skip_names_the_variable_to_set(self):
+    def test_a_legitimate_skip_is_still_a_skip(self):
+        # The distinction the change depends on. reed asked for a search that
+        # excludes the UK has nothing to do and is not broken, and turning that
+        # into an error would be the same mistake pointed the other way.
+        f = fetcher({"reed.co.uk": (200, "{}")})
+        result = reed.fetch(f, config={}, settings={"JOBBY_REED_KEY": "k"},
+                            countries=["US"])
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("UK", result["reason"])
+
+    def test_a_missing_key_names_the_variable_to_set(self):
         f = fetcher({})
         result = adzuna.fetch(f, config={}, settings=NO_SETTINGS, countries=["US"])
         self.assertIn("JOBBY_ADZUNA_ID", result["reason"])
@@ -466,7 +487,7 @@ class KeyedConnectorTests(unittest.TestCase):
         f = fetcher({})
         result = usajobs.fetch(f, config={}, settings={"JOBBY_USAJOBS_KEY": "k"},
                                countries=["US"])
-        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["status"], "error")
         self.assertIn("JOBBY_USAJOBS_EMAIL", result["reason"])
 
     def test_usajobs_normalises_its_nested_shape(self):

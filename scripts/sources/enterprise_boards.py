@@ -20,17 +20,28 @@ def targets(companies, ats):
             if c.get("ats") == ats and c.get("token")]
 
 
-def finish(source, postings, errors, requests, count, complete=False):
+def finish(source, postings, errors, requests, count, complete=False,
+           unchanged=0):
     """`complete` says the whole of every board asked for came back.
 
     It is not defaulted True here for the same reason base.ok is not: a
     platform added later that forgets to claim it stays harmless, and one that
     claims it wrongly closes live jobs.
+
+    **`unchanged` is counted and reported because a 304 is an answer.** It is
+    not a failure and it is not a shortfall: the board is telling us its
+    listing has not moved since we last read it, so the postings we hold for it
+    are still current and the connector legitimately returns nothing for it.
+    Without the count the yield ratchet in `scripts/sweep_runs.py` would read a
+    well-cached channel as a truncated one and refuse its closures every sweep.
     """
-    if errors and not postings:
+    if errors and not postings and not unchanged:
         return base.failed(source, f"every board failed ({len(errors)})", requests, errors)
-    return base.ok(source, postings, requests, errors, f"{count} boards",
-                   complete=complete)
+    note = f"{count} boards"
+    if unchanged:
+        note += f", {unchanged} unchanged since the last run"
+    return base.ok(source, postings, requests, errors, note,
+                   complete=complete, unchanged=unchanged)
 
 
 def workplace(value, fallback=None):
@@ -42,12 +53,23 @@ def workplace(value, fallback=None):
 
 def pinpoint(fetcher, companies=None, limit=None, **_):
     source, postings, errors, before = "pinpoint", [], [], fetcher.requests
+    unchanged = 0
     boards = targets(companies, source)
     if not boards:
         return base.skipped(source, "no Pinpoint boards in the company registry")
     for company in boards:
         data, response = fetcher.get_json(
             f"https://{company['token']}.pinpointhq.com/postings.json")
+        # **A 304 is an answer, not a failure.** `get_json` returns
+        # (None, response) for anything that is not a 200, so an unchanged
+        # board landed in the error branch below: 36 of pinpoint's 39 boards
+        # and 18 of teamtailor's 23 on the 2026-09-07 sweep, 54 of the run's 67
+        # errors. The boards went unread, the channel still said "39 boards"
+        # and claimed completeness, and the error list became 80% noise, which
+        # is how a real error stops being visible.
+        if response.unchanged:
+            unchanged += 1
+            continue
         if data is None:
             errors.append(base.describe(response, company.get("name")))
             continue
@@ -76,16 +98,21 @@ def pinpoint(fetcher, companies=None, limit=None, **_):
         if limit and len(postings) >= limit:
             break
     return finish(source, postings, errors, fetcher.requests - before,
-                  len(boards), complete=True)
+                  len(boards), complete=True,
+                  unchanged=unchanged)
 
 
 def teamtailor(fetcher, companies=None, limit=None, **_):
     source, postings, errors, before = "teamtailor", [], [], fetcher.requests
+    unchanged = 0
     boards = targets(companies, source)
     if not boards:
         return base.skipped(source, "no Teamtailor boards in the company registry")
     for company in boards:
         data, response = fetcher.get_json(f"https://{company['token']}.teamtailor.com/jobs.json")
+        if response.unchanged:
+            unchanged += 1
+            continue
         if data is None:
             errors.append(base.describe(response, company.get("name")))
             continue
@@ -113,7 +140,8 @@ def teamtailor(fetcher, companies=None, limit=None, **_):
         if limit and len(postings) >= limit:
             break
     return finish(source, postings, errors, fetcher.requests - before,
-                  len(boards), complete=True)
+                  len(boards), complete=True,
+                  unchanged=unchanged)
 
 
 class JazzListParser(HTMLParser):
