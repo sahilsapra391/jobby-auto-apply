@@ -303,12 +303,18 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
         self.assertEqual(observed["task"], "apply")
         self.assertNotEqual(observed["workspace"], run_apply.REPO)
         self.assertFalse(observed["workspace"].exists())
+        # `fillOnly` is part of the fixed context and belongs in the exact
+        # comparison rather than beside it: it decides whether the MCP server
+        # advertises `pre_submit`, so a default that silently changed would
+        # take the submission tools away from a real application, or give them
+        # to a run that is supposed to hand the form back.
         self.assertEqual(observed["context"], {
             "applicationId": "acme-pm",
             "resume": str(self.resume.resolve()),
             "cover": str(self.cover.resolve()),
             "uploadResume": str(self.resume.resolve()),
             "uploadCover": str(self.cover.resolve()),
+            "fillOnly": False,
         })
         invalidate.assert_not_called()
 

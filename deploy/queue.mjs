@@ -3,7 +3,9 @@
 //
 //   poll                 every queue in one read, no side effects
 //   list <prefix>        what is waiting in one queue, oldest first
-//   enqueue <prefix> <id>  add a request, deduped by application id
+//   enqueue <prefix> <id> [extra]  add a request, deduped by application id
+//                        `extra` is a JSON object; only the flags in
+//                        ENQUEUE_FLAGS are accepted, and only as booleans
 //   claim-one <prefix> [id]  take the oldest request, or that one specifically
 //   claim <prefix>       take every request
 //   config-take          take the saved search config and clear it
@@ -13,7 +15,18 @@
 import { readQueue, enqueue, claimOne, claimAll, takeConfig, QUEUES } from './kvqueue.mjs';
 import { kvGet, kvDelete } from './kv.mjs';
 
-const [cmd, prefix = 'marked/', id] = process.argv.slice(2);
+const [cmd, prefix = 'marked/', id, extraJson] = process.argv.slice(2);
+
+// What a caller on this machine may put on a queue entry beside the id.
+//
+// **An allowlist rather than a pass-through, because the entry decides how the
+// run starts.** `fillOnly` takes the submission tools away from the run and
+// `retry` waives the parked refusal; a queue entry that could carry arbitrary
+// keys would be a way to reach whatever the tick reads next, from anything
+// that can spawn this script. Booleans only, for the same reason
+// `application_server_config` compares against `True` rather than truthiness:
+// the string "false" is truthy everywhere it would matter.
+const ENQUEUE_FLAGS = ['fillOnly', 'retry'];
 const queue = prefix.replace(/\/$/, '');
 const env = process.env;
 
@@ -29,8 +42,25 @@ try {
   } else if (cmd === 'list') {
     console.log(JSON.stringify((await readQueue(env))[queue] || []));
   } else if (cmd === 'enqueue') {
-    if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) die('usage: queue.mjs enqueue <prefix> <applicationId>');
-    console.log(JSON.stringify(await enqueue(env, queue, id)));
+    if (!id || !/^[A-Za-z0-9._-]+$/.test(id)) die('usage: queue.mjs enqueue <prefix> <applicationId> [extraJson]');
+    let extra = {};
+    if (extraJson) {
+      let parsed;
+      try {
+        parsed = JSON.parse(extraJson);
+      } catch {
+        die('enqueue: extra must be a JSON object');
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        die('enqueue: extra must be a JSON object');
+      }
+      for (const [key, value] of Object.entries(parsed)) {
+        if (!ENQUEUE_FLAGS.includes(key)) die(`enqueue: unsupported flag ${key}`);
+        if (typeof value !== 'boolean') die(`enqueue: ${key} must be a boolean`);
+        extra[key] = value;
+      }
+    }
+    console.log(JSON.stringify(await enqueue(env, queue, id, extra)));
   } else if (cmd === 'claim-one') {
     // The optional id takes that request rather than the oldest.
     if (id && !/^[A-Za-z0-9._-]+$/.test(id)) die('claim-one: bad application id');

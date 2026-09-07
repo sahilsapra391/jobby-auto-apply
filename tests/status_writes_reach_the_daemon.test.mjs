@@ -21,6 +21,15 @@
 // It parses rather than greps, for the reason this repository has paid for
 // three times: a `status: "inflight"` inside a comment explaining this rule is
 // not a control sending one.
+//
+// **There are three namespaces and this file read two of them.** A `<Act>`
+// body can carry a `status`, an `action` or an `event`, and "Confirm
+// submitted" sends `event: "completed"`. So the fourth stranded control was
+// sitting inside the subject of the guard written to find stranded controls,
+// invisible because the walk never asked about its key. Same shape as
+// `GATE_PATHS` naming the caller and not the writer: the check was correct
+// about what it looked at, and what it looked at was two thirds of the
+// surface.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,13 +112,44 @@ function queueMap(name) {
 
 const sent = new Set();
 const actions = new Set();
+const events = new Set();
 for (const name of readdirSync(UI)) {
   if (!name.endsWith('.tsx')) continue;
   for (const s of sentValues(join(UI, name), 'status')) sent.add(s);
   for (const a of sentValues(join(UI, name), 'action')) actions.add(a);
+  for (const e of sentValues(join(UI, name), 'event')) events.add(e);
 }
 const carried = queueMap('STATUS_QUEUE');
 const carriedActions = queueMap('ACTION_QUEUE');
+const carriedEvents = queueMap('EVENT_QUEUE');
+
+/**
+ * The keys a `<Act body={{...}}>` can carry that the route acts on.
+ *
+ * Derived from the route rather than listed here, because a list beside the
+ * thing it describes is how this file came to be reading two namespaces out of
+ * three. A key the route reads and this file does not walk is the whole defect.
+ */
+function routeKeys() {
+  const src = readFileSync(
+    join(REPO, 'apps/web/app/api/applications/route.ts'), 'utf8');
+  const tree = ts.createSourceFile('route.ts', src, ts.ScriptTarget.ES2022, true);
+  const keys = new Set();
+  const walk = (node) => {
+    // `type Body = { applicationId?: string; action?: string; ... }`
+    if (ts.isTypeAliasDeclaration(node) && node.name.getText() === 'Body'
+        && ts.isTypeLiteralNode(node.type)) {
+      for (const member of node.type.members) {
+        if (ts.isPropertySignature(member) && member.name) {
+          keys.add(member.name.getText());
+        }
+      }
+    }
+    node.forEachChild(walk);
+  };
+  walk(tree);
+  return keys;
+}
 
 test('the scan finds the statuses the controls send', () => {
   // The anti-vacuity floor. Every check below passes on an empty set, and this
@@ -123,6 +163,49 @@ test('the scan finds the statuses the controls send', () => {
     'no action props found in the lane controls, so the action check below ' +
     'is about nothing');
   assert.ok(Object.keys(carriedActions).length >= 1, 'ACTION_QUEUE parsed as empty');
+  assert.ok(events.size >= 1,
+    'no event props found in the lane controls, so the event check below is ' +
+    'about nothing');
+  assert.ok(Object.keys(carriedEvents).length >= 1, 'EVENT_QUEUE parsed as empty');
+});
+
+test('every key the route acts on is one this file walks', () => {
+  // The guard on the guard. This file found three stranded controls and missed
+  // a fourth because it walked `status` and `action` and the fourth sent an
+  // `event`. Nothing about that omission was visible from inside the file: it
+  // passed, in a suite that passed, about a surface it did not cover.
+  //
+  // `phase` is the exception and it is a real one: the daemon writes it, no
+  // control sends it, and the route reads it so a daemon-originated write can
+  // set it. It carries its reason here rather than being quietly skipped.
+  const WALKED = new Set(['status', 'action', 'event']);
+  const NOT_A_CONTROL_SURFACE = {
+    applicationId: 'the subject, not a decision about it',
+    postingId: 'the Found path, checked by DECISION_QUEUE below',
+    decision: 'the Found path, checked by DECISION_QUEUE below',
+    phase: 'written by the daemon reporting its own progress; no control ' +
+           'sends one, and a control that did would be ordering a state ' +
+           'rather than work, which is the mistake this whole file is about',
+  };
+  const unwalked = [...routeKeys()].filter(
+    (k) => !WALKED.has(k) && !(k in NOT_A_CONTROL_SURFACE));
+  assert.deepEqual(unwalked, [],
+    `the route acts on these body keys and nothing here walks them, so a ` +
+    `control sending one could be stranded exactly as Confirm submitted was: ` +
+    `${unwalked.join(', ')}`);
+  assert.ok(routeKeys().size >= 4, 'the Body type parsed as almost nothing');
+});
+
+test('every event a control sends reaches the device', () => {
+  // **An event is a claim about what happened, and it has to reach the store
+  // that holds the claims.** "Confirm submitted" wrote an `application_events`
+  // row and returned 200 while `history.jsonl` learned nothing, so the
+  // duplicate guard would have offered the role again and the board would have
+  // left the card in Needs You.
+  const stranded = [...events].filter((e) => !(e in carriedEvents));
+  assert.deepEqual(stranded, [],
+    `these events are sent by a control and are in no queue, so the device ` +
+    `never records them: ${stranded.join(', ')}`);
 });
 
 test('every action a control sends reaches the device', () => {

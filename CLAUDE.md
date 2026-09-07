@@ -2986,6 +2986,140 @@ sentence about why something is impossible stops anybody checking, which is the
 same failure as `STATUS_QUEUE`'s docstring one file over. Prefer "not built
 yet" to a mechanism nobody has re-read.
 
+#### And wiring it revealed the control had nothing to do, 2026-09-07
+
+**Open & finish reached the device, held its slot, opened the window, and put
+an empty form in front of the user. Every piece worked and the feature did
+not.** The re-fill it ordered was dead twice over, in two unrelated ways, and
+each was invisible from the other side.
+
+The condition was `if not browser.tabs(slot)`, asked immediately after
+`browser.focus(url)`, which opens the posting when no tab matches. So it is
+never empty and the branch never ran. It reads perfectly: "re-fill when the
+slot has nothing in it." It is the wrong question asked one line too late, and
+the right one is `focus`'s own `opened`, which also says False on a second
+press where the person is already part-way through typing.
+
+Underneath it, the re-fill would have been refused anyway. `do_not_start`
+declines a parked application, correctly, and declines one whose latest event
+is `submitting`, more correctly still: re-running a form that already reached
+Submit is how an application goes in twice under a real name. Chainguard was
+both.
+
+**And the slot it held was nobody's.** A parked application has no slot: the
+reconciler releases it within a tick and `release_browser_slot` clears
+`browserSlot` off the session, so the one application this button exists for is
+precisely the one `browser_slot_for_application` answers None about. Chainguard
+parked 02:50:55Z, was released 02:54:29Z, and read None from then on.
+
+None then travelled, and both things it reached resolved it silently rather
+than refusing it. `lock_path(None)` is `None.lock`: a real file, holding a real
+slot's worth of nothing, while every reader goes on seeing the slot as free.
+And `browser.port_for` answers the **base port** for anything not in `SLOTS`,
+so `show(None)` would have stopped and relaunched apply-1 headed and taken its
+pages with it, whoever was filling a form in there. Neither would have raised.
+Both are refused at the entry now, and the handler asks
+`candidate_apply_slots`, which already encodes "this application's own slot, or
+a genuinely free one, or none".
+
+That is the third fault in one control and it is the same shape as the other
+two: a value that was reasonable when the code was written -- the slot the
+application owned -- and is None by the time the button is pressed, because
+something correct happened in between.
+
+**The fix is not to waive the refusal. It is to make the refused thing
+impossible.** A fill-only run's MCP server never advertises `pre_submit` or
+`record_completed` (`application_mcp.SUBMISSION_TOOLS`), so the guard has
+nothing left to guard: a run that cannot submit cannot submit twice. The mode
+is argv, set by the trusted runner before any provider starts, and it reaches
+`application_mcp.py` on its own command line. **A prompt is advice to one
+model; an absent tool is a fact for all of them**, which is the argument
+`cover_letter.validate_content` already makes about greetings and the reason
+the browser firewall removes navigation rather than asking for it not to be
+used. The prompt does say the run cannot submit, and that sentence is a
+courtesy so the agent parks usefully instead of spending its turns discovering
+the tools are gone.
+
+Two surfaces are narrowed, not one. `tools_for` decides what is advertised and
+`tool_names_for` decides what will run, because a client that read `tools/list`
+once and kept the answer arrives at `call` with a name that was never
+advertised.
+
+**A second `pre_submit` on an unresolved first is a state nobody designed for,
+and the guard exists to refuse it.** `finish.pre_submit` mints a nonce, writes
+`submitting`, and stores only the hash; `completed` requires that exact nonce
+against a latest event that is still `submitting`. Calling `pre_submit` again
+while the first is unresolved overwrites the guard and appends a second
+write-ahead, so the store then holds two submission attempts and one nonce, and
+nothing afterwards can say which click the confirmation belongs to. It is
+refused at both ends and both refusals stay: `pre_submit` returns
+`proceed: false` for a latest event in `{submitting, completed}`, and
+`do_not_start` refuses to start the run at all. Resolving the first attempt is
+the only way forward, and there are exactly two honest resolutions -- a
+`completed` event, or an `abandoned` one saying nothing was sent. Chainguard
+took the second on 2026-09-07, in the shape the Freehand record from
+2026-08-19 already had.
+
+**`retry: true` was a full bypass of that gate and nobody had noticed.** The
+tick read `apply_head.get("retry") is not True` and skipped the call entirely,
+so the Python board's Retry could start a fresh run of a form sitting at
+`submitting`. It never cost anything because `pre_submit` refuses from
+underneath, which is exactly why it survived: the second layer held and the
+first one was never exercised. The modes are passed in now, and a retry waives
+the parked refusal and nothing else. Note what the docstring said while this
+was true -- "this is the one function every start already passes through" --
+which is the class already written up here twice, a confident sentence about a
+mechanism that stops anybody looking.
+
+**The refusal a person reads should be the one that names an action.** The
+session checks ran before the history checks, so an application that was parked
+*and* at `submitting` reported "it is parked in Needs you, waiting on the
+user": true, circular for a user who is trying to act, and it hid the sentence
+naming Confirm submitted and Stop. Same set of runs refused either way. A
+refusal is only worth the action it names, so the terminal-event reasons go
+first now.
+
+**Three namespaces, and the guard against stranded controls walked two.**
+`status_writes_reach_the_daemon.test.mjs` was written after three controls sent
+`status: "inflight"` and reached nothing. It reads the `status` and `action`
+props of every `<Act body={{...}}>`. Confirm submitted sends `event:
+"completed"`, so the fourth stranded control sat inside that guard's own
+subject, invisible because the walk never asked about its key: the route
+inserted an `application_events` row and returned 200 while
+`history.jsonl` learned nothing, so `dupe_check` would have re-offered the
+role and the card would have stayed in Needs You. It walks all three now, and
+the keys it must walk are derived from the route's own `Body` type rather than
+listed beside it, which is the same correction as deriving parity's comparison
+from the mirror's columns.
+
+That mattered more than it looked, because Confirm submitted is the *only*
+thing that can close a fill-only handoff. No nonce and no `record_completed`
+are involved and that is correct rather than a shortcut: the nonce proves the
+agent that clicked Submit is the agent that recorded the confirmation, and here
+no agent clicked anything. A person did. `apply_marks.py` writes the event,
+`finish.py --completed` stays nonce-gated for the agent path, and the two never
+meet.
+
+**And what that record says about itself was a small fabricated audit trail.**
+`confirmation` means "the employer's own words on the page", and both boards
+render a green `confirmed` chip with that text as the proof. `apply_marks` put
+the sentence "marked submitted by the user on the board" in it, so 11 of the
+104 completed events on this machine (measured 2026-09-07, against 69 with real
+page text and 24 with none) drew the employer's chip over a claim about a
+button press. It writes `confirmedBy` now and no `confirmation`, and the chip
+has three states, because "a person says so" is neither "the employer said so"
+nor "nobody did". Every fill-only handoff lands in the third one.
+
+**`mcp_preflight.REQUIRED["jobby"]` was seven hand-written names against the
+nine the server advertises**, missing `story_facts` and `record_answers`, so a
+server that had lost the tool writing every application's answer manifest
+passed the fence. Found by needing the list to depend on the mode; it is
+derived from `application_mcp.tools_for` now. The browser half stays written
+out, because `tests/test_apply_capability_contract.py` compares it against
+`browser_mcp_proxy._tool_definitions` in both directions, which is the same
+guarantee by a different route -- and that test covered only the browser half,
+which is why the jobby drift had nowhere to show.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

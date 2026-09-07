@@ -4,7 +4,7 @@ import {
 } from "../../_ui/writes";
 import { pool } from "../../_ui/db";
 import {
-  ACTION_QUEUE, DECISION_QUEUE, STATUS_QUEUE, QueueRefused, order,
+  ACTION_QUEUE, DECISION_QUEUE, EVENT_QUEUE, STATUS_QUEUE, QueueRefused, order,
 } from "../../_ui/queue";
 
 /**
@@ -163,6 +163,19 @@ export async function POST(request: NextRequest) {
   if (body.status && STATUS_QUEUE[body.status]) {
     try {
       await order(STATUS_QUEUE[body.status], legacyId);
+    } catch (err) {
+      if (err instanceof QueueRefused) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+  }
+  // An event is a claim about what happened, and the device is where that
+  // claim has to land: `history.jsonl` is what the duplicate guard, the board
+  // sync and the artifact push all read. See `EVENT_QUEUE`.
+  if (body.event && EVENT_QUEUE[body.event]) {
+    try {
+      await order(EVENT_QUEUE[body.event], legacyId);
     } catch (err) {
       if (err instanceof QueueRefused) {
         return NextResponse.json({ error: err.message }, { status: err.status });

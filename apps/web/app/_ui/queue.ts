@@ -128,6 +128,40 @@ export const ACTION_QUEUE: Record<string, string> = {
   focus: "focus",
 };
 
+/**
+ * The queue an *event* goes to. The fourth control that wrote a row and
+ * ordered nothing, found by needing it.
+ *
+ * **"Confirm submitted" is how a human submission becomes a record, and it
+ * only reached Postgres.** The route inserted an `application_events` row and
+ * returned 200; `~/.job-application/history.jsonl` never learned, so
+ * `dupe_check` would have offered the role again, `sync_board` would have left
+ * the card in Needs You, and the R2 push that files the answer record next to
+ * the documents never ran. The board said Submitted and the device did not
+ * know the application existed in that state.
+ *
+ * It was invisible to `status_writes_reach_the_daemon.test.mjs` for a reason
+ * worth naming rather than patching over: that guard walked the `status` and
+ * `action` props and there are three namespaces, not two. The check now reads
+ * all three, which is the same correction as deriving the parity comparison
+ * from the mirror's own columns instead of listing eleven of twenty-eight.
+ *
+ * `marked` is the device queue the Python board has always used
+ * (`/api/submitted` -> `marked`, claimed at `watch.py:2604`), and
+ * `apply_marks.py` is what writes the `completed` event. **No nonce, and that
+ * is correct rather than a shortcut**: the nonce proves the agent that clicked
+ * Submit is the agent that recorded the confirmation, and here no agent
+ * clicked anything. A person did. `finish.py --completed` stays nonce-gated
+ * for the agent path and this path never touches it.
+ *
+ * `submitting` and `abandoned` are in the route's `EVENTS` set and no control
+ * sends either, so neither is here. `needs_you` is the same. Adding a control
+ * that sends one means adding its queue, and the guard fails until it does.
+ */
+export const EVENT_QUEUE: Record<string, string> = {
+  completed: "marked",
+};
+
 function env() {
   return {
     CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID,

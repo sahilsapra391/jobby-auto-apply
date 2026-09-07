@@ -412,7 +412,15 @@ def hold_slot(name, aid, seconds=HOLD_SECONDS):
     The deadline is written into the lock rather than kept in memory, because
     the watcher restarts and a hold that a restart forgets is a hold that
     releases early -- and one a restart *extends* would be the old bug back.
+
+    **An unknown slot raises rather than writing a lock nothing reads.**
+    `lock_path(None)` is `None.lock`: a real file, holding a real slot's worth
+    of nothing, while every reader goes on seeing the slot as free. A caller
+    that reached here without a slot has a bug one line earlier and needs to be
+    told, not accommodated.
     """
+    if name not in APPLY_LOCKS:
+        raise TickError(f"cannot hold an unknown browser slot {name!r}")
     _write_lock(name, {
         "pid": 0,
         "at": now_stamp(),
@@ -2253,7 +2261,7 @@ def ensure_application_session(aid):
     return f"already on record ({reason}, in {where})", False
 
 
-def do_not_start(aid):
+def do_not_start(aid, fill_only=False, retry=False):
     """Why this application must not be spawned, or None.
 
     Three states mean a run would be wrong rather than merely redundant:
@@ -2261,6 +2269,28 @@ def do_not_start(aid):
     any further, or a submit has already been attempted and is waiting on a
     confirmation nobody has recorded yet. Starting again in that last case is
     how a form gets filled a second time under the user's name.
+
+    **Two of those are conditional on what kind of run is asking, and the
+    conditions are not the same.**
+
+    `retry` is the board's Retry, and it waives the parked refusal only: the
+    blocker the user was asked about is the thing they have just dealt with,
+    and refusing the run they pressed the button for would make the button do
+    nothing. It waives nothing else. It used to waive the whole function --
+    `apply_head.get("retry") is not True` skipped the call -- so a Retry on an
+    application sitting at `submitting` started a fresh run of a form that had
+    already reached Submit. `pre_submit` refuses that from underneath, which is
+    why it never cost anything, but the docstring saying this is "the one
+    function every start already passes through" was false for a whole class of
+    start.
+
+    `fill_only` waives the parked refusal *and* the submitting one, and it is
+    safe to waive the second precisely because a fill-only run has no
+    `pre_submit` and no `record_completed` on its MCP server. The refusal
+    exists to stop a form being submitted twice; a run that cannot submit at
+    all cannot do the thing being refused. See `application_mcp.SUBMISSION_TOOLS`.
+
+    Nothing waives `dropped`, `completed`, or an unreadable history.
     """
 
     # **The slot browsers must be signed in, and this is where that stops being
@@ -2278,6 +2308,7 @@ def do_not_start(aid):
                 "needs an account cannot be filled. Sign in once with: "
                 "python3 scripts/browser.py --login "
                 "https://accounts.google.com/signin")
+    parked = False
     loaded = store(["session-load", "--id", aid])
     if loaded.returncode == 0 and (loaded.stdout or "").strip():
         try:
@@ -2287,8 +2318,7 @@ def do_not_start(aid):
         status = (entry.get("status") or "").lower()
         if status == "dropped":
             return "the user dropped it"
-        if status == "review" and entry.get("pendingFields"):
-            return "it is parked in Needs you, waiting on the user"
+        parked = status == "review" and bool(entry.get("pendingFields"))
 
     events = store(["history-list"])
     if events.returncode != 0:
@@ -2305,9 +2335,21 @@ def do_not_start(aid):
             latest = event
     if latest and latest.get("event") == "completed":
         return "it is already submitted"
-    if latest and latest.get("event") == "submitting":
+    if latest and latest.get("event") == "submitting" and not fill_only:
         return ("a submit was already attempted and no confirmation was recorded. "
                 "Press Confirm submitted if it went through, or Stop if it did not.")
+
+    # **Last, so the most consequential fact wins the message.** An application
+    # can be several of these at once, and Chainguard was two: parked on an
+    # emailed code *and* sitting at `submitting`. The park was checked first,
+    # so the tick log said "it is parked in Needs you, waiting on the user" --
+    # true, and circular for a user who was trying to act on it. The submitting
+    # refusal, which names the two buttons that resolve it, never printed.
+    #
+    # The set of runs refused does not change. Only which sentence a person
+    # reads, and a refusal is only worth the action it names.
+    if parked and not (fill_only or retry):
+        return "it is parked in Needs you, waiting on the user"
     return None
 
 
@@ -2536,7 +2578,42 @@ def tick(force_publish=False):
             if not url:
                 changed["focus"] = {"applicationId": aid, "error": "no posting url on record"}
                 continue
-            slot = browser_slot_for_application(aid)
+            # **A parked application has no slot, which is the case this
+            # button exists for and the one the first version could not
+            # survive.** `reconcile_browser_slots` releases the slot and
+            # `release_browser_slot` clears `browserSlot` off the session, so
+            # `browser_slot_for_application` answers None minutes later.
+            # Measured on Chainguard `31c8aa9c1e988c56` on 2026-09-07: parked
+            # 02:50:55Z, released 02:54:29Z, `browserSlot` None afterwards.
+            #
+            # None then travelled: `lock_path(None)` writes `None.lock` and
+            # holds nothing, and `browser.port_for(None)` answers the base port
+            # because None is not in SLOTS, so `show` would have relaunched
+            # **apply-1** headed and taken its pages with it, whoever was
+            # filling a form in there.
+            #
+            # `candidate_apply_slots` is the existing answer and is borrowed
+            # rather than restated: this application's own slot when it still
+            # holds one, and a genuinely free slot otherwise. No slot at all is
+            # a refusal that says so.
+            candidates = candidate_apply_slots(aid)
+            if not candidates:
+                changed["focus"] = {
+                    "applicationId": aid,
+                    "error": "every browser slot is busy, so there is nowhere "
+                             "to open this form",
+                }
+                continue
+            slot = candidates[0]
+            try:
+                # Recorded before the lock, so the re-fill enqueued below lands
+                # in this window: `candidate_apply_slots` reads the affinity
+                # off the session, and without it the runner would be given a
+                # different slot and fill a form nobody is looking at.
+                persist_browser_slot(aid, slot)
+            except TickError as exc:
+                changed["focus"] = {"applicationId": aid, "error": str(exc)}
+                continue
             # A window, because this is the board's "Open & finish" button on a
             # parked application: the user pressed it in order to look at the
             # form. serve() is headless now, and focus() answers
@@ -2552,26 +2629,51 @@ def tick(force_publish=False):
             focused = browser.focus(url, slot=slot)
 
             # **An empty form is not what the button is for.** The park that
-            # sent the user here happened minutes ago and the reconciler has
-            # already closed the tab, so `focus` opened the posting fresh.
-            # Re-filling is what makes the window worth walking to, and it is
-            # an ordinary apply: the agent fills, reaches the same block, and
-            # parks -- only now the slot is held, so the filled form survives
-            # for the person to finish.
+            # sent the user here happened minutes ago, and the form is gone for
+            # two independent reasons: `reconcile_browser_slots` releases a
+            # parked application's slot within a tick and closes every page,
+            # and `browser.show` above relaunches a headless Chrome headed,
+            # which takes its pages with it. So `focus` almost always opens the
+            # posting fresh, and re-filling is what makes the window worth
+            # walking to.
+            #
+            # **The condition is `focus`'s own `opened`, and the first version
+            # of this asked `browser.tabs(slot)` after `focus` had just opened
+            # a tab.** That is never empty, so the branch was dead and Open &
+            # finish gave the user a blank form for as long as it existed. It
+            # is the condition that is right rather than the one that reads
+            # right: `opened` is False on a second press, where the window is
+            # already up on the form and re-filling it would throw away what
+            # the person is part-way through typing.
+            #
+            # **Fill-only, which is the whole reason this can work at all.** A
+            # parked application is refused by `do_not_start`, and a submitting
+            # one is refused harder; a normal re-fill was refused every time.
+            # A fill-only run has no `pre_submit` and no `record_completed` on
+            # its MCP server, so it fills the form, parks with the handoff, and
+            # the person presses Submit themselves.
             #
             # Enqueued rather than spawned here, so it goes through
             # `choose_apply_head` and every guard that stops a duplicate
             # submission. `candidate_apply_slots` returns this application's
             # own slot when it holds one, which is what keeps the re-fill in
             # the window the user is about to look at.
+            #
+            # The queue dedupes by application id, so an apply already waiting
+            # wins and this click adds nothing. Safe in both directions: a
+            # normal entry that survives is refused by `do_not_start` if the
+            # application is parked, and a fill-only entry that survives fills
+            # without submitting.
             refill = None
-            if not browser.tabs(slot):
+            if focused.get("opened"):
                 refill = subprocess.run(
-                    [toolpath.node(), "queue.mjs", "enqueue", "apply/", aid],
+                    [toolpath.node(), "queue.mjs", "enqueue", "apply/", aid,
+                     json.dumps({"fillOnly": True})],
                     cwd=DEPLOY, capture_output=True, text=True,
                     env=toolpath.queue_env(), timeout=60).returncode == 0
             changed["focus"] = {
                 "applicationId": aid,
+                "slot": slot,
                 "heldSeconds": HOLD_SECONDS,
                 "refillQueued": refill,
                 **focused,
@@ -2664,8 +2766,15 @@ def tick(force_publish=False):
             changed.setdefault("alreadyRunning", []).append(
                 {"applicationId": head_id, "slot": busy[head_id]})
             apply_head = None
-        elif apply_head.get("retry") is not True:
-            reason = do_not_start(head_id)
+        else:
+            # **Called for every start, including a Retry.** It used to be
+            # skipped entirely when the entry carried `retry`, which let the
+            # board's Retry start a fresh run of a form already sitting at
+            # `submitting`. The modes are passed in instead, so a Retry waives
+            # the one refusal it is for and nothing else. See `do_not_start`.
+            reason = do_not_start(head_id,
+                                  fill_only=apply_head.get("fillOnly") is True,
+                                  retry=apply_head.get("retry") is True)
             if reason:
                 claimed = claim_one("apply/")
                 if not claimed or claimed[0].get("applicationId") != head_id:
@@ -2861,14 +2970,16 @@ def tick(force_publish=False):
                 q["apply"] = apply_tail
                 persist_browser_slot(head_id, slot)
                 browser.serve(slot)
-                pid = spawn(
-                    slot,
-                    [sys.executable, str(REPO / "scripts" / "run_apply.py"),
-                     "--id", head_id, "--slot", slot,
-                     "--provider", selected_provider],
-                    f"{slot}.log",
-                    note=head_id,
-                )
+                argv = [sys.executable, str(REPO / "scripts" / "run_apply.py"),
+                        "--id", head_id, "--slot", slot,
+                        "--provider", selected_provider]
+                # The queue entry decides the mode and the runner's argv
+                # carries it the rest of the way, into the MCP server's own
+                # command line. Nothing between here and there reads a model's
+                # output. `is True` because the entry came off KV as JSON.
+                if apply_head.get("fillOnly") is True:
+                    argv.append("--fill-only")
+                pid = spawn(slot, argv, f"{slot}.log", note=head_id)
             except Exception:
                 if retained:
                     park_slot(slot, head_id)
@@ -2880,6 +2991,7 @@ def tick(force_publish=False):
                 "pid": pid,
                 "applicationId": head_id,
                 "provider": selected_provider,
+                "fillOnly": apply_head.get("fillOnly") is True,
             })
     elif apply_ok and apply_head and candidate_slots and blocking_scan:
         # Say so. An Apply that waits is a legitimate outcome; an Apply that
