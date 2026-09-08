@@ -164,6 +164,74 @@ class ConnectionLifetimeTests(unittest.TestCase):
                          "the fetch")
 
 
+class UnchangedSlugsTests(unittest.TestCase):
+    """Which boards answered 304, not just how many.
+
+    0020 stored the count, because that is the whole fact for the coverage
+    ratchet. The canary asks a different question of the same event -- was
+    *this* board among them -- and a count cannot answer it, so the excuse in
+    `source_health.canary_problem` could never fire and the first warm sweep
+    reported greenhouse and ashby silent. Migration 0022.
+    """
+
+    class Cursor:
+        def __init__(self, log): self.log = log
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def executemany(self, sql, rows): pass
+        def execute(self, sql, args=None): self.log.append((sql, args))
+
+    class Conn:
+        def __init__(self): self.log = []
+        def cursor(self): return UnchangedSlugsTests.Cursor(self.log)
+        def commit(self): pass
+        def close(self): pass
+
+    def stage(self, result):
+        conn = self.Conn()
+        sweep_worker.stage(lambda: conn, "acct", "sweep", "greenhouse", result)
+        sql, args = conn.log[-1]
+        return sql, args
+
+    def test_the_column_is_written(self):
+        sql, args = self.stage(
+            base.ok("greenhouse", [], complete=True, unchanged=2,
+                    unchanged_slugs=["spacex", "stripe"]))
+        self.assertIn("unchanged_slugs", sql)
+        self.assertIn(json.dumps(["spacex", "stripe"]), args)
+
+    def test_the_upsert_updates_it_rather_than_keeping_the_first_write(self):
+        # A channel restaged in the same sweep would otherwise keep the first
+        # attempt's slugs beside the second attempt's count, which is a row
+        # that is internally wrong and reads as fine.
+        sql, _ = self.stage(base.ok("greenhouse", [], complete=True))
+        _, _, update = sql.partition("do update set")
+        self.assertIn("unchanged_slugs = excluded.unchanged_slugs", update)
+
+    def test_a_string_is_not_written_as_a_list_of_characters(self):
+        # `base.board_slugs` is the one definition all three sites use, and
+        # this asserts the writer goes through it rather than round-tripping
+        # whatever the envelope holds.
+        sql, args = self.stage(
+            base.ok("greenhouse", [], complete=True, unchanged=1,
+                    unchanged_slugs="spacex"))
+        self.assertIn("[]", args)
+        self.assertNotIn('"s"', " ".join(str(a) for a in args))
+
+    def test_blank_entries_are_dropped_rather_than_stored(self):
+        sql, args = self.stage(
+            base.ok("greenhouse", [], complete=True, unchanged=2,
+                    unchanged_slugs=["spacex", "", None]))
+        self.assertIn(json.dumps(["spacex"]), args)
+
+    def test_no_slugs_is_an_empty_list_and_not_a_null(self):
+        # The column is `not null default '[]'`, and a None here would fail the
+        # insert on a channel that simply had nothing unchanged -- which is
+        # every channel on a cold sweep.
+        sql, args = self.stage(base.ok("greenhouse", [], complete=True))
+        self.assertIn("[]", args)
+
+
 class ChannelIsolationTests(unittest.TestCase):
     def test_a_raising_connector_becomes_a_failure_not_a_stop(self):
         # A connector that raises must not take the other twenty-six with it,

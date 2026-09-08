@@ -335,6 +335,27 @@ def rfc822_date(value):
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def board_slugs(value):
+    """A list of board slugs, from whatever a caller or a column offered.
+
+    **One definition, because there are three callers and they used to have
+    two behaviours.** `ok` builds the envelope, `sweep_worker` writes the
+    column and `cloud_sweep` reads it back, and each is a chance for "a string
+    is a sequence" to become six single-character board slugs -- which would
+    excuse a canary board named "s". A `None` among real entries used to raise
+    from `sorted` instead, killing the channel over a cosmetic value.
+
+    Sorted, so a row written twice in one sweep compares equal.
+    """
+    if isinstance(value, (str, bytes)):
+        return []
+    try:
+        entries = list(value or ())
+    except TypeError:
+        return []
+    return sorted({str(v).strip() for v in entries if str(v or "").strip()})
+
+
 def ok(source, postings, requests=0, errors=None, note="", complete=False,
        unchanged=0, unchanged_slugs=None):
     """A channel that answered.
@@ -362,9 +383,11 @@ def ok(source, postings, requests=0, errors=None, note="", complete=False,
             # board that 304s legitimately returns no postings, and a check
             # that could not tell that from a canary that broke would be the
             # 304 fault one layer down. Held in memory for the length of one
-            # sweep and never persisted: `ingest.run` reads it and the report
-            # keeps only the count.
-            "unchangedSlugs": sorted(unchanged_slugs or ()),
+            # sweep, and persisted for exactly one hop when the fetch runs in
+            # the container: `sweep_runs.unchanged_slugs` carries it to the
+            # device and the merge deletes the row. The report keeps only the
+            # count.
+            "unchangedSlugs": board_slugs(unchanged_slugs),
             "postings": list(postings), "requests": requests,
             "listingComplete": bool(complete),
             "errors": list(errors or [])}

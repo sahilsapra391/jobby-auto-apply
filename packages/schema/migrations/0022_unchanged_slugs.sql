@@ -1,0 +1,28 @@
+-- Which boards answered 304, not just how many.
+--
+-- **0020 stored the count and a second consumer needed the identity.** Its own
+-- comment says what `unchanged` is for: "the device's coverage ratchet needs to
+-- tell those apart", and for the ratchet a count is the whole fact. The canary
+-- check asks a different question of the same event -- was *this* board among
+-- the ones that answered 304 -- and a count cannot answer it.
+--
+-- So `cloud_sweep.staged` rebuilt the envelope with `unchanged=n` and no slugs,
+-- `base.ok` defaulted `unchangedSlugs` to empty, and `canary_problem`'s first
+-- guard (`if token in set(unchanged_slugs)`) could never fire. Measured on the
+-- first warm sweep: spacex and snowflake both legitimately 304'd, both
+-- contributed zero postings, and both were reported `canary_silent` -- "was
+-- fetched and returned no postings", which is exactly the wording for a board
+-- that has moved or a parse that has broken. A warm sweep therefore alarmed on
+-- its two most important sources every time, which is how an alarm stops being
+-- read.
+--
+-- The general shape is already in CLAUDE.md as the synthetic record: a
+-- stand-in built to satisfy one predicate answers every other predicate with a
+-- default, and a default is indistinguishable from a real value. Here the
+-- default was `()` and the real value was "these 96 boards".
+--
+-- Additive, on a staging table the sweep writes and the merge deletes. Nothing
+-- in the Class A or Class B mirror reads it and no parity field is derived
+-- from it.
+alter table sweep_runs
+  add column if not exists unchanged_slugs jsonb not null default '[]'::jsonb;

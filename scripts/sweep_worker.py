@@ -47,6 +47,11 @@ sys.path.insert(0, str(HERE.parent / "packages" / "schema"))
 
 import search_config  # noqa: E402
 import sources  # noqa: E402
+# Explicitly, not via `sources.base`: that attribute exists only
+# once something else has imported the submodule, so it resolved
+# in a suite where another module did and would have raised in
+# the container.
+from sources import base as source_base  # noqa: E402
 from sources import base  # noqa: E402
 
 
@@ -226,22 +231,37 @@ def stage(connect, account, sweep, name, result, batch=500):
         cur.execute(
             "insert into sweep_runs (account_id, sweep_id, source, "
             "finished_at, status, job_count, board_count, unchanged, "
-            "listing_complete, reason) "
-            "values (%s, %s, %s, now(), %s, %s, %s, %s, %s, %s) "
+            "unchanged_slugs, listing_complete, reason) "
+            "values (%s, %s, %s, now(), %s, %s, %s, %s, %s, %s, %s) "
             "on conflict (account_id, sweep_id, source) do update set "
             "finished_at = excluded.finished_at, status = excluded.status, "
             "job_count = excluded.job_count, board_count = excluded.board_count, "
             "unchanged = excluded.unchanged, "
+            "unchanged_slugs = excluded.unchanged_slugs, "
             "listing_complete = excluded.listing_complete, "
             "reason = excluded.reason",
             (account, sweep, name, _status(result), len(postings),
              _boards(result), int(result.get("unchanged") or 0),
+             json.dumps(_unchanged_slugs(result)),
              bool(result.get("listingComplete")),
              (result.get("reason") or "")[:500]))
     try:
         conn.commit()
     finally:
         conn.close()
+
+
+def _unchanged_slugs(result):
+    """Which boards answered 304, as a list of strings.
+
+    **The count next to it is not a substitute and that is the whole point of
+    this function.** `unchanged` answers the coverage ratchet, which asks how
+    many boards were skipped; the canary asks whether one named board was
+    among them. `staged` rebuilt an envelope from the count alone, so the
+    canary's excuse could never fire and a warm sweep reported its two
+    strictest sources silent every time. See migration 0022.
+    """
+    return source_base.board_slugs(result.get("unchangedSlugs"))
 
 
 def _status(result):
