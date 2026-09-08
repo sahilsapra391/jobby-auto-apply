@@ -1269,10 +1269,50 @@ def render_version():
     return digest.hexdigest()[:12]
 
 
+#: The last provider signature this process actually read. See
+#: `provider_signature`.
+_last_provider_signature = None
+
+#: Reads that declined to wait for a lock, by subject. Counted rather than
+#: logged per occurrence: a busy registry is normal and a *persistently* busy
+#: one is the fault, so the number is what carries the signal.
+BUSY_READS = {}
+
+
 def provider_signature():
-    """Safe provider state that should trigger a fresh published board."""
+    """Safe provider state that should trigger a fresh published board.
+
+    **The tick does not wait for the registry lock.** This runs inside
+    `fingerprint` on every pass, five seconds apart, and it used to block on
+    `LOCK_EX`; a `refresh` holding that lock across its probes stalled the whole
+    tick for up to 150 seconds per connected provider. `providers.refresh` no
+    longer holds it that way and this no longer waits, and the two fixes are
+    independent on purpose.
+
+    **A busy registry returns the last signature this process read, not
+    "unreadable".** The two error directions are not symmetric. A stale
+    signature means no publish this tick, and the next tick that can read
+    corrects it. "unreadable" is a *different* string from the real signature,
+    so it changes the fingerprint, and a changed fingerprint is a deployment:
+    Vercel's free plan allows 100 a day, and this function's own caller
+    documents thirty applications once costing a hundred of them. A lock that is
+    briefly busy must not cost a deploy, twice, on the way in and the way out.
+
+    It is not silent. The tick records `providerLockBusy` so a registry that is
+    permanently locked is visible rather than merely quiet, which is the whole
+    lesson of every alarm in this file.
+
+    `ProviderError` other than busy still returns "unreadable", because that is
+    a registry that genuinely cannot be parsed rather than one held by a
+    neighbour, and the board should say so.
+    """
+    global _last_provider_signature
     try:
-        status = providers.public_status()
+        status = providers.public_status_nowait()
+    except providers.ProviderBusy:
+        BUSY_READS["provider"] = BUSY_READS.get("provider", 0) + 1
+        return _last_provider_signature if _last_provider_signature is not None \
+            else "unreadable"
     except providers.ProviderError:
         return "unreadable"
     parts = [str(status.get("activeProvider") or "none")]
@@ -1281,7 +1321,8 @@ def provider_signature():
             f"{row.get('id')}:{int(bool(row.get('connected')))}:"
             f"{row.get('status') or 'unknown'}"
         )
-    return "|".join(parts)
+    _last_provider_signature = "|".join(parts)
+    return _last_provider_signature
 
 
 def found_signature():
@@ -3046,6 +3087,11 @@ def tick(force_publish=False):
         changed.setdefault("running", busy)
 
     fp = fingerprint()
+    if BUSY_READS:
+        # A busy registry is normal; a persistently busy one is a fault, and a
+        # count that never appears cannot tell them apart. Reported after
+        # `fingerprint`, which is what fills it.
+        changed["busyReads"] = dict(BUSY_READS)
     statefile = STATE_DIR / "board-fingerprint"
     last = statefile.read_text() if statefile.exists() else ""
     age = time.time() - statefile.stat().st_mtime if statefile.exists() else 1e9
