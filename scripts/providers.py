@@ -315,6 +315,16 @@ class ProviderError(RuntimeError):
     """Base error for invalid provider operations."""
 
 
+class ProviderBusy(ProviderError):
+    """The registry lock was held and this caller declined to wait.
+
+    A distinct class rather than a `None`, because a caller has to tell "the
+    registry says nothing is connected" from "the registry could not be read",
+    and this repository has paid four times for a check that returned the shape
+    of an empty answer when it could not look.
+    """
+
+
 class ProviderStateError(ProviderError):
     """Raised when providers.json cannot be read safely."""
 
@@ -1204,15 +1214,46 @@ class ProviderRegistry:
         os.chmod(self.state_file.parent, 0o700)
 
     @contextmanager
-    def _locked(self):
+    def _locked(self, blocking: bool = True):
+        """The registry's exclusive lock.
+
+        **`blocking=False` is for a caller on a hot path that must not stall.**
+        `watch.tick` reaches this through `fingerprint` on every pass, five
+        seconds apart, and so does `watch.py --status`, the command every
+        deploy in this repository is told to run first. Both waited on
+        `LOCK_EX` with no `LOCK_NB`.
+
+        The wait was not theoretical. `refresh` held this lock across its
+        probes, so the ceiling was `PROBE_TIMEOUT_SECONDS` plus
+        `MODEL_PROBE_TIMEOUT_SECONDS` for each connected provider: 150 seconds
+        each, 450 with three. That is fixed at the writer too, and both halves
+        matter. The writer fix removes the hold that exists today; this one
+        stops a future long hold from stalling the tick again.
+        """
         self._prepare_directory()
         descriptor = os.open(self.lock_file, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             os.fchmod(descriptor, 0o600)
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+            try:
+                fcntl.flock(descriptor, flags)
+            except BlockingIOError as exc:
+                raise ProviderBusy(
+                    "the provider registry is locked by another process; "
+                    "not waiting") from exc
             yield
         finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            # A refused non-blocking acquire raises before `yield`, so this runs
+            # on a descriptor holding no lock. Safe rather than merely
+            # tolerated: `flock` binds to the open file description, which this
+            # `os.open` makes unique to this call, so `LOCK_UN` here cannot
+            # reach another holder's lock on the same path. The guard is for the
+            # unlock itself failing, which would otherwise mask whatever
+            # exception is already on its way out.
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
             os.close(descriptor)
 
     def _write_locked(self, state: Mapping[str, Any]) -> None:
@@ -1383,6 +1424,19 @@ class ProviderRegistry:
 
     def public_status(self) -> dict[str, Any]:
         with self._locked():
+            state = self._load_locked()
+            return self._public_status_locked(state)
+
+    def public_status_nowait(self) -> dict[str, Any]:
+        """`public_status`, but raises `ProviderBusy` rather than waiting.
+
+        Separate from `public_status` on purpose. The Settings lane asks a
+        question a person is waiting for an answer to and must block; the
+        watcher tick asks it every five seconds to decide whether the board is
+        worth republishing, and must not. Making the one method non-blocking
+        would have given the person "busy" instead of an answer.
+        """
+        with self._locked(blocking=False):
             state = self._load_locked()
             return self._public_status_locked(state)
 
@@ -1560,17 +1614,40 @@ class ProviderRegistry:
             return self._public_status_locked(state)
 
     def refresh(self, provider_id: str | None = None) -> dict[str, Any]:
+        """Re-probe connected providers and record what came back.
+
+        **Every probe runs outside the lock.** They are subprocess calls to a
+        provider CLI bounded by `PROBE_TIMEOUT_SECONDS` (30) and
+        `MODEL_PROBE_TIMEOUT_SECONDS` (120), and holding the registry's
+        exclusive flock across them put a 150-second-per-provider ceiling on
+        every other reader: `watch.tick` through `fingerprint` every five
+        seconds, `watch.py --status`, and the Settings lane this registry's
+        dedicated service exists to keep responsive. Three connected providers
+        made that 450 seconds.
+
+        A lock held over a network call is the connection-across-a-wait shape
+        one layer down. What the lock protects is a small JSON file, and the
+        thing being waited for is not that file.
+
+        So the shape is read, probe, re-read, write. The second read is not
+        belt and braces: a `connect` or a `disconnect` can land while the
+        probes run, and writing back a snapshot taken before it would undo a
+        change the user just made. Only the probed fields are applied, and a
+        provider that disappeared from `connections` in the gap is skipped.
+        """
         if provider_id is not None:
             _require_provider(provider_id)
+
+        now = self.clock or (lambda: datetime.now(timezone.utc))
         with self._locked():
             state = self._load_locked()
-            targets = [provider_id] if provider_id else list(state["connections"])
-            changed = False
+            targets = ([provider_id] if provider_id
+                       else list(state["connections"]))
+            plan = {}
             for target in targets:
-                if target not in state["connections"]:
+                record = state["connections"].get(target)
+                if record is None:
                     continue
-                result = self._safe_probe(target)
-                record = state["connections"][target]
                 verified_at = record.get("modelVerifiedAt")
                 verification_due = not verified_at
                 if verified_at:
@@ -1579,22 +1656,39 @@ class ProviderRegistry:
                             str(verified_at).replace("Z", "+00:00")
                         )
                         verification_due = (
-                            (self.clock or (lambda: datetime.now(timezone.utc)))()
-                            .astimezone(timezone.utc) - verified.astimezone(timezone.utc)
+                            now().astimezone(timezone.utc)
+                            - verified.astimezone(timezone.utc)
                         ).total_seconds() >= 24 * 60 * 60
                     except (TypeError, ValueError):
                         verification_due = True
-                model_verified = False
-                if result.authenticated:
-                    if target == "gemini" or (
-                        target == "anthropic" and has_provider_secret(target)
-                    ):
-                        # Gemini's health probe invokes the pinned model because
-                        # its CLI has no account-status command.
-                        model_verified = True
-                    elif verification_due:
-                        result = self._safe_model_probe(target)
-                        model_verified = result.authenticated
+                plan[target] = verification_due
+
+        outcomes = {}
+        for target, verification_due in plan.items():
+            result = self._safe_probe(target)
+            model_verified = False
+            if result.authenticated:
+                if target == "gemini" or (
+                    target == "anthropic" and has_provider_secret(target)
+                ):
+                    # Gemini's health probe invokes the pinned model because its
+                    # CLI has no account-status command.
+                    model_verified = True
+                elif verification_due:
+                    result = self._safe_model_probe(target)
+                    model_verified = result.authenticated
+            outcomes[target] = (result, model_verified)
+
+        with self._locked():
+            state = self._load_locked()
+            changed = False
+            for target, (result, model_verified) in outcomes.items():
+                record = state["connections"].get(target)
+                if record is None:
+                    # Disconnected while the probes ran. Its record is gone and
+                    # re-creating it here would resurrect a connection the user
+                    # deliberately removed.
+                    continue
                 record["health"] = result.health
                 record["lastCheckedAt"] = result.checked_at
                 record["detail"] = result.message
@@ -1659,6 +1753,10 @@ def begin_connect(
 
 def disconnect(provider_id: str) -> dict[str, Any]:
     return _registry().disconnect(provider_id, forget_secret=True)
+
+
+def public_status_nowait() -> dict[str, Any]:
+    return _registry().public_status_nowait()
 
 
 def refresh(provider_id: str | None = None) -> dict[str, Any]:
