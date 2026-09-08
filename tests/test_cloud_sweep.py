@@ -281,6 +281,25 @@ class FallbackTests(unittest.TestCase):
             cloud_sweep.start_machine("app", "gone", run=lambda *a, **k: failed)
         self.assertIn("no such machine", str(caught.exception))
 
+    def test_it_runs_where_flyctl_is_not_installed(self):
+        """CI has no flyctl, and the first version raised before `run` was consulted.
+
+        `toolpath.find` raises SystemExit for a missing binary unless told
+        `required=False`, so `find("flyctl") or "flyctl"` was a fallback
+        guarding a None that never comes. Six tests passed on this Mac, where
+        flyctl exists, and errored on the runner. Reproduced here by hiding it.
+        """
+        import os
+        from unittest import mock
+        import toolpath
+        with mock.patch.object(toolpath, "search_path", return_value="/nonexistent"), \
+             mock.patch.dict(toolpath._cache, {}, clear=True):
+            failed = mock.Mock(returncode=1, stderr="no such machine", stdout="")
+            with self.assertRaises(cloud_sweep.CloudSweepUnavailable):
+                cloud_sweep.start_machine("app", "gone", run=lambda *a, **k: failed)
+            stopped = lambda *a, **k: mock.Mock(returncode=0, stdout='{"state":"stopped"}')
+            self.assertEqual(cloud_sweep.machine_state("a", "m", run=stopped), "stopped")
+
     def test_no_test_here_can_reach_a_real_cli(self):
         # The guard on the guard: `start_machine` must have no callable default
         # for `run`, or a test can patch the wrong thing and shell out for real.

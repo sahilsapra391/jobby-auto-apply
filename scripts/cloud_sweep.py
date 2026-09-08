@@ -91,7 +91,11 @@ def start_machine(app, machine, run=None):
     """
     run = run or subprocess.run
     asked = datetime.now(timezone.utc)
-    fly = toolpath.find("flyctl") or "flyctl"
+    # `required=False`, or `find` raises SystemExit on a machine with no
+    # flyctl and the `or "flyctl"` after it is dead code guarding a None the
+    # function never returns. It read as a fallback; CI, which has no flyctl,
+    # was the first place it ran. The injected `run` ignores argv[0] anyway.
+    fly = toolpath.find("flyctl", required=False) or "flyctl"
     result = run([fly, "machine", "start", machine, "--app", app],
                  capture_output=True, text=True, timeout=120)
     if result.returncode == 0:
@@ -113,7 +117,11 @@ def start_machine(app, machine, run=None):
 def machine_state(app, machine, run=None):
     """What Fly says the machine is doing, or "" when it cannot be read."""
     run = run or subprocess.run
-    fly = toolpath.find("flyctl") or "flyctl"
+    # `required=False`, or `find` raises SystemExit on a machine with no
+    # flyctl and the `or "flyctl"` after it is dead code guarding a None the
+    # function never returns. It read as a fallback; CI, which has no flyctl,
+    # was the first place it ran. The injected `run` ignores argv[0] anyway.
+    fly = toolpath.find("flyctl", required=False) or "flyctl"
     result = run([fly, "machine", "status", machine, "--app", app, "--json"],
                  capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
