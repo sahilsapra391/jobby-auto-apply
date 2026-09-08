@@ -43,10 +43,17 @@ def rows(companies):
         if not source or not slug or source == "unknown":
             continue
         out.append((source, slug, (entry.get("addedFrom") or "registry")[:60]))
-    # Sorted and deduped: two companies can carry the same token for the same
-    # platform after an alias merge, and the unique constraint would take the
-    # first arbitrarily.
-    return sorted(set(out))
+    # **Deduped on the constraint's own key, not on the whole tuple.** The
+    # unique key is `(account_id, source, board_slug)` and `discovered_via` is
+    # not in it, so deduping on all three reported 866 boards where the
+    # database stored 795: 71 slugs appear twice with different `addedFrom`
+    # values ("pack" and "roles"), and `on conflict do nothing` correctly kept
+    # one each. Nothing was lost; the count was wrong, which is the
+    # declared-twice shape with a dedup key standing in for a constraint.
+    first = {}
+    for source, slug, via in sorted(out):
+        first.setdefault((source, slug), (source, slug, via))
+    return sorted(first.values())
 
 
 def load(root=None):
@@ -92,7 +99,10 @@ def main(argv=None):
     conn = jobs_db.connect()
     try:
         account = dual_write.account_id(conn)
-        report["account"] = account
+        # `str`, because psycopg returns a uuid.UUID and json.dumps does
+        # not serialise one. The insert had already succeeded when this
+        # raised, which is the worst place for a report to fail.
+        report["account"] = str(account)
         with conn.cursor() as cur:
             cur.execute("select count(*) from boards where account_id = %s",
                         (account,))

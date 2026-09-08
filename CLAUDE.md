@@ -3540,6 +3540,57 @@ this session of a scanner reading text about a thing as the thing, after the
 `[[services]]` comment in `fly.toml` and the two before it -- and each was
 written by someone who had just read the entry warning about it.
 
+### The cloud sweep was memory-bound, and three wrong causes came first, 2026-09-08
+
+**A cold greenhouse sweep ran 97 minutes on a 512 MB machine, and read from
+inside it:**
+
+    MemTotal 459 MB   MemFree 23 MB   MemAvailable 85 MB   loadavg 1.36
+
+`sweep_worker.sweep` holds a whole channel's postings before staging, and
+greenhouse cold is ~24,000 postings carrying full descriptions. The kernel was
+reclaiming pages continuously and every parse paid for it: 17.5 s per board
+where the laptop, cold, on a throwaway root, does the same boards at 1.57 s
+(SpaceX's 2,344 jobs in 1.8 s). The container was doing something the laptop
+does not: thrashing.
+
+**Three causes were proposed before this one and each was refuted by a
+measurement, in order.** Parse-bound: the parse benchmarks at 1,385
+postings/sec on this Mac, about 1% of sweep time. CPU-bound on a shared vCPU:
+the container's parse would have to be a hundred times slower to explain it.
+The datacentre IP being throttled by the remote end: the fetch benchmark from
+the laptop found nothing slow to throttle. What settled it was `free -m` over
+`flyctl ssh console` into the running machine -- observing rather than
+reasoning, which this file says in a dozen places and which took four attempts
+here.
+
+**The sweep is single-threaded, so vCPU count is irrelevant, and that stays
+true after the cache fix.** `sweep()` loops channels and each connector loops
+its boards; a second vCPU sits idle. The two levers are memory and the
+validator cache, and anyone sizing a machine for this starts from that premise.
+
+**The validator cache is why every cloud sweep was cold.** `base.Fetcher` keeps
+ETag and Last-Modified in `<root>/source-cache.json`, and the container's root
+is wiped on every start. ashby cold: 6,855 postings from 193 boards in 717 s.
+The laptop's warm run of the same boards: 1,050. `http_validators` is keyed by
+URL rather than hung off `boards`, because 814 of the device's entries include
+feeds that have no board row and never will, and a column on `boards` would
+have covered the registry-driven half and silently dropped the rest.
+
+**The discovery agent named this in as many words and it was not connected.**
+"With per-board Fly workers the cache stops being per-run and becomes shared
+mutable state... This needs to become a Postgres column on the boards row, not
+a file on a volume." The answer was in the corpus, in a report already read,
+and the first full run paid 97 minutes to rediscover it.
+
+**Two smaller things from the same run.** `wait_for_sweep` accepted a sweep
+with one finished channel because `stage()` commits per channel and "every row
+has a finished_at" is trivially true when one row exists; it merged a
+twenty-seventh of a sweep as a whole one, with brake 1 the only thing between
+that and closures. It waits for the machine to stop now. And Fly's free trial
+stops every machine at exactly 300 seconds -- documented, not inferred -- which
+cost two runs before the account had a card.
+
 **A guard, alarm or counter is unverified until it has been observed firing on
 the production machine. Not tested. Observed.** A green suite is evidence that
 the code is internally consistent. It is not evidence that the thing works,

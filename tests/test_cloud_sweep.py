@@ -85,11 +85,10 @@ class WaitTests(unittest.TestCase):
 
     def test_a_partly_finished_sweep_keeps_waiting_then_gives_up(self):
         conn = Conn({"from sweep_runs": [("abc-123", 27, 12)]})
-        slept = []
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
             cloud_sweep.wait_for_sweep(conn, "acct",
                                        datetime.now(timezone.utc),
-                                       seconds=0, sleep=slept.append)
+                                       seconds=0, sleep=lambda _s: None)
         self.assertIn("12 of 27 channels finished", str(caught.exception))
 
     def test_no_sweep_at_all_says_so_rather_than_hanging(self):
@@ -98,7 +97,67 @@ class WaitTests(unittest.TestCase):
             cloud_sweep.wait_for_sweep(conn, "acct",
                                        datetime.now(timezone.utc),
                                        seconds=0, sleep=lambda _s: None)
-        self.assertIn("no sweep started", str(caught.exception))
+        self.assertIn("without writing a sweep", str(caught.exception))
+
+    def test_one_finished_channel_is_not_a_finished_sweep(self):
+        """**The fault the first real run hit.**
+
+        `sweep_worker.stage` commits per channel, so a sweep two seconds old
+        with greenhouse written and twenty-six channels to come satisfies
+        "every row has a finished_at" exactly. On 2026-09-07 at 22:57:49 that
+        returned a sweep of 1 channel and 50 postings and the merge treated a
+        twenty-seventh of a sweep as a whole one. Nothing was closed, because
+        brake 1 never lets a channel it did not see be touched -- but the wait
+        had no business relying on a guard one process away.
+        """
+        conn = Conn({"from sweep_runs": [("partial", 1, 1)]})
+        running = lambda *a, **k: mock.Mock(
+            returncode=0, stdout='{"state": "started"}')
+        with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
+            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+                                       app="jobby-sourcing", machine="m1",
+                                       seconds=0, sleep=lambda _s: None,
+                                       run=running)
+        self.assertIn("still running", str(caught.exception))
+
+    def test_a_stopped_machine_with_a_whole_sweep_is_accepted(self):
+        # The positive control: the check above passes for a machine that never
+        # stops, so this proves it is not simply refusing everything.
+        conn = Conn({"from sweep_runs": [("whole", 27, 27)]})
+        stopped = lambda *a, **k: mock.Mock(
+            returncode=0, stdout='{"state": "stopped"}')
+        self.assertEqual(
+            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+                                       app="a", machine="m", seconds=5,
+                                       sleep=lambda _s: None, run=stopped),
+            "whole")
+
+    def test_an_unreadable_machine_state_waits_rather_than_merging(self):
+        # "" is could-not-read, which is never "stopped". Waiting until the
+        # deadline is the safe direction; the alternative merges a sweep still
+        # being written.
+        conn = Conn({"from sweep_runs": [("partial", 1, 1)]})
+        broken = lambda *a, **k: mock.Mock(returncode=1, stdout="")
+        with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
+            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+                                       app="a", machine="m", seconds=0,
+                                       sleep=lambda _s: None, run=broken)
+        self.assertIn("still running", str(caught.exception))
+
+    def test_the_timeout_names_where_to_look(self):
+        # A wait that gives up without saying what it was waiting on is the
+        # silent timeout this was explicitly asked not to be.
+        conn = Conn({})
+        running = lambda *a, **k: mock.Mock(
+            returncode=0, stdout='{"state": "started"}')
+        with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
+            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+                                       app="jobby-sourcing", machine="839522f7722458",
+                                       seconds=0, sleep=lambda _s: None,
+                                       run=running)
+        said = str(caught.exception)
+        self.assertIn("flyctl logs", said)
+        self.assertIn("839522f7722458", said)
 
 
 class StagedTests(unittest.TestCase):
@@ -255,6 +314,19 @@ class ImportBoardsTests(unittest.TestCase):
         companies = {"a": {"ats": "ashby", "token": "vanta", "addedFrom": "roles"},
                      "b": {"ats": "ashby", "token": "vanta", "addedFrom": "roles"}}
         self.assertEqual(len(self.mod.rows(companies)), 1)
+
+    def test_it_dedupes_on_the_constraint_key_and_not_the_whole_row(self):
+        # `discovered_via` is not in `(account_id, source, board_slug)`, so
+        # deduping on all three counted 866 boards where the database stored
+        # 795: 71 slugs carry two `addedFrom` values. Nothing was lost and the
+        # report was wrong, which is a dedup key standing in for a constraint.
+        companies = {"a": {"ats": "breezy", "token": "surge", "addedFrom": "pack"},
+                     "b": {"ats": "breezy", "token": "surge", "addedFrom": "roles"}}
+        got = self.mod.rows(companies)
+        self.assertEqual(len(got), 1)
+        # Deterministic rather than arbitrary: sorted, so the same input always
+        # produces the same `discovered_via`.
+        self.assertEqual(got[0][2], "pack")
 
     def test_the_same_slug_on_two_platforms_is_two_boards(self):
         companies = {"a": {"ats": "ashby", "token": "acme"},

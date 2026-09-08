@@ -94,39 +94,90 @@ def start_machine(app, machine, run=None):
     fly = toolpath.find("flyctl") or "flyctl"
     result = run([fly, "machine", "start", machine, "--app", app],
                  capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
+    if result.returncode == 0:
+        return asked
+    said = str(result.stderr or "") + str(result.stdout or "")
+    if True:
+        # **A machine already running is not a failure to start it.** The
+        # sweep this process exists to merge is already in flight, and
+        # refusing here would fall back to a local sweep that then fights the
+        # cloud one for the pool lock -- two sweeps rewriting the same store,
+        # which is the thing `SWEEP_LOCK` exists to prevent.
+        if "already started" in said.lower() or "already running" in said.lower():
+            return asked
         raise CloudSweepUnavailable(
-            f"flyctl could not start {machine}: "
-            f"{(result.stderr or result.stdout or '').strip()[:300]}")
+            f"flyctl could not start {machine}: {said.strip()[:300]}")
     return asked
 
 
-def wait_for_sweep(conn, account, since, seconds=WAIT_SECONDS,
-                   poll=POLL_SECONDS, sleep=time.sleep):
-    """The newest sweep id whose channels have all finished, or raise.
+def machine_state(app, machine, run=None):
+    """What Fly says the machine is doing, or "" when it cannot be read."""
+    run = run or subprocess.run
+    fly = toolpath.find("flyctl") or "flyctl"
+    result = run([fly, "machine", "status", machine, "--app", app, "--json"],
+                 capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        return ""
+    try:
+        return str(json.loads(result.stdout or "{}").get("state") or "")
+    except json.JSONDecodeError:
+        return ""
 
-    A run is finished when every row for its sweep carries a `finished_at`.
-    `complete` is not the test here -- a sweep where two channels failed is
-    still a sweep, and the closure step reads `complete` per channel further
-    down. What this waits for is the container being done.
+
+def wait_for_sweep(conn, account, since, app=None, machine=None,
+                   seconds=WAIT_SECONDS, poll=POLL_SECONDS, sleep=time.sleep,
+                   run=None):
+    """The newest sweep id, once the container has actually stopped.
+
+    **"Every row has a `finished_at`" is trivially true when one row exists.**
+    `sweep_worker.stage` commits per channel, so a sweep two seconds old with
+    greenhouse written and twenty-six channels still to come satisfies that
+    condition exactly. Measured on the first real run: it returned a sweep of
+    1 channel and 50 postings at 22:57:49, and the merge treated a twenty-
+    seventh of a sweep as a whole one. Nothing was closed, because brake 1
+    never lets a channel it did not see be touched -- but the guard that saved
+    it was one process away, and the wait had no business relying on it.
+
+    **The machine stopping is the signal.** It is the container's own statement
+    that it has no more to write, and it cannot be true early. The row count is
+    kept as a second condition rather than the only one, so a machine that
+    Fly reports stopped without the sweep having written anything is still a
+    failure with a reason rather than an empty merge.
     """
     deadline = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    stopped = False
     while True:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select sweep_id, count(*), count(finished_at) "
-                "from sweep_runs where account_id = %s and started_at >= %s "
-                "group by sweep_id order by min(started_at) desc limit 1",
-                (account, since))
-            row = cur.fetchone()
-        conn.rollback()
-        if row and row[1] and row[1] == row[2]:
-            return str(row[0])
+        if app and machine and not stopped:
+            state = machine_state(app, machine, run=run)
+            # "" is could-not-read, which is not "stopped". Waiting on an
+            # unreadable state until the deadline is the safe direction: the
+            # alternative merges a sweep still being written.
+            stopped = state in ("stopped", "destroyed", "failed")
+        elif not app:
+            stopped = True                    # no machine to wait on
+
+        row = None
+        if stopped:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "select sweep_id, count(*), count(finished_at) "
+                    "from sweep_runs where account_id = %s and started_at >= %s "
+                    "group by sweep_id order by min(started_at) desc limit 1",
+                    (account, since))
+                row = cur.fetchone()
+            conn.rollback()
+            if row and row[1] and row[1] == row[2]:
+                return str(row[0])
+
         if datetime.now(timezone.utc) >= deadline:
-            seen = "no sweep started" if not row else (
-                f"{row[2]} of {row[1]} channels finished")
+            if not stopped:
+                raise CloudSweepUnavailable(
+                    f"the machine was still running after {seconds}s; "
+                    f"`flyctl logs --app {app} --machine {machine}` says why")
+            seen = "it stopped without writing a sweep" if not row else (
+                f"it stopped with {row[2]} of {row[1]} channels finished")
             raise CloudSweepUnavailable(
-                f"the cloud sweep did not finish within {seconds}s ({seen})")
+                f"no usable sweep within {seconds}s ({seen})")
         sleep(poll)
 
 
@@ -243,7 +294,8 @@ def main(argv=None):
         try:
             asked = start_machine(app, machine)
             report["fetchStartedAt"] = asked.strftime("%Y-%m-%dT%H:%M:%SZ")
-            sweep_id = wait_for_sweep(conn, account, asked, seconds=args.wait)
+            sweep_id = wait_for_sweep(conn, account, asked, app=app,
+                                      machine=machine, seconds=args.wait)
             report["sweepId"] = sweep_id
             report["fetchSeconds"] = round(time.time() - started, 1)
             results = staged(conn, account, sweep_id)
@@ -262,7 +314,10 @@ def main(argv=None):
         return 2
 
     merge_started = time.time()
-    ingest_report = merge(root, results, publish=args.publish)
+    # `ingest.run` returns `(report, jobs)`. Treating it as a report raised
+    # after the merge had already written the pool, which is the worst place
+    # for a reporting bug to be: the work was done and the run looked failed.
+    ingest_report, _jobs = merge(root, results, publish=args.publish)
     report["mergeSeconds"] = round(time.time() - merge_started, 1)
     report["found"] = ingest_report.get("found")
     report["kept"] = ingest_report.get("kept")

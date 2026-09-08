@@ -27,9 +27,21 @@ primary_region = "iad"
 # consequence of the service block, so the answer is not to configure `deploy`
 # differently but not to use it: the workflow builds with `--build-only --push`
 # and updates the one machine that exists. Nothing in CI creates one.
+# **2 GB, and the lever is memory rather than vCPU.** Read from inside the
+# container 97 minutes into a cold greenhouse sweep on 2026-09-08:
+#
+#     MemTotal 459 MB   MemFree 23 MB   MemAvailable 85 MB   loadavg 1.36
+#
+# `sweep_worker.sweep` holds a whole channel's postings before staging, and
+# greenhouse cold is ~24,000 postings carrying full descriptions. At 512 MB the
+# kernel reclaims pages continuously and every parse pays for it: 17.5 s per
+# board where the laptop, cold, does the same boards at 1.57 s. The sweep is
+# single-threaded, so a second vCPU would sit idle; the constraint was never
+# CPU. 2 GB is the most a shared-cpu-1x carries, and it is four times the
+# measured ceiling rather than a guess at it.
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "2048mb"
 
 [env]
   JOB_APPLICATION_DIR = "/var/lib/jobby"
