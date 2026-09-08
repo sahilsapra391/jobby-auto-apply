@@ -1065,16 +1065,24 @@ databricks board fingerprints in 3.1 seconds on the laptop.
 
 What the container log shows instead is that **every 200 is followed by a stall,
 and the stalls grow**: 40s, 52s, then 151s, between requests that are otherwise
-1.0s apart. The same work costs 3.1s here and about 151s there, on a
-shared-1x-vCPU machine with 2048 MB and no swap. The interrupt that ended that
-run landed inside `identity.simhash`'s bit loop, which is where a memory-starved
-CPython would be.
+1.0s apart. The same work costs 3.1s here and about 151s there.
 
-So the honest statement is: not payload, not the algorithm, and not the source
--- the container's own environment on a full-body 200. It matters little in
-steady state, because a warm sweep has almost no 200s, and it is the thing to
-measure if a cold sweep is ever needed again. **Do not size the machine on it
-without measuring first**; three diagnoses have already been wrong here.
+**The memory reading that used to end this section was wrong, and the way it was
+wrong is the point.** It attributed the stall to a 2048 MB machine on the
+strength of a `free -m` showing 85 MB available. That reading is from the **512
+MB** machine: `deploy/sourcing/fly.toml` carries those exact numbers verbatim
+and records that the machine was resized *because of them*. So the one piece of
+evidence pointing at memory describes a configuration that no longer exists, and
+it was carried forward onto its replacement without anybody noticing the
+annotation had changed machines. See 13g for what the resize actually bought,
+which is nothing.
+
+The corroborating detail was worth nothing either. A SIGINT landing in
+`identity.simhash`'s bit loop reads as "a memory-starved CPython would be here",
+and `for bit in range(64)` is where the interpreter spends the most bytecode
+time under *every* hypothesis. A signal arrives at the next bytecode boundary
+whether the process is CPU-bound, collector-bound or thrashing. It discriminates
+nothing, and it was cited as though it did.
 
 ### 13d. The sweep is single-threaded, so vCPU count is irrelevant
 
@@ -1084,10 +1092,17 @@ vCPUs cannot move a wall clock that one Python thread owns, and the earlier
 instinct to "size it from 15.9 postings/sec on the Mac" was sizing the wrong
 axis.
 
-The axis that is real is memory, per 13c. The axis that dominates a warm sweep
-is neither: 795 boards at a 1.0s per-host floor is 13 minutes of deliberate
-sleeping, and the only way to move that is more hosts in parallel, which is a
-design change and a courtesy question, not a machine size.
+**Nor is memory the real axis, though this section said so for an afternoon.**
+13g records the experiment that settles it: the 512 MB machine cost about 208 ms
+a posting and the 2048 MB machine costs 235, so quadrupling the memory moved
+nothing. Both sizing instincts, CPU and memory, were reaches for a machine
+parameter before the workload had been measured.
+
+What does dominate a warm sweep is neither: 795 boards at a 1.0 s per-host floor
+is 13 minutes of deliberate sleeping, and the only way to move that is more
+hosts in parallel, which is a design change and a courtesy question rather than
+a machine size. What dominates a *large* sweep is whatever is super-linear in
+greenhouse, which is unidentified and, per 13g, currently unobservable.
 
 
 ### 13e. The measured warm sweep, 2026-09-08
@@ -1169,32 +1184,117 @@ reporting it as "the warm number" -- which is what happened -- is the summary
 statistic problem this file already records about a p95 over a non-stationary
 series, in a new place.
 
-### 13g. Greenhouse costs 45 s a board in the container, and it is not payload
+### 13g. Greenhouse spends 3,070 seconds nothing can account for, 2026-09-08
 
-Section 13c refuted payload and CPU and reached for memory on the strength of a
-cold run's `free -m`. The per-channel numbers refute the general form of that
-too. From the 76.3-minute sweep, all on the same machine, in one process:
+**Four explanations were written, each by an independent reader of the same
+evidence, and all four were refuted arithmetically. Including the one this
+document had already published.** What follows is what survived, which is a
+smaller and more useful thing than an answer.
 
-    channel          elapsed   postings  boards  304s   per posting
-    greenhouse        3399 s     13149     309    234      0.26 s
-    ashby              748 s      3172     193    171      0.24 s
-    smartrecruiters      77 s      3324      49      0      0.023 s
-    lever              120 s       889      91      0      0.13 s
-    rippling            15 s       818      16      0      0.018 s
+#### The floor has to be subtracted first, and there is an exact control for it
 
-**smartrecruiters parses 3,324 postings from 49 all-200 boards in 77 seconds,
-after ashby had already loaded 3,172 postings into the same process.** If this
-were memory pressure or GC growth, smartrecruiters could not be 11x cheaper per
-posting than greenhouse in the same run, later in the run. On the laptop the two
-sources cost the *same* per job (3.6 ms against 3.5 ms, fact 13c).
+`base.MIN_INTERVAL_PER_HOST` is 1.0 s and `_throttle` stamps `_last_call` around
+the sleep, so the interval is start to start and per-board work *overlaps* the
+wait rather than adding to it. Each of these channels talks to one host, so
+elapsed is at least 1.0 s per request:
 
-So what is left is something greenhouse does that the cheap channels do not, and
-"memory on a 2 GB box" is at best half of it. This is under investigation and is
-deliberately not being guessed at again: three diagnoses have already been wrong
-here, and the fourth would be the one that got written down as settled.
+    channel          req   304   200   floor    elapsed   above floor
+    greenhouse       309   234    75    309 s    3399 s      3070 s   90%
+    ashby            193   171    22    193 s     748 s       555 s   74%
+    smartrecruiters   49     0    49     49 s      77 s        28 s
+    lever             91     0    91     91 s     120 s        29 s
+    rippling          16     0    16     16 s      15 s          0 s
 
-**What is safe to say today**, and the only thing that should be relied on:
-greenhouse is 56.6 of the sweep's 76 minutes and dominates the wall clock, the
-wall clock does not block the device (the pool lock is 30.8 s), and
-`WAIT_SECONDS` is sized to survive it rather than to be right about it.
+**rippling is the control and it is exact**: 16 requests, a 16 s floor, 15 s
+measured. Its whole channel is the sleep.
 
+#### The comparison this document made was bodies against no bodies
+
+13g previously read smartrecruiters' 0.023 s/posting against greenhouse's 0.26
+and concluded memory pressure could not be the cause. The conclusion was right
+and the comparison was worthless: `boards.py:166` and `boards.py:305` pass
+`description=""`, so smartrecruiters and rippling hand `base.posting` an empty
+string and every body-proportional operation in it does nothing. Their cheapness
+is the throttle floor and says nothing about anybody's bodies.
+
+**`lever` is the control that was there all along.** `lever.py:52` passes
+`descriptionPlain` plus `additionalPlain` into the identical `base.posting`,
+full bodies through the same code path. 889 postings, 120 s, a 91 s floor: at
+most **32.6 ms a posting** against greenhouse's **233**. Seven times apart,
+bodies against bodies, in the same process. And `sweep_worker.sweep` iterates
+`sorted(selected.items())`, so lever runs *after* greenhouse's 56 minutes, at
+the highest RSS and the most drained CPU burst balance of the run. Under any
+machine-wide story lever should be the slowest. It is seven times the fastest.
+
+#### Memory is refuted, and the resize is the measurement
+
+Beyond the misattributed `free -m`: the 512 MB run cost about 208 ms a posting
+and the 2048 MB run costs 235. **Quadrupling the memory did not move the
+per-posting cost.** That is the experiment, already run, and its result is that
+the box was not the constraint. Greenhouse's peak is around 200 MB of 2048.
+
+There is also no `gc` instrumentation anywhere in the sourcing closure
+(`grep -rn "import gc|gc.get_stats|gc.collect" scripts/ packages/` is empty), so
+no collector statistic anybody quotes about this run was read off the machine it
+describes.
+
+#### A machine-wide slowdown cannot be four different numbers
+
+Solving `elapsed = floor + k x N x laptop_cost` for the container multiplier each
+channel demands gives k = 45 for greenhouse, 34 for ashby, 6 for lever and under
+1 for rippling, in one process, in one quarter of an hour, through the same
+CPython bytecode. "The container is slow" is a single constant and this is not
+one.
+
+The direction is wrong too. Ashby's bodies are 8% **longer** than greenhouse's
+(8,711 against 8,033 mean chars) and the laptop fingerprints them at the same
+rate, 3.5 ms against 3.6. In the container greenhouse is 45% dearer per
+character. Nothing that scales with body size produces that sign.
+
+#### The cost is super-linear, and that is a proof rather than a fit
+
+Three sweeps on the same registry:
+
+    12,632 postings   1,770 s
+    21,414 postings   3,984 s
+    23,207 postings   4,578 s
+
+`T ~ N^k` gives k = 1.54, 1.56, 1.73. **Any model of the form `T = F + cN` with
+`F >= 0` has `dlnT/dlnN <= 1` everywhere.** So no flat per-posting cost can
+produce this shape at any parameters, and fitting one confirms it: every pair
+demands a fixed cost of -1,415 to -3,110 s where the enforced sleep alone, over
+just five of twenty-seven channels, is +658. The explained fraction also falls
+as the run grows, 13% then 7% then 7%, where a flat model's is constant by
+construction.
+
+Something here is worse than linear in the postings already accumulated. That is
+the shape to go looking for, and it is the only one of the four hypotheses not
+yet refuted, because nobody has yet found the site.
+
+#### The instrument cannot see retries, and that is the next thing to build
+
+Every number above divides elapsed time by a floor **nobody measured**.
+`base.ok` carries `fetcher.requests`, and `sweep_worker.stage` drops it:
+`sweep_runs` has no such column, and only the whole-sweep total is ever printed.
+`board_count` comes from `re.match(r"\s*(\d+)\s+boards", reason)` against the
+connector's own note, which is boards **attempted**.
+
+`Fetcher.get` retries a status-0 response three times with 2 s and 4 s backoff,
+re-downloading the whole multi-megabyte body each time, and not one of those
+requests appears anywhere the device can read. Every hidden retry makes the true
+floor larger and the "unexplained" residual smaller, so the 3,070 s is an upper
+bound on a mystery rather than a measurement of one.
+
+**So the next step is not a fifth hypothesis. It is a `requests` column on
+`sweep_runs` and a log line per retry**, after which the residual is a number
+instead of a subtraction against a guess. This project has now spent four
+diagnoses on a quantity it cannot observe, which is exactly what CLAUDE.md says
+about an alarm whose silence has two meanings.
+
+#### What may be relied on today
+
+Greenhouse is 56.6 of the sweep's 76 minutes and dominates the wall clock. The
+wall clock does not block the device: the pool lock is 30.8 s at 12,632 postings
+and 50.9 s at 23,207, both confirmed by two independent instruments.
+`WAIT_SECONDS` is sized to survive the wall clock rather than to be right about
+it. Nothing else in this section is settled.
