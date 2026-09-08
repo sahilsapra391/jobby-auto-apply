@@ -212,29 +212,125 @@ from a launchd-supervised process keeps the plist's `EnvironmentVariables`, the
 real question being whether the code uses `execv` or `execve`. Tick wall time,
 which nothing in `watch.py` measures.
 
-## 9. Decisions that need Sahil, not more reading
+## 9. Decisions taken, 2026-09-08
 
-1. One process or two, and if the answer is "measure first", who takes the
-   Connect-click reading under load, and when?
-2. Does the `providers` flock become `LOCK_NB` before that argument is had,
-   given the tick and `--status` both block on it today?
-3. Does the runner report a version alongside the hash so `min_supported` can
-   order it, and which wins when they disagree?
-4. Is the lease TTL derived from the enforced per-attempt ceiling (about 90
-   minutes apply, 110 documents) or from the observed distribution, and does the
-   runner stop working when its own lease expires?
-5. Does the capacity advertisement carry which application ids the device can
-   run, or stay a scalar and accept refused leases as normal?
-6. What replaces `POOL_LOCK` when the file goes, given eleven modules take it
-   and two are on the apply path?
-7. Which comes first, the file store deletion or the runner, given the deletion
-   is gated on runner work the design doc schedules after it?
-8. Does the runner leg of CI get built before Phase 4 starts, since nothing
-   today produces the manifest the hash verification compares against?
-9. Is ADR 0008 amended, superseded, or left standing while the design doc
-   contradicts it?
-10. Does the KV click queue deletion move earlier, given the single
-    `jobby:queue` key lost four Open and finish presses to its own readers on
-    2026-09-07?
-11. What artifact does the Phase 4 gate accept as proof the laptop replaced
-    itself, given a board change is also a Vercel deploy?
+All eleven are settled. Recorded with the reasoning, because the reasoning is
+what a later reader needs when one of them looks wrong.
+
+**1. Fix the providers `LOCK_NB` before measuring anything.** The tick blocking
+on a 150-second probe is a bug whatever the process count turns out to be, and
+a Connect-click latency taken with it in place is a number about the bug.
+Shipped in #224: the probes left the lock and the tick stopped waiting.
+
+**2. One process or two stays open, and the measurement comes first.** Connect
+click latency at Background against Interactive, under load rather than at
+rest, which is the number that does not exist anywhere.
+
+**3. `POOL_LOCK` becomes a Postgres advisory lock keyed on the account id when
+the file store goes.** Same mechanism `migrate.py` already uses, same
+semantics. The two apply-path callers take it `LOCK_NB`: an apply that waits on
+a sweep is the 176 blocked ticks again in a new place.
+
+**4. The circular sequence resolves by ordering.** Device reads Postgres, then
+the deletion, then the rest of the runner. The design doc has it the other way
+and it has already run out of order, since `live_board` is on and the file is
+still 100 MB on disk. §6 gets rewritten so the gate comes before the thing it
+gates.
+
+**5. `ai.jobby.parity` is reloaded.** It was unloaded at the v2 cutover because
+parity would report v2 writes as divergences, and the answer to that was a
+marker rather than an unloaded instrument. Until the file store goes it is the
+only thing asserting the mirror is complete. Reloaded 2026-09-08 into a green
+run; the v2 class is labelled `awaiting_device` per migration 0023.
+
+**6. Version AND hash, and they answer different questions.** The hash is
+identity, the version is ordering. The cloud refuses a lease if the hash does
+not match the manifest **or** the version is below `min_supported`. If the two
+disagree, a hash the manifest knows under a different version, that is a
+tampered or half-unpacked runner and the lease is refused. `devices` gains a
+hash column.
+
+**7. Lease TTL from the enforced ceiling, not the observed distribution.** 90
+minutes for an apply, 110 for documents. The observed distribution is exactly
+what nearly beat `WAIT_SECONDS` today, by 57 seconds. And the runner stops on
+its own lease expiry: a runner still working past a lease the cloud has
+reclaimed is two agents on one application.
+
+**8. Capacity stays a scalar and a refused lease is normal.** `do_not_start` is
+the authority and it is per application; encoding its answer into the
+advertisement is a second copy of it, which is the class this file already
+carries five instances of. A refused lease costs one round trip. Log the
+refusal rate, and a high one is a different problem with its own diagnosis.
+
+**9. The CI runner leg is built first.** Nothing produces a manifest today, so
+hash verification has nothing to verify against. It is the prerequisite §6 does
+not name, and it goes before the runner itself.
+
+**10. ADR 0008 is superseded by a new ADR, not amended.** An accepted ADR that
+says one process, amended to say two, loses the record of why the first was
+wrong. The new one cites the priority measurement and the `LOCK_NB` finding.
+
+**11. The KV click queue deletion moves earlier, and goes with the file
+store.** Four Open-and-finish presses lost to the queue's own readers on
+2026-09-07 is a live defect available to every button, and the device reading
+Postgres is Phase 4's first item anyway.
+
+**12. The gate artifact is the exec-time SHA-256, on a device-only commit.** A
+board change is also a Vercel deploy, so a screenshot cannot separate the two.
+A `scripts/`-only change can, and the gate commit is made deliberately
+device-only.
+
+## 10. On the Phase 4 list, with numbers and no theory
+
+**Greenhouse's post-200 stall now bounds the sweep.** Three measurements, taken
+2026-09-08 on the same registry:
+
+    12,632 postings    29.5 min      the first warm sweep
+    23,207 postings    66.4 min
+    33,899 postings   119.1 min      fetchSeconds 7,143.2 against WAIT_SECONDS 7,200
+
+Greenhouse is the bulk of it: 3,399 s of one 76-minute sweep, about 45 seconds
+per board that answers 200 where the throttle floor is 1.0 and the laptop
+fingerprints the largest board in the corpus in 3.1 seconds.
+
+**No theory is recorded here on purpose.** Four were written and all four were
+refuted arithmetically, including two of this document's own: payload, parse
+cost, memory pressure and CPU starvation. `phase3-inputs.md` section 13g has
+the refutations and the one thing that survives, which is a shape rather than a
+cause: `T ~ N^k` with k = 1.54, 1.56 and 1.73, and any `T = F + cN` with
+`F >= 0` has `dlnT/dlnN <= 1`, so no flat per-posting model can produce it at
+any parameters.
+
+**The next time it beats `WAIT_SECONDS`, a merge is lost.** Today it cleared
+the deadline by 57 seconds. And the residual it is measured against is a
+subtraction from a floor nobody has measured: `sweep_runs` has no `requests`
+column and `Fetcher.get` retries a status-0 response three times, re-downloading
+a multi-megabyte body each time, invisibly. **The next step is that column and a
+per-retry log line, not a fifth hypothesis.**
+
+## 11. Phase 4 starts with the device reading Postgres
+
+That is the gate for the file store deletion, for the KV queue, and for
+everything after, so it goes first.
+
+Measured before writing any of it, per record and in both directions rather
+than by count:
+
+    pool decisions        131      102 applied, 17 watched, 12 passed
+    job_decisions         131      102 submitted, 17 watching, 12 dropped
+    only on the device      0
+    only in Postgres        0
+    state disagreements     0
+    decisions with no posting row  0
+
+Counts agreeing is the trap this document already records twice, so the sets
+were compared. They agree exactly, which is the strongest possible starting
+position: a device that read its decisions from Postgres today would see what
+it sees now.
+
+`scripts/decisions.py` is the reader and it changes no authority. The file
+still decides. The mapping is inverted from `backfill.STATE_MAP` rather than
+restated, an unmappable state raises rather than reading as no decision, and a
+decision whose posting row is gone is counted rather than silently dropped.
+Switching a consumer over is a separate change with its own evidence, one
+consumer at a time.
