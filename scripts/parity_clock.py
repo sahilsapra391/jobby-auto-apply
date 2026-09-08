@@ -77,12 +77,12 @@ REQUIRED_DAYS = 3
 #: A change to it changes which records collide, which is a change to what the
 #: mirror stores, without a line of `backfill.py` moving.
 #:
-#: Deliberately not the whole import closure. `parity_clock.py` itself,
-#: `write_path_coverage.py`, `runlock.py`, `migrate.py` and `search_config.py`
-#: are all reachable from the write path and none of them decides what is
-#: written; including them would restart the clock for editing the clock.
-#: `tests/test_gate_paths_cover_the_mirror.py` derives the upsert modules
-#: rather than restating this list, so a new one fails until it is named here.
+#: Not the whole import closure of the write path, which reaches the clock
+#: itself. But every module the mirror's own upsert modules import is now
+#: accounted for: gated here, or named in `GATE_PATH_EXEMPT` with the reason it
+#: decides nothing written. `tests/test_gate_paths_cover_the_mirror.py` derives
+#: that set and fails on anything in neither, so a new import cannot arrive
+#: silently the way `company_logos` did.
 GATE_PATHS = (
     "scripts/verify_parity.py",
     "scripts/class_b.py",
@@ -94,7 +94,40 @@ GATE_PATHS = (
     # or to an exemption changes what the gate measures. It is as load-bearing
     # as the comparison itself.
     "scripts/mirror_fields.py",
+    # **A module that decides a column the mirror writes is a gate path.**
+    # Both of these were missing and #204 proved it: it added two hosts to
+    # `company_logos.TRUSTED_SOURCE_HOSTS` on 2026-09-06, which changed what
+    # `backfill._logo_columns` derives for `logo_alt` and `logo_domain`, and
+    # the clock did not reset. 708 divergences followed, measured 2026-09-08,
+    # and nine of the fourteen days between were counted as covered.
+    "scripts/company_logos.py",
+    "scripts/identity.py",
 )
+
+#: Modules the mirror imports that decide nothing it writes, each with the
+#: reason it is not a gate path.
+#:
+#: **An exemption rather than an absence.** The old list was hand-picked, so a
+#: module missing from it was indistinguishable from a module deliberately left
+#: out, and `company_logos` sat in that ambiguity for two days. Everything
+#: `backfill` imports is now either gated or exempt here, and
+#: `tests/test_gate_paths_cover_the_mirror.py` fails on anything that is
+#: neither. A new import costs one line and one sentence; what it cannot do is
+#: arrive silently.
+#:
+#: Same idiom `verify_parity` already uses for its field exemptions: coverage
+#: deliberately given up is honest, coverage given up by oversight is not.
+GATE_PATH_EXEMPT = {
+    "packages/schema/migrate.py":
+        "connects and applies migrations; it decides no column value. Gating "
+        "on it would restart the clock for every schema change, including the "
+        "ones that add the columns parity is about to start comparing.",
+    "scripts/parity_clock.py":
+        "the clock itself. Gating on it restarts the clock for editing the "
+        "clock.",
+    "scripts/write_path_coverage.py":
+        "the clock's own coverage sidecar, for the same reason.",
+}
 # The timer's own interval, from install_parity_timer.INTERVAL_SECONDS. A log
 # whose newest line is older than a few of these is a timer to go and look at.
 INTERVAL = timedelta(seconds=1800)
