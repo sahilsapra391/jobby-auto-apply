@@ -159,6 +159,8 @@ that failure at all.
 | `store` | `cmd_answer_put` | `write_private` | answer writes |
 | `search_config` | `save` | `write_private` | the saved search, into `board_meta.search_config` |
 | `store` | `_bank_write` | `write_private` | answer bank writes, including dismiss and restore |
+| `providers` | `_write_locked` | `after_private_write` | provider connection state, into `provider_links` |
+| `store` | `write_private` | `after_private_write` | the chokepoint mirroring its own writes |
 | `store` | `cmd_profile_replace` | `write_private` | profile writes |
 
 **`search-config.json` is class B, not class C.** `board_meta.search_config`
@@ -179,12 +181,29 @@ and the cost was the same shape: v2's scan banner read invented values from a
 fixture and showed a next run nearly two hours in the past.
 
 **`providers.json` is class B, not class C.** It was treated as class C by a
-hardcoded list in `tests/test_class_b_mirror.py` and by nothing else -- it never
-appeared in the table below. Migration 0002 creates `provider_links` for exactly
-this, so the class C test ("writes something the migrations created no table
-for") does not apply. The cost of the mistake was visible: the table held zero
-rows, v2's Settings page read a fixture instead, and it said one provider was
-connected while all three were.
+hardcoded list in `tests/test_class_b_mirror.py` and by nothing else. Migration
+0002 creates `provider_links` for exactly this, so the class C test ("writes
+something the migrations created no table for") does not apply. The cost of the
+mistake was visible: the table held zero rows, v2's Settings page read a fixture
+instead, and it said one provider was connected while all three were.
+
+**And this paragraph used to end "it never appeared in the table below", which
+was true, was written down, and was left standing.** `write_path_coverage.
+documented` parses the tables and nothing else, so a file declared class B in
+prose and absent from the table is a file the coverage checklist never asks
+for: `required()` returned 29 paths and not one was a provider path. It has its
+row now.
+
+Its primitive is `after_private_write` rather than `write_private`, and that is
+the second half of the same fault. `ProviderRegistry._write_locked` has had its
+own atomic write since 2026-08-23, six days before `class_b.py` existed, so the
+mirror hook hanging off `write_private` was never on this file's path. Measured
+2026-09-08: `dual-write.log` holds 2,771 lines back to 2026-08-30 and not one
+mentions a provider, because nothing ever tried; the three rows in
+`provider_links` came from a hand-run `class_b.backfill` and share `updated_at`
+to the microsecond. `store.after_private_write` is the shared half a writer with
+its own bytes calls, and `_write_locked` keeps its own write because it fsyncs
+the parent directory after the rename, which `write_private` does not.
 
 It mirrors the registry's state and never its credentials. `connectionKey` has
 no column and must not get one; keys live in

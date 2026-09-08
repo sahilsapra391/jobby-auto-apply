@@ -219,6 +219,17 @@ class ServiceEntryTests(unittest.TestCase):
         actual = deploy_verify.closure(repo, "watch")
         hardcoded = deploy_verify.closure(repo, "provider_login")
         self.assertGreater(len(actual), len(hardcoded))
-        for name in ("watch", "cloud_sweep", "jobs_store", "store"):
+        # Named because these are the modules whose staleness the service was
+        # not being checked for. **Only what the entry reaches is asserted, not
+        # what the other name misses**: the first version also required each to
+        # be ABSENT from `provider_login`'s closure, and wiring the class B
+        # provider mirror added `import store` inside
+        # `ProviderRegistry._write_locked`, which legitimately widened it. That
+        # is the check working -- more of that service is now verified -- and
+        # an assertion that fails on it is asserting an arrangement rather than
+        # the property.
+        for name in ("watch", "cloud_sweep", "jobs_store"):
             self.assertIn(name, actual)
-            self.assertNotIn(name, hardcoded)
+        self.assertNotIn("watch", hardcoded,
+                         "the hardcoded name reached the service's own "
+                         "entrypoint, so there was nothing to fix")

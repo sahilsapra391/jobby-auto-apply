@@ -98,11 +98,35 @@ def write_private(path, payload):
         Path(tmp).unlink(missing_ok=True)
         raise
 
-    # Class B mirror, after the file and never before it. The file is on disk
-    # and this caller has already succeeded, so nothing below may change that:
-    # `after_write` swallows its own failures and logs them, and parity is what
-    # makes the resulting drift visible. See docs/write-paths.md for why this
-    # ordering is the opposite of the pool's.
+    after_private_write(path, payload)
+
+
+def after_private_write(path, payload):
+    """The class B mirror and the coverage tick, for one store write.
+
+    **Separate from `write_private` because it is not the only writer, and the
+    docstring below spent two weeks saying it was.** `ProviderRegistry.
+    _write_locked` has written `providers.json` with its own atomic write since
+    2026-08-23, six days before `class_b.py` existed, so the mirror was built on
+    a premise that was already false for that file. Nothing broke and nothing
+    complained: `dual-write.log` holds 2,771 lines back to 2026-08-30 and not
+    one mentions a provider, because the hook was never reached. The three rows
+    in `provider_links` came from a hand-run backfill and share one timestamp to
+    the microsecond.
+
+    A second writer exists because it needs to. `_write_locked` fsyncs the
+    *directory* after the rename, which `write_private` does not, and this file
+    holds the connection state three services read. Taking that away to reuse a
+    chokepoint would trade a durability guarantee for a call graph. So the
+    mirror is what gets shared, and a writer with its own bytes declares itself
+    by calling this.
+
+    Class B mirror after the file and never before it: the file is on disk and
+    the caller has already succeeded, so nothing here may change that.
+    `after_write` swallows its own failures and logs them, and parity is what
+    makes the resulting drift visible. See docs/write-paths.md for why this
+    ordering is the opposite of the pool's.
+    """
     _mirror_class_b(path, payload)
     _observe_write_path()
 
@@ -116,10 +140,16 @@ def _observe_write_path():
     would be a worse bug than the gap it exists to close.
 
     The hook is here rather than at each write path because `write_private` is
-    the only function that puts bytes in the store, and `jobs_store._persist_
-    pool` reaches disk through it -- so the pool is observed without being
-    modified, which matters because `_persist_pool` is a parity gate path and
-    changing one restarts the clock.
+    where almost every store write lands, and `jobs_store._persist_pool`
+    reaches disk through it -- so the pool is observed without being modified,
+    which matters because `_persist_pool` is a parity gate path and changing
+    one restarts the clock.
+
+    **It used to say "the only function that puts bytes in the store" and that
+    was false when it was written.** `providers.json` had its own atomic writer
+    six days earlier. `tests/test_the_store_has_one_write_chokepoint.py` now
+    fails when a third one appears, because a premise nobody can check is a
+    premise that quietly stops being true.
     """
     try:
         import write_path_coverage
