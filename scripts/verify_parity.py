@@ -706,10 +706,18 @@ def class_b_file_state(root=None):
 def class_b_postgres_state(conn, account_id):
     with conn.cursor() as cur:
         columns = sorted(mirror_fields.compared()["applications"])
+        # `pending_order` and `pending_order_at` are read beside the compared
+        # columns and are not compared: they are the mirror's own bookkeeping
+        # and the device file has no equivalent. See `AWAITING_COLUMNS`.
         cur.execute(
-            f"select legacy_id, {', '.join(columns)} from applications "
+            f"select legacy_id, {', '.join(columns)}, "
+            f"pending_order, pending_order_at from applications "
             f"where account_id = %s", (account_id,))
-        sessions = {r[0]: dict(zip(columns, r[1:])) for r in cur.fetchall()}
+        rows = cur.fetchall()
+        sessions = {r[0]: dict(zip(columns, r[1:1 + len(columns)]))
+                    for r in rows}
+        pending = {r[0]: (r[1 + len(columns)], r[2 + len(columns)])
+                   for r in rows if r[1 + len(columns)]}
         # **Derived, like the applications select above.** These were
         # hand-written column lists, and adding `kind` and `category` to
         # `answer_row` therefore added them to the file side and not to this
@@ -744,7 +752,74 @@ def class_b_postgres_state(conn, account_id):
             f"where account_id = %s", (account_id,))
         outcomes = {r[0]: dict(zip(outcome_columns, r[1:])) for r in cur.fetchall()}
     return {"sessions": sessions, "events": events, "answers": answers,
-            "profile": profile, "outcomes": outcomes}
+            "profile": profile, "outcomes": outcomes, "pending": pending}
+
+
+#: The only columns a v2 write can put into `applications`, so the only ones an
+#: outstanding work order can excuse. Derived from what `route.ts` accepts, not
+#: from what is compared: it writes `status` and `phase` and nothing else, and
+#: leaving the other sixteen compared throughout is what keeps this from being
+#: a row-level exemption. A blind spot the width of a table is how a marker
+#: becomes the thing it was added to prevent.
+AWAITING_COLUMNS = ("session.status", "session.phase")
+
+#: `pending_order` and `pending_order_at` are **not** in `mirror_fields.EXEMPT`,
+#: and that is correct rather than an omission. `compared()` is `written()`
+#: minus the exemptions, and `written()` is derived from the mirror's INSERT
+#: column list: `class_b` only ever *clears* these two, in a `do update`, so
+#: they are outside the write set and were never candidates for comparison.
+#: An exemption for a column the mirror does not write covers nothing, and
+#: `test_parity_compares_what_the_mirror_writes` refuses one -- correctly; it
+#: caught these on their first full run.
+
+#: How long a work order may be outstanding before its row is a divergence
+#: again.
+#:
+#: **A specification, not a percentile.** Four v2 writes have reconciled and
+#: they took 83, 130, 138 and 284 seconds; a queued apply additionally waits
+#: for a free browser slot, and the tick that answers runs every five seconds
+#: against a pool it parses whole. An hour is roughly thirteen times the
+#: largest observed. The `awaiting_device` ages in the report are the series to
+#: re-derive it from once there are enough of them.
+#:
+#: **The case this bound exists for is not the one that motivated the marker.**
+#: Scale Media 49dac26ae2c5c6ef has no marker at all: it predates the column,
+#: so it stays a plain divergence, which is correct. The case here is live and
+#: post-#206: v2 orders an apply, the device receives it, `do_not_start`
+#: refuses because the application is parked or its latest event is
+#: `submitting`, no session is ever written, and nothing clears the marker.
+#: Without the bound that row would be excused for ever, which is exactly the
+#: permanent exemption this design was chosen to avoid.
+AWAITING_SECONDS = 60 * 60
+
+
+def classify_awaiting(finding, pending, now=None):
+    """`(kind, order, age)` if the device has simply not answered yet.
+
+    Three conditions, and the third is deliberately the weakest of the three
+    rather than a transition check. A transition check would need a model of
+    the *file* side, and `route.ts` has none: it knows the statuses it can
+    write and nothing about what the device held before. So this is a
+    membership test on the Postgres side only, and it is said here rather than
+    implied so that nobody later softens the age bound believing this clause
+    is carrying weight. **The age bound is the only real narrowing.**
+    """
+    if finding.get("kind") != "field_mismatch":
+        return None
+    if finding.get("field") not in AWAITING_COLUMNS:
+        return None
+    order, at = (pending or {}).get(finding.get("id")) or (None, None)
+    if not order or at is None:
+        return None
+    from datetime import datetime, timezone
+    moment = now or datetime.now(timezone.utc)
+    try:
+        age = (moment - at).total_seconds()
+    except TypeError:
+        # A naive timestamp is "could not compare", which is not "young".
+        return None
+    return ("awaiting_device" if age < AWAITING_SECONDS
+            else "reconciliation_overdue", order, round(age))
 
 
 def compare_class_b(files, database):
@@ -774,10 +849,14 @@ def compare_class_b(files, database):
             for column in sorted(set(mine)):
                 if same_value(mine.get(column), yours.get(column)):
                     continue
-                findings.append({"kind": "field_mismatch", "id": name,
-                                 "field": f"{key}.{column}",
-                                 "file": mine.get(column),
-                                 "postgres": yours.get(column)})
+                finding = {"kind": "field_mismatch", "id": name,
+                           "field": f"{key}.{column}",
+                           "file": mine.get(column),
+                           "postgres": yours.get(column)}
+                verdict = classify_awaiting(finding, database.get("pending"))
+                if verdict:
+                    finding["kind"], finding["pendingOrder"], finding["ageSeconds"] = verdict
+                findings.append(finding)
 
     for name in sorted(set(database["events"]) - set(files["events"])):
         findings.append({"kind": "only_in_postgres", "id": name,
@@ -843,12 +922,19 @@ def run(conn, account_id, root=None, on_note=None):
     #: both accumulate: `mergedFieldDropped` went 2, 5, 7 and its pinned
     #: assertion had to become a derived one. The report carries the ids and
     #: nothing pins a length.
-    ASIDES = ("merged_field_dropped", "pruned_loser", "employer_field_pinned")
+    #: `awaiting_device` joins them: a v2 write whose work order the device has
+    #: not answered yet is a recorded fact about timing, not a difference
+    #: between the stores. `reconciliation_overdue` is deliberately NOT here --
+    #: it is the same row past the bound, and it is the finding.
+    ASIDES = ("merged_field_dropped", "pruned_loser", "employer_field_pinned",
+              "awaiting_device")
     report["merged_field_dropped"] = [f for f in first
                                       if f["kind"] == "merged_field_dropped"]
     report["pruned_losers"] = [f for f in first if f["kind"] == "pruned_loser"]
     report["employer_field_pinned"] = [f for f in first
                                        if f["kind"] == "employer_field_pinned"]
+    report["awaiting_device"] = [f for f in first
+                                 if f["kind"] == "awaiting_device"]
     first = [f for f in first if f["kind"] not in ASIDES]
 
     if not first:

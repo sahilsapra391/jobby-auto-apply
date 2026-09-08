@@ -102,6 +102,13 @@ GATE_PATHS = (
     # and nine of the fourteen days between were counted as covered.
     "scripts/company_logos.py",
     "scripts/identity.py",
+    # **A second writer of the mirrored tables.** v2's route writes
+    # `applications`, `application_events` and `job_decisions` directly, so a
+    # change there changes what parity compares exactly as a change to
+    # `class_b` does. Absent for the same reason `company_logos` was: the list
+    # named the device's writers, and v2 quietly became one.
+    "apps/web/app/api/applications/route.ts",
+    "apps/web/app/_ui/queue.ts",
 )
 
 #: Modules the mirror imports that decide nothing it writes, each with the

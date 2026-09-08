@@ -2689,6 +2689,44 @@ after -- because the fault is invisible in every unit test. Nothing in a suite
 is idle for half an hour, so a held connection passes everywhere except
 production. Verified by mutation: reinstating the pre-wait connect fails it.
 
+#### A chokepoint premise needs a test, 2026-09-08
+
+**`store.write_private` said it was "the only function that puts bytes in the
+store", and that was false six days before the code relying on it was
+written.** `ProviderRegistry._write_locked` has had its own atomic write since
+2026-08-23; `class_b.py` arrived 2026-08-29 and hung the class B mirror off
+`write_private`. So provider state was declared class B in prose, had no row in
+the table `write_path_coverage` derives from, and was never mirrored once. The
+absence was silent by construction: `dual-write.log` holds 2,771 lines and not
+one mentions a provider, because a mirror that broke would have complained
+2,771 times and this one never tried.
+
+The guard is a census, not a rule anybody has to remember.
+`tests/test_the_store_has_one_write_chokepoint.py` derives every `os.replace`
+under `scripts/` from the AST and requires each to be the chokepoint, a
+declared class B writer that hands its write to `store.after_private_write`, or
+exempt with the reason it writes nothing mirrored. Fourteen today, all
+accounted for. **A premise nobody can check is a premise that quietly stops
+being true.**
+
+That is the third census this week and they are one move: the aggregator-host
+list checked against every connector, `GATE_PATHS` checked against
+`backfill`'s whole import closure, and now every atomic writer checked against
+the chokepoint. **Enumerate the class from the code, never from a list beside
+it.** Each of the three had a list that was correct and incomplete, and in
+each case only the enumeration said so.
+
+#### A timestamp in a mirrored row is the source's clock, 2026-09-08
+
+`provider_links.updated_at` read 2026-09-02T03:38Z and that was taken as the
+day the mirror stopped. It is `openai.last_checked_at`, a field *value* copied
+out of `providers.json` when a hand-run backfill wrote the row at 21:25:38. A
+mirrored row's timestamps describe the thing mirrored, not the mirroring; the
+only column that dates the write is the one the writer stamps itself, and here
+all three rows shared it to the microsecond, which is what one transaction
+looks like.
+
+
 #### A count is not the thing it counts, 2026-09-08
 
 `sweep_runs.unchanged` carried how many boards answered 304, which is the whole

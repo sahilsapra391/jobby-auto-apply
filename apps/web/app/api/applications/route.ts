@@ -184,20 +184,45 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // **Which queue this click went to, so parity can tell "the device has not
+  // answered yet" from "the device never answered".** Not a "v2 wrote this"
+  // flag: that would be permanent, and the one v2 finding that exists today is
+  // a row nothing ever acted on. Scale Media 49dac26ae2c5c6ef holds `inflight`
+  // against a session file that has said `watch` since 2026-09-05, because v2
+  // wrote it two hours before #206 added the enqueue. A provenance flag would
+  // have hidden exactly that. `class_b` clears these when the device answers
+  // and `verify_parity.AWAITING_SECONDS` bounds how long they may stand.
+  //
+  // Read off the maps that were just used, never restated: a second copy of
+  // STATUS_QUEUE is the drift GATE_PATHS has already paid for.
+  const ordered = (body.status ? STATUS_QUEUE[body.status] : null)
+    ?? (body.event ? EVENT_QUEUE[body.event] : null)
+    ?? null;
+
   const client = await pool().connect();
   let applicationId: string;
   try {
     await client.query("begin");
     await client.query("select set_config('app.account_id', $1, true)", [account]);
     const { rows } = await client.query(
-      `insert into applications (account_id, legacy_id, status, phase, updated_at)
-       values ($1, $2, coalesce($3, 'unknown'), $4, now())
+      `insert into applications
+         (account_id, legacy_id, status, phase, pending_order,
+          pending_order_at, updated_at)
+       values ($1, $2, coalesce($3, 'unknown'), $4, $5,
+               case when $5::text is null then null else now() end, now())
        on conflict (account_id, legacy_id) do update
          set status = coalesce($3, applications.status),
              phase = coalesce($4, applications.phase),
+             -- coalesce, so a click that orders nothing does not clear an
+             -- order still outstanding from an earlier one. Only the device
+             -- clears it.
+             pending_order = coalesce($5, applications.pending_order),
+             pending_order_at = case
+               when $5::text is null then applications.pending_order_at
+               else now() end,
              updated_at = now()
        returning id`,
-      [account, legacyId, body.status ?? null, body.phase ?? null]);
+      [account, legacyId, body.status ?? null, body.phase ?? null, ordered]);
     applicationId = rows[0].id;
     if (body.event) {
       await client.query(
@@ -292,12 +317,15 @@ async function decide(account: string, key: string, body: Body) {
       // would make that reconciliation a guess.
       const { rows } = await client.query(
         `insert into applications
-           (account_id, legacy_id, status, posting_id, created_at, updated_at)
-         values ($1, $2, $3, $4, now(), now())
+           (account_id, legacy_id, status, posting_id, pending_order,
+            pending_order_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, now(), now(), now())
          on conflict (account_id, legacy_id) do update
-           set status = $3, posting_id = $4, updated_at = now()
+           set status = $3, posting_id = $4, pending_order = $5,
+               pending_order_at = now(), updated_at = now()
          returning id`,
-        [account, posting.rows[0].legacy_id, status, postingId]);
+        [account, posting.rows[0].legacy_id, status, postingId,
+         DECISION_QUEUE[decision]]);
       applicationId = rows[0].id;
     }
     await client.query("commit");

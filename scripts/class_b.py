@@ -124,6 +124,13 @@ def _application_id(conn, account_id, legacy_id, session=None):
                  -- history event, and it takes the `do nothing` branch above.
                  set status = excluded.status,
                      {assignments},
+                     -- The device has answered, so no work order is
+                     -- outstanding. See migration 0023: the marker excuses a
+                     -- v2 write from parity only until this runs, and a marker
+                     -- that outlives its condition is the permanent exemption
+                     -- the design rejected.
+                     pending_order = null,
+                     pending_order_at = null,
                      updated_at = now()
                returning id""",
             [account_id, legacy_id, status]
@@ -503,6 +510,19 @@ def _mirror_history(conn, account_id, payload):
                values (%s, %s, %s, %s, coalesce(%s::timestamptz, now()))""",
             (account_id, application, kind, json.dumps(payload),
              payload.get("at")))
+        # **The device has answered, and this is the only answer some clicks
+        # ever produce.** Clearing only in `_application_id`'s session branch
+        # would miss exactly the control that matters most: `apply_marks.
+        # apply_one` reads the session and appends history without writing the
+        # session, so a v2 `event: completed` reaches here and takes
+        # `_application_id`'s `do nothing` branch, which does not clear. Then
+        # `sync_board` deletes the session on a confirmed submission and there
+        # is no later write to clear it either. The marker would outlive its
+        # condition for ever on the one path that has no session at the end.
+        cur.execute(
+            "update applications set pending_order = null, "
+            "pending_order_at = null where id = %s and pending_order is not null",
+            (application,))
 
 
 ANSWER_DELETE_CEILING = 0.25
