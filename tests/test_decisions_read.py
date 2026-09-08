@@ -141,3 +141,148 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(out["agreed"], 0)
         self.assertEqual(len(out["onlyOnDevice"]), 1)
         self.assertEqual(len(out["onlyInPostgres"]), 1)
+
+
+class AppliedIndexTests(unittest.TestCase):
+    """The index `ingest.already_decided` reads, built from Postgres.
+
+    **This consumer goes first because its failure is the only visible one on
+    the switching list.** `already_decided` returning nothing for a passed
+    posting re-offers a role the user dropped, on the board, where they see it.
+    Every other reader fails silently.
+    """
+
+    class Cur:
+        def __init__(self, answers): self.answers = answers; self.rows = []
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, args=None):
+            self.rows = (self.answers["events"] if "application_events" in sql
+                         else self.answers["sessions"])
+        def fetchall(self): return list(self.rows)
+
+    class Conn:
+        def __init__(self, answers): self.answers = answers
+        def cursor(self): return AppliedIndexTests.Cur(self.answers)
+
+    def index(self, events=(), sessions=()):
+        conn = self.Conn({"events": list(events), "sessions": list(sessions)})
+        return decisions.applied_index(conn, "acct")
+
+    def test_a_completed_event_is_applied(self):
+        out = self.index(events=[("a1", "completed", "Acme", "Product Manager",
+                                  "https://boards.greenhouse.io/acme/jobs/1")])
+        self.assertIn("applied", set(out.values()))
+
+    def test_any_other_latest_event_is_not_an_application(self):
+        """The file version keeps the last event by `at` and only `completed`
+        counts. A `completed` later abandoned is not an application."""
+        for kind in ("abandoned", "submitting", "needs_you"):
+            out = self.index(events=[("a1", kind, "Acme", "PM", "https://x/1")])
+            self.assertEqual(out, {}, f"{kind} was read as an application")
+
+    def test_a_dropped_session_is_passed(self):
+        out = self.index(sessions=[("dropped", "Acme", "Product Manager", None)])
+        self.assertEqual(set(out.values()), {"passed"})
+
+    def test_the_session_mapping_matches_ingest_s_own(self):
+        """Two spellings of one mapping is the class this repo has five
+        instances of, so the two are compared rather than both trusted."""
+        import inspect
+        import ingest
+        source = inspect.getsource(ingest.applied_index)
+        block = source[source.index("status_state = {"):]
+        block = block[:block.index("}") + 1]
+        theirs = eval(block.split("=", 1)[1].strip())      # noqa: S307
+        self.assertEqual(decisions.SESSION_STATE, theirs)
+
+    def test_a_status_neither_map_knows_is_not_a_decision(self):
+        out = self.index(sessions=[("archived", "Acme", "PM", None)])
+        self.assertEqual(out, {})
+
+    def test_the_first_writer_of_a_key_wins_like_setdefault(self):
+        # History runs before sessions, so a completed application outranks
+        # whatever its session last said.
+        out = self.index(events=[("a1", "completed", "Acme", "PM", None)],
+                         sessions=[("dropped", "Acme", "PM", None)])
+        self.assertEqual(set(out.values()), {"applied"})
+
+
+class ShadowReadTests(unittest.TestCase):
+    def test_a_disagreement_names_its_direction(self):
+        """The direction matters more than the count. A key only the files
+        hold is a posting Postgres would re-offer, which is the visible
+        failure; only Postgres holds is one it would wrongly refuse."""
+        out = decisions.index_disagreements(
+            {("acme", "pm"): "passed", ("b", "c"): "applied"},
+            {("acme", "pm"): "watched", ("d", "e"): "applied"})
+        self.assertEqual(out["onlyInFiles"], ["b|c"])
+        self.assertEqual(out["onlyInPostgres"], ["d|e"])
+        self.assertEqual(out["differ"],
+                         [{"key": "acme|pm", "files": "passed",
+                           "postgres": "watched"}])
+        self.assertEqual(out["agreed"], 0)
+
+    def test_a_url_key_is_shown_as_one(self):
+        out = decisions.index_disagreements({("url", "x/1"): "passed"}, {})
+        self.assertEqual(out["onlyInFiles"], ["url:x/1"])
+
+    def test_an_unreachable_database_is_not_recorded_as_agreement(self):
+        """"Could not look" and "they agree" are different facts and only one
+        of them is evidence a reader can be switched."""
+        import sys as _sys
+        import tempfile
+        from unittest import mock
+        root = tempfile.mkdtemp()
+        # `jobs_db.connect` rather than `applied_index`, because the first
+        # version patched the query and asserted its message -- and under a
+        # redirected HOME the *connect* fails first with a different one, so
+        # the case passed alone and failed in a full run. The property is that
+        # any failure in the read path is recorded as unreadable; which line
+        # raised is an arrangement.
+        import jobs_db
+        with mock.patch.object(jobs_db, "connect",
+                               side_effect=OSError("no route to host")):
+            entry = decisions.shadow_applied_index(root, {("a", "b"): "passed"})
+        self.assertIsNone(entry["clean"])
+        self.assertTrue(entry.get("unreadable"))
+        self.assertNotIn("agreed", entry,
+                         "an unreachable database was recorded as agreement")
+
+    def test_any_failure_in_the_read_path_is_unreadable_not_agreement(self):
+        """The property, without naming which line raises."""
+        import tempfile
+        from unittest import mock
+        for target, boom in (("applied_index", ValueError("bad state")),):
+            with mock.patch.object(decisions, target, side_effect=boom):
+                entry = decisions.shadow_applied_index(
+                    tempfile.mkdtemp(), {("a", "b"): "passed"})
+            self.assertIsNone(entry["clean"])
+            self.assertNotIn("agreed", entry)
+
+    def test_the_helper_never_raises_whatever_the_reader_does(self):
+        """`decisions_shadow` sits in `ingest` and is called from two scopes.
+        The first version attached its result to `report` in `add_postings`,
+        where `report` is assigned twenty lines later -- and the handler
+        referenced it too, so the guard raised its own NameError and took six
+        tests with it. Same shape as `root=root` on a function with no `root`.
+        """
+        import ingest
+        from unittest import mock
+        with mock.patch.object(ingest, "decisions_shadow") as spy:
+            spy.side_effect = None
+        with mock.patch.dict("sys.modules", {"decisions": None}):
+            out = ingest.decisions_shadow("/nonexistent", {}, "probe")
+        self.assertIsNone(out["clean"])
+        self.assertIn("unreadable", out)
+
+    def test_the_sweep_never_reads_the_shadow_result(self):
+        """The file is authoritative for the whole window. A shadow read that
+        fed `already_decided` would be the switch, not the window."""
+        import inspect
+        import ingest
+        source = inspect.getsource(ingest.run)
+        after = source[source.index("shadow_applied_index"):]
+        self.assertNotIn("decided = ", after,
+                         "the index was reassigned after the shadow read")
+        self.assertNotIn("shadow[", after.split("report[")[0])

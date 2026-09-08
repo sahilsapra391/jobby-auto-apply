@@ -136,6 +136,156 @@ def compare(pool, stored):
             "agreed": len(set(pool) & set(stored)) - len(disagree)}
 
 
+
+# --- the applied index, read from Postgres ----------------------------------
+#
+# `ingest.applied_index` builds the same map from three store files -- the
+# history events, the sessions, and the role index -- and `already_decided`
+# reads it to refuse a posting the user has passed on. All three are class B
+# and all three are mirrored into `applications` and `application_events`, so
+# the same index is derivable from Postgres and nothing has ever derived it.
+#
+# **`seen`'s failure mode is visible, which is why this consumer goes first.**
+# A miss here re-offers a role the user already dropped, on the board, where
+# they will see it. Every other reader on the switching list fails silently.
+
+#: How a session's `status` becomes a decision. Lifted verbatim from
+#: `ingest.applied_index` rather than re-derived, because two spellings of one
+#: mapping is the class this repository has five instances of. The test
+#: compares this against that function's own source.
+SESSION_STATE = {"inflight": "applied", "review": "watched",
+                 "active": "watched", "watch": "watched", "dropped": "passed"}
+
+
+def applied_index(conn, account_id, root=None):
+    """`ingest.applied_index`'s map, built from Postgres instead of the files.
+
+    Same keys, same precedence, same `setdefault` semantics: the first writer
+    of a key wins, and the order is history events then sessions, because an
+    application that completed outranks whatever its session last said.
+
+    `applications` carries the session half and the role half in one row --
+    `class_b.session_row` and `class_b.role_row` write disjoint columns of it
+    -- so what the files keep in three places is one join here. The url comes
+    off the role half, exactly as the file version prefers `role.get("url")`.
+    """
+    import identity
+    import jobs_store
+
+    index = {}
+
+    def remember(company, title, url, state):
+        if company and title:
+            index.setdefault(
+                (identity.norm_company(company), jobs_store.norm_title(title)),
+                state)
+        link = identity.url_key(url)
+        if link:
+            index.setdefault(("url", link), state)
+
+    with conn.cursor() as cur:
+        # The latest event per application, and only `completed` counts as
+        # applied -- the file version sorts every event by `at` and keeps the
+        # last, so a `completed` followed by an `abandoned` is not an
+        # application. `distinct on` is that same "last one wins".
+        cur.execute(
+            """select distinct on (a.id)
+                      a.legacy_id, e.kind, a.company, a.role, a.apply_url
+                 from application_events e
+                 join applications a on a.id = e.application_id
+                where e.account_id = %s
+                order by a.id, e.at desc, e.id desc""",
+            (account_id,))
+        for _legacy, kind, company, role, url in cur.fetchall():
+            if kind == "completed":
+                remember(company, role, url, "applied")
+
+        cur.execute(
+            """select status, company, role, apply_url from applications
+                where account_id = %s and status is not null""",
+            (account_id,))
+        for status, company, role, url in cur.fetchall():
+            state = SESSION_STATE.get(status)
+            if state:
+                remember(company, role, url, state)
+    return index
+
+
+def index_disagreements(from_files, from_postgres):
+    """Where the two indexes differ, keyed the way the index is keyed.
+
+    Reported as three lists rather than a count, and the direction matters
+    more than the total: a key only the files hold is a posting Postgres would
+    re-offer, which is the visible failure, and a key only Postgres holds is
+    one it would wrongly refuse, which is silent.
+    """
+    def show(key):
+        return "url:" + key[1] if key[0] == "url" else "%s|%s" % key
+
+    only_files = sorted(show(k) for k in set(from_files) - set(from_postgres))
+    only_pg = sorted(show(k) for k in set(from_postgres) - set(from_files))
+    differ = sorted(
+        (show(k), from_files[k], from_postgres[k])
+        for k in set(from_files) & set(from_postgres)
+        if from_files[k] != from_postgres[k])
+    return {"onlyInFiles": only_files, "onlyInPostgres": only_pg,
+            "differ": [{"key": k, "files": f, "postgres": p}
+                       for k, f, p in differ],
+            "agreed": len(set(from_files) & set(from_postgres)) - len(differ)}
+
+
+
+#: Where a shadow read records what it saw. One line per run, appended.
+SHADOW_LOG = "logs/shadow-reads.jsonl"
+
+
+def shadow_applied_index(root, from_files, note=""):
+    """Build the index from Postgres too, and record where the two differ.
+
+    **The file is authoritative throughout and this returns nothing the caller
+    uses.** That is the whole shape: a reader is switched only after a window
+    in which the two agreed on real traffic, exactly as the mirror was written
+    before anything read it. One reader at a time, each with its own window.
+
+    Never raises and never slows the sweep down by more than the read. A
+    Postgres that is unreachable is recorded as unreachable, not as agreement:
+    "could not look" and "they agree" are different facts and only one of them
+    is evidence.
+    """
+    import time
+    from pathlib import Path
+    entry = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+             "reader": "applied_index", "note": note,
+             "fileKeys": len(from_files)}
+    started = time.time()
+    try:
+        import dual_write
+        import jobs_db
+        conn = jobs_db.connect()
+        try:
+            account = dual_write.account_id(conn)
+            stored = applied_index(conn, account, root)
+        finally:
+            conn.close()
+        entry["postgresKeys"] = len(stored)
+        entry.update(index_disagreements(from_files, stored))
+        entry["clean"] = not (entry["onlyInFiles"] or entry["onlyInPostgres"]
+                              or entry["differ"])
+    except Exception as exc:                              # noqa: BLE001
+        entry["unreadable"] = f"{type(exc).__name__}: {exc}"[:200]
+        entry["clean"] = None
+    entry["seconds"] = round(time.time() - started, 2)
+
+    try:
+        path = Path(root) / SHADOW_LOG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    except OSError as exc:                                # noqa: BLE001
+        sys.stderr.write(f"shadow read: could not record: {exc}\n")
+    return entry
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--compare", action="store_true",
