@@ -1139,3 +1139,62 @@ each naming what it is and what it would take:
 No canary entries, which is the 13a fix landing. Nothing that a reader cannot
 act on.
 
+
+### 13f. A completed sweep thrown away twice, and the timeout that did it
+
+**The trigger worked. The deadline threw the result away.** `config.env` was
+armed at 06:50 while the running checkout still carried `WAIT_SECONDS = 12 * 60`.
+Two scheduled sweeps then fired unattended:
+
+    07:58:44  started the machine, gave up at 08:10, machine finished 09:05
+    11:55:10  started the machine, gave up at 12:07, machine finished 13:11
+
+Both fell back with the right words -- "the machine was still running after
+720s; `flyctl logs ...` says why" -- and both were complete: 27 of 27 channels,
+21,414 and 23,207 postings, 44,621 rows sitting in `sweep_postings` that nothing
+ever read. Eight hours of a stale board while the work was done and staged.
+
+**The two directions of this error are not symmetric and the constant has to be
+chosen on that rather than on a percentile.** Too long means a hung container
+goes unnoticed and one cycle is missed. Too short means a *finished* sweep is
+discarded, every time, forever, because the container will always be slower than
+the deadline that is too short for it. `WAIT_SECONDS` is two hours, 1.6x the
+worst of three real sweeps and well inside the four-hour tier-1 interval.
+
+**And the first measurement was the smallest, which made it the wrong one to
+generalise from.** 29.5 minutes at 12,632 postings looked like the warm number.
+It was the warm number *for that sweep*: 1.8x the postings costs 2.6x the time.
+A single measurement of a non-linear thing is a measurement of one point, and
+reporting it as "the warm number" -- which is what happened -- is the summary
+statistic problem this file already records about a p95 over a non-stationary
+series, in a new place.
+
+### 13g. Greenhouse costs 45 s a board in the container, and it is not payload
+
+Section 13c refuted payload and CPU and reached for memory on the strength of a
+cold run's `free -m`. The per-channel numbers refute the general form of that
+too. From the 76.3-minute sweep, all on the same machine, in one process:
+
+    channel          elapsed   postings  boards  304s   per posting
+    greenhouse        3399 s     13149     309    234      0.26 s
+    ashby              748 s      3172     193    171      0.24 s
+    smartrecruiters      77 s      3324      49      0      0.023 s
+    lever              120 s       889      91      0      0.13 s
+    rippling            15 s       818      16      0      0.018 s
+
+**smartrecruiters parses 3,324 postings from 49 all-200 boards in 77 seconds,
+after ashby had already loaded 3,172 postings into the same process.** If this
+were memory pressure or GC growth, smartrecruiters could not be 11x cheaper per
+posting than greenhouse in the same run, later in the run. On the laptop the two
+sources cost the *same* per job (3.6 ms against 3.5 ms, fact 13c).
+
+So what is left is something greenhouse does that the cheap channels do not, and
+"memory on a 2 GB box" is at best half of it. This is under investigation and is
+deliberately not being guessed at again: three diagnoses have already been wrong
+here, and the fourth would be the one that got written down as settled.
+
+**What is safe to say today**, and the only thing that should be relied on:
+greenhouse is 56.6 of the sweep's 76 minutes and dominates the wall clock, the
+wall clock does not block the device (the pool lock is 30.8 s), and
+`WAIT_SECONDS` is sized to survive it rather than to be right about it.
+

@@ -72,13 +72,31 @@ MACHINE_VAR = "JOBBY_FLY_MACHINE"
 #: local sweep holding it for the whole 26.8 minutes. The device is not waiting
 #: on anything during the fetch, so its wall clock costs nothing.
 #:
-#: So this bounds a *hung* container, not a slow one. Forty-five minutes is
-#: about 1.5x the measured warm sweep -- headroom for a colder one, since 77 of
-#: greenhouse's 353 boards still answered 200 on that run -- and comfortably
-#: inside `tier1IntervalMinutes`, which defaults to 4 hours. Overrunning it
-#: falls back to a local sweep, which costs the 26.8 minutes of lock this
-#: exists to avoid, so erring long is the cheap direction.
-WAIT_SECONDS = 45 * 60
+#: So this bounds a *hung* container, not a slow one, and the two directions of
+#: error are not symmetric. Erring long means a genuinely hung container is not
+#: noticed for that long, and one sourcing cycle is missed. Erring short means a
+#: **completed** sweep is thrown away: the machine goes on to finish, stage all
+#: 27 channels, and stop, and the device never merges a row of it. That happened
+#: twice on 2026-09-08, at 07:58 and 11:55, against the 12-minute value -- both
+#: fell back with the correct message, both sweeps finished, and 44,621 staged
+#: postings sat unmerged for eight hours while the board went stale.
+#:
+#: Three real sweeps, warm cache throughout:
+#:
+#:     06:04 -> 06:33   29.5 min   12,632 postings
+#:     07:58 -> 09:05   66.4 min   21,414 postings
+#:     11:55 -> 13:11   76.3 min   23,207 postings
+#:
+#: **Do not read the first as the typical one.** It was the smallest, and the
+#: cost is not linear in postings: 1.8x the postings cost 2.6x the time, because
+#: greenhouse alone is 56.6 of those 76 minutes at about 45 seconds per board
+#: that answers 200. See `docs/plans/phase3-inputs.md` section 13f; that cost is
+#: a container fault under investigation, not a property of the source, and this
+#: constant should come back down when it is fixed.
+#:
+#: Two hours is 1.6x the worst observed, and still comfortably inside
+#: `tier1IntervalMinutes`, which defaults to 4 hours.
+WAIT_SECONDS = 120 * 60
 POLL_SECONDS = 10
 
 
