@@ -57,12 +57,46 @@ MACHINE_VAR = "JOBBY_FLY_MACHINE"
 
 #: How long to wait for the container before giving up and falling back.
 #:
-#: The measured sweep was 25.8 seconds for all 27 channels against a four-tenant
-#: registry, and the local equivalent against the full 895-board registry runs a
-#: median 26.8 minutes. Twelve minutes is comfortably above the first and well
-#: below the second, and a cloud fetch that is slower than the laptop has lost
-#: its only argument.
-WAIT_SECONDS = 12 * 60
+#: **Derived from a measured warm sweep, and the earlier reasoning was wrong
+#: about what this bounds.** Twelve minutes came from a 25.8-second run against
+#: a four-tenant registry and the argument that "a cloud fetch slower than the
+#: laptop has lost its only argument". The first full warm sweep against the
+#: real 795-board registry, on 2026-09-08, took **29.5 minutes** (06:04:09 to
+#: 06:33:37, 27 channels, 12,632 postings), against the device's own median of
+#: 26.8. The cloud fetch is not faster and was never going to be: 795 boards at
+#: `MIN_INTERVAL_PER_HOST` is 13 minutes of deliberate sleeping before any work,
+#: and the container is a shared 1x vCPU where the laptop is not.
+#:
+#: Speed was the wrong argument. What moved is the **pool lock**, measured on
+#: the same sweep at 30.8 seconds by two independent instruments, against a
+#: local sweep holding it for the whole 26.8 minutes. The device is not waiting
+#: on anything during the fetch, so its wall clock costs nothing.
+#:
+#: So this bounds a *hung* container, not a slow one, and the two directions of
+#: error are not symmetric. Erring long means a genuinely hung container is not
+#: noticed for that long, and one sourcing cycle is missed. Erring short means a
+#: **completed** sweep is thrown away: the machine goes on to finish, stage all
+#: 27 channels, and stop, and the device never merges a row of it. That happened
+#: twice on 2026-09-08, at 07:58 and 11:55, against the 12-minute value -- both
+#: fell back with the correct message, both sweeps finished, and 44,621 staged
+#: postings sat unmerged for eight hours while the board went stale.
+#:
+#: Three real sweeps, warm cache throughout:
+#:
+#:     06:04 -> 06:33   29.5 min   12,632 postings
+#:     07:58 -> 09:05   66.4 min   21,414 postings
+#:     11:55 -> 13:11   76.3 min   23,207 postings
+#:
+#: **Do not read the first as the typical one.** It was the smallest, and the
+#: cost is not linear in postings: 1.8x the postings cost 2.6x the time, because
+#: greenhouse alone is 56.6 of those 76 minutes at about 45 seconds per board
+#: that answers 200. See `docs/plans/phase3-inputs.md` section 13f; that cost is
+#: a container fault under investigation, not a property of the source, and this
+#: constant should come back down when it is fixed.
+#:
+#: Two hours is 1.6x the worst observed, and still comfortably inside
+#: `tier1IntervalMinutes`, which defaults to 4 hours.
+WAIT_SECONDS = 120 * 60
 POLL_SECONDS = 10
 
 
@@ -122,20 +156,49 @@ def machine_state(app, machine, run=None):
     # function never returns. It read as a fallback; CI, which has no flyctl,
     # was the first place it ran. The injected `run` ignores argv[0] anyway.
     fly = toolpath.find("flyctl", required=False) or "flyctl"
-    result = run([fly, "machine", "status", machine, "--app", app, "--json"],
+    # **`machines list --json`, not `machine status --json`.** The latter is not
+    # a flag flyctl has: it exits non-zero with usage text, so this returned ""
+    # forever, `wait_for_sweep` correctly refused to read could-not-look as
+    # stopped, and a finished sweep sat staged while the device waited out its
+    # deadline. The guard did its job; the command it guarded was wrong.
+    #
+    # Third unverified flyctl invocation in this feature, after `--command`
+    # (which appends to an ENTRYPOINT rather than replacing it) and `--config`
+    # (resolved against the build-context argument). A flag that reads
+    # plausibly is not a flag that exists, and none of the three failed until
+    # it ran.
+    result = run([fly, "machines", "list", "--app", app, "--json"],
                  capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return ""
     try:
-        return str(json.loads(result.stdout or "{}").get("state") or "")
+        machines = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
         return ""
+    if not isinstance(machines, list):
+        return ""
+    for entry in machines:
+        if str((entry or {}).get("id") or "") == machine:
+            return str(entry.get("state") or "")
+    # Absent from a listing that was read is not the same as unreadable: a
+    # machine that no longer exists cannot be waited for.
+    return "destroyed"
 
 
-def wait_for_sweep(conn, account, since, app=None, machine=None,
+def wait_for_sweep(connect, account, since, app=None, machine=None,
                    seconds=WAIT_SECONDS, poll=POLL_SECONDS, sleep=time.sleep,
                    run=None):
     """The newest sweep id, once the container has actually stopped.
+
+    **`connect` is a callable, and a connection per poll.** This is the same
+    fault `sweep_worker.stage` was fixed for and it was left open one file
+    away: the wait is the longest-lived thing in the process, 29.5 minutes on
+    the measured warm sweep, and Neon closes an idle connection long before
+    that. Held across the wait, the device died with `consuming input failed:
+    SSL connection has been closed unexpectedly` **after** the container had
+    finished writing all 27 channels -- a completed fetch reported as a failed
+    run. A rule stated in one function's docstring is not a rule the codebase
+    holds, and the closer the neighbour the less likely anybody checks.
 
     **"Every row has a `finished_at`" is trivially true when one row exists.**
     `sweep_worker.stage` commits per channel, so a sweep two seconds old with
@@ -166,14 +229,20 @@ def wait_for_sweep(conn, account, since, app=None, machine=None,
 
         row = None
         if stopped:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "select sweep_id, count(*), count(finished_at) "
-                    "from sweep_runs where account_id = %s and started_at >= %s "
-                    "group by sweep_id order by min(started_at) desc limit 1",
-                    (account, since))
-                row = cur.fetchone()
-            conn.rollback()
+            conn = connect()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select sweep_id, count(*), count(finished_at) "
+                        "from sweep_runs where account_id = %s "
+                        "and started_at >= %s "
+                        "group by sweep_id order by min(started_at) desc "
+                        "limit 1",
+                        (account, since))
+                    row = cur.fetchone()
+                conn.rollback()
+            finally:
+                conn.close()
             if row and row[1] and row[1] == row[2]:
                 return str(row[0])
 
@@ -198,8 +267,9 @@ def staged(conn, account, sweep_id):
     from sources import base
     with conn.cursor() as cur:
         cur.execute(
-            "select source, status, job_count, unchanged, listing_complete, "
-            "reason from sweep_runs where account_id = %s and sweep_id = %s",
+            "select source, status, job_count, unchanged, unchanged_slugs, "
+            "listing_complete, reason from sweep_runs "
+            "where account_id = %s and sweep_id = %s",
             (account, sweep_id))
         runs = cur.fetchall()
         cur.execute(
@@ -214,16 +284,23 @@ def staged(conn, account, sweep_id):
         postings.setdefault(source, []).append(value)
 
     out = {}
-    for source, status, count, unchanged, complete, reason in runs:
+    for source, status, count, unchanged, slugs, complete, reason in runs:
         mine = postings.get(source, [])
         if status == "failed":
             out[source] = base.failed(source, reason or "the cloud sweep failed")
         elif status == "skipped":
             out[source] = base.skipped(source, reason or "skipped in the cloud")
         else:
+            # **`unchanged_slugs` travels, not just its length.** The count
+            # answers the coverage ratchet and the list answers the canary,
+            # and rebuilding with only the count is what made a warm sweep
+            # report spacex and snowflake silent: both had legitimately 304'd,
+            # `canary_problem`'s excuse reads the list, and the list was empty
+            # because nothing had carried it. Migration 0022.
             out[source] = base.ok(source, mine, requests=0, note=reason or "",
                                   complete=bool(complete),
-                                  unchanged=int(unchanged or 0))
+                                  unchanged=int(unchanged or 0),
+                                  unchanged_slugs=_slugs(slugs))
         if len(mine) != int(count or 0) and status == "complete":
             # Said rather than smoothed over: the run row and the rows it
             # counts disagreeing means a partial write, and the closure step is
@@ -234,7 +311,28 @@ def staged(conn, account, sweep_id):
     return out
 
 
-def merge(root, results, now=None, publish=False):
+def _slugs(value):
+    """The staged `unchanged_slugs` as a list of strings.
+
+    psycopg gives a jsonb column back as the parsed value, but a driver or a
+    fixture may hand over the text, and a string iterated as a sequence would
+    make every character a board slug. Refused rather than iterated.
+    """
+    from sources import base
+    if isinstance(value, (str, bytes)):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return []
+        if isinstance(value, (str, bytes)):
+            # `'"spacex"'` is legal JSON and decodes to a string, which
+            # `board_slugs` would then refuse -- correctly, and silently. Said
+            # here so the refusal has a reason attached to it.
+            return []
+    return base.board_slugs(value)
+
+
+def merge(root, results, now=None, publish=False, lock_seconds=None):
     """Run the existing pipeline over staged results, under the pool lock.
 
     The connectors are replaced with ones that return what was staged and make
@@ -243,6 +341,11 @@ def merge(root, results, now=None, publish=False):
     """
     import ingest
     from sources import base
+
+    # A list rather than a return value: the caller needs the span even when
+    # the merge raises, and an exception carrying no measurement is how "the
+    # work was done and the run looked failed" happened here once already.
+    lock_seconds = [] if lock_seconds is None else lock_seconds
 
     def connector_for(envelope):
         def connector(fetcher, **_):
@@ -258,9 +361,20 @@ def merge(root, results, now=None, publish=False):
         # reentrant, so `jobs_store.save_jobs` taking it again inside the merge
         # is fine and is why the merge does not deadlock on itself.
         with runlock.held(root, jobs_store.POOL_LOCK, note="cloud-merge"):
-            return ingest.run(root, now=now, settings={},
-                              fetcher=base.Fetcher(root=root, opener=None),
-                              publish=publish)
+            # **Timed here rather than around the call, because the number the
+            # whole phase exists to move is this one.** `mergeSeconds` measured
+            # from outside includes the connector swap and would keep including
+            # whatever gets added next to it; a reader comparing a sweep
+            # against the 26.8-minute device baseline needs the span the pool
+            # was actually unavailable for, from the process that made it
+            # unavailable.
+            held_at = time.time()
+            try:
+                return ingest.run(root, now=now, settings={},
+                                  fetcher=base.Fetcher(root=root, opener=None),
+                                  publish=publish)
+            finally:
+                lock_seconds.append(round(time.time() - held_at, 1))
     finally:
         ingest.sources.ALL.clear()
         ingest.sources.ALL.update(original)
@@ -280,6 +394,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Start the cloud fetch, wait, and merge what it staged.")
     ap.add_argument("--publish", action="store_true")
+    ap.add_argument(
+        "--merge-only", action="store_true",
+        help=("merge the newest finished staged sweep without starting a "
+              "machine; for a fetch that already landed"))
     ap.add_argument("--wait", type=int, default=WAIT_SECONDS)
     args = ap.parse_args(argv)
 
@@ -291,27 +409,49 @@ def main(argv=None):
     report = {"at": jobs_store.now_stamp(), "app": app, "machine": machine}
     started = time.time()
     try:
-        if not app:
+        if not app and not args.merge_only:
             raise CloudSweepUnavailable(
                 f"no cloud sweep configured: set {APP_VAR} and {MACHINE_VAR}")
         if not account:
             raise CloudSweepUnavailable(
                 "no JOBBY_ACCOUNT_ID, and every staged row is account-scoped")
         import jobs_db
-        conn = jobs_db.connect()
-        try:
+        # **No connection is held across the wait.** `wait_for_sweep` opens one
+        # per poll and `staged` opens its own, because the wait is 29.5 minutes
+        # on a measured warm sweep and Neon closes an idle connection long
+        # before that. Held, the device lost a completed 27-channel fetch to
+        # `consuming input failed: SSL connection has been closed unexpectedly`
+        # -- the same fault `sweep_worker.stage` was fixed for, left open one
+        # file away.
+        if args.merge_only:
+            # **A fetch that already landed needs no machine, and starting one
+            # is not harmless.** `main` always started the machine, so an
+            # attempt to merge staged work kicked off a *second* sweep and then
+            # waited for it -- which is how a finished 27-channel sweep sat in
+            # `sweep_postings` while the device waited out a deadline on a run
+            # it had just caused. The staged sweep is the subject; the machine
+            # is not involved.
+            asked = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            report["mergeOnly"] = True
+            sweep_id = wait_for_sweep(jobs_db.connect, account, asked,
+                                      app=None, machine=None, seconds=0,
+                                      sleep=lambda _s: None)
+        else:
             asked = start_machine(app, machine)
             report["fetchStartedAt"] = asked.strftime("%Y-%m-%dT%H:%M:%SZ")
-            sweep_id = wait_for_sweep(conn, account, asked, app=app,
-                                      machine=machine, seconds=args.wait)
-            report["sweepId"] = sweep_id
-            report["fetchSeconds"] = round(time.time() - started, 1)
+            sweep_id = wait_for_sweep(jobs_db.connect, account, asked,
+                                      app=app, machine=machine,
+                                      seconds=args.wait)
+        report["sweepId"] = sweep_id
+        report["fetchSeconds"] = round(time.time() - started, 1)
+        conn = jobs_db.connect()
+        try:
             results = staged(conn, account, sweep_id)
-            report["channels"] = {k: v["status"] for k, v in results.items()}
-            report["staged"] = sum(len(v.get("postings") or [])
-                                   for v in results.values())
         finally:
             conn.close()
+        report["channels"] = {k: v["status"] for k, v in results.items()}
+        report["staged"] = sum(len(v.get("postings") or [])
+                               for v in results.values())
     except CloudSweepUnavailable as exc:
         report["fellBack"] = str(exc)
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -322,11 +462,16 @@ def main(argv=None):
         return 2
 
     merge_started = time.time()
+    lock_seconds = []
     # `ingest.run` returns `(report, jobs)`. Treating it as a report raised
     # after the merge had already written the pool, which is the worst place
     # for a reporting bug to be: the work was done and the run looked failed.
-    ingest_report, _jobs = merge(root, results, publish=args.publish)
+    ingest_report, _jobs = merge(root, results, publish=args.publish,
+                                 lock_seconds=lock_seconds)
     report["mergeSeconds"] = round(time.time() - merge_started, 1)
+    # The span the pool was actually locked for, which is a subset of
+    # `mergeSeconds` and is the figure Phase 3 is judged on.
+    report["lockSeconds"] = lock_seconds[0] if lock_seconds else None
     report["found"] = ingest_report.get("found")
     report["kept"] = ingest_report.get("kept")
     report["closed"] = ingest_report.get("closed")

@@ -2661,6 +2661,44 @@ gone is a deletion. Refusing every missing file would have failed every test
 that starts from a temp directory, which is a different bug and one the
 mutation test catches.
 
+#### And it recurred one file over, three days later, 2026-09-08
+
+**A connection held across a wait is not a bug that gets fixed. It is a shape
+that gets fixed once per file.** `sweep_worker.stage` was changed to take a
+`connect` callable on 2026-09-05, with a docstring saying why: the first full
+sweep opened a connection at the start and held it while the fetch worked, and
+the stage after ashby's twenty-four minutes died with `consuming input failed:
+SSL connection has been closed unexpectedly`. Neon closes an idle connection
+long before a 795-board sweep is done.
+
+`cloud_sweep.main`, next door, opened one connection, called `start_machine`,
+waited **29.5 minutes** on it, and then used it. Same exception, same cause,
+three days later, in the function that reads the seam the fixed one writes. The
+run reported a failure **after** the container had finished writing all 27
+channels: a completed fetch, reported as a failed run.
+
+The rule, because two instances in one feature is a pattern and not an
+accident: **anything that waits on a container connects after the wait, never
+before it.** A connection opened before a wait is a connection whose idle time
+is the wait, which is exactly the thing being waited for. `wait_for_sweep` takes
+a callable and opens one per poll; `staged` opens its own afterwards.
+
+And the guard is a test that reads `main`'s source and asserts the ordering --
+`jobs_db.connect()` appears nowhere before `wait_for_sweep(`, and does appear
+after -- because the fault is invisible in every unit test. Nothing in a suite
+is idle for half an hour, so a held connection passes everywhere except
+production. Verified by mutation: reinstating the pre-wait connect fails it.
+
+#### A count is not the thing it counts, 2026-09-08
+
+`sweep_runs.unchanged` carried how many boards answered 304, which is the whole
+fact for the coverage ratchet it was designed for. The canary asks *which*
+board, `cloud_sweep.staged` rebuilt the envelope from the count alone, and an
+empty slug list is indistinguishable from "nothing was unchanged" -- so a warm
+sweep reported its two strictest sources dead every time it ran. Migration 0022
+carries the slugs.
+
+
 ### "Could not look" is never "is not there", 2026-09-03
 
 **A check that cannot read its subject must say so in its own vocabulary. It
