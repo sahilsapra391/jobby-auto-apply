@@ -57,11 +57,28 @@ from pathlib import Path
 # The plists are the definition of production: they name the checkout the
 # services actually execute, by absolute path. Reading the repo this script
 # happens to sit in would inspect a worktree and call it production.
-SERVICES = {
-    "ai.jobby.watch": "watch",
-    "ai.jobby.documents": "document_worker",
-    "ai.jobby.providers": "provider_login",
-}
+#: The services that must exist. **A floor, not a map**: what each one *runs* is
+#: read off its own plist by `entry_for`, never restated here.
+#:
+#: It was a map, and the map was wrong about a third of the fleet.
+#: `ai.jobby.providers` executes `watch.py --provider-controls`, and this file
+#: said `provider_login`. Measured 2026-09-08: the closure it checked was 6
+#: modules and the closure that service actually holds resident is 40, so **34
+#: modules were never compared against its start time** -- `watch` itself,
+#: `cloud_sweep`, `dual_write`, `class_b`, `jobs_store`, `store`, `ingest`. A
+#: deploy touching any of them, with that service left unrestarted, verified
+#: clean while the service went on running the old code from memory. That is
+#: exactly the two-commits-at-once state this script exists to refuse.
+#:
+#: Same shape as `parity_clock.GATE_PATHS`, which named the caller rather than
+#: the code that writes, and was defended by a test asserting the list. A list
+#: of names beside the thing it describes is a second implementation, and the
+#: second one is the one that goes stale.
+SERVICES = (
+    "ai.jobby.watch",
+    "ai.jobby.documents",
+    "ai.jobby.providers",
+)
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 
@@ -80,6 +97,23 @@ def plist_for(label):
         return plistlib.loads(path.read_bytes())
     except Exception:                                   # noqa: BLE001
         return None
+
+
+def entry_for(label):
+    """The `scripts/` module a service actually executes, off its own plist.
+
+    Returns `None` when the plist is missing or names no script, which is
+    "could not look" and is never an empty closure: a service whose entry
+    cannot be read is unverified, and the caller says so rather than reporting
+    zero stale modules.
+    """
+    data = plist_for(label)
+    if not data:
+        return None
+    for arg in data.get("ProgramArguments") or []:
+        if arg.endswith(".py") and "/scripts/" in arg:
+            return Path(arg).stem
+    return None
 
 
 def production_repo():
@@ -250,11 +284,20 @@ def main(argv=None):
     # 2 and 3. the services, and what each one is holding
     report["services"] = {}
     earliest_start = None
-    for label, entry in SERVICES.items():
+    for label in SERVICES:
+        entry = entry_for(label)
         pid = pid_of(label)
         began = started_at(pid)
         row = {"pid": pid, "startedAt": _stamp(began), "entry": entry}
-        if pid is None:
+        if entry is None:
+            # Not an empty closure. A plist that cannot be read is a service
+            # whose freshness is unknown, and reporting it fresh is the failure
+            # this whole script exists to prevent.
+            failures.append(
+                "%s: its plist names no script under scripts/, so there is "
+                "nothing to compare against its start time; treat as "
+                "unverified rather than fresh" % label)
+        elif pid is None:
             failures.append("%s is not running" % label)
         elif began is None:
             failures.append("%s: start time unreadable, which is not the same "
