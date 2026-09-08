@@ -991,3 +991,151 @@ extractor that reads a description for a degree requirement, an employment
 type and a role category. It belongs here rather than with the board, and
 building the pickers before it exists would ship three controls that can only
 ever match nothing.
+
+## 13. The container's first sweeps, and three wrong diagnoses, 2026-09-08
+
+### 13a. A warm canary answers 304, and the count could not say which board
+
+The first warm cloud sweep reported `canary_silent` for spacex and snowflake --
+greenhouse's and ashby's canary boards, the two sources held to the strict
+standard. The wording is "was fetched and returned no postings", which is what a
+moved tenant or a broken parse looks like. Both had in fact answered 304, which
+is the healthiest thing a board can do.
+
+`canary_problem`'s first guard is exactly for this: a board named in
+`unchangedSlugs` is excused. It could never fire, because the list never
+crossed the seam. `sweep_runs` carries `unchanged` as an int, and 0020's own
+comment says why: "the device's coverage ratchet needs to tell those apart",
+where a count is the whole fact. The canary asks a different question of the
+same event -- was *this* board among them -- and `cloud_sweep.staged` rebuilt
+the envelope from the count alone, so `base.ok` defaulted the list to empty.
+
+**Empty is indistinguishable from "nothing was unchanged".** That is the
+synthetic-record shape already in CLAUDE.md, one table over: a stand-in built
+to satisfy one predicate answers every other predicate with a default. Here the
+default was `()` and the real value was "these 96 boards".
+
+The cost is not one wrong line. A warm sweep is the normal case, so the alarm
+fired on its two most important sources **every time it ran**, which is how an
+alarm stops being read. Migration 0022 carries the slugs; `base.board_slugs` is
+the one normaliser all three sites use.
+
+**The corpus said this thirteen days before it shipped.**
+`docs/handoffs/claude-discovery-2026-08-23.md` records "Ashby and Lever
+contacted 135 and 70 boards respectively but returned no changed payloads on
+that conditional run", and the next paragraph is a warning in general form: "Do
+not interpret `kept: 0` as connector failure... A healthy unchanged board can
+produce zero new records." A check that reads zero postings as a broken board
+is that mistake with a badge on. Nobody connected the two, and nothing would
+have made them: the handoff is about reading a report and the canary is about
+writing one.
+
+### 13b. Three wrong diagnoses of a slow container, and what the log said
+
+The first cold sweep took ashby alone about twenty-four minutes. Three
+explanations were advanced and each was refuted by measurement rather than
+argument: parse-bound, shared-vCPU, datacentre throttling. What actually
+settled it was `free -m` over `flyctl ssh console` and a missing validator
+cache -- the container had no `source-cache.json`, so every board was a cold
+200 where the laptop's every board was a 304.
+
+**A cold sweep and a warm sweep are different workloads, and comparing one
+machine's cold run against another machine's warm run measures the cache.**
+Warm, the container runs at 1.0s a board, which is `MIN_INTERVAL_PER_HOST`
+exactly: the sweep is sleeping, not working.
+
+`load_validators` now seeds the container from `http_validators` before the
+Fetcher is built, and `seed_validators.py` put the laptop's 814 entries there
+so the first cloud run was warm.
+
+### 13c. Greenhouse's per-board cost is not its payload
+
+17.5 seconds a board for greenhouse against 3.7 for ashby reads like payload,
+and greenhouse's own connector docstring invites that reading: `content=true`
+is "fourteen times the traffic". Measured against the live APIs on 2026-09-08,
+five boards each:
+
+    greenhouse   mean 3.9 MB/board, network 1.27s, json.loads 0.014s
+    ashby        mean 4.5 MB/board, network 0.63s, json.loads 0.013s
+
+Ashby's payloads are **larger** per job (8,711 mean body chars on its big board
+against greenhouse's 8,033) and its per-job fingerprint cost is the same, 3.5ms
+against 3.6ms. Payload is refuted, and so is parse: the whole 870-job
+databricks board fingerprints in 3.1 seconds on the laptop.
+
+What the container log shows instead is that **every 200 is followed by a stall,
+and the stalls grow**: 40s, 52s, then 151s, between requests that are otherwise
+1.0s apart. The same work costs 3.1s here and about 151s there, on a
+shared-1x-vCPU machine with 2048 MB and no swap. The interrupt that ended that
+run landed inside `identity.simhash`'s bit loop, which is where a memory-starved
+CPython would be.
+
+So the honest statement is: not payload, not the algorithm, and not the source
+-- the container's own environment on a full-body 200. It matters little in
+steady state, because a warm sweep has almost no 200s, and it is the thing to
+measure if a cold sweep is ever needed again. **Do not size the machine on it
+without measuring first**; three diagnoses have already been wrong here.
+
+### 13d. The sweep is single-threaded, so vCPU count is irrelevant
+
+`sweep_worker.sweep` runs channels in a loop and each connector walks its boards
+in a loop. There is no thread pool, no `asyncio`, no `multiprocessing`. Adding
+vCPUs cannot move a wall clock that one Python thread owns, and the earlier
+instinct to "size it from 15.9 postings/sec on the Mac" was sizing the wrong
+axis.
+
+The axis that is real is memory, per 13c. The axis that dominates a warm sweep
+is neither: 795 boards at a 1.0s per-host floor is 13 minutes of deliberate
+sleeping, and the only way to move that is more hosts in parallel, which is a
+design change and a courtesy question, not a machine size.
+
+
+### 13e. The measured warm sweep, 2026-09-08
+
+The first device-triggered warm sweep to run end to end, and the numbers it
+settles.
+
+    fetch          06:04:09 -> 06:33:37   29.5 minutes, in the container
+    27 channels    24 complete, 2 failed, 1 skipped
+    staged         12,632 postings
+    POOL LOCK      30.8 seconds
+    merge          found 12,632, kept 357, closed 1
+
+**30.8 seconds against a local sweep's median 26.8 minutes.** Measured twice
+by instruments that share no code: `cloud_sweep` times the span inside
+`runlock.held` and reports `lockSeconds`, and a separate process polled
+`~/.job-application/locks/scan.lock` at 10 Hz and recorded a `cloud-merge`
+span from 02:36:59 to 02:37:30. Both say 30.8.
+
+**The cloud fetch is slower than the laptop, and that was never the argument.**
+29.5 minutes against 26.8. It could not have been faster: 795 boards at a 1.0s
+per-host floor is 13 minutes of deliberate sleeping before any work happens, and
+the container is a shared 1x vCPU. `WAIT_SECONDS` moved from 12 minutes to 45
+on this measurement, and its docstring now says it bounds a *hung* container
+rather than a slow one.
+
+**The device's own connection died the same way the container's had.**
+`cloud_sweep.main` opened one Postgres connection, called `start_machine`,
+waited 29.5 minutes on it, and then used it: Neon had closed it, and the run
+reported `consuming input failed: SSL connection has been closed unexpectedly`
+**after** the container had finished writing all 27 channels. A completed fetch
+reported as a failed run.
+
+This is `sweep_worker.stage`'s fault, in the file next door, three days later.
+CLAUDE.md already carries the general form from `read_pool` and `load_jobs`: a
+rule stated in one function's docstring is not a rule the codebase holds, and
+the closer the neighbour the less likely anybody checks. Both readers of the
+same seam had the same connection lifetime available to them, and only one had
+been fixed. `wait_for_sweep` takes a `connect` callable now and opens one per
+poll, which is exactly what `stage` was changed to do.
+
+**The problems line, which is the point of the health work.** Three entries,
+each naming what it is and what it would take:
+
+    jooble      failed: jooble any '': HTTP 400
+    oracle_orc  failed: every board failed (2)
+    lever       returned 8% of its usual 32 for 2 sweeps running
+
+No canary entries, which is the 13a fix landing. Nothing that a reader cannot
+act on.
+

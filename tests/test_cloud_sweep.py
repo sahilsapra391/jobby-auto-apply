@@ -80,13 +80,15 @@ class WaitTests(unittest.TestCase):
     def test_it_returns_the_sweep_once_every_channel_has_finished(self):
         conn = Conn({"from sweep_runs": [("abc-123", 27, 27)]})
         self.assertEqual(
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc)),
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc)),
             "abc-123")
 
     def test_a_partly_finished_sweep_keeps_waiting_then_gives_up(self):
         conn = Conn({"from sweep_runs": [("abc-123", 27, 12)]})
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
-            cloud_sweep.wait_for_sweep(conn, "acct",
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct",
                                        datetime.now(timezone.utc),
                                        seconds=0, sleep=lambda _s: None)
         self.assertIn("12 of 27 channels finished", str(caught.exception))
@@ -94,7 +96,8 @@ class WaitTests(unittest.TestCase):
     def test_no_sweep_at_all_says_so_rather_than_hanging(self):
         conn = Conn({})
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
-            cloud_sweep.wait_for_sweep(conn, "acct",
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct",
                                        datetime.now(timezone.utc),
                                        seconds=0, sleep=lambda _s: None)
         self.assertIn("without writing a sweep", str(caught.exception))
@@ -114,7 +117,8 @@ class WaitTests(unittest.TestCase):
         running = lambda *a, **k: mock.Mock(
             returncode=0, stdout='[{"id": "m1", "state": "started"}]')
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc),
                                        app="jobby-sourcing", machine="m1",
                                        seconds=0, sleep=lambda _s: None,
                                        run=running)
@@ -127,7 +131,8 @@ class WaitTests(unittest.TestCase):
         stopped = lambda *a, **k: mock.Mock(
             returncode=0, stdout='[{"id": "m", "state": "stopped"}]')
         self.assertEqual(
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc),
                                        app="a", machine="m", seconds=5,
                                        sleep=lambda _s: None, run=stopped),
             "whole")
@@ -139,7 +144,8 @@ class WaitTests(unittest.TestCase):
         conn = Conn({"from sweep_runs": [("partial", 1, 1)]})
         broken = lambda *a, **k: mock.Mock(returncode=1, stdout="")
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc),
                                        app="a", machine="m", seconds=0,
                                        sleep=lambda _s: None, run=broken)
         self.assertIn("still running", str(caught.exception))
@@ -151,7 +157,8 @@ class WaitTests(unittest.TestCase):
         running = lambda *a, **k: mock.Mock(
             returncode=0, stdout='[{"id": "839522f7722458", "state": "started"}]')
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable) as caught:
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc),
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc),
                                        app="jobby-sourcing",
                                        machine="839522f7722458",
                                        seconds=0, sleep=lambda _s: None,
@@ -291,6 +298,79 @@ class StagedTests(unittest.TestCase):
             [])
 
 
+class ConnectionLifetimeTests(unittest.TestCase):
+    """Nothing holds a Postgres connection across the wait.
+
+    **The same fault as `sweep_worker.stage`, one file away, found the same
+    way.** The measured warm sweep fetched for 29.5 minutes; Neon closes an
+    idle connection long before that, so a connection opened before
+    `start_machine` and used again after `wait_for_sweep` is dead by the time
+    the fetch lands. The device died with `consuming input failed: SSL
+    connection has been closed unexpectedly` **after** the container had
+    written all 27 channels -- a completed fetch reported as a failed run.
+
+    A rule stated in one function's docstring is not a rule the codebase
+    holds, and the closer the neighbour the less likely anybody checks.
+    """
+
+    def test_wait_for_sweep_takes_a_callable_and_opens_one_per_poll(self):
+        opened, closed = [], []
+
+        class C(Conn):
+            def __init__(self, n):
+                super().__init__({"from sweep_runs": [("s1", 27, 27)]})
+                self.n = n
+            def close(self): closed.append(self.n)
+
+        def connect():
+            opened.append(len(opened))
+            return C(len(opened) - 1)
+
+        out = cloud_sweep.wait_for_sweep(
+            connect, "acct", datetime(1970, 1, 1, tzinfo=timezone.utc),
+            app=None, machine=None, seconds=0, sleep=lambda _s: None)
+        self.assertEqual(out, "s1")
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(closed, [0], "the poll's connection was left open")
+
+    def test_a_second_poll_does_not_reuse_the_first_connection(self):
+        # Two polls, two connections. Reusing one is the whole defect: it is
+        # the connection that has been idle the longest that gets used last.
+        made = []
+        answers = [[("s1", 27, 3)], [("s1", 27, 27)]]
+
+        class C(Conn):
+            def __init__(self, rows):
+                super().__init__({"from sweep_runs": rows})
+                self.closed = False
+            def close(self): self.closed = True
+
+        def connect():
+            c = C(answers[min(len(made), len(answers) - 1)])
+            made.append(c)
+            return c
+
+        out = cloud_sweep.wait_for_sweep(
+            connect, "acct", datetime(1970, 1, 1, tzinfo=timezone.utc),
+            app=None, machine=None, seconds=30,
+            sleep=lambda _s: None, poll=0)
+        self.assertEqual(out, "s1")
+        self.assertEqual(len(made), 2)
+        self.assertTrue(all(c.closed for c in made))
+
+    def test_main_never_holds_one_across_the_wait(self):
+        import inspect
+        source = inspect.getsource(cloud_sweep.main)
+        before, _, after = source.partition("wait_for_sweep(")
+        self.assertNotIn("jobs_db.connect()", before,
+                         "a connection was opened before the wait, which is "
+                         "the connection Neon closes")
+        self.assertIn("jobs_db.connect,", source,
+                      "wait_for_sweep must be handed the callable")
+        # `staged` gets its own, after the wait, and closes it.
+        self.assertIn("jobs_db.connect()", after)
+
+
 class LockShapeTests(unittest.TestCase):
     """When the pool lock is taken, and when it is not."""
 
@@ -306,7 +386,8 @@ class LockShapeTests(unittest.TestCase):
             cloud_sweep.start_machine(
                 "app", "m1", run=lambda *a, **k: mock.Mock(returncode=0))
             conn = Conn({"from sweep_runs": [("s1", 3, 3)]})
-            cloud_sweep.wait_for_sweep(conn, "acct", datetime.now(timezone.utc))
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct", datetime.now(timezone.utc))
         self.assertEqual(taken, [],
                          "the fetch or the wait took a lock, which is the "
                          "26.8 minutes this change exists to stop")
@@ -551,7 +632,8 @@ class MergeOnlyTests(unittest.TestCase):
         # asks only whether every channel finished.
         conn = Conn({"from sweep_runs": [("landed", 27, 27)]})
         self.assertEqual(
-            cloud_sweep.wait_for_sweep(conn, "acct",
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct",
                                        datetime(1970, 1, 1, tzinfo=timezone.utc),
                                        app=None, machine=None, seconds=0,
                                        sleep=lambda _s: None),
@@ -561,7 +643,8 @@ class MergeOnlyTests(unittest.TestCase):
         # The 1-of-27 guard is not waived by the mode.
         conn = Conn({"from sweep_runs": [("partial", 27, 3)]})
         with self.assertRaises(cloud_sweep.CloudSweepUnavailable):
-            cloud_sweep.wait_for_sweep(conn, "acct",
+            cloud_sweep.wait_for_sweep(
+            lambda: conn, "acct",
                                        datetime(1970, 1, 1, tzinfo=timezone.utc),
                                        app=None, machine=None, seconds=0,
                                        sleep=lambda _s: None)

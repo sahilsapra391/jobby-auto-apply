@@ -57,12 +57,28 @@ MACHINE_VAR = "JOBBY_FLY_MACHINE"
 
 #: How long to wait for the container before giving up and falling back.
 #:
-#: The measured sweep was 25.8 seconds for all 27 channels against a four-tenant
-#: registry, and the local equivalent against the full 895-board registry runs a
-#: median 26.8 minutes. Twelve minutes is comfortably above the first and well
-#: below the second, and a cloud fetch that is slower than the laptop has lost
-#: its only argument.
-WAIT_SECONDS = 12 * 60
+#: **Derived from a measured warm sweep, and the earlier reasoning was wrong
+#: about what this bounds.** Twelve minutes came from a 25.8-second run against
+#: a four-tenant registry and the argument that "a cloud fetch slower than the
+#: laptop has lost its only argument". The first full warm sweep against the
+#: real 795-board registry, on 2026-09-08, took **29.5 minutes** (06:04:09 to
+#: 06:33:37, 27 channels, 12,632 postings), against the device's own median of
+#: 26.8. The cloud fetch is not faster and was never going to be: 795 boards at
+#: `MIN_INTERVAL_PER_HOST` is 13 minutes of deliberate sleeping before any work,
+#: and the container is a shared 1x vCPU where the laptop is not.
+#:
+#: Speed was the wrong argument. What moved is the **pool lock**, measured on
+#: the same sweep at 30.8 seconds by two independent instruments, against a
+#: local sweep holding it for the whole 26.8 minutes. The device is not waiting
+#: on anything during the fetch, so its wall clock costs nothing.
+#:
+#: So this bounds a *hung* container, not a slow one. Forty-five minutes is
+#: about 1.5x the measured warm sweep -- headroom for a colder one, since 77 of
+#: greenhouse's 353 boards still answered 200 on that run -- and comfortably
+#: inside `tier1IntervalMinutes`, which defaults to 4 hours. Overrunning it
+#: falls back to a local sweep, which costs the 26.8 minutes of lock this
+#: exists to avoid, so erring long is the cheap direction.
+WAIT_SECONDS = 45 * 60
 POLL_SECONDS = 10
 
 
@@ -151,10 +167,20 @@ def machine_state(app, machine, run=None):
     return "destroyed"
 
 
-def wait_for_sweep(conn, account, since, app=None, machine=None,
+def wait_for_sweep(connect, account, since, app=None, machine=None,
                    seconds=WAIT_SECONDS, poll=POLL_SECONDS, sleep=time.sleep,
                    run=None):
     """The newest sweep id, once the container has actually stopped.
+
+    **`connect` is a callable, and a connection per poll.** This is the same
+    fault `sweep_worker.stage` was fixed for and it was left open one file
+    away: the wait is the longest-lived thing in the process, 29.5 minutes on
+    the measured warm sweep, and Neon closes an idle connection long before
+    that. Held across the wait, the device died with `consuming input failed:
+    SSL connection has been closed unexpectedly` **after** the container had
+    finished writing all 27 channels -- a completed fetch reported as a failed
+    run. A rule stated in one function's docstring is not a rule the codebase
+    holds, and the closer the neighbour the less likely anybody checks.
 
     **"Every row has a `finished_at`" is trivially true when one row exists.**
     `sweep_worker.stage` commits per channel, so a sweep two seconds old with
@@ -185,14 +211,20 @@ def wait_for_sweep(conn, account, since, app=None, machine=None,
 
         row = None
         if stopped:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "select sweep_id, count(*), count(finished_at) "
-                    "from sweep_runs where account_id = %s and started_at >= %s "
-                    "group by sweep_id order by min(started_at) desc limit 1",
-                    (account, since))
-                row = cur.fetchone()
-            conn.rollback()
+            conn = connect()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select sweep_id, count(*), count(finished_at) "
+                        "from sweep_runs where account_id = %s "
+                        "and started_at >= %s "
+                        "group by sweep_id order by min(started_at) desc "
+                        "limit 1",
+                        (account, since))
+                    row = cur.fetchone()
+                conn.rollback()
+            finally:
+                conn.close()
             if row and row[1] and row[1] == row[2]:
                 return str(row[0])
 
@@ -366,34 +398,42 @@ def main(argv=None):
             raise CloudSweepUnavailable(
                 "no JOBBY_ACCOUNT_ID, and every staged row is account-scoped")
         import jobs_db
+        # **No connection is held across the wait.** `wait_for_sweep` opens one
+        # per poll and `staged` opens its own, because the wait is 29.5 minutes
+        # on a measured warm sweep and Neon closes an idle connection long
+        # before that. Held, the device lost a completed 27-channel fetch to
+        # `consuming input failed: SSL connection has been closed unexpectedly`
+        # -- the same fault `sweep_worker.stage` was fixed for, left open one
+        # file away.
+        if args.merge_only:
+            # **A fetch that already landed needs no machine, and starting one
+            # is not harmless.** `main` always started the machine, so an
+            # attempt to merge staged work kicked off a *second* sweep and then
+            # waited for it -- which is how a finished 27-channel sweep sat in
+            # `sweep_postings` while the device waited out a deadline on a run
+            # it had just caused. The staged sweep is the subject; the machine
+            # is not involved.
+            asked = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            report["mergeOnly"] = True
+            sweep_id = wait_for_sweep(jobs_db.connect, account, asked,
+                                      app=None, machine=None, seconds=0,
+                                      sleep=lambda _s: None)
+        else:
+            asked = start_machine(app, machine)
+            report["fetchStartedAt"] = asked.strftime("%Y-%m-%dT%H:%M:%SZ")
+            sweep_id = wait_for_sweep(jobs_db.connect, account, asked,
+                                      app=app, machine=machine,
+                                      seconds=args.wait)
+        report["sweepId"] = sweep_id
+        report["fetchSeconds"] = round(time.time() - started, 1)
         conn = jobs_db.connect()
         try:
-            if args.merge_only:
-                # **A fetch that already landed needs no machine, and starting
-                # one is not harmless.** `main` always started the machine, so
-                # an attempt to merge staged work kicked off a *second* sweep
-                # and then waited for it -- which is how a finished 27-channel
-                # sweep sat in `sweep_postings` while the device waited out a
-                # deadline on a run it had just caused. The staged sweep is the
-                # subject; the machine is not involved.
-                asked = datetime(1970, 1, 1, tzinfo=timezone.utc)
-                report["mergeOnly"] = True
-                sweep_id = wait_for_sweep(conn, account, asked, app=None,
-                                          machine=None, seconds=0,
-                                          sleep=lambda _s: None)
-            else:
-                asked = start_machine(app, machine)
-                report["fetchStartedAt"] = asked.strftime("%Y-%m-%dT%H:%M:%SZ")
-                sweep_id = wait_for_sweep(conn, account, asked, app=app,
-                                          machine=machine, seconds=args.wait)
-            report["sweepId"] = sweep_id
-            report["fetchSeconds"] = round(time.time() - started, 1)
             results = staged(conn, account, sweep_id)
-            report["channels"] = {k: v["status"] for k, v in results.items()}
-            report["staged"] = sum(len(v.get("postings") or [])
-                                   for v in results.values())
         finally:
             conn.close()
+        report["channels"] = {k: v["status"] for k, v in results.items()}
+        report["staged"] = sum(len(v.get("postings") or [])
+                               for v in results.values())
     except CloudSweepUnavailable as exc:
         report["fellBack"] = str(exc)
         print(json.dumps(report, indent=2, sort_keys=True))
