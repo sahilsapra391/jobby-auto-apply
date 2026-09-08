@@ -29,7 +29,12 @@ DOC = REPO / "docs" / "write-paths.md"
 # The functions that put bytes in the store, however they are reached.
 PRIMITIVES = {"write_private", "save_jobs", "save_passed", "save_companies",
               "edit", "mark_passed", "mark_watched", "remember_role",
-              "_persist_pool"}
+              "_persist_pool",
+              # The mirror half of `write_private`, for a writer with its own
+              # atomic write. `providers._write_locked` fsyncs the parent
+              # directory after the rename and so cannot use `write_private`;
+              # for two weeks that meant it mirrored nothing at all.
+              "after_private_write"}
 
 # The modules a primitive can legitimately be called on. A `foo.edit(...)` on
 # some unrelated object is not a store write.

@@ -1285,6 +1285,34 @@ class ProviderRegistry:
                 os.unlink(temporary)
             except FileNotFoundError:
                 pass
+        # **Hand this write to the class B mirror.** Called directly rather
+        # than through a helper: `docs/write-paths.md` names the primitive a
+        # row calls and `tests/test_write_paths.py` checks that call site
+        # exists, so a helper one level down would make the inventory name
+        # something this function does not call.
+        #
+        # This writer is not `store.write_private` and never was. The mirror
+        # hook lives in `write_private`, whose docstring claimed to be "the
+        # only function that puts bytes in the store"; this method predates
+        # `class_b.py` by six days and keeps its own atomic write because it
+        # fsyncs the parent directory after the rename, which `write_private`
+        # does not. So `providers.json` was declared class B in prose, was
+        # absent from the class B table `write_path_coverage` derives from, and
+        # was never mirrored once: 2,771 lines of `dual-write.log` and not one
+        # mentions a provider, because nothing ever tried.
+        #
+        # Never raises. The file is on disk and the caller has already
+        # succeeded, exactly as `write_private`'s own contract says, and a
+        # mirror that could fail a Connect is worse than the drift it prevents.
+        try:
+            import store
+            store.after_private_write(self.state_file, dict(state))
+        except Exception as exc:                          # noqa: BLE001
+            # Loud, because a silent mirror is the fault being fixed. One line,
+            # because this can run on every Connect.
+            sys.stderr.write(
+                f"providers: the class B mirror refused this write: "
+                f"{type(exc).__name__}: {exc}\n")
 
     def _safe_probe(self, provider_id: str) -> ProbeResult:
         try:
