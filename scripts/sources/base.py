@@ -272,6 +272,31 @@ class Fetcher:
         return last
 
     def get_json(self, url, headers=None, conditional=True):
+        """One JSON request, with a progress line when asked for one.
+
+        **Ninety minutes that look identical whether the sweep is working or
+        stuck.** The container printed one line per channel, and greenhouse's
+        309 boards sat inside one channel; from outside there was no way to
+        tell a cold fetch from a hang. This is the one place every connector's
+        requests pass through, so it is the one place a per-board line can
+        cover all twenty-seven without touching any of them.
+
+        Opt-in through `JOBBY_FETCH_PROGRESS`, because on the laptop this is
+        the ingest log and 795 lines a sweep is noise there; in the container
+        it is the only window in.
+        """
+        started = time.monotonic()
+        data, response = self._get_json_inner(url, headers, conditional)
+        if os.environ.get("JOBBY_FETCH_PROGRESS"):
+            host = urllib.parse.urlparse(url).netloc
+            status = getattr(response, "status", None)
+            what = ("304" if getattr(response, "unchanged", False)
+                    else str(status) if status is not None else "err")
+            print(f"  fetch {host} {what} {time.monotonic() - started:.1f}s "
+                  f"#{self.requests}", flush=True)
+        return data, response
+
+    def _get_json_inner(self, url, headers=None, conditional=True):
         """(data, response). `data` is None on anything but a parseable 200."""
         response = self.get(url, headers=headers, conditional=conditional)
         if not response.ok:

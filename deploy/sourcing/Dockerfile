@@ -32,7 +32,8 @@ COPY docs/write-paths.md /app/docs/write-paths.md
 # (`base.Fetcher` treats a damaged cache as empty, deliberately).
 ENV JOB_APPLICATION_DIR=/var/lib/jobby \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    JOBBY_FETCH_PROGRESS=1
 RUN mkdir -p /var/lib/jobby && chmod 700 /var/lib/jobby
 
 # Non-root: this process makes outbound HTTP to two dozen third parties and

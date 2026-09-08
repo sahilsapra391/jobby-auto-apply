@@ -53,6 +53,7 @@ import browser  # noqa: E402
 import deploy_lock  # noqa: E402
 import document_job  # noqa: E402
 import browser_identity
+import cloud_sweep
 import corpus_check
 import source_health
 import provider_login  # noqa: E402
@@ -528,7 +529,16 @@ APPLY_SLOTS = len(APPLY_LOCKS)
 # silently: the tick evaluated the branch, found the lock held, spawned nothing,
 # and logged nothing. Pressing Apply during a sweep did nothing at all and then
 # worked again, with no way to tell those apart from the outside.
-INGEST_LOCK_NOTES = frozenset(("tier1-ingest", "ingest"))
+INGEST_LOCK_NOTES = frozenset(("tier1-ingest", "ingest", "cloud-merge"))
+
+#: The lock a cloud sweep holds while it waits on a container.
+#:
+#: **Deliberately not `scan`.** `scan` is the pool's write lock and holding it
+#: for the length of a fetch is the thing moving the fetch was meant to end. A
+#: cloud sweep holds this for its whole life so two cannot overlap, and takes
+#: `scan` only for the merge -- which is why `scan_blocking_apply` must not
+#: learn about this name.
+CLOUD_SWEEP_LOCK = "cloud-sweep"
 
 
 def scan_blocking_apply():
@@ -2946,13 +2956,34 @@ def tick(force_publish=False):
     # It needs no LLM and no browser, so it costs minutes of HTTP rather than
     # tokens — but it is still spawned detached, because eighty company boards
     # at a second apiece is not something a three-second tick can hold.
-    if not lock_holder("scan"):
+    if not lock_holder("scan") and not lock_holder(CLOUD_SWEEP_LOCK):
         due, _ = tier1_due()
         if due:
             nxt = schedule_next_tier1()
-            pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "ingest.py"),
-                                 "--tier", "1"], "ingest-runs.log", note="tier1-ingest")
-            changed["tier1ScanStarted"] = {"pid": pid, "nextAt": nxt}
+            # **The cloud path holds a different lock, and that is the point.**
+            # `spawn` locks for the child's whole life, and a local sweep runs
+            # a median 26.8 minutes holding `scan` -- which is the pool's write
+            # lock, taken by eight non-sweep callers, two of them on the apply
+            # path. A cloud sweep spends nearly all of that waiting on a
+            # container, so it holds `cloud-sweep` throughout (which stops two
+            # overlapping sweeps and blocks nothing, because
+            # `scan_blocking_apply` reads `scan`) and takes `scan` only around
+            # the merge.
+            #
+            # Both branches are checked above, so a local sweep and a cloud one
+            # cannot start on top of each other.
+            app, machine = cloud_sweep.configured()
+            if app:
+                pid = spawn(CLOUD_SWEEP_LOCK,
+                            [sys.executable, str(REPO / "scripts" / "cloud_sweep.py")],
+                            "ingest-runs.log", note="cloud-sweep")
+                changed["tier1ScanStarted"] = {"pid": pid, "nextAt": nxt,
+                                               "where": "cloud", "machine": machine}
+            else:
+                pid = spawn("scan", [sys.executable, str(REPO / "scripts" / "ingest.py"),
+                                     "--tier", "1"], "ingest-runs.log", note="tier1-ingest")
+                changed["tier1ScanStarted"] = {"pid": pid, "nextAt": nxt,
+                                               "where": "device"}
 
     # The device claims an Apply click only after the local document worker
     # returned all four verified files and the saved provider passed auth.

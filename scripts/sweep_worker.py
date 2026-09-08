@@ -108,6 +108,78 @@ def load_search(conn, account):
     return value if isinstance(value, dict) else json.loads(value)
 
 
+#: How many validators to keep, matching `base.Fetcher`'s own trim. A cache
+#: that grows without bound is a table nobody prunes.
+VALIDATOR_CAP = 5000
+
+
+def load_validators(conn, account, root):
+    """Write the stored validators into the file `base.Fetcher` reads.
+
+    **The file is the interface, deliberately.** `Fetcher` loads
+    `<root>/source-cache.json` in its constructor and writes it in
+    `save_validators`, and teaching it about Postgres would put a database
+    dependency inside every connector's fetch path -- including on the device,
+    where the file is correct and the database is not always reachable. Writing
+    the file before the Fetcher exists costs one round trip and changes
+    nothing else.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "select url, etag, last_modified, seen_at from http_validators "
+            "where account_id = %s order by seen_at desc limit %s",
+            (account, VALIDATOR_CAP))
+        rows = cur.fetchall()
+    conn.rollback()
+    cache = {url: {"at": at.strftime("%Y-%m-%dT%H:%M:%SZ") if at else None,
+                   "etag": etag, "lastModified": modified}
+             for url, etag, modified, at in rows}
+    path = Path(root) / "source-cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cache), encoding="utf-8")
+    return len(cache)
+
+
+def save_validators(connect, account, root, batch=500):
+    """Upsert what this sweep learned, and prune to the cap.
+
+    Its own connection, on the rule the staging write already follows: this
+    runs after the whole fetch, and a connection held since before it is a
+    connection Neon closed twenty minutes ago.
+    """
+    path = Path(root) / "source-cache.json"
+    try:
+        cache = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # A damaged cache is a slow next run, never a wrong one -- the same
+        # judgement `base.Fetcher` makes about reading it.
+        return 0
+    rows = [(account, url, (v or {}).get("etag"), (v or {}).get("lastModified"))
+            for url, v in cache.items() if isinstance(v, dict)]
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            for start in range(0, len(rows), batch):
+                cur.executemany(
+                    "insert into http_validators "
+                    "(account_id, url, etag, last_modified, seen_at) "
+                    "values (%s, %s, %s, %s, now()) "
+                    "on conflict (account_id, url) do update set "
+                    "etag = excluded.etag, "
+                    "last_modified = excluded.last_modified, "
+                    "seen_at = excluded.seen_at",
+                    rows[start:start + batch])
+            cur.execute(
+                "delete from http_validators where account_id = %s and url not in ("
+                "  select url from http_validators where account_id = %s "
+                "  order by seen_at desc limit %s)",
+                (account, account, VALIDATOR_CAP))
+        conn.commit()
+    finally:
+        conn.close()
+    return len(rows)
+
+
 def run_channel(name, connector, fetcher, config, registry, countries, limit):
     """One channel, with its exception turned into a failure rather than a stop.
 
@@ -124,9 +196,23 @@ def run_channel(name, connector, fetcher, config, registry, countries, limit):
         return base.failed(name, f"{type(exc).__name__}: {exc}"[:200])
 
 
-def stage(conn, account, sweep, name, result, batch=500):
-    """Write one channel's postings, then its run row. In that order."""
+def stage(connect, account, sweep, name, result, batch=500):
+    """Write one channel's postings, then its run row. In that order.
+
+    **A connection per stage, not one for the run.** The first real full sweep
+    opened a connection at the start and held it while the fetch worked:
+    adzuna staged four seconds in, ashby then took about twenty-four minutes,
+    and the stage after it died with `consuming input failed: SSL connection
+    has been closed unexpectedly`. Neon closes an idle connection long before a
+    795-board sweep is done, so one connection for the run is a connection that
+    is dead for every channel after the first slow one.
+
+    `connect` is a callable rather than a connection for that reason. It is
+    also why this takes the whole result and returns nothing: the caller must
+    not be holding anything across a fetch.
+    """
     postings = result.get("postings") or []
+    conn = connect()
     with conn.cursor() as cur:
         for start in range(0, len(postings), batch):
             chunk = postings[start:start + batch]
@@ -152,7 +238,10 @@ def stage(conn, account, sweep, name, result, batch=500):
              _boards(result), int(result.get("unchanged") or 0),
              bool(result.get("listingComplete")),
              (result.get("reason") or "")[:500]))
-    conn.commit()
+    try:
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _status(result):
@@ -170,11 +259,22 @@ def _boards(result):
     return int(found.group(1)) if found else 0
 
 
-def sweep(conn, account, channels=None, limit=None, dry_run=False):
+def sweep(connect, account, channels=None, limit=None, dry_run=False):
+    """Fetch every channel, staging each as it finishes.
+
+    `connect` is a callable and nothing here holds a connection across a fetch.
+    The registry and the saved search are read on one connection that is then
+    closed, because reading them takes milliseconds and the fetch takes tens of
+    minutes.
+    """
     started = time.time()
     sweep_id = str(uuid.uuid4())
-    config = load_search(conn, account)
-    registry = load_registry(conn, account)
+    conn = connect()
+    try:
+        config = load_search(conn, account)
+        registry = load_registry(conn, account)
+    finally:
+        conn.close()
     countries = config.get("locations") or None
     selected = dict(sources.ALL)
     if channels:
@@ -183,9 +283,19 @@ def sweep(conn, account, channels=None, limit=None, dry_run=False):
             raise SystemExit(f"sweep_worker: unknown channel(s) {unknown}")
         selected = {c: selected[c] for c in channels}
 
-    fetcher = base.Fetcher(root=Path(os.environ.get("JOB_APPLICATION_DIR",
-                                                   "/var/lib/jobby")))
+    root = Path(os.environ.get("JOB_APPLICATION_DIR", "/var/lib/jobby"))
+    # **Before the Fetcher exists**, because it reads the file in its
+    # constructor. Without this every cloud sweep is a cold sweep: the
+    # container's root is ephemeral, so ashby fetched 6,855 postings from 193
+    # boards in 717 seconds where the laptop's cached run fetched 1,050.
+    conn = connect()
+    try:
+        seeded = load_validators(conn, account, root)
+    finally:
+        conn.close()
+    fetcher = base.Fetcher(root=root)
     report = {"sweepId": sweep_id, "at": stamp(), "boards": len(registry),
+              "validatorsSeeded": seeded,
               "channels": {}, "postings": 0, "requests": 0}
     for name, connector in sorted(selected.items()):
         result = run_channel(name, connector, fetcher, config, registry,
@@ -198,11 +308,19 @@ def sweep(conn, account, channels=None, limit=None, dry_run=False):
         }
         report["postings"] += count
         if not dry_run:
-            stage(conn, account, sweep_id, name, result)
+            stage(connect, account, sweep_id, name, result)
+        # **Progress, because a silent container is a container nobody can
+        # diagnose.** The first full run emitted nothing for twenty-four
+        # minutes and there was no way to tell a slow sweep from a hung one
+        # from outside. One line per channel, flushed.
+        print(f"{stamp()} {name}: {result.get('status')} "
+              f"{count} postings, {round(time.time() - started, 1)}s elapsed",
+              flush=True)
     report["requests"] = fetcher.requests
     report["seconds"] = round(time.time() - started, 1)
     if not dry_run:
         fetcher.save_validators()
+        report["validatorsStored"] = save_validators(connect, account, root)
     return report
 
 
@@ -216,13 +334,7 @@ def main(argv=None):
     channels = [c.strip() for c in (args.channels or "").split(",") if c.strip()]
 
     account = account_id()
-    # A dry run still connects: the registry and the saved search are what it
-    # is dry about writing, not what it reads.
-    conn = _connect()
-    try:
-        report = sweep(conn, account, channels or None, args.limit, args.dry_run)
-    finally:
-        conn.close()
+    report = sweep(_connect, account, channels or None, args.limit, args.dry_run)
     print(json.dumps(report, indent=2, sort_keys=True))
     # A sweep where every channel failed exits non-zero, so a scheduler that
     # only reads exit codes still learns something. A sweep with some failures
