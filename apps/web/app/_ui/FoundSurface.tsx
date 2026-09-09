@@ -1,5 +1,5 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
-import { AddPosting, FindSources, SaveSearch } from "./FoundActions";
+import { AddPosting, FindSources, SaveFilters } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
@@ -200,13 +200,17 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             the reader found the Filter button; the old board applies instantly
             and the count moves. `SubmitOnChange` submits the form the control
             is in, so this stays one GET form and gains no state of its own. */}
-        {/* **"Any time" is offered, because the default is 30 days.** A
+        {/* **"All time" is offered, because the default is 30 days.** A
             default the reader cannot turn off is a filter they cannot see, and
             that is worse than one they could not turn on. It is a real radio
             value rather than "clear the parameter", so it round-trips and
-            stays checked like every other choice here. */}
+            stays checked like every other choice here.
+
+            It sits after 30 days rather than before 6 hours, because the row
+            reads as a widening scale and the widest end is where the widest
+            option belongs. */}
         <div className="jb-radios">
-          {([[ANY_WINDOW, "Any time"], ...Object.entries(WINDOWS)] as [string, string][])
+          {([...Object.entries(WINDOWS), [ANY_WINDOW, "All time"]] as [string, string][])
             .map(([v, label]) => (
             <label className="jb-radio" key={v}>
               <input type="radio" name="within" value={v}
@@ -225,12 +229,22 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             <option value={v} key={v}>{label}</option>
           ))}
         </select>
-        <button className="jb-btn primary" type="submit">Filter</button>
-        {filtered ? (
-          // Clear is a link rather than a reset: reset restores the form's
-          // defaults and leaves the URL filtered, so the count would not move.
-          <a className="jb-btn" href="/?lane=found">Clear</a>
-        ) : null}
+        {/* **No Filter button.** Every control here applies on change, so a
+            button that re-applies what is already applied is a control whose
+            only job is to make the reader wonder whether the last click
+            worked. `SubmitOnChange` covers the whole filter form; the keyword
+            box submits on Enter, which is what a form does anyway.
+
+            **Reset to default is a link rather than a form reset**, because a
+            reset restores the form's defaults and leaves the URL filtered, so
+            the count would not move and the reader would be looking at the old
+            result under new controls. */}
+        {filtered
+          ? <a className="jb-btn" href="/?lane=found">Reset to default</a>
+          : <button className="jb-btn" type="button" disabled
+                    title="nothing is filtered, so there is nothing to reset">
+              Reset to default
+            </button>}
         {/* **The count says what it counted.** v2 read "50 of 18,300 jobs",
             which is a page size against a pool and invites the reading that
             18,300 were searched and 50 matched. The filters are predicates on
@@ -252,6 +266,7 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
         </span>
       </div>
       <SubmitOnChange />
+      <SaveFilters enabled={writesEnabled} />
       {/* The keyword chips the old board renders under the input. Each is a
           link that removes its own term, which is what a chip's × does. */}
       <div className="jb-pills">
@@ -425,15 +440,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
         </div>
       </details>
       </form>
-      {/* The board's own actions row, which v2 had not at all. Save search is
-          the write; Clear is a link because a reset would restore the form's
-          defaults and leave the URL filtered, so the count would not move. */}
-      <div className="jb-row jb-actions">
-        <SaveSearch enabled={writesEnabled} />
-        {filtered
-          ? <a className="jb-btn" href="/?lane=found">Clear</a>
-          : <button className="jb-btn" type="button" disabled>Clear</button>}
-      </div>
+      {/* **The actions row is gone, and both of its controls with it.**
+          Save search was a button for a thing that should never have needed
+          one: the filters you are looking at are the search, so they are saved
+          when they change rather than when you remember to press something.
+          `SaveFilters` does that. And the second Clear was the same control as
+          the one in the filter row, three hundred pixels away, so a reader
+          counting Clear buttons found two and could not tell which was which. */}
     </div>
   );
 }

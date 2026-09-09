@@ -94,12 +94,51 @@ def main():
         print(json.dumps({"error": (r.stderr or "").strip()[:150]}))
         return 2
 
-    # Refresh the board so the phase is visible while the work is still running.
+    # Refresh the board so the phase is visible while the work is still
+    # running -- **detached, because waiting on it made this tool fail.**
+    #
+    # `publish.py` reads the whole store, runs `r2_sync.sync(apply=True)` and
+    # writes KV. `watch.py` bounds it at 120 seconds and has still recorded
+    # "publish failed: gave no result within 120s and was killed" more than
+    # once. `application_mcp._set_phase` spawns this script with `timeout=90`,
+    # so a synchronous publish could not fit in the budget on a bad day and the
+    # whole call died with `TimeoutExpired`.
+    #
+    # **The phase was already saved when that happened, and the damage was
+    # downstream of that.** The agent got an error from a tool that had in fact
+    # worked, stopped calling it, and the card sat on whatever phase it had
+    # managed to write while the run carried on underneath. Observed on the
+    # Spotify run of 2026-09-09: `set_phase` to "Filling the form" reported
+    # `TimeoutExpired`, no phase was ever set again, and the board still read
+    # "Filling the form" hours after the application had parked. That pill is
+    # the only progress a person sees, so a stuck one is worse than a missing
+    # one: it says work is happening.
+    #
+    # The board still gets its refresh; nothing here waits for it. The output
+    # goes to a log rather than to `DEVNULL`, because the failure that matters
+    # explains itself once, at the moment it happens.
+    published = "skipped"
     if not args.root:
-        subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
-                       capture_output=True, text=True)
+        log = Path.home() / ".job-application" / "logs" / "publish-phase.log"
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            handle = open(log, "a")
+        except OSError:
+            handle = subprocess.DEVNULL
+        try:
+            subprocess.Popen([sys.executable, str(REPO / "scripts" / "publish.py")],
+                             stdout=handle, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+            published = "spawned"
+        except OSError as exc:
+            # Never silent. A board that will not refresh is worth one line.
+            published = f"could not spawn: {exc}"
+        finally:
+            if handle is not subprocess.DEVNULL:
+                handle.close()
     print(json.dumps({"id": args.id, "status": d["status"],
-                      "previousStatus": d.get("previousStatus"), "phase": d.get("phase")}))
+                      "previousStatus": d.get("previousStatus"),
+                      "phase": d.get("phase"), "publish": published}))
     return 0
 
 
