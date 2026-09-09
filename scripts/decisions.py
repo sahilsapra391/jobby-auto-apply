@@ -256,7 +256,11 @@ def shadow_applied_index(root, from_files, note=""):
     from pathlib import Path
     entry = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
              "reader": "applied_index", "note": note,
-             "fileKeys": len(from_files)}
+             "fileKeys": len(from_files),
+             # What was read, not how much. A window of identical reads
+             # measures nothing however long it runs, so the digest is what
+             # says the subject moved between two of them.
+             "indexDigest": index_digest(from_files)}
     started = time.time()
     try:
         import dual_write
@@ -286,10 +290,131 @@ def shadow_applied_index(root, from_files, note=""):
     return entry
 
 
+
+def index_digest(index):
+    """A stable digest of an index's contents, so "it changed" is checkable.
+
+    `blake2b` rather than `hash()`, which is randomised per process: a digest
+    that changes on restart would report every read as a change and every
+    window as covered.
+    """
+    import hashlib
+    parts = []
+    for key in sorted(index, key=lambda k: (str(k[0]), str(k[1]))):
+        parts.append(f"{key[0]}\x1f{key[1]}\x1f{index[key]}")
+    return hashlib.blake2b("\x1e".join(parts).encode("utf-8"),
+                           digest_size=8).hexdigest()
+
+
+#: The three writers of the thing `applied_index` reads. A window is covered
+#: when each has written and a clean shadow read has happened since.
+#:
+#: **Not a duration, and the reason is the anti-vacuity rule this repository
+#: already carries.** 404 of 404 agreed on the first read, so forty-two more
+#: reads of the same 404 keys prove nothing about a reader: the check would
+#: pass on a subject that never moved, exactly as `test_v2_matches_the_board`
+#: passed on 99 classes when a real render emits 164. What a window is for is
+#: disagreement under real conditions, and the conditions are three different
+#: processes writing.
+#:
+#: Enumerated from the code rather than remembered, which is this week's third
+#: census: the writers of `applications` and `application_events` are the
+#: device's own class B mirror, the board's Pass and Watch, and v2's route.
+WINDOW_WRITERS = {
+    "sweep": "a sweep whose merge moved the decided set",
+    "device": "a Pass or Watch taken on the board and mirrored by the device",
+    "v2": "a write from the board itself, through the v2 route",
+}
+
+
+def window(root, conn, account_id):
+    """Which of the three writers has been exercised with a clean read since.
+
+    Returns a verdict per writer and an overall `ready`. The switch is
+    permanent when `ready` is true, and this exists so that decision is
+    checkable rather than recalled.
+    """
+    from pathlib import Path
+    reads = []
+    path = Path(root) / SHADOW_LOG
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                reads.append(json.loads(line))
+            except ValueError:
+                continue
+
+    clean = [r for r in reads if r.get("clean") is True and r.get("at")]
+    dirty = [r for r in reads if r.get("clean") is False]
+    unreadable = [r for r in reads if r.get("clean") is None]
+    latest_clean = max((r["at"] for r in clean), default=None)
+
+    with conn.cursor() as cur:
+        # v2 stamps `decided_from` on a decision and `pending_order_at` on an
+        # application, and either is a v2 write.
+        cur.execute(
+            """select greatest(
+                 (select max(decided_at) from job_decisions
+                   where account_id = %s and decided_from = 'v2'),
+                 (select max(pending_order_at) from applications
+                   where account_id = %s))""",
+            (account_id, account_id))
+        last_v2 = cur.fetchone()[0]
+        cur.execute(
+            """select max(decided_at) from job_decisions
+                where account_id = %s and decided_from <> 'v2'""",
+            (account_id,))
+        last_device = cur.fetchone()[0]
+
+    # A sweep moving the decided set shows as two clean reads with different
+    # digests. Two reads of one unchanged subject are one sample, not two.
+    digests = [r.get("indexDigest") for r in clean if r.get("indexDigest")]
+    moved = len(set(digests)) > 1
+
+    opened = min((r["at"] for r in reads if r.get("at")), default=None)
+
+    def covered(when):
+        """Written *inside* the window, with a clean read after it.
+
+        **The window bound is the half that makes this evidence.** Without it a
+        write from three days before the shadow read existed counts, because a
+        clean read trivially follows it -- and that proves nothing about a
+        reader tracking a change, which is what the window is for. Measured on
+        the first run: two of the three writers read `met` on writes that
+        predated the window entirely.
+        """
+        if when is None or not opened or not latest_clean:
+            return False
+        stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ") if hasattr(when, "strftime") \
+            else str(when)
+        return opened <= stamp <= latest_clean
+
+    verdict = {
+        # Whatever moved it. Two clean reads of an unchanged subject are one
+        # sample, and a window of those measures nothing however long it runs.
+        "sweep": {"met": moved,
+                  "how": f"{len(set(digests))} distinct index digests across "
+                         f"{len(clean)} clean reads"},
+        "device": {"met": covered(last_device),
+                   "how": f"last device decision {last_device}"},
+        "v2": {"met": covered(last_v2),
+               "how": f"last v2 write {last_v2}"},
+    }
+    for name, entry in verdict.items():
+        entry["needs"] = WINDOW_WRITERS[name]
+    return {"reads": len(reads), "clean": len(clean), "disagreed": len(dirty),
+            "unreadable": len(unreadable), "openedAt": opened,
+            "latestCleanAt": latest_clean,
+            "writers": verdict,
+            "ready": bool(not dirty and all(v["met"] for v in verdict.values()))}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--compare", action="store_true",
                     help="read both sides and report where they differ")
+    ap.add_argument("--window", action="store_true",
+                    help="has the shadow window covered its three writers")
     args = ap.parse_args(argv)
 
     import jobs_db
@@ -308,11 +433,20 @@ def main(argv=None):
     for state in sorted(set(stored.values())):
         report["byState"][state] = sum(1 for v in stored.values() if v == state)
 
+    if args.window:
+        conn = jobs_db.connect()
+        try:
+            report["window"] = window(jobs_store.root_dir(None), conn, account)
+        finally:
+            conn.close()
+
     if args.compare:
         pool = from_pool(jobs_store.load_jobs(jobs_store.root_dir(None)))
         report["pool"] = len(pool)
         report["comparison"] = compare(pool, stored)
-    print(json.dumps(report, indent=2, sort_keys=True))
+    print(json.dumps(report, indent=2, sort_keys=True, default=str))
+    if args.window and not args.compare:
+        return 0 if report["window"]["ready"] else 1
     if args.compare:
         c = report["comparison"]
         return 0 if not (c["onlyOnDevice"] or c["onlyInPostgres"]

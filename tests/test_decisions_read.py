@@ -10,6 +10,7 @@ This is the first Phase 4 module and it changes no authority. The file still
 decides; this proves the read agrees with it.
 """
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -286,3 +287,119 @@ class ShadowReadTests(unittest.TestCase):
         self.assertNotIn("decided = ", after,
                          "the index was reassigned after the shadow read")
         self.assertNotIn("shadow[", after.split("report[")[0])
+
+
+class WindowTests(unittest.TestCase):
+    """The switch is checkable rather than recalled.
+
+    **The window is not a duration.** 404 of 404 agreed on the first read, so
+    forty-two more reads of the same 404 keys prove nothing about a reader: the
+    check would pass on a subject that never moved, exactly as
+    `test_v2_matches_the_board` passed on 99 classes when a real render emits
+    164. What a window is for is disagreement under real conditions, and the
+    conditions are three different processes writing.
+    """
+
+    class Cur:
+        def __init__(self, answers): self.answers = list(answers); self.i = -1
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, args=None): self.i += 1
+        def fetchone(self): return (self.answers[self.i],)
+
+    class Conn:
+        def __init__(self, answers): self.answers = answers
+        def cursor(self): return WindowTests.Cur(self.answers)
+
+    # Not `run`: that is `TestCase.run`, and shadowing it hands the
+    # helper a TestResult instead of the lines.
+    def window_for(self, lines, v2=None, device=None):
+        import tempfile
+        from pathlib import Path
+        root = Path(tempfile.mkdtemp())
+        log = root / decisions.SHADOW_LOG
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        return decisions.window(root, self.Conn([v2, device]), "acct")
+
+    def clean(self, at, digest):
+        return {"at": at, "clean": True, "indexDigest": digest}
+
+    def test_nothing_is_met_before_anything_has_happened(self):
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa")])
+        self.assertFalse(out["ready"])
+        self.assertFalse(any(v["met"] for v in out["writers"].values()))
+
+    def test_a_write_predating_the_window_does_not_count(self):
+        """The half that makes this evidence. Without it a write from three
+        days before the shadow existed counts, because a clean read trivially
+        follows it, and that says nothing about a reader tracking a change."""
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa")],
+                       v2="2026-09-05T10:00:00Z", device="2026-09-05T10:00:00Z")
+        self.assertFalse(out["writers"]["v2"]["met"])
+        self.assertFalse(out["writers"]["device"]["met"])
+
+    def test_a_write_inside_the_window_with_a_clean_read_after_counts(self):
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa"),
+                        self.clean("2026-09-08T23:00:00Z", "bbb")],
+                       v2="2026-09-08T22:30:00Z", device="2026-09-08T22:40:00Z")
+        self.assertTrue(out["writers"]["v2"]["met"])
+        self.assertTrue(out["writers"]["device"]["met"])
+
+    def test_a_write_with_no_clean_read_after_it_does_not_count(self):
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa")],
+                       v2="2026-09-08T23:00:00Z")
+        self.assertFalse(out["writers"]["v2"]["met"])
+
+    def test_identical_reads_are_one_sample_however_many_there_are(self):
+        lines = [self.clean(f"2026-09-08T2{i}:00:00Z", "same") for i in range(4)]
+        out = self.window_for(lines, v2="2026-09-08T20:30:00Z",
+                       device="2026-09-08T20:40:00Z")
+        self.assertFalse(out["writers"]["sweep"]["met"],
+                         "four reads of an unchanged index counted as movement")
+        self.assertFalse(out["ready"])
+
+    def test_one_disagreement_anywhere_keeps_the_window_open(self):
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa"),
+                        {"at": "2026-09-08T22:30:00Z", "clean": False},
+                        self.clean("2026-09-08T23:00:00Z", "bbb")],
+                       v2="2026-09-08T22:10:00Z", device="2026-09-08T22:20:00Z")
+        self.assertEqual(out["disagreed"], 1)
+        self.assertFalse(out["ready"], "a window with a disagreement was ready")
+
+    def test_an_unreadable_read_is_counted_and_is_not_clean(self):
+        out = self.window_for([{"at": "2026-09-08T22:00:00Z", "clean": None,
+                         "unreadable": "OSError: down"}])
+        self.assertEqual(out["unreadable"], 1)
+        self.assertEqual(out["clean"], 0)
+
+    def test_all_three_and_no_disagreement_is_ready(self):
+        out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa"),
+                        self.clean("2026-09-08T23:00:00Z", "bbb")],
+                       v2="2026-09-08T22:30:00Z", device="2026-09-08T22:40:00Z")
+        self.assertTrue(out["ready"])
+
+    def test_the_digest_is_stable_across_processes(self):
+        """`hash()` is randomised per process, so a digest built on it would
+        report every read as a change and every window as covered."""
+        import subprocess
+        index = {("acme", "pm"): "passed", ("url", "x/1"): "applied"}
+        here = decisions.index_digest(index)
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, %r); import decisions; "
+             "print(decisions.index_digest("
+             "{('acme','pm'):'passed',('url','x/1'):'applied'}))"
+             % str(REPO / "scripts")],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), here)
+
+    def test_the_digest_moves_when_a_decision_changes(self):
+        a = decisions.index_digest({("acme", "pm"): "passed"})
+        b = decisions.index_digest({("acme", "pm"): "watched"})
+        self.assertNotEqual(a, b)
+
+    def test_the_three_writers_are_named_with_what_each_needs(self):
+        self.assertEqual(set(decisions.WINDOW_WRITERS), {"sweep", "device", "v2"})
+        for name, need in decisions.WINDOW_WRITERS.items():
+            self.assertGreater(len(need.split()), 4, f"{name} has no description")

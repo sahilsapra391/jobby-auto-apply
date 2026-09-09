@@ -334,3 +334,52 @@ restated, an unmappable state raises rather than reading as no decision, and a
 decision whose posting row is gone is counted rather than silently dropped.
 Switching a consumer over is a separate change with its own evidence, one
 consumer at a time.
+
+### The window is three conditions, not a duration
+
+404 of 404 agreed on the first read, so forty-two more reads of the same 404
+keys measure nothing. A window of identical samples is the anti-vacuity problem
+this project already carries twice: `test_v2_matches_the_board` passed on 99
+classes when a real render emits 164, and "not zero" was never "complete".
+
+So the window is covered when each of the three processes that write the thing
+`applied_index` reads has written **inside the window** and a clean shadow read
+has happened since:
+
+    sweep    the index digest moved between two clean reads
+    device   a Pass or Watch taken on the board and mirrored by the device
+    v2       a write from the board itself, through the v2 route
+
+`python3 scripts/decisions.py --window` reports it and exits non-zero until
+`ready`. One disagreement anywhere keeps it open.
+
+**The window bound is the half that makes it evidence, and the first version
+did not have it.** Without it a write from three days before the shadow existed
+counts, because a clean read trivially follows it, and that says nothing about
+a reader tracking a change. Measured on the first run: two of the three writers
+read `met` on writes that predated the window entirely. Four mutations run
+against the fixed version, each failing.
+
+Expect about two days at six sweeps a day. If any of the three does not happen
+naturally, drive it: a Pass on a Found card costs nothing.
+
+### The lock slope, and where the measurement points
+
+    12,632 postings    30.8 s
+    23,207             50.9
+    33,899            157.4
+    32,055            117.5
+
+1.46x the postings cost 3.09x the lock between the second and third, and the
+fourth confirms the third was not an outlier. Some of it is real work: `closed`
+went 0, 1, 67, 54 and `kept` 214, 357, 900, 804. Not all of it.
+
+The candidate is the merge holding the lock across a whole-pool read and then
+`_persist_pool` **re-reading the same 100 MB file** to derive its Postgres
+delta, so the digest comparison is over the pool rather than over what changed.
+Not measured, and not claimed: that is the quiet-moment measurement.
+
+If it is the whole-pool digest, 500k postings makes it minutes and Phase 6
+arrives early. The fix is inside Phase 4's own scope either way, which is the
+useful part: **a device reading Postgres does not need to re-read a 100 MB file
+to know what changed.**
