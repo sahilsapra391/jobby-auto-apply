@@ -294,10 +294,22 @@ const MUTATIONS = [
    { postingId: "00000000-0000-0000-0000-000000000000", decision: "pass" }],
 ];
 
+/**
+ * A mutation shaped exactly like one of the board's own buttons.
+ *
+ * **The origin and the token are not decoration here.** These probes are about
+ * the write gate, one layer past the middleware, and a request the middleware
+ * refuses never reaches it: five of these answered 403 instead of 503 the
+ * moment the Basic gate was replaced, which reads as "the flag is not gating"
+ * and is really "this request never arrived". A probe for an inner layer has to
+ * get past the outer one or it is measuring the outer one.
+ */
 const post = (headers, body) =>
   fetch(`http://127.0.0.1:${PORT}/api/applications`, {
     method: "POST",
     headers: { "content-type": "application/json",
+               origin: `http://127.0.0.1:${PORT}`,
+               "x-jobby-request": "1",
                ...headers },
     body: JSON.stringify(body),
   });
