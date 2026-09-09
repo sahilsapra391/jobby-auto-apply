@@ -248,9 +248,16 @@ export function PostingRow(row: Row) {
             application to an agent that fills a real employer's form under a
             real name. See ApplyWithConfirm for why it moves the target rather
             than relabelling in place. */}
+        {/* **The Found select has no `company` and no `role`.** It produces
+            `p.title` and `e.canonical_name as employer`; the watch lane is the
+            one that aliases both, and this was copied from it. So both props
+            were `undefined` on every Found card and the prompt fell back to
+            "Apply to this posting?" -- the bare are-you-sure that
+            `ApplyWithConfirm`'s own docstring rejects as catching nothing, on
+            the one control that cannot be taken back. */}
         <ApplyWithConfirm subject={row.id} rowId={row.id}
-                          company={s(row.company) ?? undefined}
-                          role={s(row.role) ?? undefined}
+                          company={s(row.employer) ?? undefined}
+                          role={s(row.title) ?? undefined}
                           body={{ postingId: row.id, decision: "apply" }} />
         <Act className="jb-btn danger" subject={row.id} rowId={row.id} icon="pass"
              title="Never offer this one again"

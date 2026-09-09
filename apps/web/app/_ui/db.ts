@@ -146,17 +146,49 @@ function argsFor(params: readonly string[], values: Record<string, unknown>) {
  * Both callers come through this now, so a filter added to `Filters` is read
  * by both or by neither.
  */
+/**
+ * The filter keys, once, with how each rides a URL.
+ *
+ * **`filtersFrom` read ten and `laneQuery` wrote three.** That is the
+ * declared-twice shape this file's own docstring lists four instances of, in
+ * the one place it claimed to have fixed: the route read every filter
+ * correctly and the *writer* dropped seven, so page one was filtered and every
+ * page after it was not. Measured on production with `exp=2`: page one 50 rows
+ * and 0 violations, page two 50 rows and 25 violations carrying `years_min` up
+ * to 12.
+ *
+ * It survived because almost nobody reached the advanced controls while they
+ * needed a Filter button nobody found. Making them apply on change is exactly
+ * what turns this from latent into the common case, so it is fixed in the same
+ * series rather than after it.
+ *
+ * Both directions are generated from this list now. A filter added to
+ * `Filters` and not added here is read by neither, which is a visible bug
+ * rather than a silent one.
+ */
+const FILTER_KEYS = [
+  { key: "q", kind: "one" },
+  { key: "within", kind: "one" },
+  { key: "direct", kind: "flag" },
+  { key: "not", kind: "one" },
+  { key: "scope", kind: "one" },
+  { key: "cos", kind: "one" },
+  { key: "conames", kind: "one" },
+  { key: "loc", kind: "many" },
+  { key: "wp", kind: "many" },
+  { key: "exp", kind: "one" },
+] as const;
+
 export function filtersFrom(params: URLSearchParams): Filters {
-  const one = (k: string) => params.get(k) ?? undefined;
-  const many = (k: string) => {
-    const all = params.getAll(k);
-    return all.length ? all : undefined;
-  };
-  return {
-    q: one("q"), within: one("within"), direct: params.get("direct") === "1",
-    not: one("not"), scope: one("scope"), cos: one("cos"),
-    conames: one("conames"), loc: many("loc"), wp: many("wp"), exp: one("exp"),
-  };
+  const out: Record<string, unknown> = {};
+  for (const { key, kind } of FILTER_KEYS) {
+    if (kind === "flag") out[key] = params.get(key) === "1";
+    else if (kind === "many") {
+      const all = params.getAll(key);
+      out[key] = all.length ? all : undefined;
+    } else out[key] = params.get(key) ?? undefined;
+  }
+  return out as Filters;
 }
 
 function filterValues(f: Filters | undefined) {
@@ -169,9 +201,18 @@ function filterValues(f: Filters | undefined) {
     // `exclude` rather than `not`: the SQL parameter name ends up in
     // generated statements and `not` is a reserved word there.
     exclude: f?.not?.trim() || null,
-    // The scope only means anything with a keyword, and "title" is the
-    // narrower of the two, so it is the default the SQL assumes.
-    scope: f?.scope === "all" ? "all" : "title",
+    // **"Title and description" was a no-op, and this line was the whole
+    // reason.** It compared against `"all"`, which nothing on this axis has
+    // ever emitted: the select's vocabulary is `title` | `title+description`
+    // (`found_lane.SCOPE_OPTIONS`, and v2 copies it), so both choices
+    // collapsed to `"title"` and the title-only predicate stayed on either
+    // way. It was the only occurrence of that string on this axis anywhere in
+    // the repository, which is what a value nobody produces looks like.
+    //
+    // The SQL reads it as: `scope = 'title'` restricts to the title, anything
+    // else does not. So the narrower choice is the one that has to be named,
+    // and null is the wider one.
+    scope: f?.scope === "title" ? "title" : null,
     // A mode with no names is not a filter. Both halves or neither, or "hide"
     // with an empty box would hide everything.
     cos: names.length && (f?.cos === "only" || f?.cos === "hide") ? f.cos : null,
@@ -311,9 +352,17 @@ export async function row(lane: Lane, id: string): Promise<Row | null> {
  */
 export function laneQuery(lane: Lane, sort: Sort, filters?: Filters): string {
   const p = new URLSearchParams({ lane, sort });
-  if (filters?.q) p.set("q", filters.q);
-  if (filters?.within) p.set("within", filters.within);
-  if (filters?.direct) p.set("direct", "1");
+  if (!filters) return p.toString();
+  const bag = filters as unknown as Record<string, unknown>;
+  for (const { key, kind } of FILTER_KEYS) {
+    const value = bag[key];
+    if (kind === "flag") { if (value) p.set(key, "1"); continue; }
+    if (kind === "many") {
+      if (Array.isArray(value)) for (const v of value) p.append(key, String(v));
+      continue;
+    }
+    if (value !== undefined && value !== null && value !== "") p.set(key, String(value));
+  }
   return p.toString();
 }
 
@@ -446,6 +495,52 @@ export async function locationScope(): Promise<string | null> {
  * twice invites them to disagree about the same row -- which for this field
  * would be visible, since an empty list means Worldwide rather than nothing.
  */
+/**
+ * Country groups the board offers as one pill, mirroring
+ * `search_config.REGION_PACKS`.
+ *
+ * Stored unexpanded on purpose, so a pack that gains a country later applies to
+ * configs already saved. That means a reader of the stored value has to expand
+ * it, and `expand_locations` is the function v1 does it with.
+ */
+const REGION_PACKS: Record<string, string[]> = {
+  EU: ["AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR",
+       "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
+       "SI", "ES", "SE", "IS", "LI", "NO", "CH", "GB"],
+  MIDDLE_EAST: ["AE", "SA", "QA", "KW", "BH", "OM", "JO", "EG"],
+  SEA: ["SG", "MY", "PH", "ID", "TH", "VN"],
+};
+
+/**
+ * The countries a saved `locations` selects, packs expanded.
+ *
+ * **This was `.map(String)` over a list of objects.** `search_config.validate`
+ * stores `[{country:"US"}, {regionPack:"EU"}]` and enforces that shape, so
+ * every entry stringified to `"[object Object]"`: the chip would have read
+ * that, the picker would have shown nothing ticked over a real saved search,
+ * and a `regionPack` would have been lost outright rather than expanded into
+ * its thirty-two countries.
+ *
+ * It was invisible only because the stored list is empty today. The commit
+ * that makes the country boxes tick is the one that lets a reader put
+ * something in it, so this is fixed in the same series rather than after
+ * somebody saves one.
+ */
+function expandLocations(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as { country?: unknown; regionPack?: unknown };
+    if (typeof e.regionPack === "string") {
+      out.push(...(REGION_PACKS[e.regionPack.toUpperCase()] ?? []));
+    } else if (typeof e.country === "string") {
+      out.push(e.country.toUpperCase());
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
 export async function savedSearch(): Promise<{
   words: string | null; locations: string[]; scope: string; extra: string[];
 }> {
@@ -464,8 +559,7 @@ export async function savedSearch(): Promise<{
   const extra = unplaced.rows.map((r) => String(r.country))
     .filter((c) => !known.has(c)).sort();
   const config = rows[0]?.search_config as Record<string, unknown> | null;
-  const locations = Array.isArray(config?.locations)
-    ? (config!.locations as unknown[]).map(String) : [];
+  const locations = expandLocations(config?.locations);
   const scope = typeof config?.searchScope === "string"
     ? (config!.searchScope as string) : "title";
   if (!config) return { words: null, locations, scope, extra };
