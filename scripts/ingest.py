@@ -149,6 +149,31 @@ def applied_index(root):
     return index
 
 
+def decisions_shadow(root, decided, note):
+    """Run the Postgres reader beside the file one and record the difference.
+
+    **The file is authoritative for the whole window and nothing reads what
+    this returns.** `already_decided` is the first consumer being switched, and
+    it goes first because its failure is the only visible one on the list: a
+    miss re-offers a role the user dropped, on the board, where they see it.
+
+    Never raises. A shadow read may not fail a sweep, and it will not be
+    load-bearing until a window of real traffic says it can be.
+    """
+    try:
+        import decisions
+        shadow = decisions.shadow_applied_index(root, decided, note=note)
+        out = {k: shadow.get(k) for k in
+               ("clean", "fileKeys", "postgresKeys", "seconds", "unreadable")}
+        out["disagreements"] = (len(shadow.get("onlyInFiles") or [])
+                                + len(shadow.get("onlyInPostgres") or [])
+                                + len(shadow.get("differ") or []))
+        return out
+    except Exception as exc:                              # noqa: BLE001
+        return {"clean": None,
+                "unreadable": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 def already_decided(index, posting):
     """('applied'|'watched'|'passed', why), or (None, "")."""
     for url in identity.sighting_urls(posting):
@@ -317,6 +342,13 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
     report["tenantsSeeded"] = pack_summary["added"]
 
     decided = applied_index(root)
+    # **Shadow read, file authoritative.** `already_decided` below is the
+    # consumer being switched to Postgres first, because its failure is the
+    # only visible one on the list: a miss re-offers a role the user dropped,
+    # on the board, where they see it. This builds the same index from
+    # Postgres and records where the two differ; nothing here reads the
+    # result. See `decisions.shadow_applied_index`.
+    report["shadowRead"] = decisions_shadow(root, decided, "run")
     tombstones = tombstone_index(passed)
     index = identity.Index(jobs, companies)
 
@@ -609,6 +641,12 @@ def add_postings(root, postings, now=None):
     companies = jobs_store.load_companies(root)
     index = identity.Index(jobs, companies)
     decided = applied_index(root)
+    # **Shadow read, file authoritative.** See the note in `run`. Nothing is
+    # attached to a report here: `report` is not assigned until below, and the
+    # first version of this block referenced it in the body *and* in the
+    # handler, so the guard raised its own NameError. The shadow log is the
+    # record either way.
+    decisions_shadow(root, decided, "add_postings")
     tombstones = tombstone_index(passed)
 
     report = {"found": 0, "kept": 0, "deduped": 0, "gatedOut": 0, "gatedOutBy": {},

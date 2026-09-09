@@ -3400,6 +3400,14 @@ the test now pins both call sites through the AST.
 `NoStorePathIsAFrozenDefaultTests` cannot see this class at all: it walks
 module-level constants, and this was a fallback inside a function body.
 
+**Recurred 2026-09-08, in `ingest`, next to this entry.** A shadow read added to
+`add_postings` attached its result to `report`, which that function assigns
+twenty lines further down, and the `except` guarding it referenced `report` too
+-- so the guard raised its own `NameError` and took six tests with it. Same
+shape, same week, written by somebody who had just read this paragraph. The
+name a repair uses has to be bound in the scope the repair is in, and neither
+`py_compile` nor a green suite elsewhere will say so.
+
 **One finding genuinely parked.** `toolpath.settings` reads `LOCAL_CONFIG` off
 `Path.home()` while `worker_key` writes through the same constant in five
 places, so making the reader store-relative without the writer splits them. It
