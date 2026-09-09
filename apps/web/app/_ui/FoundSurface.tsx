@@ -1,4 +1,5 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
+import { AddPosting, FindSources, SaveSearch } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
@@ -34,7 +35,12 @@ const clock = (iso: string | null) => {
  * recorded"; there is no default to fall back to, because a default here is
  * the fixture again with better manners.
  */
-export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
+export function ScanBanner({ meta, writesEnabled = false }: {
+  meta: BoardMeta | null;
+  /** Whether the control is offered. The route reads the same flag
+   *  against the same database, so this is never authorisation. */
+  writesEnabled?: boolean;
+}) {
   const ingest = (meta?.lastIngest ?? {}) as Record<string, unknown>;
   const n = (key: string) =>
     typeof ingest[key] === "number" ? (ingest[key] as number) : null;
@@ -74,13 +80,16 @@ export function ScanBanner({ meta }: { meta: BoardMeta | null }) {
         <div>
           {version ? <strong>{`Search v${version} is live.`}</strong> : null}{" "}
           <span>
+            {/* Two different passes, so two different names. The connectors
+                run themselves; Find new sources is the agent discovery step
+                that finds boards the registry does not have. */}
             {meta?.nextScanAt
-              ? <>Every 4 hours &middot; next run {clock(meta.nextScanAt)}</>
-              : <span className="muted">next run not recorded</span>}
+              ? <>Connectors run every 4 hours &middot; next {clock(meta.nextScanAt)}</>
+              : <span className="muted">next connector run not recorded</span>}
           </span>
           <span className="jb-savestate" />
         </div>
-        <button className="jb-btn primary" type="button">Scan now</button>
+        <FindSources enabled={writesEnabled} />
       </div>
       <p className="jb-ingest">
         {ingest.at ? <>Last scan {clock(String(ingest.at))}</>
@@ -420,8 +429,7 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           the write; Clear is a link because a reset would restore the form's
           defaults and leave the URL filtered, so the count would not move. */}
       <div className="jb-row jb-actions">
-        <button className="jb-btn primary" type="button"
-                disabled={!writesEnabled} title={dark}>Save search</button>
+        <SaveSearch enabled={writesEnabled} />
         {filtered
           ? <a className="jb-btn" href="/?lane=found">Clear</a>
           : <button className="jb-btn" type="button" disabled>Clear</button>}
@@ -446,18 +454,9 @@ export function AddLink({ writesEnabled }: { writesEnabled: boolean }) {
     <div className="jb-addlink">
       <h4>Found something yourself?</h4>
       <p>Paste a posting and the next sweep starts there.</p>
-      <div className="jb-row">
-        {/* Not a filter and not in the filter form: this enqueues a posting
-            onto the scan queue, which `board.js` already accepts and v2 has no
-            route for yet. It is a build of its own, not a name away from
-            working. */}
-        <input type="url" placeholder="https://…" aria-label="Posting link"
-               data-decorative="enqueues to the scan queue; v2 has no route for it yet"
-               disabled={!writesEnabled}
-               title={writesEnabled ? undefined : READ_ONLY} />
-        <button className="jb-btn" type="button" disabled={!writesEnabled}
-                title={writesEnabled ? undefined : READ_ONLY}>Add</button>
-      </div>
+      {/* Not a filter and not in the filter form: it enqueues a posting onto
+          the scan queue, which is what the old board did. */}
+      <AddPosting enabled={writesEnabled} />
     </div>
   );
 }

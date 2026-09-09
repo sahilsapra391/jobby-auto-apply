@@ -3,15 +3,23 @@ import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { SelectFace } from "../_ui/SelectFace";
 import { providers } from "../_ui/db";
+import { accountId, writesEnabled } from "../_ui/writes";
 import { PROVIDER_LABELS } from "../providers.generated";
+import { ProviderAction } from "../_ui/ProviderAction";
 
 /**
  * Settings. One row per provider, and the row is the board's own shape:
  * provider, status, action.
  *
- * The connection itself stays on the device -- nothing here connects anything
- * -- but the board still has to show connected from not, which is what the
- * scaffold was missing. `settings_panel.py` already defines this layout:
+ * The connection itself stays on the device, and the button still has to reach
+ * it. That sentence used to end "-- nothing here connects anything", which was
+ * true about where a credential lives and stopped anybody asking whether the
+ * control sent anything: it was a raw `<button>` with data attributes nothing
+ * read, and there was no provider route to read them. `ProviderAction` posts to
+ * `/api/providers`, which enqueues to `providerLocal/` where
+ * `watch.process_local_provider_controls` has been claiming throughout.
+ *
+ * The board still has to show connected from not, which is what the `settings_panel.py` already defines this layout:
  * `.provider-head` names the provider and its pinned model, `.host-row` is the
  * target with its status, and `.provider-action` is the one button.
  *
@@ -40,6 +48,11 @@ export default async function Settings() {
   // own rule and what v2 lost by always sending them to Found.
   const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
   const links = await providers();
+  // Whether the control is *offered*, never authorisation: `/api/providers`
+  // reads the same flag against the same database before it enqueues, so a
+  // client that ignores this gets a 503 and a button that says why. Same
+  // contract `Act` states for the lanes.
+  const writes = await writesEnabled(await accountId()).catch(() => false);
   return (
     <>
       <AppBar here="settings" theme={theme} home={home} />
@@ -123,11 +136,10 @@ export default async function Settings() {
                       : "Not connected"}
                   </span>
                 </div>
-                <button className="btn provider-action" type="button"
-                        data-provider={p.provider} data-target="local"
-                        data-action={connected ? "disconnect" : "connect"}>
+                <ProviderAction provider={p.provider} enabled={writes}
+                                action={connected ? "disconnect" : "connect"}>
                   {connected ? "Disconnect" : "Connect"}
-                </button>
+                </ProviderAction>
                 <p className="provider-detail">{p.detail ?? ""}</p>
               </article>
               );

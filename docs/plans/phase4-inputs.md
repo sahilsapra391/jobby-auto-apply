@@ -383,3 +383,34 @@ If it is the whole-pool digest, 500k postings makes it minutes and Phase 6
 arrives early. The fix is inside Phase 4's own scope either way, which is the
 useful part: **a device reading Postgres does not need to re-read a 100 MB file
 to know what changed.**
+
+## 13. The provider drop, and what the reconnect confirmed, 2026-09-09
+
+The account was disconnected and reconnected by the user, and the cause was an
+expired OpenAI token rather than anything in this work. It is recorded here
+with its timestamps because the reconnect is what unblocked a real application,
+and because one of the timestamps is a trap this repository has already been
+caught by once.
+
+    2026-09-02T03:38Z   provider_links.updated_at, and NOT when anything broke
+    2026-09-08T21:25:38 the hand-run backfill that actually wrote that row
+    2026-09-09T04:34:00Z openai reconnected, old board's Connect, OAuth flow
+    2026-09-09T04:42:01Z probe: status healthy, activeProvider openai
+    2026-09-09T04:42:01Z spotify 58bb183afcc598c2 claimed and ran
+
+**The `updated_at` caveat is #226's and it applies to every row in that
+table.** It is `openai.last_checked_at`, a field *value* copied out of
+`providers.json` when the backfill wrote the row, so it dates the thing
+mirrored and not the mirroring. The only column that dates a write is the one
+the writer stamps itself, and all three rows shared that to the microsecond,
+which is what one transaction looks like. Anyone reading a drop window out of
+`updated_at` will get the source's clock and believe it is theirs.
+
+**The reconnect is confirmed by the work that followed it, not by the status
+field.** Spotify's Senior Product Manager - Subscriptions had been waiting
+since 00:57. It was claimed at 04:42:01Z, the agent filled the form and
+attached `resume.pdf`, and it is parked in Needs you on two things a person has
+to do: the visible hCaptcha challenge, and one demographic question. That is a
+correct park rather than a fault, and it is the answer to "did the provider
+come back" that a healthy status could not give -- a probe says the credential
+works, and a run says the pipeline does.

@@ -1,4 +1,5 @@
 import { COUNTRY_NAMES, CONTINENT_COUNTRIES } from "../search.generated";
+import { ClearAllLocations, OnlyThisCountry } from "./LocationActions";
 import { READ_ONLY } from "./actions";
 
 /**
@@ -69,8 +70,7 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                    disabled={!writesEnabled} title={dark} />
             <span>Worldwide</span>
           </label>
-          <button type="button" className="jb-location-clear"
-                  disabled={!writesEnabled} title={dark}>Clear all</button>
+          <ClearAllLocations enabled={writesEnabled} title={dark} />
         </div>
         <div className="jb-continent-list">
           {groups.map(([key, label, codes]) => {
@@ -112,9 +112,8 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                                  data-country-name={name} />
                           <span>{name}</span>
                         </label>
-                        <button type="button" className="jb-only"
-                                disabled={!writesEnabled} title={dark}
-                                aria-label={`Select only ${name}`}>Only</button>
+                        <OnlyThisCountry name={name} enabled={writesEnabled}
+                                         title={dark} />
                       </div>
                     );
                   })}
