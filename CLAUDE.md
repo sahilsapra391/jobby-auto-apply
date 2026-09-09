@@ -1130,6 +1130,13 @@ of them asks whether the file is a file. A check that can only report "this
 control reaches nothing" is blind to "this source does not compile", and the
 second one takes the board down while the first is a lane with a dead button.
 
+**A guard that walks a tree is answering about the tree it was handed.** Whether
+that tree is the one the build will accept is a different question, and the
+parser's error recovery is what makes the two look identical: it is designed to
+keep going so an editor can offer completions inside a half-typed expression,
+and every consumer that does not read `parseDiagnostics` inherits that tolerance
+without asking for it.
+
 **The half that is mine rather than the tool's: I ran `tsc --noEmit`, got exit
 0, then edited the file, and carried the green forward.** The typecheck never
 saw the version that shipped. That is the stale-server finding at a smaller
@@ -1466,6 +1473,40 @@ proposes gets run against a corpus it was not written for, before it is
 allowed to propose anything.** Not to measure its accuracy there -- it may
 legitimately refuse everything -- but to find out what it is confident about
 when it is out of its depth.
+
+## Both boards are public, and only their writes are gated, 2026-09-09
+
+**v2's Basic gate came off at the owner's explicit instruction**, matching
+`deploy/api/board.js`, which dropped the identical gate on 2026-08-31. One
+policy across both boards rather than two to keep in step.
+
+What that means, stated rather than inferred from the absence of a check: the
+board names companies, roles, match scores and the profile; `/api/artifact`
+serves rendered resumes and cover letters to anyone with a filename, and those
+carry a home address and a phone number. Vercel's SSO is
+`all_except_custom_domains`, so `v2.jobby.fyi` has no platform gate behind the
+app's own. Nothing is between the internet and this data, and that is the
+decision.
+
+**Removing a read gate is not removing write protection, and conflating them
+turns a public board into a public control panel.** All nine routes under
+`apps/web/app/api` were relying on the middleware and carried no check of their
+own -- zero occurrences of `x-jobby-request` or a 403 between them -- so a bare
+deletion would have opened `POST /api/applications`, which is Drop and Apply on
+real applications under a real name. `middleware.ts` now refuses any non-GET
+that is not same-origin, `application/json`, and carrying `x-jobby-request: 1`,
+ported from `board.js`'s `rejectCrossSiteMutation` rather than reinvented. It
+sits in the middleware because a route added tomorrow inherits it; a per-route
+check is a list somebody has to remember to extend.
+
+**Two of v2's five senders did not carry that header**, and shipping the guard
+without fixing them would have re-run the 2026-08-23 outage exactly: `useWrite`
+drives Apply, Drop, Watch and both Retry controls, and `ProfileEdits` drives the
+profile. `tests/v2_writes_carry_the_token.test.mjs` is the guard, and it follows
+one level of indirection because `headers: headers()` is the real pattern and an
+inline-literal reader called `FoundActions` stranded when it is not. What it
+cannot resolve it reports as unverified rather than as either a pass or a
+failure.
 
 ## Security invariants
 
@@ -2241,15 +2282,29 @@ So: one owner per deploy, announced before, and these four in one action rather
 than one of them.
 
 ```
-0. take the deploy lock, and stop if somebody already holds it
-1. announce it, and say which services are going down
-2. pull the production checkout, staying on main
-3. restart all three services, dependencies before the orchestrator
-4. verify no reflog entry fell between the pull and the restarts
-5. release the deploy lock
+0. run the build, after the last edit, against the tree being deployed
+1. take the deploy lock, and stop if somebody already holds it
+2. announce it, and say which services are going down
+3. pull the production checkout, staying on main
+4. restart all three services, dependencies before the orchestrator
+5. verify no reflog entry fell between the pull and the restarts
+6. verify the web half deployed, by commit SHA and not by the dashboard
+7. release the deploy lock
 ```
 
-Step 0 is the one that actually excludes a second owner, and step 4 is stricter
+**Step 0 is a step and not a reminder, because it is the one check nothing else
+substitutes for.** The test suites read the files they import; `tsc` reads the
+type graph; every AST guard reads a tree a recovering parser handed it. The
+build is the only thing that reads what the deployment reads, and on 2026-09-09
+a green suite of 3,558 Python tests, 238 node tests and a clean `tsc` sat on top
+of a file `next build` refuses. "After the last edit" is the load-bearing half:
+that same `tsc` had run and passed against the previous version of the file.
+
+```bash
+python3 scripts/deploy_verify.py --build
+```
+
+Step 1 is the one that actually excludes a second owner, and step 5 is stricter
 than it used to be for a reason given below. Both are cheap:
 
 ```bash
@@ -2393,7 +2448,7 @@ leaving the daemons resident on `3a34a51` while the disk read `eb27ec8`. That is
 the two-commits-at-once state this file already forbids, produced by two sessions
 that both announced and both gated correctly. Checking only "the start times
 postdate the entry I expect" passes for each of them separately, which is why
-step 4 above now asks whether any reflog entry fell *between* the pull and the
+step 5 above now asks whether any reflog entry fell *between* the pull and the
 restarts. That is the check that caught it.
 
 **So the fix is a lock, not another rule about telling each other things.** Every

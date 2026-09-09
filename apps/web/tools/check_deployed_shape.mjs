@@ -49,18 +49,18 @@ const BASE_PATH = "";
 const ROUTES = ["/", "/profile", "/settings"];
 const PORT = 3199;
 /**
- * The gate is on in this check, not bypassed for it.
+ * **Reads are public and writes are not, and both halves are asserted here.**
  *
- * middleware.ts refuses every request without Basic auth and answers 503 when
- * DASHBOARD_PASSWORD is unset. Running the shape crawl with no password would
- * have meant crawling 503s and asserting happily that they carry no bad asset
- * URLs, which is the shape of a check that passes while testing nothing. So
- * the check supplies a password, and asserts the gate first.
+ * The Basic gate came off on 2026-09-09 at the owner's instruction, matching
+ * `deploy/api/board.js`, which dropped the identical gate on 2026-08-31. What
+ * replaced it is not nothing: `middleware.ts` refuses any non-GET that is not
+ * same-origin JSON carrying `x-jobby-request: 1`. A check that stopped
+ * asserting the gate because the gate changed would leave the write half
+ * unguarded on a board with no SSO behind it, so the assertions below are
+ * rewritten rather than deleted.
  */
-const PASSWORD = "check-deployed-shape";
 /** Distinct per run, so a stored idempotent answer can never stand in for one. */
 const runId = `${process.pid}-${Date.now()}`;
-const CREDENTIALS = "Basic " + Buffer.from(":" + PASSWORD).toString("base64");
 
 const problems = [];
 const notes = [];
@@ -108,7 +108,7 @@ if (existsSync(join(WEB, "public"))) {
 const running = [];
 
 /** Boot the traced server on `port`, optionally with a password configured. */
-async function boot(port, password) {
+async function boot(port) {
   const env = { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1",
                 NODE_ENV: "production" };
   // The board reads Postgres, so the traced server needs one or every route
@@ -118,8 +118,6 @@ async function boot(port, password) {
   if (!env.JOBBY_DATABASE_URL && process.env.JOBBY_TEST_DATABASE_URL) {
     env.JOBBY_DATABASE_URL = process.env.JOBBY_TEST_DATABASE_URL;
   }
-  if (password === undefined) delete env.DASHBOARD_PASSWORD;
-  else env.DASHBOARD_PASSWORD = password;
 
   // **Refuse a port somebody else is on, rather than talk to them.**
   // A readiness probe that fetches `/` cannot tell this server's answer from
@@ -193,7 +191,7 @@ for (const signal of ["uncaughtException", "unhandledRejection"]) {
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => done(1));
 
-const server = await boot(PORT, PASSWORD);
+const server = await boot(PORT);
 const serverLog = server.log;
 if (server.dead) {
   console.error("the isolated server never answered. Its own output:\n" + server.log);
@@ -203,67 +201,78 @@ if (server.dead) {
 // ----------------------------------------------------------------- gate
 //
 // A custom domain is exempt from the team's SSO, so this middleware is the
-// only thing between v2.jobby.fyi and the internet. It is checked here, on the
-// traced bundle, because a gate that works in dev and is absent from the
+// only thing between v2.jobby.fyi and the internet. Reads are deliberately
+// open; writes are not, and that distinction is what is checked here, on the
+// traced bundle, because a rule that holds in dev and is absent from the
 // deployment is the exact failure this whole tool exists for.
 
 for (const route of ROUTES) {
   const url = `http://127.0.0.1:${PORT}${route}`;
 
+  // Public, on purpose. A 401 here would mean the gate came back.
   const anon = await fetch(url);
-  if (anon.status !== 401) {
-    fail(`${route} answered ${anon.status} with no credentials. It must be 401.`);
-  }
-  if (!(anon.headers.get("www-authenticate") || "").startsWith("Basic ")) {
-    fail(`${route} refused anonymously without a WWW-Authenticate challenge, ` +
-         `so a browser has no way to offer credentials.`);
-  }
-
-  const wrong = await fetch(url, {
-    headers: { authorization: "Basic " + Buffer.from(":wrong").toString("base64") },
-  });
-  if (wrong.status !== 401) {
-    fail(`${route} answered ${wrong.status} to a wrong password. It must be 401.`);
+  if (anon.status !== 200) {
+    fail(`${route} answered ${anon.status} anonymously. Reads are public; a ` +
+         `401 means the Basic gate is back and a 5xx means it is broken.`);
   }
 }
 
-// **The case this check could not see about itself.**
-//
-// Every assertion above runs against a server with a password configured, so
-// none of them can observe what happens when there is none -- and an unset
-// environment variable is the most likely way this board ends up serving the
-// world, because it looks like nothing at all. It happens on a fresh project,
-// on a renamed variable, on a preview environment nobody populated. So a second
-// server is booted with DASHBOARD_PASSWORD absent, and it must refuse.
+// **The write half, which is the whole reason removing the gate was not just a
+// deletion.** Every route under /api relied on Basic auth and carries no check
+// of its own, so without these three the board would be a public control panel:
+// POST /api/applications is Drop and Apply on real applications under a real
+// name. Each refusal is provoked rather than assumed.
 {
-  const bare = await boot(PORT + 1, undefined);
-  if (bare.dead) {
-    fail("the server with no DASHBOARD_PASSWORD never answered:\n" + bare.log);
-  } else {
-    const res = await fetch(`http://127.0.0.1:${PORT + 1}/`);
-    if (res.status !== 503) {
-      fail(`with DASHBOARD_PASSWORD unset the board answered ${res.status}, ` +
-           `not 503. An unconfigured board must refuse, never fall open: on a ` +
-           `custom domain there is no SSO behind it to catch this.`);
-    }
-    // And it must not be openable by guessing the empty password.
-    const empty = await fetch(`http://127.0.0.1:${PORT + 1}/`, {
-      headers: { authorization: "Basic " + Buffer.from(":").toString("base64") },
-    });
-    if (empty.status !== 503) {
-      fail(`with DASHBOARD_PASSWORD unset, an empty password got ` +
-           `${empty.status}. Absent config must not be satisfiable.`);
-    }
+  const target = `http://127.0.0.1:${PORT}/api/applications`;
+  const body = JSON.stringify({ applicationId: "shape-check", status: "dropped" });
+
+  const noOrigin = await fetch(target, {
+    method: "POST", body,
+    headers: { "content-type": "application/json", "x-jobby-request": "1" },
+  });
+  if (noOrigin.status !== 403) {
+    fail(`a POST with no Origin answered ${noOrigin.status}, not 403. Anything ` +
+         `on the internet can then act on this board.`);
+  }
+
+  const badType = await fetch(target, {
+    method: "POST", body,
+    headers: { origin: `http://127.0.0.1:${PORT}`, "content-type": "text/plain",
+               "x-jobby-request": "1" },
+  });
+  if (badType.status !== 415) {
+    fail(`a POST declaring text/plain answered ${badType.status}, not 415. A ` +
+         `form-encoded POST is what a cross-site form submits.`);
+  }
+
+  const noToken = await fetch(target, {
+    method: "POST", body,
+    headers: { origin: `http://127.0.0.1:${PORT}`, "content-type": "application/json" },
+  });
+  if (noToken.status !== 403) {
+    fail(`a POST without x-jobby-request answered ${noToken.status}, not 403.`);
+  }
+
+  // And the control, because three refusals prove nothing if everything is
+  // refused: a well-formed request must get past the middleware. It may still
+  // be refused by the route itself, which is a different layer and a different
+  // status; what it must not be is one of the three above.
+  const good = await fetch(target, {
+    method: "POST", body,
+    headers: { origin: `http://127.0.0.1:${PORT}`, "content-type": "application/json",
+               "x-jobby-request": "1", "idempotency-key": `shape-${runId}` },
+  });
+  if (good.status === 403 || good.status === 415) {
+    const said = await good.text().catch(() => "");
+    fail(`a well-formed same-origin POST was refused by the middleware ` +
+         `(${good.status}: ${said.slice(0, 120)}). Every board control sends ` +
+         `exactly these headers, so this refuses the board's own buttons.`);
   }
 }
 
-// Static chunks are the board's own code and are not exempt.
-const chunkProbe = await fetch(`http://127.0.0.1:${PORT}/_next/static/chunks/`);
-if (chunkProbe.status !== 401) {
-  fail(`/_next/static/ answered ${chunkProbe.status} unauthenticated. The ` +
-       `matcher exempts static assets, and a lane's shape is inferable from ` +
-       `the board's own chunks.`);
-}
+// Static chunks were gated when pages were. They are public now for the same
+// reason the pages are, and there is nothing left to assert about them that
+// the page checks above do not already cover.
 
 // ------------------------------------------------- writes refuse, flag off
 
@@ -288,7 +297,7 @@ const MUTATIONS = [
 const post = (headers, body) =>
   fetch(`http://127.0.0.1:${PORT}/api/applications`, {
     method: "POST",
-    headers: { authorization: CREDENTIALS, "content-type": "application/json",
+    headers: { "content-type": "application/json",
                ...headers },
     body: JSON.stringify(body),
   });
@@ -423,8 +432,7 @@ for (const [label, query, want] of [
   ["an id that is not a uuid", "lane=found&id=nope", 400],
   ["a well-formed ask", "lane=found&id=00000000-0000-0000-0000-000000000000", 200],
 ]) {
-  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane/row?${query}`,
-                          { headers: { authorization: CREDENTIALS } });
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane/row?${query}`);
   if (res.status !== want) {
     fail(`GET /api/lane/row answered ${res.status} for ${label}, wanted ${want}`);
   }
@@ -451,8 +459,7 @@ for (const [label, query, want] of [
    "lane=found&sort=new&afterId=00000000-0000-0000-0000-000000000000" +
    "&afterAt=2026-01-01T00:00:00Z", 200],
 ]) {
-  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane?${query}`,
-                          { headers: { authorization: CREDENTIALS } });
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/lane?${query}`);
   if (res.status !== want) {
     fail(`GET /api/lane answered ${res.status} for ${label}, wanted ${want}`);
   }
@@ -470,8 +477,7 @@ for (const [label, query, want] of [
   ["a well-formed id for a posting that is gone",
    "id=00000000-0000-0000-0000-000000000000", 404],
 ]) {
-  const res = await fetch(`http://127.0.0.1:${PORT}/api/posting?${query}`,
-                          { headers: { authorization: CREDENTIALS } });
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/posting?${query}`);
   if (res.status !== want) {
     fail(`GET /api/posting answered ${res.status} for ${label}, wanted ${want}`);
     continue;
@@ -523,8 +529,7 @@ if (!existsSync(FIXTURE)) {
 const seen = new Set();
 
 for (const route of ROUTES) {
-  const res = await fetch(`http://127.0.0.1:${PORT}${route}`,
-                          { headers: { authorization: CREDENTIALS } });
+  const res = await fetch(`http://127.0.0.1:${PORT}${route}`);
   if (!res.ok) {
     fail(`${route} answered ${res.status} from the traced bundle. ` +
          `A route that renders from the working tree and fails here is ` +
@@ -576,7 +581,7 @@ const assets = [...seen].filter((u) => !u.startsWith("/api/company-logo")).sort(
 
 for (const url of assets) {
   const res = await fetch(`http://127.0.0.1:${PORT}${url}`,
-                          { redirect: "follow", headers: { authorization: CREDENTIALS } });
+                          { redirect: "follow" });
   if (!res.ok) {
     fail(`${url} answered ${res.status} from the traced bundle`);
   }
@@ -585,7 +590,7 @@ for (const url of assets) {
 if (logoUrls.length) {
   const url = logoUrls.sort()[0];
   const res = await fetch(`http://127.0.0.1:${PORT}${url}`,
-                          { redirect: "follow", headers: { authorization: CREDENTIALS } });
+                          { redirect: "follow" });
   const body = res.ok ? "" : await res.text();
   if (res.ok) {
     const type = res.headers.get("content-type") || "";

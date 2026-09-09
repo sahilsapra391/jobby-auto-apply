@@ -250,14 +250,81 @@ def _stamp(epoch):
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def web_build(repo):
+    """Run `next build` and say whether the tree compiles.
+
+    **This is the only check in the sequence that reads every file the
+    deployment reads.** The test suites read what they import, `tsc` reads the
+    type graph, and every AST guard reads a tree `ts.createSourceFile` handed
+    it after recovering from whatever was wrong with it. On 2026-09-09 a file
+    with a JSX comment in expression position passed 3,558 Python tests, 238
+    node tests and a clean `tsc`, and `next build` refused it.
+
+    It is deliberately not `tsc`. A typecheck is cheap and answers a different
+    question, and the one that mattered had already passed against the previous
+    version of the same file.
+    """
+    web = Path(repo) / "apps" / "web"
+    if not (web / "package.json").exists():
+        return "unavailable", "no apps/web/package.json under %s" % repo
+    if not (web / "node_modules" / ".bin" / "next").exists():
+        # **"Could not look" is never "is not there", and this one had to be
+        # taught that on its first run.** The production checkout carries no
+        # installed dependencies, so `npm run build` exits 127 with
+        # `next: command not found` -- which is not a compile failure and must
+        # not be reported as one. It is also not a pass. Naming the third state
+        # is the whole rule, and the fix a reader needs is one command.
+        return "unavailable", ("no installed next in %s; run `npm ci` there, or "
+                               "run this from the worktree the change was built "
+                               "in" % (web / "node_modules"))
+    proc = subprocess.run(["npm", "run", "build"], cwd=str(web),
+                          capture_output=True, text=True)
+    if proc.returncode == 0:
+        return "ok", "next build clean"
+    # **The reason is kept rather than discarded.** A build that failed and a
+    # build that could not start are different facts, and the failure nobody
+    # can reproduce is the one whose evidence was thrown away at the source.
+    tail = (proc.stdout or "") + (proc.stderr or "")
+    lines = [ln for ln in tail.splitlines() if ln.strip()][-12:]
+    return "failed", "exit %d\n          %s" % (proc.returncode,
+                                                "\n          ".join(lines))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--repo", help="checkout to inspect; default is the one "
                                        "the installed plists execute")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--build", action="store_true",
+        help="run the web build against this tree and fail on it. Step 0 of "
+             "the deploy sequence, and the only check that reads what the "
+             "deployment reads.")
+    parser.add_argument(
+        "--build-only", action="store_true",
+        help="run the build and nothing else, for use before the pull")
     args = parser.parse_args(argv)
 
     failures, report = [], {}
+
+    if args.build or args.build_only:
+        where = Path(args.repo).resolve() if args.repo else Path.cwd()
+        verdict, detail = web_build(where)
+        report["build"] = {"verdict": verdict, "detail": detail}
+        if verdict == "failed":
+            failures.append("the web build failed, so the tree does not "
+                            "compile: %s" % detail)
+        elif verdict == "unavailable":
+            # Exit 2, distinct from both. A deploy must not read this as a
+            # pass, and a reader must not read it as a broken tree.
+            failures.append("the web build could not run here, which is not "
+                            "the same as a tree that does not build: %s" % detail)
+        if args.build_only:
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print("build     %-11s %s" % (verdict.upper(), detail))
+            return {"ok": 0, "failed": 1, "unavailable": 2}[verdict]
 
     repo = Path(args.repo).resolve() if args.repo else production_repo()
     if repo is None or isinstance(repo, list):

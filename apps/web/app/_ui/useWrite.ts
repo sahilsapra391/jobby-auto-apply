@@ -71,6 +71,12 @@ export function useWrites(lane: string): WriteState {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          // **Every board mutation carries this.** Without it the request is
+          // refused as cross-site, which is what Apply, Drop, Watch and both
+          // Retry controls all send through. `found_lane.py` shipped a POST
+          // helper without it once and the Found lane 403ed for five days
+          // behind a toast that named no reason.
+          "x-jobby-request": "1",
           // Minted with the change and kept across retries. A fresh key per
           // attempt turns the server's dedupe into decoration.
           "idempotency-key": key,

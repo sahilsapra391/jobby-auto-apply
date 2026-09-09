@@ -161,6 +161,7 @@ export function EditsProvider({ enabled, outcomes: initial, children }: {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          "x-jobby-request": "1",
           // Minted with the edit and reused on a retry, so the queue's own
           // dedupe and the store's `lastEditId` replay both hold.
           "idempotency-key": editId,
