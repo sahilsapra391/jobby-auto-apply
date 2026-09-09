@@ -12,7 +12,7 @@ import { AnswersModal } from "./_ui/AnswersModal";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
-  accountId, boardMeta, counts, laneQuery, page, readerName, savedSearch,
+  accountId, boardMeta, counts, filtersFrom, laneQuery, page, readerName, savedSearch,
 } from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
@@ -40,7 +40,7 @@ const TAB_ORDER: Lane[] = ["found", "watch", "flight", "act", "done"];
 export default async function Board({
   searchParams,
 }: {
-  searchParams: Promise<{ lane?: string; sort?: string; q?: string;
+  searchParams: Promise<{ lane?: string; sort?: string; q?: string | string[];
                           within?: string; direct?: string; not?: string;
                           scope?: string; cos?: string; conames?: string;
                           exp?: string;
@@ -55,6 +55,8 @@ export default async function Board({
     await searchParams;
   const many = (v?: string | string[]) =>
     v === undefined ? undefined : (Array.isArray(v) ? v : [v]);
+  /** The keywords, as a list, whether one arrived or several. */
+  const words = many(q);
   const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
     ? (asked as Lane)
     : "found";
@@ -77,11 +79,22 @@ export default async function Board({
   // `all` is the explicit way to ask for that, so the default is a default
   // rather than a ceiling.
   const window = active === "found" ? (within ?? DEFAULT_WINDOW) : within;
+  // **Built by `filtersFrom`, not by hand.** This was the fourth place that
+  // listed the filter keys, after `laneQuery`, `tabHref` and the keyword chip,
+  // and a page that reads a different set from the one the route reads is the
+  // shape that had page one filtered and page two not.
+  const asParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (value === undefined) continue;
+    for (const v of Array.isArray(value) ? value : [value]) asParams.append(key, v);
+  }
+  const carried = filtersFrom(asParams);
+  const wide = window === ANY_WINDOW;
   const filters = active === "found"
-    ? { q, within: window === ANY_WINDOW ? undefined : window,
-        direct: direct === "1", not: not_, scope: searchIn, cos, conames,
-        loc: many(loc), wp: many(wp), exp }
-    : (q ? { q } : undefined);
+    ? { ...carried, within: wide ? undefined : window }
+    // Every other lane offers the keyword search only, which is what its own
+    // search row draws.
+    : (words ? { q: words } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const [tally, first, writes, meta, pool, scope, archive, reader] =
@@ -93,7 +106,7 @@ export default async function Board({
     active === "found" ? savedSearch() : undefined,
     // The archive's first page. It is a dialog on this document rather than a
     // route, so it renders with the board or not at all.
-    page("dropped", null, 50, "new", q ? { q } : undefined),
+    page("dropped", null, 50, "new", words ? { q: words } : undefined),
     readerName(),
   ]);
   const stamp = boardStamp(meta?.updatedAt ?? null);
@@ -107,14 +120,15 @@ export default async function Board({
    * same reason. They are only meaningful on Found, and they are carried
    * anyway: dropping them on the way out means they cannot come back.
    */
-  const tabHref = (lane: Lane) => {
-    const p = new URLSearchParams({ lane });
-    if (askedSort) p.set("sort", askedSort);
-    if (q) p.set("q", q);
-    if (within) p.set("within", within);
-    if (direct === "1") p.set("direct", "1");
-    return `/?${p}`;
-  };
+  //
+  // **Through `laneQuery`, because this hand-listed four of ten.** `not`,
+  // `scope`, `cos`, `conames`, `loc`, `wp` and `exp` were dropped on the way
+  // out, and this is `home` on the logo as well as the tabs, so it is the
+  // return path from Settings and Profile too: filter Found to "up to 2 years",
+  // click Watching, click Found, and the filter is gone with the count moved.
+  // Third writer of this URL to be brought onto one derivation.
+  const tabHref = (lane: Lane) =>
+    `/?${laneQuery(lane, sort, active === "found" ? carried : undefined)}`;
 
   return (
     <>
@@ -197,7 +211,7 @@ export default async function Board({
           {active === "found" ? (
             <>
               <ScanBanner meta={meta} writesEnabled={writes} />
-              <Filters q={q} within={within} direct={direct === "1"}
+              <Filters q={words} within={within} direct={direct === "1"}
                        sort={sort} shown={first.rows.length}
                        total={tally[active]} pool={pool}
                        scope={scope?.words ?? undefined}
@@ -214,7 +228,7 @@ export default async function Board({
           {active !== "found" ? (
             <>
               <LaneHint lane={active} count={tally[active]} />
-              <LaneSearch lane={active} q={q}
+              <LaneSearch lane={active} q={words?.join(" ")}
                           shown={first.rows.length} total={tally[active]} />
             </>
           ) : null}
@@ -237,9 +251,14 @@ export default async function Board({
         </div>
       </div>
 
+      {/* `query` is built by `laneQuery` like every other lane URL. It was
+          string-concatenated and carried only `q`, which is the one that will
+          be wrong the day Dropped grows a filter. A JSX comment cannot sit
+          between attributes, which is the second time today that construct has
+          compiled in my head and not in the build. */}
       <DroppedDock count={tally.dropped} rows={archive.rows}
                    cursor={archive.next} done={archive.done}
-                   query={`lane=dropped${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+                   query={laneQuery("dropped", "new", words ? { q: words } : undefined)}
                    writesEnabled={writes} />
       <SelectFace />
       <DroppedOpen />

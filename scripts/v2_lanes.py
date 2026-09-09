@@ -374,27 +374,61 @@ WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
 #: The board draws the same chip on the same rows: `canonical_rank` puts ats at
 #: 0, aggregator and feed at 2, and employer and other at 3, and the card's
 #: chip is `rank <= 1`.
+#: The text a keyword is matched against, which is what the scope selects.
+#:
+#: **The board's two haystacks, copied rather than reinvented**
+#: (`found_lane.haystack`): `title` is `job.ti`, and the wider one is
+#: `job.ti + job.co + job.sum + job.tg`. Note what the wider one is not: the
+#: full description. The board never had it client-side and the label "Title
+#: and description" has always meant the summary, so matching the board means
+#: matching that.
+#:
+#: The employer name comes through a scalar subquery rather than an alias, for
+#: the reason `FILTERS` already gives about `employers e`: this block is shared
+#: by the page query, the count and the row lookup, and only the first joins it.
+HAYSTACK = """case when coalesce(%(scope)s::text, '') = 'title'
+                   then coalesce(p.title, '')
+                   else concat_ws(' ', coalesce(p.title, ''),
+                          coalesce((select em.canonical_name from employers em
+                                     where em.id = p.employer_id), ''),
+                          coalesce(p.summary, ''),
+                          coalesce(array_to_string(p.tags, ' '), ''))
+              end"""
+
 FILTERS = """
-   and (%(q)s::text is null
-        or p.search_tsv @@ websearch_to_tsquery('english', %(q)s::text))
+   -- **A keyword is a phrase, and keywords are OR'd. Both from the board.**
+   --
+   -- v2 ran `websearch_to_tsquery('english', q)` over `search_tsv`, which ANDs
+   -- bare terms and stems them, so "product manager" meant "a row containing
+   -- product somewhere and manager somewhere" and returned a Full Stack iOS
+   -- role because both words appear in its description. The board does
+   -- `hay.indexOf(keyword)`: one chip is one literal substring, which is what
+   -- makes a two-word chip a phrase without anybody typing quotes.
+   --
+   -- OR rather than AND is the board's, with its reason: "Any of them, not all
+   -- of them. Three job titles in the box means 'show me all three kinds of
+   -- job'; requiring every word meant a second title emptied the board, because
+   -- no posting is a product manager AND a business analyst."
+   and (%(q)s::text[] is null or exists (
+          select 1 from unnest(%(q)s::text[]) as kw
+           where """ + HAYSTACK + """ ilike '%%' || kw || '%%'))
    and (%(within)s::text is null
         or (p.posted_at is not null
             and p.posted_at >= now() - %(within)s::interval))
    and (not coalesce(%(direct)s::boolean, false)
         or p.sources @> '[{"sourceClass":"ats"}]'::jsonb)
+   -- The same haystack the keywords use, because the board uses one:
+   -- `if (exclude && hay.indexOf(exclude) !== -1) return false`. Excluding
+   -- against a different text from the one you searched is how a term can be
+   -- both matched and not excluded.
    and (%(exclude)s::text is null
-        or (p.title not ilike '%%' || %(exclude)s::text || '%%'
-            and coalesce(p.summary, '') not ilike '%%' || %(exclude)s::text || '%%'))
-   -- **`coalesce`, because `NULL <> 'title'` is NULL and NULL is not true.**
-   -- With no scope chosen the clause read `false or NULL or (title ilike ...)`,
-   -- so a row survived only when the reader's raw text was a literal substring
-   -- of the title. `product manager` is one and passed; `manager -warehouse`
-   -- and `"product manager"` are not, so both drew an empty lane while the
-   -- full-text index underneath was answering perfectly. Caught before it
-   -- deployed, by running the suite against a database rather than watching
-   -- twenty-six modules skip.
-   and (%(q)s::text is null or coalesce(%(scope)s::text, '') <> 'title'
-        or p.title ilike '%%' || %(q)s::text || '%%')
+        or """ + HAYSTACK + """ not ilike '%%' || %(exclude)s::text || '%%')
+   -- The scope is inside the haystack above rather than a predicate of its
+   -- own. It used to be a second clause that narrowed an already-matched row
+   -- to its title, which is a different thing from searching a smaller
+   -- haystack once: with the tsquery matching the description and the title
+   -- clause narrowing it, "title only" meant "matches the description AND the
+   -- raw string is in the title".
    and (%(loc)s::text[] is null or p.country = any(%(loc)s::text[]))
    and (%(wp)s::text[] is null
         or p.workplace = any(%(wp)s::text[])

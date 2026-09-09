@@ -90,7 +90,8 @@ class FilterPredicateShapeTests(unittest.TestCase):
 
     def test_a_null_parameter_means_the_filter_is_off(self):
         sql = v2_lanes.page_sql("found")
-        self.assertIn("%(q)s::text is null", sql)
+        # `text[]`, not `text`: a keyword is a chip and chips are a list.
+        self.assertIn("%(q)s::text[] is null", sql)
         self.assertIn("%(within)s::text is null", sql)
         self.assertIn("not coalesce(%(direct)s::boolean, false)", sql)
 
