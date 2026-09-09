@@ -1194,6 +1194,19 @@ the text, so `dynamic_bases()` collects the static part and the check skips
 every rule whose subject carries it. That is coverage deliberately given up,
 which is honest, where a listed guess at the six values would rot.
 
+**Fourth instance, 2026-09-09, and it was in the guard that warns about it.**
+`form_controls_have_names.test.mjs` opens by saying a regex over TSX cannot
+tell a `<select>` in a comment from one in the tree, parses the controls with
+the TypeScript AST for exactly that reason, and then decided whether the file
+had a `<form>` with `/<form[\s>]/` over the raw source. It matched
+`<form method="get">` inside two docstrings explaining why those components
+deliberately have none, and judged both files as form-bearing on the strength
+of the sentence saying they are not. The careful half and the careless half
+were twelve lines apart, in one function each. **Knowing the shape does not
+prevent repeating it; what caught this one was a mutation, and the first
+mutation missed because the test I wrote for it fed a fixture to the parser
+rather than the real tree to `everyControl`, which is where the regex was.**
+
 The general form, past CSS: **a static check can only see the names that are
 written down.** Anything a program composes -- a class, a column, a table, a
 route, a metric key, an event name -- is outside what any source reader can
@@ -3061,6 +3074,14 @@ something v2 can do... Phase 4 moves the runner and this control with it", and
 sentence about why something is impossible stops anybody checking, which is the
 same failure as `STATUS_QUEUE`'s docstring one file over. Prefer "not built
 yet" to a mechanism nobody has re-read.
+
+**And the sentence explaining why a control cannot do a thing is not the
+control being wired.** Connect on v2 carried a docstring reading "nothing here
+connects anything", which was true about where a provider connection lives and
+stopped five sessions asking whether the button reaches it. It was the fifth
+stranded control, after Confirm submitted, Open & finish, Undrop and
+Apply-from-Watching, and the guard that found the other four did not walk
+Settings.
 
 #### And wiring it revealed the control had nothing to do, 2026-09-07
 

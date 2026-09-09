@@ -38,9 +38,9 @@ const CONTROLS = new Set(['input', 'select', 'textarea']);
  */
 const DECORATIVE = 'data-decorative';
 
-function controlsUnderForms(file) {
+function controlsUnderForms(file, text) {
   const source = ts.createSourceFile(
-    file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    file, text ?? readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = [];
 
   const tagOf = (node) => {
@@ -60,34 +60,117 @@ function controlsUnderForms(file) {
   // Depth-first, carrying whether we are inside a <form>. A control's own
   // ancestry is what decides whether it is submitted, so the flag travels down
   // rather than being asked for afterwards.
+  // The identifiers a `value={x}` binds to, so `controlled` can ask whether
+  // anything else in the file reads x. Collected in the same pass rather than
+  // re-parsed, because a second parse is a second thing to keep in step.
+  const bindings = new Map();
+  const readsOf = new Map();
+
+  let sawForm = false;
   const walk = (node, inForm) => {
     const tag = tagOf(node);
     const nowInForm = inForm || tag === 'form';
+    if (tag === 'form') sawForm = true;
     if (tag && CONTROLS.has(tag)) {
       const a = attrs(node);
       const { line } = source.getLineAndCharacterOfPosition(node.getStart());
+      const bound = boundIdentifier(a.get('value'));
+      if (bound) bindings.set(node, bound);
       found.push({
+        node,
         tag, line: line + 1, inForm: nowInForm,
         named: a.has('name'),
+        bound,
+        hasOnChange: a.has('onChange'),
         decorative: a.get(DECORATIVE)?.initializer?.getText(source) ?? null,
         type: a.get('type')?.initializer?.getText(source) ?? '',
       });
     }
     node.forEachChild((child) => walk(child, nowInForm));
   };
+
+  // Every identifier read in the file that is NOT a `value=` binding and NOT
+  // the `const [x, setX] = useState()` that declares it. What is left is
+  // somebody using the value.
+  const valueAttrExpressions = new Set();
+  const collectValueAttrs = (node) => {
+    if (ts.isJsxAttribute(node) && node.name.getText(source) === 'value'
+        && node.initializer && ts.isJsxExpression(node.initializer)
+        && node.initializer.expression) {
+      valueAttrExpressions.add(node.initializer.expression);
+    }
+    node.forEachChild(collectValueAttrs);
+  };
+  collectValueAttrs(source);
+
+  const countReads = (node) => {
+    if (ts.isIdentifier(node) && !valueAttrExpressions.has(node)) {
+      const parent = node.parent;
+      const isDeclaration =
+        (ts.isBindingElement(parent) || ts.isVariableDeclaration(parent))
+        && parent.name === node;
+      const isPropertyName = ts.isPropertyAssignment(parent) && parent.name === node;
+      const isMemberName = ts.isPropertyAccessExpression(parent) && parent.name === node;
+      if (!isDeclaration && !isPropertyName && !isMemberName) {
+        readsOf.set(node.getText(source), (readsOf.get(node.getText(source)) ?? 0) + 1);
+      }
+    }
+    node.forEachChild(countReads);
+  };
+  countReads(source);
+
   walk(source, false);
-  return found;
+  for (const c of found) {
+    // **The third way a control reaches the server, and the two the guard had
+    // could not see it.** `named` and `inForm` both assume the value travels
+    // by form submission. A controlled React input's value lives in state and
+    // travels in a JSON body a click handler builds, so a `name` on it would
+    // do nothing at all. The claim is checkable and it is checked: the bound
+    // identifier has to be read somewhere that is not its own declaration and
+    // not the `value=` attribute, which is the same "a script names it"
+    // notion `controls_reach_something` uses for buttons. A controlled input
+    // nothing reads is still inert and still fails.
+    c.controlled = Boolean(c.bound && c.hasOnChange && (readsOf.get(c.bound) ?? 0) > 0);
+    delete c.node;
+  }
+  return { controls: found, sawForm };
+}
+
+/** The identifier inside `value={x}`, or null for `value="literal"`, `value={x.y}`
+ *  and anything else this cannot follow. Null is "cannot look", and a control
+ *  it cannot look at is judged by the two older rules rather than excused. */
+function boundIdentifier(attr) {
+  const init = attr?.initializer;
+  if (!init || !init.expression) return null;
+  return init.expression.kind === ts.SyntaxKind.Identifier
+    ? init.expression.getText() : null;
+}
+
+/**
+ * The whole rule, in one place.
+ *
+ * The mutation tests below had their own copy of this and that is the
+ * declared-twice shape this repository has now met five times: a comparison
+ * whose two sides drift, where the half nobody looks at decides what the check
+ * can see. Both sides call this.
+ */
+function isInert(c, fileHasForm) {
+  return !c.decorative && !c.controlled && (!c.named || (fileHasForm && !c.inForm));
 }
 
 function everyControl() {
   const out = [];
   for (const name of readdirSync(UI)) {
     if (!name.endsWith('.tsx')) continue;
-    const src = readFileSync(join(UI, name), 'utf8');
-    const fileHasForm = /<form[\s>]/.test(src);
-    for (const c of controlsUnderForms(join(UI, name))) {
-      out.push({ file: name, fileHasForm, ...c });
-    }
+    // **`fileHasForm` was a regex over the raw source, in the file whose own
+    // header says a regex cannot tell a control in a comment from one in the
+    // tree.** It read `<form method="get">` inside two docstrings explaining
+    // why those components deliberately have no form, and judged both files as
+    // form-bearing on the strength of the sentence saying they are not. The
+    // careful half and the careless half were twelve lines apart. It comes off
+    // the same AST walk as everything else now.
+    const { controls, sawForm } = controlsUnderForms(join(UI, name));
+    for (const c of controls) out.push({ file: name, fileHasForm: sawForm, ...c });
   }
   return out;
 }
@@ -114,8 +197,7 @@ test('every control is submitted, or says why not', () => {
   // asking it to contain one would be asking the wrong component. What it does
   // control is the name, so that is what is required of it. A file that does
   // have a form is judged on both, because there the placement is its choice.
-  const inert = everyControl().filter(
-    (c) => !c.decorative && (!c.named || (c.fileHasForm && !c.inForm)));
+  const inert = everyControl().filter((c) => isInert(c, c.fileHasForm));
   assert.deepEqual(
     inert, [],
     'these controls cannot reach the server. A control outside a form is ' +
@@ -136,4 +218,91 @@ test('a decorative marker carries a reason rather than being a bare flag', () =>
   assert.deepEqual(bare.map((c) => `${c.file}:${c.line}`), [],
     `${DECORATIVE} must say why. A bare marker is an exemption nobody can ` +
     `review, which is how an exemption list becomes the thing it guards against.`);
+});
+
+// **Three mutations, because the rule above was widened and a widened guard
+// that has not been made to fail is a guard nobody has checked.** Each feeds
+// the parser a source it should refuse, and each fails if the corresponding
+// half of the rule is removed. Verified by removing them one at a time.
+
+/** One control's verdict, from source text rather than from the tree on disk. */
+function judge(text) {
+  const { controls, sawForm } = controlsUnderForms('mutation.tsx', text);
+  return controls.map((c) => ({ ...c, fileHasForm: sawForm, inert: isInert(c, sawForm) }));
+}
+
+test('a controlled input nothing reads is still inert', () => {
+  // The narrow claim `controlled` makes is that somebody reads the state. An
+  // input that binds a value and a setter and is never read again renders,
+  // takes a value and drops it, which is precisely what this file exists for.
+  const [stranded] = judge(`
+    export function X() {
+      const [url, setUrl] = useState("");
+      return <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} />;
+    }`);
+  assert.equal(stranded.controlled, false,
+               'a bound value nobody reads was excused as controlled');
+  assert.equal(stranded.inert, true);
+
+  const [wired] = judge(`
+    export function X() {
+      const [url, setUrl] = useState("");
+      const go = () => send("/api/scan", { url: url.trim() });
+      return <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} />;
+    }`);
+  assert.equal(wired.controlled, true, 'a value read by a handler was called inert');
+  assert.equal(wired.inert, false);
+});
+
+test('the real tree, not a fixture: prose about a form is not a form', () => {
+  // **The mutation for this one has to run against `everyControl`, because
+  // that is where the regex was.** The fixture test below proves the parser
+  // reports `sawForm` correctly and says nothing about who reads it, so
+  // reverting `everyControl` to the regex left it green -- a mutation aimed at
+  // something the test does not exercise, which this repository has written up
+  // once already and repeated here within the hour.
+  //
+  // So this asks the question on the files that actually disagree. It is
+  // deliberately floored: if nobody's docstring mentions a `<form>` any more
+  // the test has no subject left, and it says so rather than passing.
+  const disagreeing = readdirSync(UI).filter((name) => {
+    if (!name.endsWith('.tsx')) return false;
+    const text = readFileSync(join(UI, name), 'utf8');
+    return /<form[\s>]/.test(text) && !controlsUnderForms(join(UI, name)).sawForm;
+  });
+  assert.ok(disagreeing.length > 0,
+            'no file mentions a <form> in prose without having one, so this ' +
+            'test has no subject and proves nothing about everyControl');
+  const byFile = new Map(everyControl().map((c) => [c.file, c.fileHasForm]));
+  for (const name of disagreeing) {
+    if (!byFile.has(name)) continue;   // no controls in it; nothing to judge
+    assert.equal(byFile.get(name), false,
+                 `${name} has no <form> in its tree and everyControl says it does. ` +
+                 'That is the regex reading a comment, and every control in the ' +
+                 'file is then judged on a placement the file never chose.');
+  }
+});
+
+test('a form written in a comment is not a form', () => {
+  // The fault this replaced: `<form method="get">` inside a docstring
+  // explaining why the component has none made the file form-bearing, so every
+  // control in it was judged on a placement the file never chose.
+  const prose = judge(`
+    /** The board did this inside a \`<form method="get">\` and v2 does not. */
+    export function X() { return <input name="q" />; }`);
+  assert.equal(prose[0].fileHasForm, false,
+               'a <form> in a comment was read as a form in the tree');
+
+  // The control, because a strip that hides a real one is worse than the bug.
+  const real = judge('export function X() { return <form><input name="q" /></form>; }');
+  assert.equal(real[0].fileHasForm, true, 'a real <form> went unseen');
+  assert.equal(real[0].inForm, true);
+});
+
+test('an unnamed uncontrolled control outside a form still fails', () => {
+  // The original rule, unchanged. Both older notions have to keep biting or
+  // the widening bought silence rather than accuracy.
+  const [c] = judge('export function X() { return <form></form>; }\n'
+                    + 'export function Y() { return <input type="text" />; }');
+  assert.equal(c.inert, true, 'an unnamed control in a form-bearing file passed');
 });

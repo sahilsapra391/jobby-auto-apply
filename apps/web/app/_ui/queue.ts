@@ -38,7 +38,7 @@
 // @ts-expect-error -- generated from deploy/kvqueue.mjs, plain JS with no
 // types. Same idiom as r2.generated.mjs in the artifact route: one way of
 // importing these, not two.
-import { enqueue, configured } from "./kvqueue.generated.mjs";
+import { enqueue, configured, putConfig } from "./kvqueue.generated.mjs";
 
 /** Raised when the queue cannot take the work, so the caller writes nothing. */
 export class QueueRefused extends Error {
@@ -158,6 +158,17 @@ export const ACTION_QUEUE: Record<string, string> = {
  * sends either, so neither is here. `needs_you` is the same. Adding a control
  * that sends one means adding its queue, and the guard fails until it does.
  */
+/**
+ * Where a provider control lands. One queue rather than a map, because there is
+ * one target: `deploy/api/board.js` carried `PROVIDER_TARGETS = {local:
+ * "providerLocal"}` and the remote worker it once also fed is retired.
+ *
+ * `watch.process_local_provider_controls` claims `providerLocal/` and has
+ * throughout, which is what makes the Settings button a stranded control rather
+ * than an unbuilt feature.
+ */
+export const PROVIDER_QUEUE = "providerLocal";
+
 export const EVENT_QUEUE: Record<string, string> = {
   completed: "marked",
 };
@@ -203,6 +214,38 @@ export async function order(queue: string, applicationId: string,
   } catch (err) {
     throw new QueueRefused(
       `the work queue would not take this click, so nothing was written: ` +
+      `${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+
+/**
+ * Park a saved search where the device will claim it.
+ *
+ * **Validated on the machine that owns the schema, never here.**
+ * `scripts/search_config.py` refuses anything it cannot accept, and a board
+ * that could write an invalid config straight into the store would break every
+ * later scan. This only parks it.
+ *
+ * Goes through this module rather than importing the generated queue directly,
+ * for the same reason `order` does: the env check and its named refusal live
+ * here, and a second caller reaching past them is a second place for "the
+ * queue is not configured" to be answered differently.
+ */
+export async function saveSearch(config: Record<string, unknown>) {
+  const e = env();
+  if (!configured(e)) {
+    const missing = Object.entries(e).filter(([, v]) => !v).map(([k]) => k);
+    throw new QueueRefused(
+      `the work queue is not configured on this deployment, so this search ` +
+      `would be saved nowhere the device can read it. Set ${missing.join(", ")}.`,
+      503);
+  }
+  try {
+    return await putConfig(e, config);
+  } catch (err) {
+    throw new QueueRefused(
+      `the work queue would not take this search, so nothing was written: ` +
       `${err instanceof Error ? err.message : String(err)}`);
   }
 }

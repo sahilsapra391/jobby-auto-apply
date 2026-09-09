@@ -196,7 +196,7 @@ export default async function Board({
              id={`p-${active}`} role="tabpanel">
           {active === "found" ? (
             <>
-              <ScanBanner meta={meta} />
+              <ScanBanner meta={meta} writesEnabled={writes} />
               <Filters q={q} within={within} direct={direct === "1"}
                        sort={sort} shown={first.rows.length}
                        total={tally[active]} pool={pool}

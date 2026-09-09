@@ -211,9 +211,12 @@ UNRENDERED = {
     "provider connection state on the Settings page": {
         "state": "buildable",
         "why": "drawing whether a provider is connected is a read of "
-               "`provider_links`, which v2 already queries. Connect and "
-               "Disconnect are the writes and they are not these classes.",
-        "classes": {"provider-active", "provider-message"},
+               "`provider_links`, which v2 already queries. `provider-message` "
+               "left this group when Connect was wired: the control needs a "
+               "status line to report a refusal into, so the class the board "
+               "already had is the one it reports into. `provider-active` is "
+               "the remaining read.",
+        "classes": {"provider-active"},
     },
     "the scan banner and its progress": {
         "state": "buildable",
@@ -221,7 +224,7 @@ UNRENDERED = {
                "`board_meta`, `meta.slotsParked` and the ingest report all "
                "carry it already. Only the Scan now button is a write, and "
                "that is `scan`, which is in ALLOWED rather than here.",
-        "classes": {"scanbar", "scanmsg", "sysbanner", "capacity", "waiting"},
+        "classes": {"scanbar", "scanmsg", "sysbanner", "capacity"},
     },
     "the board's single-document navigation": {
         "state": "architectural",
