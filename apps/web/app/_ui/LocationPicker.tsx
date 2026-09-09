@@ -81,8 +81,8 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                   <span className="jb-continent-main">
                     {/* Also an aggregate: it selects and clears its children,
                         and the children are what carry the value. */}
-                    <input type="checkbox" checked={picked === codes.length}
-                           readOnly disabled={!writesEnabled} title={dark}
+                    <input type="checkbox" defaultChecked={picked === codes.length}
+                           disabled={!writesEnabled} title={dark}
                            data-decorative="selects and clears its children; the countries carry the value"
                            aria-label={`Select all countries in ${label}`} />
                     <span>{label}</span>
@@ -104,10 +104,23 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                           {/* **The country boxes are the ones that submit.**
                               An empty selection is Worldwide, which is the
                               storage contract the board already holds, so no
-                              `loc` at all is a legal and meaningful state. */}
+                              `loc` at all is a legal and meaningful state.
+
+                              **`checked` with `readOnly` made every one of
+                              these inert.** React refuses the toggle on a
+                              controlled checkbox with no `onChange`, and
+                              `readOnly` tells the browser the same thing, so
+                              clicking a country did nothing at all: the box did
+                              not tick, no request went out, and the lane never
+                              moved. It was a picture of the saved selection
+                              wearing a control's clothes. `defaultChecked` hands
+                              the toggle back to the browser, which is what every
+                              other control in this form already does -- the form
+                              is a plain GET and the server renders the next
+                              state, so nothing here needs to be controlled. */}
                           <input type="checkbox" name="loc" value={code}
-                                 checked={chosen.has(code)}
-                                 readOnly disabled={!writesEnabled} title={dark}
+                                 defaultChecked={chosen.has(code)}
+                                 disabled={!writesEnabled} title={dark}
                                  data-loc={code} data-continent-country={key}
                                  data-country-name={name} />
                           <span>{name}</span>

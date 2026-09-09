@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /** Every board mutation carries these. A POST without `x-jobby-request` is
  *  refused as cross-site, which is how Watch, Pass and Apply from Found 403'd
@@ -142,6 +142,48 @@ function configFromForm(root: HTMLElement | Document): Record<string, unknown> {
 
 /** Save search. Parked in the queue; `search_config.py` validates it, because
  *  a board that could write an invalid config would break every later scan. */
+/**
+ * The filters you are looking at are the search, so they save themselves.
+ *
+ * **Save search was a button for a thing that should never have needed one.**
+ * A reader who narrows the lane and walks away has said what they want; making
+ * that survive only if they notice a second button is how a saved search drifts
+ * from the search on screen. The board's own Save search had the same shape and
+ * the same problem.
+ *
+ * It saves once per filter change, not once per render: the config is hashed
+ * and compared against what this tab last sent, so a reload, a lane switch or a
+ * re-render writes nothing. `sessionStorage` rather than `localStorage`, so a
+ * new tab re-establishes the saved state rather than trusting a stale note from
+ * a week ago.
+ *
+ * A failure is silent on purpose and this is the one place that is right: the
+ * reader did not ask for this, the lane in front of them is correct either way,
+ * and a toast about a background write they did not initiate is noise. It is
+ * logged, so it is not invisible.
+ */
+export function SaveFilters({ enabled }: { enabled: boolean }) {
+  useEffect(() => {
+    if (!enabled) return;
+    const form = document.querySelector<HTMLFormElement>("form.jb-filter-form");
+    if (!form) return;
+    const config = configFromForm(form);
+    const signature = JSON.stringify(config);
+    let last: string | null = null;
+    try { last = sessionStorage.getItem("jobby.savedFilters"); } catch { last = null; }
+    if (last === signature) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      send("/api/search-config", config)
+        .then(() => { try { sessionStorage.setItem("jobby.savedFilters", signature); } catch {} })
+        .catch((err) => console.error("the filters were not saved", err));
+    }, 800);
+    return () => { cancelled = true; clearTimeout(timer); };
+  });
+  return null;
+}
+
 export function SaveSearch({ enabled }: { enabled: boolean }) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
   const [why, setWhy] = useState("");

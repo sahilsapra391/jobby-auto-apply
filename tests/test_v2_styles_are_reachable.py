@@ -80,7 +80,7 @@ OBSERVED_ON_THE_PAGE = frozenset({
     "appbar", "boards", "brand", "btn", "chip", "company-cell", "company-mark",
     "danger", "dialog-close", "dialog-head", "dropped-count", "dropped-dialog",
     "dropped-dock", "dropped-label", "eyebrow", "filters", "ghost", "has-logo",
-    "hero-copy", "hint", "jb-actions", "jb-acts", "jb-addlink", "jb-adv",
+    "hero-copy", "hint", "jb-acts", "jb-addlink", "jb-adv",
     "jb-advbody", "jb-banner", "jb-basic", "jb-btn", "jb-card", "jb-check",
     "jb-checks", "jb-chip", "jb-chips", "jb-co", "jb-col", "jb-continent",
     "jb-continent-count", "jb-continent-list", "jb-continent-main", "jb-count",
@@ -225,6 +225,18 @@ UNRENDERED = {
                "carry it already. Only the Scan now button is a write, and "
                "that is `scan`, which is in ALLOWED rather than here.",
         "classes": {"scanbar", "scanmsg", "sysbanner", "capacity"},
+    },
+    "the board's Found actions row, below the filters": {
+        "state": "architectural",
+        "why": "**not unbuilt: removed, and the row with it.** The board keeps "
+               "Save search and a second Clear in a row below the filters. v2 "
+               "saves the filters when they change rather than when somebody "
+               "presses a button, and its one reset control sits in the filter "
+               "row beside the thing it resets, so a reader counting Clear "
+               "buttons finds one rather than two. With both controls gone the "
+               "row has nothing to hold, and a container rendered around "
+               "nothing is not a gap.",
+        "classes": {"jb-actions"},
     },
     "the board's single-document navigation": {
         "state": "architectural",
