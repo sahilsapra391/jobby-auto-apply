@@ -142,47 +142,28 @@ function configFromForm(root: HTMLElement | Document): Record<string, unknown> {
 
 /** Save search. Parked in the queue; `search_config.py` validates it, because
  *  a board that could write an invalid config would break every later scan. */
-/**
- * The filters you are looking at are the search, so they save themselves.
+/*
+ * **`SaveFilters` is deleted, not disabled, and this is why.**
  *
- * **Save search was a button for a thing that should never have needed one.**
- * A reader who narrows the lane and walks away has said what they want; making
- * that survive only if they notice a second button is how a saved search drifts
- * from the search on screen. The board's own Save search had the same shape and
- * the same problem.
+ * It saved the filter form on every change, debounced, with no confirmation.
+ * What it actually did was turn any URL somebody navigated to into the
+ * account's saved search -- and the saved search is not a view preference.
+ * `ingest.run` reads it to decide which jobs to fetch and keep, so narrowing it
+ * narrows sourcing.
  *
- * It saves once per filter change, not once per render: the config is hashed
- * and compared against what this tab last sent, so a reload, a lane switch or a
- * re-render writes nothing. `sessionStorage` rather than `localStorage`, so a
- * new tab re-establishes the saved state rather than trusting a stale note from
- * a week ago.
+ * Observed 2026-09-09, and the damage was mine: diagnostic navigation on the
+ * deployed board wrote `locations: [{country: "IN"}]`, `keywords:
+ * ["Technical", "Program", "Manager"]` and `postedWithin: "6h"` over a search
+ * that had been worldwide, keywordless and 30 days. Version 23 to 27 in an
+ * afternoon, four writes, none of them asked for. From the reader's side every
+ * filter looked broken, because every filter was operating inside 221 rows.
  *
- * A failure is silent on purpose and this is the one place that is right: the
- * reader did not ask for this, the lane in front of them is correct either way,
- * and a toast about a background write they did not initiate is noise. It is
- * logged, so it is not invisible.
+ * The premise was wrong rather than the implementation. "The filters you are
+ * looking at are the search" is true of a view and false of a sourcing config,
+ * and a write nobody asked for has no undo. If this comes back it needs an
+ * explicit control, and what it writes has to be a view preference that is not
+ * the sweep's input.
  */
-export function SaveFilters({ enabled }: { enabled: boolean }) {
-  useEffect(() => {
-    if (!enabled) return;
-    const form = document.querySelector<HTMLFormElement>("form.jb-filter-form");
-    if (!form) return;
-    const config = configFromForm(form);
-    const signature = JSON.stringify(config);
-    let last: string | null = null;
-    try { last = sessionStorage.getItem("jobby.savedFilters"); } catch { last = null; }
-    if (last === signature) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-      send("/api/search-config", config)
-        .then(() => { try { sessionStorage.setItem("jobby.savedFilters", signature); } catch {} })
-        .catch((err) => console.error("the filters were not saved", err));
-    }, 800);
-    return () => { cancelled = true; clearTimeout(timer); };
-  });
-  return null;
-}
 
 export function SaveSearch({ enabled }: { enabled: boolean }) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");

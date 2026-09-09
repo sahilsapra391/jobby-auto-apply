@@ -1,5 +1,5 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
-import { AddPosting, FindSources, SaveFilters } from "./FoundActions";
+import { AddPosting, FindSources } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import type { BoardMeta } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
@@ -266,7 +266,6 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
         </span>
       </div>
       <SubmitOnChange />
-      <SaveFilters enabled={writesEnabled} />
       {/* The keyword chips the old board renders under the input. Each is a
           link that removes its own term, which is what a chip's × does. */}
       <div className="jb-pills">
