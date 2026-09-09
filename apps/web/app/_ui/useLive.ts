@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LiveSession, type Envelope } from "./live";
 import { actionFor, applyRow, type Row } from "./project";
 import { mark } from "./measure";
+import type { Cursor } from "./db";
 import type { Lane } from "../lanes.generated";
 
 /**
@@ -61,7 +62,7 @@ export type LiveState = {
 };
 
 export function useLive({
-  lane, query, rows, setRows, absorbs,
+  lane, query, rows, setRows, replaceAll, absorbs,
 }: {
   lane: Lane;
   /** The lane, its sort and its filters, as `laneQuery` built them. One
@@ -78,6 +79,20 @@ export function useLive({
    */
   rows: () => Row[];
   setRows: (fn: (held: Row[]) => Row[]) => void;
+  /**
+   * Replace the lane with a fresh page one, paging state and all.
+   *
+   * **`reload` used to call `setRows(() => body.rows)` and stop there**, and
+   * the cursor it invalidated lives in `LaneList`. Load more twice, then press
+   * "3 new rows": rows 51-150 vanish while the cursor still points at 150, so
+   * the next Load more appends 151-200 onto a fifty-row list and the reader is
+   * looking at a lane with a hundred rows missing from the middle and no way
+   * to tell.
+   *
+   * Which rows are shown and where the next page starts are one fact. They are
+   * set together or the lane describes a page it is not on.
+   */
+  replaceAll: (rows: Row[], next: Cursor, done: boolean) => void;
   /** Subjects this tab has already drawn optimistically. */
   absorbs: (subject: string) => boolean;
 }): LiveState {
@@ -99,10 +114,15 @@ export function useLive({
     const res = await fetch(`/api/lane?${query}`);
     if (!res.ok) throw new Error(`lane reload ${res.status}`);
     const body = await res.json();
-    setRows(() => body.rows);
+    // **The cursor comes from this response, not from the server-rendered
+    // page.** A reload happens because the rows changed, so the page one it
+    // returns is not the page one the server sent, and its `next` is the only
+    // cursor that belongs to the list now on screen. Resetting to the initial
+    // cursor would be the same defect a layer down.
+    replaceAll(body.rows, body.next ?? null, Boolean(body.done));
     setArrived(0);
     stop();
-  }, [query, lane, setRows]);
+  }, [query, lane, replaceAll]);
 
   /** Ask the lane whether it still holds one subject, and act on the answer. */
   const ask = useCallback(async (id: string) => {
