@@ -200,3 +200,53 @@ test('Connect is driven, by name', () => {
     assert.ok(c.byProp, `ProviderAction's ${c.label} reaches nothing again`);
   }
 });
+
+// **Every file this walk reads has to be a file the build accepts, and for one
+// push it was not.** `ts.createSourceFile` recovers from syntax errors rather
+// than throwing: it returns a tree with error nodes and files the complaints in
+// `parseDiagnostics`, which nothing read. So a `{/* comment */}` written into a
+// ternary branch, where JSX children are not expected and the braces are an
+// object literal, was walked by five separate guards -- this one,
+// `form_controls_have_names`, `lane_actions_are_driven`,
+// `status_writes_reach_the_daemon` and `profile_route_writes_nothing` -- and
+// every one of them found its controls and passed. `next build` refused it.
+//
+// It is the same shape as a check pointed at a stale server, one step earlier:
+// the guards were reading a real file and answering correctly about it, and the
+// thing that decides whether the board exists was never asked. A guard that can
+// only report "this control reaches nothing" is blind to "this file is not a
+// file", and the second failure is the one that takes the board down.
+//
+// This is not a substitute for the build. It is the cheap half that runs in
+// `node --test` in a second, so the expensive half is not the first thing to
+// notice.
+test('every file the walk reads is one the compiler can parse', () => {
+  const broken = [];
+  for (const [file, src] of text) {
+    const tree = ts.createSourceFile(file, src, ts.ScriptTarget.ES2022, true,
+                                     file.endsWith('.tsx') ? ts.ScriptKind.TSX
+                                                           : ts.ScriptKind.TS);
+    for (const d of tree.parseDiagnostics ?? []) {
+      const { line } = tree.getLineAndCharacterOfPosition(d.start ?? 0);
+      broken.push(`${relative(APP, file)}:${line + 1} ` +
+                  ts.flattenDiagnosticMessageText(d.messageText, ' '));
+    }
+  }
+  assert.deepEqual(broken, [],
+    'these files do not parse, so every AST guard walking them is answering ' +
+    'about a tree the build will refuse:\n  ' + broken.join('\n  '));
+});
+
+test('the parse check has files to check, and it fails on a real break', () => {
+  // Anti-vacuity, and the mutation in one. A walk that has stopped walking
+  // reports full compliance, and a diagnostics read that never fires is the
+  // eleven other checks in CLAUDE.md that measured nothing.
+  assert.ok(text.size >= 10,
+            `only ${text.size} sources found; the walk has stopped walking`);
+  const bad = ts.createSourceFile(
+    'x.tsx', 'export const A = () => (cond ? ({/* c */}<p/>) : null);',
+    ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  assert.ok((bad.parseDiagnostics ?? []).length > 0,
+            'the exact construct that broke the build parsed clean, so this ' +
+            'check would not have caught it');
+});

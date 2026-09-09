@@ -1109,6 +1109,40 @@ it was the check disagreeing with a change that should not have moved it. A
 lesson written down is not a lesson applied, and the second instance is always
 somewhere adjacent to the first.
 
+### Five AST guards walked a file that cannot build, 2026-09-09
+
+**`ts.createSourceFile` does not throw on a syntax error.** It recovers, returns
+a tree with error nodes, and files the complaints in `parseDiagnostics`, which
+nothing in this repository read. So a `{/* comment */}` written into a ternary
+branch -- JSX comment syntax, valid only where children are expected, an object
+literal anywhere else -- was walked by `controls_reach_something`,
+`form_controls_have_names`, `lane_actions_are_driven`,
+`status_writes_reach_the_daemon` and `profile_route_writes_nothing`. All five
+found their controls. All five passed. 22 node tests green on a file `next
+build` refuses with `Expected '</', got 'className'`.
+
+Verified by reinstating the exact break: the parse assertion fails and the other
+four files still report 22 passes.
+
+**The guards were not wrong and that is the point.** Each asks whether a control
+reaches something, each answered correctly about the tree it was given, and none
+of them asks whether the file is a file. A check that can only report "this
+control reaches nothing" is blind to "this source does not compile", and the
+second one takes the board down while the first is a lane with a dead button.
+
+**The half that is mine rather than the tool's: I ran `tsc --noEmit`, got exit
+0, then edited the file, and carried the green forward.** The typecheck never
+saw the version that shipped. That is the stale-server finding at a smaller
+scale -- the measurement was correct and its subject was substituted -- and it
+is cheap to avoid: **a compile or build result is about the bytes that existed
+when it ran, so it goes after the last edit, not before.** The build is also the
+only check here that reads every file the deployment reads, so a green suite
+with an unrun build is a claim about the tests rather than about the board.
+
+`controls_reach_something` reads `parseDiagnostics` now, with an anti-vacuity
+floor on the file count and a mutation asserting the exact construct fails. It
+is the cheap half that runs in a second; it does not replace running the build.
+
 ### A fixture with an empty collection under-renders, and nothing looks wrong
 
 **A check that renders a fixture and inspects the output is only as complete as

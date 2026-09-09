@@ -91,11 +91,11 @@ export function ProviderAction({
             : "Asked your Mac to apply it."}
         </p>
       ) : null}
+      {/* `provider-message` is the board's own status line for this card and it
+          has no red variant. Inventing one here would be a second design system
+          growing beside the first, which is what the invented-class check
+          refused. The alert role carries the urgency. */}
       {state === "failed" ? (
-        {/* `provider-message` is the board's own status line for this card
-            and it has no red variant. Inventing one here would be a second
-            design system growing beside the first, which is what the
-            invented-class check refused. The alert role carries the urgency. */}
         <p className="provider-detail provider-message" role="alert">{why}</p>
       ) : null}
     </>
