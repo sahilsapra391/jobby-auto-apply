@@ -322,8 +322,11 @@ class WindowTests(unittest.TestCase):
         log.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
         return decisions.window(root, self.Conn([v2, device]), "acct")
 
-    def clean(self, at, digest):
-        return {"at": at, "clean": True, "indexDigest": digest}
+    def clean(self, at, digest, note="run"):
+        # `note` defaults to a production one: a read with no note is a hand
+        # probe and the window ignores it, which is what the two cases at the
+        # end of this class are about.
+        return {"at": at, "clean": True, "indexDigest": digest, "note": note}
 
     def test_nothing_is_met_before_anything_has_happened(self):
         out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa")])
@@ -361,7 +364,8 @@ class WindowTests(unittest.TestCase):
 
     def test_one_disagreement_anywhere_keeps_the_window_open(self):
         out = self.window_for([self.clean("2026-09-08T22:00:00Z", "aaa"),
-                        {"at": "2026-09-08T22:30:00Z", "clean": False},
+                        {"at": "2026-09-08T22:30:00Z", "clean": False,
+                         "note": "run"},
                         self.clean("2026-09-08T23:00:00Z", "bbb")],
                        v2="2026-09-08T22:10:00Z", device="2026-09-08T22:20:00Z")
         self.assertEqual(out["disagreed"], 1)
@@ -369,7 +373,7 @@ class WindowTests(unittest.TestCase):
 
     def test_an_unreadable_read_is_counted_and_is_not_clean(self):
         out = self.window_for([{"at": "2026-09-08T22:00:00Z", "clean": None,
-                         "unreadable": "OSError: down"}])
+                                "note": "run", "unreadable": "OSError: down"}])
         self.assertEqual(out["unreadable"], 1)
         self.assertEqual(out["clean"], 0)
 
@@ -403,3 +407,34 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(set(decisions.WINDOW_WRITERS), {"sweep", "device", "v2"})
         for name, need in decisions.WINDOW_WRITERS.items():
             self.assertGreater(len(need.split()), 4, f"{name} has no description")
+
+    def test_a_hand_probe_does_not_open_the_window(self):
+        """Provenance is the property the artifact cannot answer.
+
+        The first version counted a probe run from a worktree and used its
+        timestamp as `openedAt`, so the window would have been open since
+        before the code was on the device and the three writers judged against
+        a clock that started in the wrong place.
+        """
+        out = self.window_for(
+            [{"at": "2026-09-08T22:00:00Z", "clean": True,
+              "indexDigest": "aaa", "note": "probe"},
+             {"at": "2026-09-09T03:00:00Z", "clean": True,
+              "indexDigest": "bbb", "note": "run"}],
+            v2="2026-09-08T22:30:00Z", device="2026-09-08T22:40:00Z")
+        self.assertEqual(out["openedAt"], "2026-09-09T03:00:00Z")
+        self.assertEqual(out["handProbes"], 1)
+        self.assertEqual(out["reads"], 1)
+        # Both writes now predate the window, so neither is met.
+        self.assertFalse(out["writers"]["v2"]["met"])
+        self.assertFalse(out["writers"]["device"]["met"])
+        self.assertFalse(out["ready"])
+
+    def test_a_probe_cannot_supply_the_movement_either(self):
+        out = self.window_for(
+            [{"at": "2026-09-09T03:00:00Z", "clean": True,
+              "indexDigest": "aaa", "note": "run"},
+             {"at": "2026-09-09T03:30:00Z", "clean": True,
+              "indexDigest": "zzz", "note": "probe"}])
+        self.assertFalse(out["writers"]["sweep"]["met"],
+                         "a hand probe supplied the index movement")

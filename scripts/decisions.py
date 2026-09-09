@@ -320,6 +320,19 @@ def index_digest(index):
 #: Enumerated from the code rather than remembered, which is this week's third
 #: census: the writers of `applications` and `application_events` are the
 #: device's own class B mirror, the board's Pass and Watch, and v2's route.
+#: The notes a production shadow read carries. `ingest.decisions_shadow` passes
+#: the name of the function it was called from, so anything else is somebody
+#: running the reader by hand.
+#:
+#: **A hand probe must not open a window that measures production traffic.**
+#: The first version counted one, from a worktree, and used its timestamp as
+#: `openedAt` -- so the window would have been "open" since before the code was
+#: on the device, and the three writers would have been judged against a clock
+#: that started in the wrong place. Same shape as the `activity.json` files
+#: two sessions each dated to their own run: provenance is the property the
+#: artifact cannot answer, so it is written down rather than inferred.
+PRODUCTION_NOTES = ("run", "add_postings")
+
 WINDOW_WRITERS = {
     "sweep": "a sweep whose merge moved the decided set",
     "device": "a Pass or Watch taken on the board and mirrored by the device",
@@ -343,6 +356,10 @@ def window(root, conn, account_id):
                 reads.append(json.loads(line))
             except ValueError:
                 continue
+
+    # Hand probes are recorded and never counted. See `PRODUCTION_NOTES`.
+    probes = [r for r in reads if r.get("note") not in PRODUCTION_NOTES]
+    reads = [r for r in reads if r.get("note") in PRODUCTION_NOTES]
 
     clean = [r for r in reads if r.get("clean") is True and r.get("at")]
     dirty = [r for r in reads if r.get("clean") is False]
@@ -404,6 +421,7 @@ def window(root, conn, account_id):
         entry["needs"] = WINDOW_WRITERS[name]
     return {"reads": len(reads), "clean": len(clean), "disagreed": len(dirty),
             "unreadable": len(unreadable), "openedAt": opened,
+            "handProbes": len(probes),
             "latestCleanAt": latest_clean,
             "writers": verdict,
             "ready": bool(not dirty and all(v["met"] for v in verdict.values()))}
