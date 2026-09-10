@@ -90,8 +90,10 @@ class FilterPredicateShapeTests(unittest.TestCase):
 
     def test_a_null_parameter_means_the_filter_is_off(self):
         sql = v2_lanes.page_sql("found")
-        # `text[]`, not `text`: a keyword is a chip and chips are a list.
-        self.assertIn("%(q)s::text[] is null", sql)
+        # **The property, not the spelling.** `is null` alone was the bug:
+        # an empty array is not null and `unnest('{}')` yields no rows, so the
+        # filter matched nothing instead of being off.
+        self.assertIn("array_length(%(q)s::text[], 1), 0) = 0", sql)
         self.assertIn("%(within)s::text is null", sql)
         self.assertIn("not coalesce(%(direct)s::boolean, false)", sql)
 

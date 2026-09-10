@@ -198,8 +198,19 @@ function filterValues(f: Filters | undefined) {
     // **A list, because a keyword is a chip and chips are OR'd.** One string
     // meant one tsquery and `product manager` meant product AND manager
     // anywhere in the row.
-    q: f?.q && f.q.length
-         ? f.q.map((k) => k.trim()).filter(Boolean) || null : null,
+    // **`[] || null` is `[]`, because an empty array is truthy in JavaScript.**
+    // The keyword box submits alongside the hidden chips, so an empty box put
+    // `q=` in the URL, this produced `[]` rather than null, and the predicate
+    // below then matched nothing at all: `unnest('{}')` yields no rows, so the
+    // `exists` is false for every posting. The loosest filter the form can
+    // produce returned "0 of 22,735".
+    //
+    // Deduped as well, like the board: pressing Enter on a keyword that is
+    // already a chip would otherwise add it twice.
+    q: (() => {
+      const words = [...new Set((f?.q ?? []).map((k) => k.trim()).filter(Boolean))];
+      return words.length ? words : null;
+    })(),
     within: f?.within && f.within in WINDOWS ? WINDOWS[f.within] : null,
     direct: f?.direct ?? false,
     // `exclude` rather than `not`: the SQL parameter name ends up in

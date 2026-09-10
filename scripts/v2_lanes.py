@@ -409,7 +409,13 @@ FILTERS = """
    -- of them. Three job titles in the box means 'show me all three kinds of
    -- job'; requiring every word meant a second title emptied the board, because
    -- no posting is a product manager AND a business analyst."
-   and (%(q)s::text[] is null or exists (
+   -- **Empty means off, not "match nothing".** A caller that passes `{}`
+   -- instead of null used to zero the lane, because `unnest('{}')` yields no
+   -- rows and the `exists` is then false for every posting. One caller did
+   -- exactly that and the board read "0 of 22,735" under the loosest filter
+   -- the form can produce. The caller is fixed; this is here so the fourth
+   -- one cannot repeat it.
+   and (coalesce(array_length(%(q)s::text[], 1), 0) = 0 or exists (
           select 1 from unnest(%(q)s::text[]) as kw
            where """ + HAYSTACK + """ ilike '%%' || kw || '%%'))
    and (%(within)s::text is null

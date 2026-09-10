@@ -66,7 +66,7 @@ class TheKeywordPredicateMatchesTheBoardTests(unittest.TestCase):
         # could not see it. The shape has to be pinned with what precedes it.
         self.assertRegex(
             FILTERS,
-            r"%\(q\)s::text\[\] is null\s+or exists\s*\(\s*"
+            r"array_length\(%\(q\)s::text\[\], 1\), 0\) = 0\s+or exists\s*\(\s*"
             r"select 1 from unnest\(%\(q\)s::text\[\]\)",
             "keywords are no longer a plain `or exists` over the list. "
             "`not exists` there means none of them; an `and` over the "
@@ -90,6 +90,20 @@ class TheKeywordPredicateMatchesTheBoardTests(unittest.TestCase):
                    r" \{ hit = true; break; \}",
             "the board no longer breaks on the first hit, so it may have "
             "stopped OR'ing")
+
+    def test_an_empty_keyword_list_is_the_filter_being_off(self):
+        """**`is null` alone read `{}` as "match nothing".**
+
+        An empty array is not null, and `unnest('{}')` yields no rows, so the
+        `exists` was false for every posting. One caller passed `[]` -- the
+        keyword box submits alongside the chips, so an empty box put `q=` in
+        the URL -- and the loosest filter the form can produce read
+        "0 of 22,735". The caller is fixed; this is the half that stops a
+        fourth one repeating it.
+        """
+        self.assertIn("array_length(%(q)s::text[], 1), 0) = 0", FILTERS,
+                      "an empty keyword array narrows the lane to nothing "
+                      "instead of leaving the filter off")
 
     def test_the_haystack_is_the_boards_two(self):
         hay = v2_lanes.HAYSTACK
