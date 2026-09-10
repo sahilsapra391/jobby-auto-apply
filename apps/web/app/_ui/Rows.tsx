@@ -510,7 +510,21 @@ export function DoneRow(row: Row) {
       <td>{(() => {
         const p = (row.completed_payload ?? {}) as Record<string, unknown>;
         const cover = s(p.coverLetter);
-        if (!cover) return <Muted>not recorded</Muted>;
+        // **`never recorded`, which is what the Resume column beside it says
+        // for the identical condition.** This said "not recorded" and `DocLink`
+        // said "never recorded", so one row could carry both words for one
+        // fact, three cells apart. Rendered on production, page one: 3 "not
+        // recorded" in this column against 2 "never recorded" in that one.
+        //
+        // `DocLink`'s wording wins because it is the one the four-state
+        // comment defines, and because "never" is the honest half: no filename
+        // was written, so the document was not made and nothing is missing.
+        if (!cover) {
+          return <span className="muted"
+                       title="No document filename was recorded for this application, so nothing was made and nothing is missing">
+                   never recorded
+                 </span>;
+        }
         // A real letter is a filename; the agent also writes a sentence here
         // when a form had no cover-letter field, and that sentence is a fact
         // worth showing rather than a link worth faking.
@@ -814,6 +828,40 @@ function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
   );
 }
 
+/**
+ * The key `documentSiblings` builds its map with, in the same words.
+ *
+ * **The map is keyed by the basename and this was looking it up by the whole
+ * recorded value.** `documentSiblings` groups on
+ * `lower(split_part(payload->>'resumeVariant', '/', -1))`, and 18 of the 100
+ * recorded `resumeVariant` values are paths -- `applications/Ramp/
+ * Sahil_Sapra_Ramp_Resume.pdf` rather than the bare name. Every one of those
+ * missed, `shared` fell back to 1, and the row dropped through to "not
+ * stored".
+ *
+ * Measured on production 2026-09-10: **3** rows are keyed wrongly (Cohere,
+ * Datadog, Ramp) and **2** of them visibly change state, because the
+ * `stored.has(key)` branch above catches Cohere before this is reached. Both
+ * counts are true and they answer different questions: how many lookups are
+ * wrong, and how many readers see a wrong word.
+ *
+ * The word matters more than the count. "not stored" says the document is not
+ * in the bucket; "not attributable" says it **is** there and more than one
+ * application claims that name. Those are the two facts CLAUDE.md is most
+ * careful to keep apart, and the board was saying a document is missing when
+ * the truth is that it exists and cannot be tied to one application.
+ *
+ * `split_part(x, '/', -1)` returns the whole string when there is no
+ * separator, which is what `slice(lastIndexOf + 1)` does for -1, so the two
+ * agree on a bare filename as well as on a path.
+ * `tests/the_sibling_key_is_the_key_it_was_built_with.test.mjs` compares them
+ * rather than restating the rule, because this is one contract in two
+ * languages and that is how the other two in this repository are held.
+ */
+function basename(value: string): string {
+  return value.slice(value.lastIndexOf("/") + 1).toLowerCase();
+}
+
 /** A `/doc/` link for a filename the store recorded, or nothing. */
 function DocLink({ row, kind, label, value }: {
   row: Row; kind: "resume" | "cover"; label: string; value: unknown;
@@ -863,7 +911,7 @@ function DocLink({ row, kind, label, value }: {
       </a>
     );
   }
-  const shared = siblings.get(name.toLowerCase()) ?? 1;
+  const shared = siblings.get(basename(name)) ?? 1;
   if (shared > 1) {
     return (
       <span className="chip hold"
