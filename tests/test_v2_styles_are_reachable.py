@@ -253,12 +253,20 @@ UNRENDERED = {
         "state": "buildable",
         "why": "a long tail, each one small, none of them a write. Kept as "
                "one group rather than seven because splitting them would "
-               "imply a sequencing decision nobody has made.",
+               "imply a sequencing decision nobody has made.\n\n"
+               "`why` left this group with migration 0024. It was listed as "
+               "buildable and it was not: `phase.py` writes `phaseDetail` into "
+               "the session on every `set_phase` and there was no "
+               "`phase_detail` column, nothing in `class_b.session_row` and "
+               "nothing selecting it, so drawing the span would have drawn an "
+               "empty one on every In-flight card. The gap was the mirror "
+               "rather than the markup, which is the distinction this file "
+               "already draws for `sight` and `jb-sight`.",
         "classes": {"ago", "applymsg", "aside", "chip-sm", "contact",
                     "direct", "dropping", "err", "fault-note",
                     "jb-decidefail", "jb-linkmsg", "jb-out", "jb-pill",
                     "jb-vt", "jb-wide", "msg", "note", "ok", "pill", "stub",
-                    "undo", "why"},
+                    "undo"},
     },
     "states whose base class v2 does render, already carried by ALLOWED with "
     "their own reasons; listed here too because the inverted check sees them "
