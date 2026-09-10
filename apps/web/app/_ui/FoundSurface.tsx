@@ -181,7 +181,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
   // whitespace made "product manager" two chips and two filters, which is the
   // same mistake the tsquery made one layer down: a two-word phrase is one
   // thing a reader asked for.
-  const terms = (q ?? []).map((t) => t.trim()).filter(Boolean);
+  //
+  // **Deduped, like the board's chip list and not only like its query.**
+  // `filterValues` already dedupes what reaches the SQL, so a keyword in the
+  // URL twice filtered once -- and still drew two chips, two hidden inputs and
+  // two siblings sharing a React key. The board's `keywords.indexOf(word) ===
+  // -1` keeps one of each, so this does too.
+  const terms = [...new Set((q ?? []).map((t) => t.trim()).filter(Boolean))];
   // **Every filter this surface was rendered with, as one object.** A URL built
   // from some of the props is the hand-listing that had page one filtered and
   // page two not, in a third place.

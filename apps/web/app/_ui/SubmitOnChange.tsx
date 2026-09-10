@@ -17,9 +17,56 @@ import { useEffect } from "react";
  * nodes while an effect mounted higher up still holds the old ones. That has
  * now caused the same class of bug three times, so nothing here holds a node.
  *
- * The keyword box is still excluded. It submits on Enter, which a form already
- * does, and submitting per keystroke would reload the lane per character.
+ * **Enter is handled here, and this used to say it did not need to be.** The
+ * sentence was "The keyword box is still excluded. It submits on Enter, which a
+ * form already does." A form does -- when it has a submit button, or exactly
+ * one text field. The HTML spec's implicit submission refuses Enter in a form
+ * with no submit button and more than one field that blocks it, and this form
+ * has three: the keyword box, "Hide jobs mentioning" and the company names.
+ * Removing the Filter button was correct and is what made the sentence false,
+ * because Enter only ever worked through the button that was removed. Found
+ * from a screen recording on 2026-09-10: "product manager" typed, Enter
+ * pressed, and the URL, the chips and the count all stayed exactly where they
+ * were. Reproduced with real keystrokes; a synthetic `keydown` from script does
+ * not trigger implicit submission, so it could not have reproduced this.
+ *
+ * Two correct changes, and a property that only existed between them -- the
+ * composition failure CLAUDE.md records for the blank Settings page.
+ *
+ * **Exclude and company names apply on Enter and on leaving the box, not per
+ * keystroke, and that is a deliberate difference from the board.** The board
+ * filters an embedded slice in the browser, so it re-renders on every `input`
+ * for free. Here every apply is a navigation, and one per character would
+ * reload the lane under the reader mid-word and take their cursor with it.
+ * The keyword box does not apply on leaving it, because the board does not add
+ * a keyword on blur either: a half-typed word is not a chip.
  */
+
+/**
+ * What Enter in a filter text box should do. Pure and exported so the test
+ * compiles it out and runs it, rather than reading the source and asserting
+ * what it looks like.
+ *
+ *   ignore   an IME is mid-composition, where Enter confirms a character; or
+ *            the keyword box is empty -- the board's `if (word && ...)` adds
+ *            nothing, and a reload that changes nothing is not a response
+ *   clear    the keyword is already a chip -- the board dedupes with
+ *            `keywords.indexOf(word) === -1` and clears the box regardless
+ *   submit   everything else, including an emptied exclude or company box,
+ *            because deleting that text and pressing Enter means "stop
+ *            filtering on this"
+ */
+export function enterAction(
+  name: string, value: string, chips: readonly string[], composing: boolean,
+): "submit" | "clear" | "ignore" {
+  if (composing) return "ignore";
+  if (name !== "q") return "submit";
+  const word = value.trim();
+  if (!word) return "ignore";
+  if (chips.includes(word)) return "clear";
+  return "submit";
+}
+
 export function SubmitOnChange() {
   useEffect(() => {
     /**
@@ -34,12 +81,22 @@ export function SubmitOnChange() {
       if (pending) clearTimeout(pending);
       pending = setTimeout(() => { pending = null; form.requestSubmit(); }, 300);
     };
+    /** Enter is one deliberate act, so it goes now and takes any pending
+     *  debounced submit with it rather than racing it into a second load. */
+    const submitNow = (form: HTMLFormElement) => {
+      if (pending) { clearTimeout(pending); pending = null; }
+      form.requestSubmit();
+    };
 
     const onChange = (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
+      // `change` on a text field fires when focus leaves it with a new value,
+      // which is how exclude and company names apply without a reload per
+      // keystroke. The keyword box is deliberately not in this list.
       const control = target.closest<HTMLInputElement | HTMLSelectElement>(
-        "input[type=radio], input[type=checkbox], select");
+        "input[type=radio], input[type=checkbox], select, " +
+        "input[name=not], input[name=conames]");
       if (!control) return;
       const form = control.form ?? control.closest("form");
       if (!form || !form.classList.contains("jb-filter-form")) return;
@@ -61,6 +118,27 @@ export function SubmitOnChange() {
       submitSoon(form);
     };
 
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter") return;
+      const target = event.target as HTMLElement | null;
+      const box = target?.closest?.<HTMLInputElement>(
+        "input[type=search], input[type=text]");
+      if (!box) return;
+      const form = box.form;
+      if (!form || !form.classList.contains("jb-filter-form")) return;
+      const chips = [...form.querySelectorAll<HTMLInputElement>(
+        'input[type=hidden][name="q"]')].map((i) => i.value);
+      const action = enterAction(box.name, box.value, chips, event.isComposing);
+      if (action === "ignore") {
+        // Never swallow an IME's Enter: it is confirming a character.
+        if (!event.isComposing) event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      if (action === "clear") { box.value = ""; return; }
+      submitNow(form);
+    };
+
     /**
      * **Everything selected is no filter, and it has to serialise that way.**
      * All 199 boxes ticked is the default, and submitting them produced a URL
@@ -80,10 +158,12 @@ export function SubmitOnChange() {
     };
 
     document.addEventListener("change", onChange);
+    document.addEventListener("keydown", onKeyDown);
     document.addEventListener("submit", onSubmit, true);
     return () => {
       if (pending) clearTimeout(pending);
       document.removeEventListener("change", onChange);
+      document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("submit", onSubmit, true);
     };
   }, []);
