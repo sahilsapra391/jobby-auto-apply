@@ -87,7 +87,7 @@ export type Row = Record<string, unknown> & { id: string };
  */
 /** The Found lane's filters. Absent means off, never "match everything". */
 export type Filters = {
-  q?: string; within?: string; direct?: boolean;
+  q?: string[]; within?: string; direct?: boolean;
   /** Words to exclude from title and summary. */
   not?: string;
   /** Which columns `q` searches: title, or title and summary. */
@@ -167,7 +167,7 @@ function argsFor(params: readonly string[], values: Record<string, unknown>) {
  * rather than a silent one.
  */
 const FILTER_KEYS = [
-  { key: "q", kind: "one" },
+  { key: "q", kind: "many" },
   { key: "within", kind: "one" },
   { key: "direct", kind: "flag" },
   { key: "not", kind: "one" },
@@ -195,7 +195,11 @@ function filterValues(f: Filters | undefined) {
   const list = (xs?: string[]) => (xs && xs.length ? xs : null);
   const names = (f?.conames ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return {
-    q: f?.q?.trim() || null,
+    // **A list, because a keyword is a chip and chips are OR'd.** One string
+    // meant one tsquery and `product manager` meant product AND manager
+    // anywhere in the row.
+    q: f?.q && f.q.length
+         ? f.q.map((k) => k.trim()).filter(Boolean) || null : null,
     within: f?.within && f.within in WINDOWS ? WINDOWS[f.within] : null,
     direct: f?.direct ?? false,
     // `exclude` rather than `not`: the SQL parameter name ends up in

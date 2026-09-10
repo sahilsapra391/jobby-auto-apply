@@ -1,7 +1,7 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import { AddPosting, FindSources } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
-import type { BoardMeta } from "./db";
+import { laneQuery, type BoardMeta, type Filters } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
 import { LocationPicker } from "./LocationPicker";
 import {
@@ -142,7 +142,8 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                          locations = [], writesEnabled = false,
                          searchScope = "title", extraLocations = [],
                          not_, cos, conames, wp, exp }: {
-  q?: string; within?: string; direct?: boolean; sort?: Sort;
+  /** The keywords, as chips. One chip is one phrase; chips are OR'd. */
+  q?: string[]; within?: string; direct?: boolean; sort?: Sort;
   /** Words to exclude. `not` is a reserved word, hence the underscore. */
   not_?: string;
   /** "all" | "only" | "hide" -- what to do with the company names beside it. */
@@ -168,7 +169,18 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
   // Every advanced control carries the same reason when it is dark, so it is
   // named once.
   const dark = writesEnabled ? undefined : READ_ONLY;
-  const terms = (q ?? "").split(/\s+/).filter(Boolean);
+  // **The chips are the keywords, not the words in them.** Splitting on
+  // whitespace made "product manager" two chips and two filters, which is the
+  // same mistake the tsquery made one layer down: a two-word phrase is one
+  // thing a reader asked for.
+  const terms = (q ?? []).map((t) => t.trim()).filter(Boolean);
+  // **Every filter this surface was rendered with, as one object.** A URL built
+  // from some of the props is the hand-listing that had page one filtered and
+  // page two not, in a third place.
+  const held: Filters = {
+    q: terms, within, direct, not: not_, scope: searchScope, cos, conames,
+    loc: locations, wp, exp,
+  };
   const filtered = !!(q || within || direct);
   return (
     // **`.jb-filters` is the surface, and it was missing.** The board wraps
@@ -192,7 +204,15 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
       <form className="jb-filter-form" method="get" action="/">
       <div className="jb-row jb-basic">
         <input type="hidden" name="lane" value="found" />
-        <input type="search" name="q" defaultValue={q ?? ""}
+        {/* **The chips already set are hidden inputs; the box adds one more.**
+            The placeholder has always said "Add a keyword and press Enter" and
+            the box was a single field whose whole contents were the search, so
+            a second keyword replaced the first. One `q` per chip, repeated,
+            the way `loc` and `wp` already ride. */}
+        {terms.map((term) => (
+          <input type="hidden" name="q" value={term} key={term} />
+        ))}
+        <input type="search" name="q" defaultValue=""
                placeholder="Add a keyword and press Enter…"
                aria-label="Add a keyword" />
         {/* **The chips apply on click.** They were radios in a form that only
@@ -270,12 +290,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
           link that removes its own term, which is what a chip's × does. */}
       <div className="jb-pills">
         {terms.map((term) => {
-          const rest = terms.filter((t) => t !== term).join(" ");
-          const next = new URLSearchParams({ lane: "found" });
-          if (rest) next.set("q", rest);
-          if (within) next.set("within", within);
-          if (direct) next.set("direct", "1");
-          if (sort) next.set("sort", sort);
+          // **Through `laneQuery`.** This hand-listed four keys, so removing
+          // one keyword from a two-keyword search silently cleared every
+          // advanced filter with it. Fourth writer of a lane URL onto the one
+          // derivation.
+          const next = laneQuery("found", (sort ?? "score") as Sort, {
+            ...held, q: terms.filter((t) => t !== term),
+          });
           return (
             <a className="chip" key={term} href={`/?${next}`}
                aria-label={`Remove ${term}`}>{term} &#215;</a>
