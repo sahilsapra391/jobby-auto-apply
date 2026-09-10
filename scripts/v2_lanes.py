@@ -363,12 +363,21 @@ WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
 #: keyword box takes phrases in quotes and `-word` to exclude, and the reader
 #: who types them should get what they asked for rather than a token soup.
 #:
-#: **The company predicate names no alias.** `FILTERS` is shared by the page
-#: query, the count and the row lookup, and only the first joins `employers e`.
-#: Writing `e.canonical_name` here compiled fine in the generator and answered
-#: "missing FROM-clause entry for table e" on the first count -- a 500 on the
-#: board rather than a build failure. An `exists` against `employers em` is
-#: self-contained, so every query that shares this block can carry it.
+#: **The company predicate keeps its own `exists`, and the reason changed.**
+#: It was self-contained because `FILTERS` is shared by the page query and the
+#: count and only the page query joined `employers e` -- writing
+#: `e.canonical_name` here once compiled fine in the generator and answered
+#: "missing FROM-clause entry for table e" on the first count, a 500 on the
+#: board rather than a build failure. The count joins `employers` now, so that
+#: constraint is gone.
+#:
+#: It stays anyway, for a different reason and a smaller one. `exists` answers
+#: false for a posting with no employer; `lower(e.canonical_name) = any(...)`
+#: answers NULL, and `(%(cos)s = 'only') = NULL` is NULL, which drops the row
+#: from a "hide these companies" search that should have kept it. That is the
+#: three-valued-logic trap this file already carries an entry about, and it is
+#: not worth taking on a predicate that only runs when a company filter is set.
+#: The haystack was worth it because it runs on every keyword search.
 #:
 #: "direct listings only" is `sourceClass = 'ats'`, which is `direct_rank` 0.
 #: The board draws the same chip on the same rows: `canonical_rank` puts ats at
@@ -383,14 +392,29 @@ WINDOWS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days",
 #: and description" has always meant the summary, so matching the board means
 #: matching that.
 #:
-#: The employer name comes through a scalar subquery rather than an alias, for
-#: the reason `FILTERS` already gives about `employers e`: this block is shared
-#: by the page query, the count and the row lookup, and only the first joins it.
+#: **The employer name comes off the join, and the count query gained the join
+#: to make that legal.** It used to be a correlated scalar subquery, because
+#: this block is shared by the page query and the count and only the page query
+#: joined `employers`. That is a real constraint and the subquery satisfied it;
+#: what it cost was an `Index Scan using employers_pkey` **once per candidate
+#: row**, inside the keyword `exists`, where the planner cannot hoist it.
+#:
+#: Measured against production, five keywords, wide scope, `explain (analyze)`
+#: on the count:
+#:
+#:     before   SubPlan 2 -> Index Scan using employers_pkey, loops=22643
+#:              Execution Time 950 ms, client median 543 ms
+#:     after    the hash join supplies the name, no subplan
+#:
+#: Adding `left join employers e` to the count is the cheaper half of the
+#: keyword performance work and needs no index. The other half is a trigram
+#: index on this expression, and **an expression index cannot hold a
+#: correlated subquery**, so this was a precondition for that as well as a
+#: saving on its own.
 HAYSTACK = """case when coalesce(%(scope)s::text, '') = 'title'
                    then coalesce(p.title, '')
                    else concat_ws(' ', coalesce(p.title, ''),
-                          coalesce((select em.canonical_name from employers em
-                                     where em.id = p.employer_id), ''),
+                          coalesce(e.canonical_name, ''),
                           coalesce(p.summary, ''),
                           coalesce(array_to_string(p.tags, ' '), ''))
               end"""
@@ -593,11 +617,16 @@ def count_sql(lane):
     if lane in POSTING_LANES:
         # The count carries the filters too, or the tab badge says 18,104 over
         # a lane showing nine.
+        # `employers` is joined here for the haystack rather than for anything
+        # selected: `count(*)` needs no column off it. A left join on a primary
+        # key adds a hash join over 900-odd rows and removes one index scan per
+        # candidate row from inside the keyword `exists`.
         return f"""
 select count(*)
   from postings p
   left join job_decisions d
     on d.posting_id = p.id and d.account_id = %(account)s
+  left join employers e on e.id = p.employer_id
  where {LANES[lane]["where"]}{FILTERS}
 """.strip()
     return f"""
