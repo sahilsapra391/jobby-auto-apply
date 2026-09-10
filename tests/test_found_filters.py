@@ -172,35 +172,80 @@ class FilterBehaviourTests(pgtest.SchemaCase):
         self.assertEqual(self.found(), ["pm-new", "pm-old", "wh-new", "wh-old"])
 
     def test_a_keyword_narrows_it(self):
-        self.assertEqual(self.found(q="product manager"), ["pm-new", "pm-old"])
+        self.assertEqual(self.found(q=["product manager"]), ["pm-new", "pm-old"])
 
-    def test_a_negated_keyword_excludes(self):
-        """`websearch_to_tsquery`, so `-word` means what the reader typed."""
-        self.assertEqual(self.found(q="operative -warehouse"), [])
-        self.assertEqual(self.found(q="manager -warehouse"), ["pm-new", "pm-old"])
+    def test_a_two_word_keyword_is_a_phrase_and_not_two_terms(self):
+        """The reason this whole predicate was rewritten.
 
-    def test_a_keyword_the_title_does_not_literally_contain_still_matches(self):
-        """The bug the other keyword tests could not see.
-
-        **`NULL <> 'title'` is NULL, and NULL is not true.** The title-scope
-        clause read `q is null or scope <> 'title' or title ilike ...`, so with
-        no scope chosen -- which is every default page load -- a row survived
-        only if the reader's raw text was a literal substring of the title.
-
-        Three keyword tests existed and two of them failed on that. The one
-        that passed, `product manager`, passed because it happens to be a
-        substring of "Product Manager", so full-text search and a raw ilike
-        agree on it and nothing distinguishes them. This one is a query the
-        index answers and a substring cannot: stemming makes `managers` match
-        `Manager`, and no title contains the letters `managers`.
+        `websearch_to_tsquery` ANDs bare terms, so "product manager" meant
+        "product somewhere and manager somewhere" and matched a Full Stack iOS
+        posting because both words appear in its description. The board does
+        `hay.indexOf(keyword)`: one chip is one literal substring, so a
+        two-word chip is a phrase without anybody typing quotes.
         """
-        self.assertEqual(self.found(q="managers"), ["pm-new", "pm-old"])
-        # And with the scope actually on, the same query is a title substring
-        # test and finds nothing, which is the branch the clause is for.
-        self.assertEqual(self.found(q="managers", scope="title"), [])
+        # Both words present, never adjacent: a tsquery matches this and a
+        # phrase does not.
+        self.assertEqual(self.found(q=["manager product"]), [])
 
-    def test_a_quoted_phrase_is_a_phrase(self):
-        self.assertEqual(self.found(q='"product manager"'), ["pm-new", "pm-old"])
+    def test_keywords_are_ord_because_the_board_ors_them(self):
+        """The board's decision, with the board's reason: "no posting is a
+        product manager AND a business analyst", so requiring every chip
+        empties the lane. A second keyword widens."""
+        self.assertEqual(self.found(q=["product manager"]), ["pm-new", "pm-old"])
+        self.assertEqual(
+            sorted(self.found(q=["product manager", "warehouse"])),
+            ["pm-new", "pm-old", "wh-new", "wh-old"])
+
+    def test_exclusion_is_the_exclude_box_and_not_a_dash(self):
+        """**Capability deliberately given up, named rather than lost.**
+
+        `-word` was `websearch_to_tsquery` syntax and the board has never had
+        it: negation there is a separate control, `jb-ex`, which is `exclude`
+        here. Matching the board means a dash is now a literal dash, so the
+        test that asserted the old syntax becomes the test that asserts where
+        negation actually lives.
+        """
+        self.assertEqual(self.found(q=["operative -warehouse"]), [])
+        self.assertEqual(
+            self.found(q=["manager"], exclude="warehouse"), ["pm-new", "pm-old"])
+
+    def test_stemming_is_gone_with_the_tsquery_and_that_is_the_trade(self):
+        """**The one real loss, written down rather than discovered later.**
+
+        The index stems, so `managers` matched `Manager`. A substring does not,
+        and the board never did either -- `hay.indexOf('managers')` is false
+        against "Product Manager". Matching the board costs this, and the
+        reader's recourse is to type the shorter word.
+        """
+        self.assertEqual(self.found(q=["managers"]), [])
+        self.assertEqual(self.found(q=["manager"]), ["pm-new", "pm-old"])
+
+    def test_quotes_are_literal_now_because_a_chip_is_already_a_phrase(self):
+        """`"product manager"` was how you asked a tsquery for a phrase. A chip
+        is one, so the quotes are characters and match nothing."""
+        self.assertEqual(self.found(q=['"product manager"']), [])
+        self.assertEqual(self.found(q=["product manager"]), ["pm-new", "pm-old"])
+
+    def test_the_scope_picks_the_haystack_rather_than_narrowing_a_match(self):
+        """**The employer name is the clean discriminator here.**
+
+        Every fixture title is "Product Manager" or "Warehouse Operative", so a
+        keyword drawn from a title cannot tell the two scopes apart -- it is in
+        both haystacks. `acme` is the employer, which the board puts in the
+        wide haystack (`job.co`) and never in the narrow one, so it is in
+        exactly one of them and the test can fail in both directions.
+
+        The scope used to be a second predicate narrowing an already-matched
+        row to its title, which with a tsquery matching the description meant
+        "title only" was really "matches the description AND the raw string is
+        in the title".
+        """
+        self.assertEqual(sorted(self.found(q=["acme"])),
+                         ["pm-new", "pm-old", "wh-new", "wh-old"])
+        self.assertEqual(self.found(q=["acme"], scope="title"), [])
+        # And a title word is in both, so the scope does not simply refuse.
+        self.assertEqual(self.found(q=["manager"], scope="title"),
+                         ["pm-new", "pm-old"])
 
     def test_the_date_window_narrows_it(self):
         self.assertEqual(self.found(within="7 days"), ["pm-new", "wh-new"])
@@ -210,7 +255,7 @@ class FilterBehaviourTests(pgtest.SchemaCase):
 
     def test_the_filters_compose(self):
         self.assertEqual(
-            self.found(q="product manager", within="7 days", direct=True),
+            self.found(q=["product manager"], within="7 days", direct=True),
             ["pm-new"])
 
     def test_an_undated_posting_is_excluded_by_a_window_rather_than_kept(self):
