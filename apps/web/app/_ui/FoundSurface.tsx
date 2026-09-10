@@ -236,7 +236,12 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
         {terms.map((term) => (
           <input type="hidden" name="q" value={term} key={term} />
         ))}
-        <input type="search" name="q" defaultValue=""
+        {/* `autoComplete="off"` because the browser restores the last submitted
+            value on a back or a re-navigation, so the box came back holding the
+            keyword that is now a chip beside it. The board clears its box when
+            it makes the chip, and a box still showing what you just added reads
+            as "it did not take". */}
+        <input type="search" name="q" defaultValue="" autoComplete="off"
                placeholder="Add a keyword and press Enter…"
                aria-label="Add a keyword" />
         {/* **The chips apply on click.** They were radios in a form that only
