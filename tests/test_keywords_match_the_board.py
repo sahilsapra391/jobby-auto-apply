@@ -132,3 +132,30 @@ class TheKeywordPredicateMatchesTheBoardTests(unittest.TestCase):
         tsquery matching the description, "title only" meant "matches the
         description AND the raw string is in the title"."""
         self.assertNotIn("or p.title ilike '%%' || %(q)s::text", FILTERS)
+
+
+class TheKeywordBoxBehavesLikeTheBoardsTests(unittest.TestCase):
+    """The two small ones, both found by clicking the deployed board.
+
+    Neither is visible from the SQL: they are what the form does around it.
+    """
+
+    def test_the_box_does_not_restore_what_it_submitted(self):
+        surface = (REPO / "apps" / "web" / "app" / "_ui" / "FoundSurface.tsx").read_text()
+        box = surface[surface.index('type="search" name="q"'):]
+        box = box[:box.index("/>")]
+        self.assertIn('autoComplete="off"', box,
+                      "the browser restores the last submitted value, so the "
+                      "box comes back holding the keyword that is now a chip "
+                      "beside it, which reads as 'it did not take'")
+
+    def test_keywords_are_deduped_like_the_boards(self):
+        db = (REPO / "apps" / "web" / "app" / "_ui" / "db.ts").read_text()
+        block = db[db.index("function filterValues"):]
+        block = block[:block.index("\n}")]
+        self.assertIn("new Set(", block,
+                      "keywords are not deduped. The box submits alongside the "
+                      "chips, so Enter on a keyword that is already a chip adds "
+                      "it twice.")
+        self.assertIn("keywords.indexOf(word) === -1", BOARD,
+                      "the board no longer dedupes, so this copy now disagrees")

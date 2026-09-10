@@ -205,8 +205,10 @@ function filterValues(f: Filters | undefined) {
     // `exists` is false for every posting. The loosest filter the form can
     // produce returned "0 of 22,735".
     //
-    // Deduped as well, like the board: pressing Enter on a keyword that is
-    // already a chip would otherwise add it twice.
+    // Deduped as well, like the board -- `if (word && keywords.indexOf(word)
+    // === -1)`. The box submits alongside the chips, so pressing Enter on a
+    // keyword that is already a chip would otherwise add it twice and the same
+    // predicate would run twice for one result.
     q: (() => {
       const words = [...new Set((f?.q ?? []).map((k) => k.trim()).filter(Boolean))];
       return words.length ? words : null;
