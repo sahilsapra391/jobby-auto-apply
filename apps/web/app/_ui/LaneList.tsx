@@ -11,7 +11,10 @@ import { useWrites } from "./useWrite";
 import { drive, forget, mark, measuring, summarise, taken } from "./measure";
 
 type Row = Record<string, unknown> & { id: string };
-type Cursor = { at: string | null; id: string } | null;
+// One declaration, in `db.ts`, which is where the route and the page both
+// take it from. The identical local copy here had not drifted and was one
+// edit away from it.
+import type { Cursor } from "./db";
 
 /** How many rows are in the DOM at once, whatever the lane holds. */
 const WINDOW = 60;
@@ -138,8 +141,21 @@ export function LaneList({
   const held = useRef(rows);
   held.current = rows;
   const readRows = useCallback(() => held.current, []);
+  /**
+   * A fresh page one, and the paging state that goes with it.
+   *
+   * The three pieces are one fact: what is shown, where the next page starts,
+   * and whether there is one. `reload` reset the first and left the other two
+   * pointing into a list that no longer existed.
+   */
+  const replaceAll = useCallback((next: Row[], cursorNow: Cursor, doneNow: boolean) => {
+    setRows(() => next);
+    setCursor(cursorNow);
+    setDone(doneNow);
+  }, []);
+
   const live = useLive({
-    lane, query, rows: readRows, setRows, absorbs: writes.absorbs,
+    lane, query, rows: readRows, setRows, replaceAll, absorbs: writes.absorbs,
   });
 
   /**
