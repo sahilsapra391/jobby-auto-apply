@@ -1150,6 +1150,44 @@ with an unrun build is a claim about the tests rather than about the board.
 floor on the file count and a mutation asserting the exact construct fails. It
 is the cheap half that runs in a second; it does not replace running the build.
 
+### A filter test that builds its own query is testing a different page, 2026-09-09
+
+**Found read 0 of 22,735 on the deployed board under the widest filter the form
+can produce, with a green suite, a clean build and four separate reports of
+"measured against your database" behind it.** Every one of those measurements
+was a query I constructed. The page constructs a different one, and the
+difference was the whole defect.
+
+```js
+f.q.map((k) => k.trim()).filter(Boolean) || null
+//  []  ||  null   ===   []      an empty array is truthy in JavaScript
+```
+
+`.filter(Boolean)` strips the empty strings and leaves the container. The
+keyword box submits alongside the hidden chips, so an empty box puts `q=` in the
+URL, `filtersFrom` produced `q = []` rather than `null`, and the predicate reads
+an empty array as *match nothing*: `unnest('{}')` yields no rows, so the
+`exists` is false for every posting. Bisected through the deployed `/api/lane`
+by deleting one parameter at a time -- 0 rows as-is, 50 without `q=`, 0 without
+anything else.
+
+**So the rule is about the subject rather than the bug: every test of a filter
+starts from a query string the page produces, never from a query the test
+constructs.** Compile the real `filtersFrom`/`filterValues` out of `db.ts`, feed
+them the URL, assert on what comes out. A test that hands the predicate a
+hand-built `Filters` object has skipped the half that was wrong, and it will
+pass for exactly as long as the bug lives.
+
+**Fourth substituted-subject entry in this file, and the first that was seen and
+reasoned past.** The others were a check pointed at a stale server, a Playwright
+page a test had not selected, and an `activity.json` two sessions each dated to
+their own run. This one had a fifth property none of those had: the evidence was
+already in hand. `qValues: ["product manager", ""]` was measured in the URL two
+hours before the lane was found empty and written off as "harmless to the query,
+cosmetic in the URL", by reasoning about what `.filter(Boolean)` does rather
+than by running the expression beside it. **`[] || null` takes four seconds to
+evaluate and no amount of reading the line answers it.**
+
 ### A fixture with an empty collection under-renders, and nothing looks wrong
 
 **A check that renders a fixture and inspects the output is only as complete as

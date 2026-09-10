@@ -222,6 +222,14 @@ export default async function Board({
                        extraLocations={scope?.extra ?? []}
                        not_={not_} cos={cos} conames={conames}
                        wp={many(wp)} exp={exp}
+                       // **Off `carried`, not off the raw params.** These are
+                       // three-state -- on, off, and never touched -- and
+                       // `filtersFrom` is the one place that reads the hidden
+                       // companion's `=0` and the box's `=1` in the right
+                       // order. A second reader here would be the fifth
+                       // hand-listed filter set in this file's history.
+                       unkposted={carried.unkposted} unkwp={carried.unkwp}
+                       unkexp={carried.unkexp} incremote={carried.incremote}
                        writesEnabled={writes} />
             </>
           ) : null}

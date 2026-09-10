@@ -1,6 +1,5 @@
 import { COUNTRY_NAMES, CONTINENT_COUNTRIES } from "../search.generated";
 import { ClearAllLocations, OnlyThisCountry } from "./LocationActions";
-import { READ_ONLY } from "./actions";
 
 /**
  * The 199-country picker, which is the saved search's storage contract as much
@@ -13,16 +12,22 @@ import { READ_ONLY } from "./actions";
  * `found_lane.py` rather than retyped, because a second answer to "which group
  * is Turkey in" parts from the first on the first edit.
  *
- * **Rendered with the boxes disabled and the summary honest.** Choosing
- * locations changes the saved search, which is a write, and writes are behind
- * `live_board`. The reader can see the whole scope and what it currently
- * covers; what they cannot do yet is change it. Absent would say the board
- * cannot do this at all.
+ * **Not gated on `live_board`, and the gate that was here rested on a premise
+ * that had stopped being true.** Every box, both actions and the continent
+ * toggles were `disabled={!writesEnabled}`, because choosing locations used to
+ * change the saved search -- `LocationActions` still says so: "the write is
+ * Save search, which reads the form afterwards". #234 deleted `SaveFilters`
+ * and the actions row went with it, so a country box is now a `loc=` parameter
+ * on a GET form and nothing else. A filter is a read.
+ *
+ * It cost nothing today, which is the only reason it survived: `live_board` is
+ * on, so 0 of 203 boxes render disabled on production. It would have taken the
+ * entire picker dark the first time the flag went off, for a write it no
+ * longer performs.
  */
-export function LocationPicker({ selected, writesEnabled, extra = [] }: {
+export function LocationPicker({ selected, extra = [] }: {
   /** Country codes, or empty for Worldwide, straight off the saved search. */
   selected: string[];
-  writesEnabled: boolean;
   /** Codes the pool holds that the taxonomy does not place. */
   extra?: string[];
 }) {
@@ -43,12 +48,25 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
   const worldwide = selected.length === 0;
   const chosen = new Set(worldwide
     ? [...Object.keys(COUNTRY_NAMES), ...extra] : selected);
-  const title = worldwide ? "Worldwide"
-    : chosen.size === 1
-      ? (COUNTRY_NAMES[[...chosen][0]] ?? [...chosen][0])
-      : `${chosen.size} countries`;
-  const note = worldwide ? `all ${total}` : `of ${total}`;
-  const dark = writesEnabled ? undefined : READ_ONLY;
+  // **The summary's two lines, in the board's own words.** `found_lane.py`
+  // writes four pairs and v2 wrote `all 203` / `of 203`, which is a ratio
+  // where the board writes a sentence. Clicked on both, 2026-09-09: the board
+  // reads "Worldwide / All 202 countries", "India / 1 country", "2 countries /
+  // Multiple continents", "No countries selected / Choose a continent or
+  // country".
+  //
+  // "Multiple continents" is what the board says for any multi-country
+  // selection, including 24 countries that are all in North America. It is
+  // carried rather than corrected: this is a parity port, and a summary line
+  // that disagrees with the board a reader is comparing against is the thing
+  // being fixed.
+  const [title, note] = worldwide
+    ? ["Worldwide", `All ${total} countries`]
+    : chosen.size === 0
+      ? ["No countries selected", "Choose a continent or country"]
+      : chosen.size === 1
+        ? [COUNTRY_NAMES[[...chosen][0]] ?? [...chosen][0], "1 country"]
+        : [`${chosen.size} countries`, "Multiple continents"];
 
   return (
     <details className="jb-location-picker" data-location-total={total}>
@@ -67,10 +85,10 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                 is what submitting no `loc` already means. */}
             <input type="checkbox" checked={worldwide} readOnly
                    data-decorative="aggregate over the country boxes; empty loc already means worldwide"
-                   disabled={!writesEnabled} title={dark} />
+                   />
             <span>Worldwide</span>
           </label>
-          <ClearAllLocations enabled={writesEnabled} title={dark} />
+          <ClearAllLocations />
         </div>
         <div className="jb-continent-list">
           {groups.map(([key, label, codes]) => {
@@ -82,7 +100,6 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                     {/* Also an aggregate: it selects and clears its children,
                         and the children are what carry the value. */}
                     <input type="checkbox" defaultChecked={picked === codes.length}
-                           disabled={!writesEnabled} title={dark}
                            data-decorative="selects and clears its children; the countries carry the value"
                            aria-label={`Select all countries in ${label}`} />
                     <span>{label}</span>
@@ -120,13 +137,11 @@ export function LocationPicker({ selected, writesEnabled, extra = [] }: {
                               state, so nothing here needs to be controlled. */}
                           <input type="checkbox" name="loc" value={code}
                                  defaultChecked={chosen.has(code)}
-                                 disabled={!writesEnabled} title={dark}
-                                 data-loc={code} data-continent-country={key}
+                                       data-loc={code} data-continent-country={key}
                                  data-country-name={name} />
                           <span>{name}</span>
                         </label>
-                        <OnlyThisCountry name={name} enabled={writesEnabled}
-                                         title={dark} />
+                        <OnlyThisCountry name={name} />
                       </div>
                     );
                   })}

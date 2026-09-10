@@ -418,7 +418,14 @@ FILTERS = """
    and (coalesce(array_length(%(q)s::text[], 1), 0) = 0 or exists (
           select 1 from unnest(%(q)s::text[]) as kw
            where """ + HAYSTACK + """ ilike '%%' || kw || '%%'))
+   -- **A posting with no date is kept when "unknown posted date" is ticked**,
+   -- which is the board's rule and the box's default:
+   -- `if (!when) { if (!unknownAllowed('postedAt')) return false; }`. v2 had
+   -- `p.posted_at is not null` with no way to say otherwise, so 2,433
+   -- undated postings were invisible under every window. Clicked on the
+   -- board 2026-09-09: unticking the box moved 3300 to 3211.
    and (%(within)s::text is null
+        or (p.posted_at is null and coalesce(%(unk_posted)s::boolean, true))
         or (p.posted_at is not null
             and p.posted_at >= now() - %(within)s::interval))
    and (not coalesce(%(direct)s::boolean, false)
@@ -435,12 +442,35 @@ FILTERS = """
    -- haystack once: with the tsquery matching the description and the title
    -- clause narrowing it, "title only" meant "matches the description AND the
    -- raw string is in the title".
-   and (%(loc)s::text[] is null or p.country = any(%(loc)s::text[]))
+   -- **A job that names a country has to be in a selected one, and a job that
+   -- names none is only kept when it is remote and the reader asked for it.**
+   -- Straight from the board, comment and all: "The old rule let any remote
+   -- posting through any country filter, so selecting India showed 'Remote -
+   -- Canada: select locations' -- a job that is remote *within Canada* and
+   -- cannot be done from India." And for the null half: "Only genuinely
+   -- location-free remote work answers a search for somewhere specific, and
+   -- only when asked for."
+   --
+   -- v2 dropped every country-less posting from a scoped search, so the
+   -- include-remote box had nothing behind it and could not be offered.
+   and (%(loc)s::text[] is null
+        or (p.country is not null and p.country = any(%(loc)s::text[]))
+        or (p.country is null and p.remote
+            and coalesce(%(inc_remote)s::boolean, true)))
+   -- A posting whose workplace nobody recorded is kept when "unknown
+   -- workplace" is ticked: `else if (!unknownAllowed('workplace')) return
+   -- false`. `p.workplace = any(...)` is NULL for a null workplace, so v2 kept
+   -- one only when it happened to be flagged remote.
    and (%(wp)s::text[] is null
         or p.workplace = any(%(wp)s::text[])
-        or ('remote' = any(%(wp)s::text[]) and p.remote))
+        or ('remote' = any(%(wp)s::text[]) and p.remote)
+        or (p.workplace is null and coalesce(%(unk_wp)s::boolean, true)))
+   -- The same shape a third time. This one v2 already had, permanently on;
+   -- the box is what makes it a choice. Clicked on the board: Max experience
+   -- 3 with the box ticked is 2062, and 539 without it.
    and (%(exp)s::int is null
-        or p.years_min is null or p.years_min <= %(exp)s::int)
+        or (p.years_min is null and coalesce(%(unk_exp)s::boolean, true))
+        or p.years_min <= %(exp)s::int)
    and (%(cos)s::text is null
         or (%(cos)s::text = 'only') = exists (
               select 1 from employers em
@@ -594,7 +624,25 @@ PARAMS = ["account", "after_at", "after_id", "limit", "q", "within",
           # The advanced card. Every one reads a column measured populated
           # on 2026-09-05: country 99.7%, remote 100%, workplace 30.2%,
           # years_min 39.0%, canonical_name on every employer.
-          "exclude", "scope", "loc", "wp", "exp", "cos", "conames"]
+          "exclude", "scope", "loc", "wp", "exp", "cos", "conames",
+          # **The unknown buckets, and the picker's remote toggle.** Each one
+          # widens the filter beside it, which is why they arrive with those
+          # filters rather than before them. The board ships all four on, and
+          # v2 shipped two of them permanently off:
+          #
+          #   unk_posted   an undated posting survived no date window at all.
+          #                2,433 of 25,415 postings have no `posted_at`.
+          #   unk_wp       a posting with no workplace survived no workplace
+          #                selection unless it happened to be remote. 17,084
+          #                of 25,415 have no `workplace`.
+          #   unk_exp      already permanently on (`p.years_min is null or
+          #                ...`), so this only makes it switchable. 15,855 of
+          #                25,415 have no `years_min`.
+          #   inc_remote   a posting with no country was dropped from every
+          #                scoped search. The board keeps genuinely
+          #                location-free remote work when this is ticked, and
+          #                only then.
+          "unk_posted", "unk_wp", "unk_exp", "inc_remote"]
 
 #: The four that are not a filter: who is asking, where the page starts, and
 #: how much of it. Everything else in `PARAMS` narrows the lane, so

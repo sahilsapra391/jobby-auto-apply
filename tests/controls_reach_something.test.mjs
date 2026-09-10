@@ -57,8 +57,8 @@ const INERT_ALLOWED = {
   // form's defaults while leaving the URL filtered so the count would not
   // move. Declared rather than exempted by shape, because a hard `disabled` is
   // exactly what Open & finish carried for a bad reason.
-  "Reset to default": "nothing is filtered, so there is nothing to reset; the "
-       + "filtered branch renders a link to /?lane=found which does",
+  "Clear": "nothing is filtered, so there is nothing to clear; the filtered "
+       + "branch renders a link to /?lane=found which does",
 };
 
 function sources(dir, out = []) {
