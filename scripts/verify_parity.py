@@ -627,6 +627,14 @@ def class_b_file_state(root=None):
     paths = store.paths(base)
 
     sessions = {}
+    # **Which of the two writers supplied each key, kept apart.** The merged
+    # dict is what the field comparison needs; the split is what the orphan
+    # check below needs, and collapsing them is what made its exemption
+    # unmeasurable. A key present only because `roles.json` names it is a
+    # different fact from one backed by a session file, and the whole question
+    # "is this row an orphan" is about which.
+    session_files = set()
+    role_entries = set()
     directory = Path(paths["sessions"])
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
@@ -639,6 +647,7 @@ def class_b_file_state(root=None):
             # builder.** This was `status` alone: one string per session,
             # compared across seven green runs while `phase` went unchecked.
             sessions[key] = class_b.session_row(payload)
+            session_files.add(key)
 
     # **The row has two writers, so the expected row is both.** A session says
     # what state an application is in; `roles.json` names it, and it names 205
@@ -654,6 +663,7 @@ def class_b_file_state(root=None):
                 continue
             key = (entry.get("applicationId") or key).strip()
             row = dict(class_b.role_row(entry))
+            role_entries.add(key)
             if key in sessions:
                 sessions[key] = {**sessions[key], **row}
             else:
@@ -700,7 +710,8 @@ def class_b_file_state(root=None):
                 outcomes[edit_id] = {k: v for k, v in built.items() if k in keep}
 
     return {"sessions": sessions, "events": events, "answers": answers,
-            "profile": profile, "outcomes": outcomes}
+            "profile": profile, "outcomes": outcomes,
+            "sessionFiles": session_files, "roleEntries": role_entries}
 
 
 def class_b_postgres_state(conn, account_id):
@@ -752,8 +763,22 @@ def class_b_postgres_state(conn, account_id):
             f"where account_id = %s", (account_id,))
         outcomes = {r[0]: dict(zip(outcome_columns, r[1:])) for r in cur.fetchall()}
 
+        # **Arm (a) of the orphan exemption: a live `completed` event.** Its
+        # own query rather than a derivation from `events` above, because that
+        # dict is keyed by `eventId` and carries the mirror's compared columns,
+        # which do not include the application's legacy id. A join through a
+        # dict with no join key is how a narrowing quietly becomes a no-op that
+        # still reads as one.
+        cur.execute(
+            "select distinct a.legacy_id from applications a "
+            "  join application_events h on h.application_id = a.id "
+            " where a.account_id = %s and h.account_id = %s "
+            "   and h.kind = 'completed'", (account_id, account_id))
+        completed = {r[0] for r in cur.fetchall()}
+
     return {"sessions": sessions, "events": events, "answers": answers,
-            "profile": profile, "outcomes": outcomes, "pending": pending}
+            "profile": profile, "outcomes": outcomes, "pending": pending,
+            "completed": completed}
 
 
 #: The only columns a v2 write can put into `applications`, so the only ones an
@@ -840,24 +865,36 @@ def compare_class_b(files, database):
     # applications invisible, and it is narrowable in one line, because the two
     # legitimate reasons are both checkable:
     #
-    #   roles.json   `class_b_file_state` merges the role index into
-    #                `sessions`, so a roles-only id is already on the file side
-    #                and never reaches this set
-    #   completed    `finish.py` deletes a session on submission
+    #   (a) completed    `finish.py` deletes the session on submission
+    #   (b) roles.json   the role index outlives the session
     #
-    # **Only the first of those is real today, and the check ships with no
-    # exemption at all.** Measured against production 2026-09-09: `roles.json`
-    # holds 208 entries against 208 `applications` rows and 100 session files,
-    # nothing anywhere prunes it, and the Postgres-only set is therefore
-    # **empty**. A completed-event exemption would have explained 0 of 0 rows.
+    # **Both arms are stated, and the check subtracts the session files rather
+    # than the merged `sessions` dict.** `class_b_file_state` merges
+    # `roles.json` into `sessions` because the field comparison needs both
+    # writers, and the merged form is what this used to read.
     #
-    # That was worth measuring rather than accepting: the finding arrived with
-    # 108 / 103 / 5 attached, and those numbers are against session files
-    # alone, which is not the side this comparison uses. Adding the exemption
-    # on the strength of them would have put a permanent blind spot in the one
-    # direction that had just let a row through, to excuse rows that do not
-    # exist. If `roles.json` is ever pruned, this check names the orphans and
-    # the exemption gets added then, with a count behind it.
+    # Be exact about what the split buys, because the obvious claim is wrong
+    # and I made it before running the mutation: `merged == sessionFiles |
+    # roleEntries`, so `db - merged - completed - roles` and
+    # `db - sessionFiles - completed - roles` are **the same set**. Swapping
+    # one for the other is a refactor, not a defect, and a test asserting
+    # otherwise cannot fail.
+    #
+    # What the split buys is that the arms become separately countable, which
+    # is the difference between "0 findings" and "108 examined, 103 by (a), 5
+    # by (b), 0 left". The first is a number you cannot act on: it reads
+    # identically whether the exemption is doing work or the subject is empty.
+    # Measured against production 2026-09-10, which is the second:
+    #
+    #     208 application rows, 100 session files, 208 roles.json entries
+    #     108  no session file
+    #     103    (a) a live completed event
+    #       5    (b) named by roles.json
+    #       0    neither -- and the probe row was one of these
+    #
+    # An arm that stops explaining anything is not thereby wrong: (b) covers
+    # every completed application only while nothing prunes `roles.json`, and
+    # (a) is what holds when something does.
     for group, key in (("sessions", "session"), ("events", "event"),
                        ("outcomes", "editOutcome"),
                        ("answers", "answer")):
@@ -886,8 +923,13 @@ def compare_class_b(files, database):
                     finding["kind"], finding["pendingOrder"], finding["ageSeconds"] = verdict
                 findings.append(finding)
 
-    # An application row with nothing behind it on the device.
-    for name in sorted(set(database["sessions"]) - set(files["sessions"])):
+    # An application row with nothing behind it on the device: no session
+    # file, no completed event, and no entry in the role index.
+    unexplained = (set(database["sessions"])
+                   - set(files.get("sessionFiles") or ())
+                   - (database.get("completed") or set())
+                   - set(files.get("roleEntries") or ()))
+    for name in sorted(unexplained):
         findings.append({"kind": "only_in_postgres", "id": name,
                          "field": "session"})
     for name in sorted(set(database["outcomes"]) - set(files["outcomes"])):
