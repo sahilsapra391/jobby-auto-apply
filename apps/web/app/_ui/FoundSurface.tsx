@@ -1,8 +1,6 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import { AddPosting, FindSources } from "./FoundActions";
-// `ANY_WINDOW` is no longer imported: the "All time" chip is gone, and the
-// value still round-trips for anyone who types `within=all` in the URL.
-import { DEFAULT_WINDOW } from "./window";
+import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import { anyFilterSet, laneQuery, type BoardMeta, type Filters } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
 import { LocationPicker } from "./LocationPicker";
@@ -246,17 +244,25 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             the reader found the Filter button; the old board applies instantly
             and the count moves. `SubmitOnChange` submits the form the control
             is in, so this stays one GET form and gains no state of its own. */}
-        {/* **Five chips, and no "All time".** The board offers 6 hours through
-            30 days and stops, so v2 does too.
+        {/* **"All time" is a deliberate difference from the board, kept on
+            purpose.** The board offers 6 hours through 30 days and stops, so
+            this chip is the one control in this block that has no counterpart
+            over there -- and the parity port is not a reason to remove it.
 
-            The cost is stated rather than hidden, because it is real: 2,506 of
-            the 22,735 postings in the pool were posted more than 30 days ago
-            and `within=all` is the only thing that reached them. Measured
-            2026-09-09 -- `within=all` answers 22,735 and `within=30d` answers
-            20,229. A reader who wants those types the parameter; there is no
-            longer a control for it. */}
+            Measured 2026-09-09: `within=all` answers 22,735 and `within=30d`
+            answers 20,229, so **2,506 postings are older than 30 days** and
+            this chip is the only thing that reaches them. A default the reader
+            cannot turn off is a filter they cannot see, which is worse than a
+            chip the board never had. It was removed in the first pass of this
+            port and put back for that reason.
+
+            It is a real radio value rather than "clear the parameter", so it
+            round-trips and stays checked like every other choice here, and it
+            sits after 30 days rather than before 6 hours because the row reads
+            as a widening scale and the widest end is where the widest option
+            belongs. */}
         <div className="jb-radios">
-          {(Object.entries(WINDOWS) as [string, string][])
+          {([...Object.entries(WINDOWS), [ANY_WINDOW, "All time"]] as [string, string][])
             .map(([v, label]) => (
             <label className="jb-radio" key={v}>
               <input type="radio" name="within" value={v}

@@ -1150,6 +1150,47 @@ with an unrun build is a claim about the tests rather than about the board.
 floor on the file count and a mutation asserting the exact construct fails. It
 is the cheap half that runs in a second; it does not replace running the build.
 
+### A probe against a production route is a write, 2026-09-10
+
+**Until the refusal is observed for that exact input. Four neighbours refusing
+proves nothing about the fifth, and the fifth is the one that writes.**
+
+A session probing v2's four Needs You controls sent a deliberately malformed
+`applicationId`, having read that `queue.ts:209` refuses it inside `order()`
+before the upsert. Correct, and all four behaved that way. It then added a
+fifth case, `status: "review"`, to demonstrate a separate finding, and did not
+re-check the property for it. `review` maps to no queue, so `order()` is never
+called, so the validation inside `order()` never runs: 200, one `applications`
+row under `legacy_id '!!probe-not-a-real-id!!'`, one `idempotency_keys` row.
+
+**The generalisation from n cases to n+1 was the whole subject of the report it
+appeared in.** That is not carelessness, it is what the shape does: four
+observations of a refusal make the fifth feel observed too, and the difference
+between "this input is refused" and "inputs like this are refused" is invisible
+right up until it is a row in production under a real name.
+
+So, for anything sent to a route that can write:
+
+**Enumerate the refusals the input depends on, and count them.** An input
+resting on *one* check is an input that writes when that check is wrong, which
+is exactly the case you are usually probing. Prefer a probe where two
+independent refusals must both fail -- here, a malformed id *and* a deaf
+status -- and say which two.
+
+**Read the store afterwards, not the status code.** `remember` stores the first
+answer for an idempotency key and `replay` serves it back, so a status can be
+about a request that never ran. Row counts before and after are the evidence;
+the response is not.
+
+**A refusal you have not seen for this input is a hypothesis.** Verify it
+somewhere a write costs nothing -- the traced bundle on a throwaway database --
+before sending it to the deployment the applications go out from.
+
+Verified after the fix, on production, 2026-09-10: seven probes, every one
+carrying the malformed id so that two checks had to fail, all 400. Rows stayed
+at 208, probe-shaped `legacy_id`s 0, and `idempotency_keys` rows 0 -- the
+refusal lands before `remember`, so nothing was stored at all.
+
 ### A filter test that builds its own query is testing a different page, 2026-09-09
 
 **Found read 0 of 22,735 on the deployed board under the widest filter the form
