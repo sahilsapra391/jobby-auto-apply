@@ -751,6 +751,7 @@ def class_b_postgres_state(conn, account_id):
             f"select edit_id, {', '.join(outcome_columns)} from edit_outcomes "
             f"where account_id = %s", (account_id,))
         outcomes = {r[0]: dict(zip(outcome_columns, r[1:])) for r in cur.fetchall()}
+
     return {"sessions": sessions, "events": events, "answers": answers,
             "profile": profile, "outcomes": outcomes, "pending": pending}
 
@@ -826,10 +827,37 @@ def compare_class_b(files, database):
     """Divergences across sessions, history events, answers and profile."""
     findings = []
 
-    # `roles.json` also creates applications rows, so Postgres legitimately
-    # holds application ids the sessions directory does not: a session is
-    # deleted once an application completes and the role index outlives it.
-    # Only the other direction is a divergence.
+    # **The exemption was drawn wider than the fact it rests on, and a probe
+    # row proved it.** The reasoning was sound -- `roles.json` also creates
+    # `applications` rows, and `finish.py` deletes a session on submission, so
+    # Postgres legitimately holds ids the sessions directory does not -- and
+    # the conclusion drawn from it was "skip the direction entirely". A peer
+    # session then wrote `legacy_id '!!probe-not-a-real-id!!'` to production
+    # through the route, and it would have survived a green parity run: no
+    # session, no roles entry, no completed event, and nothing looking.
+    #
+    # This is the same exemption CLAUDE.md records as having made 27 fixture
+    # applications invisible, and it is narrowable in one line, because the two
+    # legitimate reasons are both checkable:
+    #
+    #   roles.json   `class_b_file_state` merges the role index into
+    #                `sessions`, so a roles-only id is already on the file side
+    #                and never reaches this set
+    #   completed    `finish.py` deletes a session on submission
+    #
+    # **Only the first of those is real today, and the check ships with no
+    # exemption at all.** Measured against production 2026-09-09: `roles.json`
+    # holds 208 entries against 208 `applications` rows and 100 session files,
+    # nothing anywhere prunes it, and the Postgres-only set is therefore
+    # **empty**. A completed-event exemption would have explained 0 of 0 rows.
+    #
+    # That was worth measuring rather than accepting: the finding arrived with
+    # 108 / 103 / 5 attached, and those numbers are against session files
+    # alone, which is not the side this comparison uses. Adding the exemption
+    # on the strength of them would have put a permanent blind spot in the one
+    # direction that had just let a row through, to excuse rows that do not
+    # exist. If `roles.json` is ever pruned, this check names the orphans and
+    # the exemption gets added then, with a count behind it.
     for group, key in (("sessions", "session"), ("events", "event"),
                        ("outcomes", "editOutcome"),
                        ("answers", "answer")):
@@ -858,6 +886,13 @@ def compare_class_b(files, database):
                     finding["kind"], finding["pendingOrder"], finding["ageSeconds"] = verdict
                 findings.append(finding)
 
+    # An application row with nothing behind it on the device.
+    for name in sorted(set(database["sessions"]) - set(files["sessions"])):
+        findings.append({"kind": "only_in_postgres", "id": name,
+                         "field": "session"})
+    for name in sorted(set(database["outcomes"]) - set(files["outcomes"])):
+        findings.append({"kind": "only_in_postgres", "id": name,
+                         "field": "editOutcome"})
     for name in sorted(set(database["events"]) - set(files["events"])):
         findings.append({"kind": "only_in_postgres", "id": name,
                          "field": "event"})
