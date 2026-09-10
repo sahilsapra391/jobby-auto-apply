@@ -345,6 +345,66 @@ def verify_terminal_outcome(application_id, expected_artifacts):
     return {"ok": False, "terminal": None, "why": why, "safeToRestore": True}
 
 
+#: The only questions a cover letter may be pasted into.
+#:
+#: **36 of 38 recorded runs report the form had no cover-letter field, against
+#: 2 where one attached.** That is the normal case, not a fault: the letter is
+#: built, most employers never ask for it, and a run that treats "no field" as
+#: a failure is reporting a problem that does not exist. Measured over
+#: `apply-runs.log` on 2026-09-10.
+#:
+#: What is worth doing is the case one run already found on its own initiative:
+#: a form with no upload but with an open-ended box at the end. The letter is
+#: the best answer anybody has to "anything else we should know", so it goes
+#: there.
+#:
+#: **The list is here rather than in the prompt because the judgement has to be
+#: the same for every provider.** A prompt is advice to one model; this is the
+#: vocabulary all of them get. The agent still has to read the page -- only it
+#: can see what the field says -- but what counts as open-ended is not its
+#: call.
+#:
+#: Word-bounded on both sides when matched, because this repository has paid
+#: three afternoons for `marker in text`: "age " matches "average ", "india"
+#: matches "Indiana", and here "why" would match "Why did you leave your last
+#: role" -- a specific question with a specific answer, and the one thing this
+#: must never fill.
+COVER_LETTER_TARGETS = (
+    "additional information",
+    "anything else",
+    "anything else you would like us to know",
+    "cover letter",
+    "is there anything else",
+    "tell us more",
+    "why this role",
+    "why do you want to work here",
+    "why are you interested",
+)
+
+#: What step 4 says about the letter when the form has nowhere to put it.
+_COVER_LETTER_RULE = """
+   **The cover letter usually has nowhere to go, and that is the normal
+   outcome.** Measured over every recorded run: 36 forms of 38 had no
+   cover-letter field at all. If there is no file input for it, do not report
+   that as a problem and do not park on it.
+
+   One thing to try first. If the form has no cover-letter upload but does ask
+   something open-ended, paste the letter's text there. These are the only
+   questions that qualify, and the match is on the field's own label:
+
+""" + "\n".join(f"       {q}" for q in COVER_LETTER_TARGETS) + """
+
+   **Never paste it into a field that asks something specific.** "Why did you
+   leave your last role", "What is your notice period", "Describe a project you
+   are proud of" all have their own answers, and a cover letter in one of them
+   is a non-answer under a real name. If the only free-text box asks something
+   specific, the letter does not go, and that is a finished run rather than a
+   blocked one.
+
+   Say which of the three happened in your report: attached to a field, pasted
+   into a named open-ended question, or not sent because the form did not ask.
+"""
+
 #: What step 7 says on a run that may submit.
 _SUBMIT_STEP = """7. Before clicking Submit, call `jobby.pre_submit` exactly once. Submit only when it returns
    `proceed: true`. Keep its `submissionNonce`. Click Submit once. After the page visibly
@@ -461,6 +521,7 @@ the browser tools are unavailable, call `jobby.park_application` with that block
    call it again naming the one you want. For custom comboboxes,
    click the field and then its visible option. Never press Enter to accept an option because
    that can submit a form early. Use the browser select-option tool for native selects.
+{_COVER_LETTER_RULE}
 
    If employment history has an Add another control, enter every position, newest first.
    Get the exact plan in one `jobby.experience_plan` call and fill each description it
