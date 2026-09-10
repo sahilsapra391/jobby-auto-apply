@@ -25,6 +25,7 @@ type Body = {
   /** A device action that changes no state. See `ACTION_QUEUE`. */
   action?: string;
   status?: string;
+  /** Named so the refusal below can be about a field rather than a stranger. */
   phase?: string;
   event?: string;
   /** The Found path: a posting the reader decided about. */
@@ -32,9 +33,48 @@ type Body = {
   decision?: string;
 };
 
-/** What a client may set, named rather than passed through. */
-const STATUSES = new Set(["watch", "review", "active", "inflight", "dropped"]);
-const EVENTS = new Set(["submitting", "completed", "abandoned", "needs_you"]);
+/**
+ * A legacy application id, checked at the route before anything reads it.
+ *
+ * **This used to live only inside `order()`, and six accepted values never
+ * reach `order()`.** `STATUSES` held five names and `STATUS_QUEUE` three;
+ * `EVENTS` held four and `EVENT_QUEUE` one; `phase` had no map at all. A body
+ * naming one of the six skipped the queue, skipped the validation inside it,
+ * and went straight to the upsert, where any string at all became a
+ * `legacy_id` and a row. A peer session proved it on production with
+ * `{applicationId: "!!probe-not-a-real-id!!", status: "review"}`: 200, one
+ * `applications` row, one `idempotency_keys` row. The row is gone.
+ *
+ * It is the same character class `order()` enforces, hoisted, because a check
+ * that only runs on some paths is a check whose coverage is an accident of
+ * which map happens to have an entry.
+ */
+const APPLICATION_ID = /^[A-Za-z0-9._-]{1,128}$/;
+
+/**
+ * What a client may set: **the keys of the queue maps, never a list beside
+ * them.**
+ *
+ * A status or an event the daemon has no queue for is not a thing this board
+ * can order, and accepting it wrote a row for work nobody was going to do --
+ * which is the exact failure `order()` refuses an unconfigured queue to
+ * prevent, arriving by the one door that never opens it. Deriving the set
+ * means a queue added tomorrow is accepted without anybody adding it twice,
+ * and a queue removed stops being accepted the same day. Same move as parity
+ * deriving its columns from the mirror's own INSERT.
+ *
+ * Measured 2026-09-09 across v2's whole surface: the only values any control
+ * sends are `inflight`, `dropped`, `watch`, the `focus` action and the
+ * `completed` event. All five have queues, so this refuses nothing a reader
+ * can click.
+ *
+ * `phase` is refused outright and has no map on purpose. It is Class B, the
+ * device owns it, and the board writing it is the `coalesce(excluded.phase,
+ * ...)` fault CLAUDE.md records one layer down: a NULL meant "keep whatever
+ * you had", so the branch could only ever be wrong.
+ */
+const STATUSES = new Set(Object.keys(STATUS_QUEUE));
+const EVENTS = new Set(Object.keys(EVENT_QUEUE));
 
 /**
  * What a Found card can be decided: the state to store, and the lane the work
@@ -114,6 +154,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "an action needs an applicationId" }, { status: 400 });
     }
+    if (!APPLICATION_ID.test(legacy)) {
+      return NextResponse.json(
+        { error: "applicationId is not a usable application id" },
+        { status: 400 });
+    }
     const queue = ACTION_QUEUE[body.action];
     if (!queue) {
       return NextResponse.json(
@@ -140,6 +185,19 @@ export async function POST(request: NextRequest) {
   if (!legacyId) {
     return NextResponse.json(
       { error: "applicationId or postingId is required" }, { status: 400 });
+  }
+  // Before the status, before the event, before anything that could write.
+  if (!APPLICATION_ID.test(legacyId)) {
+    return NextResponse.json(
+      { error: "applicationId is not a usable application id" },
+      { status: 400 });
+  }
+  // The device owns `phase`. A board that sets it is asserting a stage of work
+  // it cannot observe, and there is no queue that would make it true.
+  if (body.phase !== undefined) {
+    return NextResponse.json(
+      { error: "phase is written by the device, not by the board" },
+      { status: 400 });
   }
   if (body.status && !STATUSES.has(body.status)) {
     return NextResponse.json(
@@ -222,7 +280,10 @@ export async function POST(request: NextRequest) {
                else now() end,
              updated_at = now()
        returning id`,
-      [account, legacyId, body.status ?? null, body.phase ?? null, ordered]);
+      // $4 is always null: `phase` is refused above. The `coalesce` stays so
+      // the upsert preserves whatever the device last wrote rather than
+      // blanking it, which is what a bare `excluded.phase` would do.
+      [account, legacyId, body.status ?? null, null, ordered]);
     applicationId = rows[0].id;
     if (body.event) {
       await client.query(
@@ -239,14 +300,15 @@ export async function POST(request: NextRequest) {
   }
 
   // ---- then the publish -------------------------------------------------
+  // `needs_you` and `phase` are gone from here because they are gone from the
+  // route: neither has a queue, both are refused above, and a branch for a
+  // value that can no longer arrive is a sentence about a mechanism that stops
+  // the next reader checking.
   const kind = body.event === "completed" ? "application.completed"
-    : body.event === "needs_you" ? "application.needs_you"
-    : body.phase ? "application.phase"
     : "application.changed";
   const published = await publish(account, kind, {
     application_id: applicationId,
     ...(body.status ? { to: body.status } : {}),
-    ...(body.phase ? { phase: body.phase } : {}),
   });
 
   const answer = { applicationId, kind, published };

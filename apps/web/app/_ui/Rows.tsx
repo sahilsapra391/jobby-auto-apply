@@ -23,6 +23,48 @@ type Row = Record<string, unknown> & { id: string };
 
 const s = (v: unknown) => (v == null ? null : String(v));
 
+/**
+ * `clock.clock_label`: `16:00:07 EDT`, or nothing at all.
+ *
+ * Empty rather than a guess for an unreadable stamp, because the span it fills
+ * sits at the end of a row of buttons and a wrong time there is a reader
+ * deciding a run is stuck when it is not.
+ */
+const clockLabel = (v: unknown) => {
+  const raw = s(v);
+  if (!raw) return "";
+  const when = new Date(raw);
+  if (Number.isNaN(when.getTime())) return "";
+  return when.toLocaleTimeString("en-US", {
+    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit",
+    second: "2-digit", hour12: false, timeZoneName: "short",
+  });
+};
+
+/**
+ * Which of the five steps is lit, and the wording under them.
+ *
+ * **A null phase is "Queued" with step one on**, which is `dashboard.py:739`
+ * (`phase = entry.get("phase") or "Queued"`) and not what v2 did. v2 asked
+ * `PHASES.indexOf(phase ?? "")`, got -1, and lit none of the five. Measured
+ * 2026-09-09: 180 of 208 applications carry no phase at all, and `decide()`
+ * inserts `status: "inflight"` with none, so the first card this lane ever
+ * draws is guaranteed to hit it. The lane has never held a row, which is the
+ * only reason nobody has seen it.
+ *
+ * The match is on a prefix, like v1's, so an agent's wording does not have to
+ * be exact, and **an unrecognised phase falls to step one rather than to -1**
+ * -- again v1's rule, `next(..., 0)`. Two stored values are outside the list,
+ * `Needs you` (4 rows) and `Failed` (1), and both now render their own word
+ * under a strip that shows something.
+ */
+function phaseStep(phase: unknown): { label: string; at: number } {
+  const label = s(phase) || "Queued";
+  const key = label.toLowerCase();
+  const at = PHASES.findIndex((st) => key.startsWith(st.toLowerCase().slice(0, 8)));
+  return { label, at: at === -1 ? 0 : at };
+}
+
 const WORKPLACE: Record<string, string> = {
   remote: "Remote", hybrid: "Hybrid", onsite: "On-site",
 };
@@ -650,14 +692,20 @@ export function ActCard(row: Row) {
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Drop
         </Act>
-        <span className="ats"></span>
+        {/* **One class, two facts, and v2 drew neither.** Here it is the ATS
+            the application went through (`dashboard.py:734`), which tells a
+            reader which form is waiting for them. The lane has always selected
+            `a.ats`; nothing put it on the page. 8 of 24 parked applications
+            carry one, and store-wide the values are greenhouse 67, ashby 40,
+            lever 11, linkedin 7, workday 9. */}
+        <span className="ats">{s(row.ats) ?? ""}</span>
       </div>
     </article>
   );
 }
 
 export function FlightCard(row: Row) {
-  const at = PHASES.indexOf(s(row.phase) ?? "");
+  const { label, at } = phaseStep(row.phase);
   return (
     <article className="card flight" data-id={row.id}>
       <header>
@@ -668,7 +716,7 @@ export function FlightCard(row: Row) {
         {PHASES.map((name, i) =>
           <span className={i <= at ? "step on" : "step"} title={name} key={name} />)}
       </div>
-      <p className="phase">{s(row.phase) ?? ""}</p>
+      <p className="phase">{label}</p>
       <div className="act">
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
              body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
@@ -678,7 +726,17 @@ export function FlightCard(row: Row) {
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Stop
         </Act>
-        <span className="ats"></span>
+        {/* The other fact: when this run last moved, not which ATS it is on.
+            **v1 renders nothing here either, and that is a v1 bug rather than
+            a decision.** `dashboard.py:774` passes `clock_label` the slice
+            `(entry.get("phaseAt") or "")[11:19]`, a bare `"16:00:07"` that
+            `clock.parse` cannot read, so `local()` is None and the label is
+            "". Measured by running it, not by reading it.
+
+            `phase_at` is not a column on `applications` and is not mirrored,
+            so the stamp v2 has for "when did this last move" is
+            `updated_at`, which the lane already selects. */}
+        <span className="ats">{clockLabel(row.updated_at)}</span>
       </div>
     </article>
   );
