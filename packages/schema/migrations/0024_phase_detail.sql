@@ -1,0 +1,34 @@
+-- The sentence under the phase pill, which the device has always written and
+-- the mirror has never carried.
+--
+-- `phase.py` writes `phaseDetail` into the session on every `set_phase`, and
+-- `dashboard.py:764` renders it in `.why` beside the step strip. It is what
+-- separates the three states the document stage spends most of a run in:
+-- "Sending the document job to the local worker", "Waiting for the local
+-- document worker" and "Your Device is generating the resume and cover
+-- letter" all carry the phase "Building documents on Your Device". Without
+-- the detail, a reader watching a run cannot tell a worker that has not picked
+-- the job up from one that is working.
+--
+-- **A rendering gap and a mirror gap are different problems and this was the
+-- second.** v2 could not draw `.why` because there was no column, no entry in
+-- `class_b.session_row` and nothing selecting it -- not because the markup was
+-- missing. Adding the markup first would have drawn an empty span on every
+-- card, which is the shape this project has met on `.ats` twice.
+--
+-- Nullable with no default, and **backfilled from the sessions on disk** by
+-- `class_b.backfill`, which exists for exactly this: a column added after the
+-- mirror went live, whose docstring says "without this, parity opens red on
+-- every one of them". It did -- 28 findings on `session.phase_detail` the
+-- moment the column existed, because 28 sessions carry a real detail and
+-- Postgres held NULL.
+--
+-- An earlier draft of this comment said "no backfill: inventing a detail for
+-- the rows that predate the column would be a fabricated progress note", and
+-- parity is what corrected it. That reasoning is right about *inventing* one
+-- and wrong about these: the sentences exist, on disk, written by `phase.py`
+-- at the moment they described. Copying them across is what a mirror is.
+--
+-- 28 of 208 have one. A row without draws no `.why`, which is what
+-- `dashboard.py` already does for a session that has none.
+alter table applications add column if not exists phase_detail text;

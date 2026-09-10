@@ -182,7 +182,8 @@ COMPLETED_AT = """(select h.at from application_events h
                where h.application_id = a.id and h.kind = 'completed'
                order by h.at desc limit 1)"""
 
-APPLICATION_COLUMNS = f"""a.id, a.legacy_id, a.status, a.phase, a.updated_at,
+APPLICATION_COLUMNS = f"""a.id, a.legacy_id, a.status, a.phase, a.phase_detail,
+             a.updated_at,
              a.created_at, a.posting_id,
              a.posting_id is not null as linked,
              coalesce(p.title, a.role) as role,

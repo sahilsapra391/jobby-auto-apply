@@ -155,6 +155,10 @@ def session_row(payload):
     payload = payload or {}
     status = (payload.get("status") or "").strip() or None
     phase = (payload.get("phase") or "").strip() or None
+    # The sentence that says *why*, written by `phase.py` on every `set_phase`
+    # and rendered by the board in `.why`. Three of the document stage's states
+    # share one phase string and are told apart only by this.
+    phase_detail = (payload.get("phaseDetail") or "").strip() or None
     # **Verbatim, and never normalised into columns.** 61 entries across eight
     # different key shapes on the real store; picking columns would drop the
     # keys that carry the instruction. Migration 0009 says why at length.
@@ -172,7 +176,8 @@ def session_row(payload):
         return int(value) if isinstance(value, (int, float)) else None
 
     return {
-        "status": status, "phase": phase, "blockers": blocked,
+        "status": status, "phase": phase, "phase_detail": phase_detail,
+        "blockers": blocked,
         # `postedDate` is a calendar date in the session and a timestamptz in
         # the column; Postgres casts it, and the Found date contract says this
         # is `postedAt` and never `firstSeenAt`.

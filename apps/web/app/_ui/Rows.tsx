@@ -730,7 +730,20 @@ export function FlightCard(row: Row) {
         {PHASES.map((name, i) =>
           <span className={i <= at ? "step on" : "step"} title={name} key={name} />)}
       </div>
-      <p className="phase">{label}</p>
+      {/* **The phase and the sentence saying why, which is `dashboard.py:764`.**
+          Three of the document stage's states share the phase "Building
+          documents on Your Device" and are told apart only by the detail:
+          sending the job, waiting for the worker, or the worker generating.
+          A reader watching a run cannot otherwise tell a worker that has not
+          picked the job up from one that is working.
+
+          It could not be drawn before migration 0024, because there was no
+          `phase_detail` column, `class_b.session_row` did not carry it and
+          nothing selected it. Adding the markup without those would have drawn
+          an empty span on every card, which is what `.ats` did twice. */}
+      <p className="phase">{label}
+        {s(row.phase_detail)
+          ? <span className="why">{s(row.phase_detail)}</span> : null}</p>
       <div className="act">
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
              body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
