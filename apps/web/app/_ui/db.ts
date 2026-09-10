@@ -101,6 +101,18 @@ export type Filters = {
   wp?: string[];
   /** Max years of experience the posting may ask for. */
   exp?: string;
+  /**
+   * The four widening switches. Undefined is the default, which is on.
+   *
+   * `unkposted` keeps postings with no date under a date window, `unkwp` keeps
+   * postings with no workplace under a workplace selection, `unkexp` keeps
+   * postings with no stated years under a Max experience, and `incremote`
+   * keeps location-free remote work under a scoped location search.
+   */
+  unkposted?: boolean;
+  unkwp?: boolean;
+  unkexp?: boolean;
+  incremote?: boolean;
 };
 
 /**
@@ -166,7 +178,7 @@ function argsFor(params: readonly string[], values: Record<string, unknown>) {
  * `Filters` and not added here is read by neither, which is a visible bug
  * rather than a silent one.
  */
-const FILTER_KEYS = [
+export const FILTER_KEYS = [
   { key: "q", kind: "many" },
   { key: "within", kind: "one" },
   { key: "direct", kind: "flag" },
@@ -177,12 +189,39 @@ const FILTER_KEYS = [
   { key: "loc", kind: "many" },
   { key: "wp", kind: "many" },
   { key: "exp", kind: "one" },
+  // **The three unknown buckets and the picker's remote toggle. On by
+  // default, which is what makes them `onflag` rather than `flag`.**
+  //
+  // A checkbox submits when it is ticked and not when it is not, so a control
+  // whose default is ticked has no HTML shape that means "absent is on":
+  // either every URL carries the default, or absence means the opposite of it.
+  // Each of these therefore rides with a hidden `=0` companion of the same
+  // name, and the **last** value wins:
+  //
+  //   ticked     `unkposted=0&unkposted=1`   last "1"  -> on
+  //   unticked   `unkposted=0`               last "0"  -> off
+  //   absent      nothing                              -> on, the default
+  //
+  // Which keeps the bare `/?lane=found` case honest: a reader who has touched
+  // none of these gets the board's defaults, and only one who unticked
+  // something carries a parameter.
+  { key: "unkposted", kind: "onflag" },
+  { key: "unkwp", kind: "onflag" },
+  { key: "unkexp", kind: "onflag" },
+  { key: "incremote", kind: "onflag" },
 ] as const;
 
 export function filtersFrom(params: URLSearchParams): Filters {
   const out: Record<string, unknown> = {};
   for (const { key, kind } of FILTER_KEYS) {
     if (kind === "flag") out[key] = params.get(key) === "1";
+    // On unless the last value says otherwise. `get` returns the *first*,
+    // which is the hidden companion and always "0", so a box that is ticked
+    // would read as unticked on every single load.
+    else if (kind === "onflag") {
+      const all = params.getAll(key);
+      out[key] = all.length ? all[all.length - 1] !== "0" : undefined;
+    }
     else if (kind === "many") {
       const all = params.getAll(key);
       out[key] = all.length ? all : undefined;
@@ -237,6 +276,11 @@ function filterValues(f: Filters | undefined) {
     // would drop the 69.8% of postings whose workplace is not recorded.
     wp: f?.wp && f.wp.length && f.wp.length < 3 ? f.wp : null,
     exp: f?.exp && /^\d+$/.test(f.exp) ? Number(f.exp) : null,
+    // Undefined is the default, which for all four is on.
+    unk_posted: f?.unkposted !== false,
+    unk_wp: f?.unkwp !== false,
+    unk_exp: f?.unkexp !== false,
+    inc_remote: f?.incremote !== false,
   };
 }
 
@@ -365,6 +409,28 @@ export async function row(lane: Lane, id: string): Promise<Row | null> {
  * Splitting a view across several optional props means a caller can supply
  * some of them. Splitting it across one means it cannot.
  */
+/**
+ * Is any filter set at all: **read off `FILTER_KEYS`, never a list beside it.**
+ *
+ * `FoundSurface` asked `!!(q || within || direct)` -- three of the ten -- so a
+ * lane narrowed only by locations, workplace, an exclude term or a company
+ * list reported itself unfiltered. Clear went dark on a filtered board, and
+ * the count line dropped the pool number, which is the third place in this
+ * repository where a subset of a field list has been hand-written next to the
+ * list itself.
+ */
+export function anyFilterSet(f: Filters | undefined): boolean {
+  if (!f) return false;
+  for (const { key, kind } of FILTER_KEYS) {
+    const v = (f as Record<string, unknown>)[key];
+    if (v == null) continue;
+    if (kind === "many") { if (Array.isArray(v) && v.length) return true; continue; }
+    if (kind === "flag") { if (v) return true; continue; }
+    if (String(v).trim() !== "") return true;
+  }
+  return false;
+}
+
 export function laneQuery(lane: Lane, sort: Sort, filters?: Filters): string {
   const p = new URLSearchParams({ lane, sort });
   if (!filters) return p.toString();

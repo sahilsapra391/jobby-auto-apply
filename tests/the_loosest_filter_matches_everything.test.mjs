@@ -69,6 +69,19 @@ test('an empty keyword box is no keyword, not an empty list', () => {
     `unnest('{}') yields no rows so the exists is false for every posting.`);
 });
 
+/**
+ * The four parameters whose loose value is `true`, because they *widen*.
+ *
+ * Named rather than skipped by shape: a rule like "ignore booleans" would take
+ * `direct` with them, and `direct: true` on a URL the reader did not ask for
+ * is exactly the kind of silent narrowing this file exists to catch. Each of
+ * these keeps postings a filter beside it would otherwise drop -- undated
+ * postings under a date window, workplace-less ones under a workplace
+ * selection, ones with no stated years under a Max experience, and
+ * location-free remote work under a scoped location search.
+ */
+const WIDENS = new Set(['unk_posted', 'unk_wp', 'unk_exp', 'inc_remote']);
+
 test('no filter in the loosest URL narrows anything', () => {
   // Every value the page would send. Anything that is not null here is a
   // predicate that will run, and the loosest filter must run none of them.
@@ -77,11 +90,26 @@ test('no filter in the loosest URL narrows anything', () => {
     if (v === null || v === false) return false;
     // `within` is a real choice in this URL and legitimately narrows.
     if (k === 'within') return false;
+    if (WIDENS.has(k)) return false;
     return true;
   });
   assert.deepEqual(narrowing, [],
     'these are set from a URL where the reader chose nothing, so each one ' +
     'silently narrows the lane: ' + JSON.stringify(narrowing));
+});
+
+test('the widening switches are at their widest in the loosest URL', () => {
+  // The other half, and the half an exemption usually forgets: skipping these
+  // above would pass just as happily on `false`, which is the narrow side and
+  // the state two of them were stuck in before they were wired.
+  const values = filterValues(filtersFrom(new URLSearchParams(LOOSEST)));
+  const wrong = [...WIDENS].filter((k) => values[k] !== true);
+  assert.deepEqual(wrong, [],
+    'these widen the filter beside them and are off in a URL where the ' +
+    'reader chose nothing: ' + JSON.stringify(wrong));
+  assert.equal([...WIDENS].every((k) => k in values), true,
+    'a widening switch is missing from filterValues entirely, so the check ' +
+    'above passed on an absence');
 });
 
 test('a real keyword still arrives, so this is not vacuous', () => {

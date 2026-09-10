@@ -1,7 +1,7 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
 import { AddPosting, FindSources } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
-import { laneQuery, type BoardMeta, type Filters } from "./db";
+import { anyFilterSet, laneQuery, type BoardMeta, type Filters } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
 import { LocationPicker } from "./LocationPicker";
 import {
@@ -141,7 +141,8 @@ export function ScanBanner({ meta, writesEnabled = false }: {
 export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                          locations = [], writesEnabled = false,
                          searchScope = "title", extraLocations = [],
-                         not_, cos, conames, wp, exp }: {
+                         not_, cos, conames, wp, exp,
+                         unkposted, unkwp, unkexp, incremote }: {
   /** The keywords, as chips. One chip is one phrase; chips are OR'd. */
   q?: string[]; within?: string; direct?: boolean; sort?: Sort;
   /** Words to exclude. `not` is a reserved word, hence the underscore. */
@@ -165,6 +166,13 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
   searchScope?: string;
   /** Codes the pool holds that the taxonomy does not place. */
   extraLocations?: string[];
+  /**
+   * The four widening switches. Undefined is the default, which is on.
+   *
+   * Each rides with a hidden `=0` companion so that unticking one is
+   * expressible at all; see `FILTER_KEYS`.
+   */
+  unkposted?: boolean; unkwp?: boolean; unkexp?: boolean; incremote?: boolean;
 } = {}) {
   // Every advanced control carries the same reason when it is dark, so it is
   // named once.
@@ -179,9 +187,25 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
   // page two not, in a third place.
   const held: Filters = {
     q: terms, within, direct, not: not_, scope: searchScope, cos, conames,
-    loc: locations, wp, exp,
+    loc: locations, wp, exp, unkposted, unkwp, unkexp, incremote,
   };
-  const filtered = !!(q || within || direct);
+  // Which parameter each unknown toggle carries, so the row is drawn from
+  // `UNKNOWN_TOGGLES` rather than from a second list of three labels beside
+  // it. `degree` is filtered out below and has no entry here, which is what
+  // makes its absence a decision rather than an oversight.
+  const UNKNOWN_PARAM: Record<string, string> = {
+    experience: "unkexp", workplace: "unkwp", postedAt: "unkposted",
+  };
+  const unknownOn: Record<string, boolean | undefined> = {
+    experience: unkexp, workplace: unkwp, postedAt: unkposted,
+  };
+  // **Read off `FILTER_KEYS`, not off three of them.** This was
+  // `!!(q || within || direct)`, so a lane narrowed by locations, workplace,
+  // an exclude term or a company list said it was unfiltered: Clear went dark
+  // on a filtered board and the count line dropped its pool number. Third
+  // place in this repository where a subset of a field list sat beside the
+  // list, after `/api/lane` and `SaveFilters`.
+  const filtered = anyFilterSet(held);
   return (
     // **`.jb-filters` is the surface, and it was missing.** The board wraps
     // this whole block -- the row, the keyword chips and Advanced search -- in
@@ -220,15 +244,23 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             the reader found the Filter button; the old board applies instantly
             and the count moves. `SubmitOnChange` submits the form the control
             is in, so this stays one GET form and gains no state of its own. */}
-        {/* **"All time" is offered, because the default is 30 days.** A
-            default the reader cannot turn off is a filter they cannot see, and
-            that is worse than one they could not turn on. It is a real radio
-            value rather than "clear the parameter", so it round-trips and
-            stays checked like every other choice here.
+        {/* **"All time" is a deliberate difference from the board, kept on
+            purpose.** The board offers 6 hours through 30 days and stops, so
+            this chip is the one control in this block that has no counterpart
+            over there -- and the parity port is not a reason to remove it.
 
-            It sits after 30 days rather than before 6 hours, because the row
-            reads as a widening scale and the widest end is where the widest
-            option belongs. */}
+            Measured 2026-09-09: `within=all` answers 22,735 and `within=30d`
+            answers 20,229, so **2,506 postings are older than 30 days** and
+            this chip is the only thing that reaches them. A default the reader
+            cannot turn off is a filter they cannot see, which is worse than a
+            chip the board never had. It was removed in the first pass of this
+            port and put back for that reason.
+
+            It is a real radio value rather than "clear the parameter", so it
+            round-trips and stays checked like every other choice here, and it
+            sits after 30 days rather than before 6 hours because the row reads
+            as a widening scale and the widest end is where the widest option
+            belongs. */}
         <div className="jb-radios">
           {([...Object.entries(WINDOWS), [ANY_WINDOW, "All time"]] as [string, string][])
             .map(([v, label]) => (
@@ -259,24 +291,36 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
             reset restores the form's defaults and leaves the URL filtered, so
             the count would not move and the reader would be looking at the old
             result under new controls. */}
+        {/* **"Clear", which is what the board calls it.** "Reset to default"
+            described the mechanism (a link back to the unfiltered URL) rather
+            than the act, and a reader looking for the board's Clear did not
+            find one. */}
         {filtered
-          ? <a className="jb-btn" href="/?lane=found">Reset to default</a>
+          ? <a className="jb-btn" href="/?lane=found">Clear</a>
           : <button className="jb-btn" type="button" disabled
-                    title="nothing is filtered, so there is nothing to reset">
-              Reset to default
+                    title="nothing is filtered, so there is nothing to clear">
+              Clear
             </button>}
-        {/* **The count says what it counted.** v2 read "50 of 18,300 jobs",
-            which is a page size against a pool and invites the reading that
-            18,300 were searched and 50 matched. The filters are predicates on
-            a Postgres query, so the whole pool really is filtered; what 50 is
-            is the page. The old board's scoping sentence existed because it
+        {/* **The count says what it counted, and it compares the numbers
+            rather than reading the URL.** v2 read "50 of 18,300 jobs", which
+            is a page size against a pool and invites the reading that 18,300
+            were searched and 50 matched. The filters are predicates on a
+            Postgres query, so the whole pool really is filtered; what 50 is is
+            the page. The old board's scoping sentence existed because it
             filtered an embedded slice and could not say more, and repeating
-            its shape here would understate what this does. */}
+            its shape here would understate what this does.
+
+            **The pool clause was gated on `filtered` and vanished on a lane
+            that plainly was.** A bare `/?lane=found` reads 20,229 against a
+            pool of 22,735 and said "20,229 jobs", because the 30-day default
+            is a filter nobody typed. `total !== pool` is the fact; whether a
+            reader supplied a parameter is a different question and not this
+            one. */}
         <span className="jb-count">
           {total === undefined ? "" : (
             <>
               {total.toLocaleString()} {total === 1 ? "job" : "jobs"}
-              {filtered && pool !== undefined && pool !== total
+              {pool !== undefined && pool !== total
                 ? <> match, of {pool.toLocaleString()} in the pool</>
                 : null}
               {shown !== undefined && shown < total
@@ -360,20 +404,24 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
               <div className="jb-row">
                 <div className="jb-location-field">
                   <span className="jb-location-label">Locations</span>
-                  <LocationPicker selected={locations} writesEnabled={writesEnabled}
+                  <LocationPicker selected={locations}
                                   extra={extraLocations} />
                 </div>
                 <div className="jb-stack">
-                  {/* **Decorative until the location filter it modifies is
-                      doing something worth modifying.** "Include remote for
-                      this selection" widens `loc`, and a control that widens
-                      an unset filter is a control with no effect -- naming it
-                      would make it submit a parameter no predicate reads,
-                      which is the inert-control problem with a name on it. It
-                      goes in with the locations work. */}
+                  {/* **Wired now, and it was doing more harm decorative than
+                      it looked.** v2 dropped every posting with no country
+                      from a scoped search, full stop, so there was nothing for
+                      this box to widen and it was rendered inert with a note
+                      saying so. The board's rule is narrower and better:
+                      "Only genuinely location-free remote work answers a
+                      search for somewhere specific, and only when asked for."
+
+                      Named for the unticked state, like the three below, so
+                      the default puts nothing in the URL. */}
                   <label className="jb-check">
-                    <input type="checkbox" defaultChecked
-                           data-decorative="widens the location filter; wired with it" />
+                    <input type="hidden" name="incremote" value="0" />
+                    <input type="checkbox" name="incremote" value="1"
+                           defaultChecked={incremote !== false} />
                     <span>include remote for this selection</span>
                   </label>
                   <div className="jb-checks">
@@ -419,21 +467,42 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
                     </label>))}
               </div>
               <div className="jb-row jb-checks">
-                {/* **These widen the filters beside them, so they wait for
-                    those.** "unknown experience" means "keep postings whose
-                    years are not stated", which is a modifier on Max
-                    experience and means nothing on its own; submitting a
-                    parameter no predicate reads is the inert control again
-                    wearing a name. They go in with the filters they modify.
+                {/* **Three, wired, and two of them were changing results while
+                    they sat here decorative.** Each widens the filter beside
+                    it, which is why they waited for those filters -- and two
+                    of the three were not "off", they were *stuck on the
+                    narrow side*, which is worse than inert:
 
-                    The note under them named degree, role and job type, which
-                    are no longer offered at all -- a note explaining controls
-                    that are gone is worse than none. */}
+                      unknown posted date   v2 had `p.posted_at is not null`,
+                                            so 2,433 undated postings were
+                                            invisible under every window. The
+                                            board keeps them.
+                      unknown workplace     `p.workplace = any(...)` is NULL
+                                            for a null workplace, so 17,084
+                                            postings survived only by being
+                                            flagged remote.
+                      unknown experience    already permanently on. The box
+                                            makes it a choice.
+
+                    Clicked on the board 2026-09-09: unticking posted date
+                    moved 3300 to 3211, workplace to 2191, and Max experience 3
+                    reads 2062 with the box and 539 without it.
+
+                    **`degree` is not offered, and that is the honest state.**
+                    The board keeps it because it has a Degree select to modify
+                    and v2 has none: `postings` carries no degree column and
+                    `extracted.degree` was populated in 0 of 25,204 records. On
+                    the board the pair does exactly what that implies -- I
+                    clicked it: Degree = Bachelor's with the box ticked is
+                    3300, unticked is **0**, because every posting is unknown.
+                    A checkbox whose only reachable effect is emptying the lane
+                    is not a filter. */}
                 {UNKNOWN_TOGGLES.filter(([key]) => key !== "degree")
                   .map(([key, label]) => (
                   <label className="jb-check" key={key}>
-                    <input type="checkbox" defaultChecked
-                           data-decorative="widens the filter beside it; wired with that filter" />
+                    <input type="hidden" name={UNKNOWN_PARAM[key]} value="0" />
+                    <input type="checkbox" name={UNKNOWN_PARAM[key]} value="1"
+                           defaultChecked={unknownOn[key] !== false} />
                     <span>unknown {label}</span>
                   </label>))}
                 <span className="jb-note">postings that do not state a value

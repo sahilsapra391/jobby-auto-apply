@@ -260,12 +260,71 @@ class FilterBehaviourTests(pgtest.SchemaCase):
             self.found(q=["product manager"], within="7 days", direct=True),
             ["pm-new"])
 
-    def test_an_undated_posting_is_excluded_by_a_window_rather_than_kept(self):
-        """`posted_at is null` must not slip through a date filter. 2,143
-        postings have no date, and "posted in the last 24 hours" cannot honestly
-        include a posting whose date nobody stated."""
+    def test_an_undated_posting_follows_the_unknown_bucket(self):
+        """**Whether a dateless posting survives a window is the reader's
+        choice, and the board's default is that it does.**
+
+        This asserted the opposite -- that `posted_at is null` must never slip
+        through a date filter -- and the reasoning was good: "posted in the
+        last 24 hours" cannot honestly include a posting whose date nobody
+        stated. What it missed is that the board has always offered the choice.
+        `found_lane.matches` reads
+
+            if (!when) { if (!unknownAllowed('postedAt')) return false; }
+
+        and the box ships ticked, so v2 was on the *narrow* side of a switch it
+        did not have. 2,433 postings have no date; clicked on the board
+        2026-09-09, unticking the box moves 3300 to 3211.
+
+        Both sides are asserted here, because a test for one side of a switch
+        passes just as happily when the switch does nothing.
+        """
         with self.conn.cursor() as cur:
             cur.execute("update postings set posted_at = null "
                         "where legacy_id = 'pm-new'")
-        self.assertNotIn("pm-new", self.found(within="7 days"))
+        # The default, which `no_filters()` supplies as None and the predicate
+        # reads through `coalesce(..., true)`.
+        self.assertIn("pm-new", self.found(within="7 days"))
         self.assertIn("pm-new", self.found())
+        # And the reader who unticks it.
+        self.assertNotIn("pm-new", self.found(within="7 days", unk_posted=False))
+        # The switch must not widen a window that is not set, nor narrow one it
+        # is not about: a dated posting inside the window is unaffected either
+        # way, which is what says the clause is scoped to the null case.
+        self.assertIn("pm-old", self.found(unk_posted=False))
+
+    def test_the_other_two_unknown_buckets_switch_the_same_way(self):
+        """`unk_wp` and `unk_exp` widen the filters beside them, and v2 had
+        both stuck: `p.workplace = any(...)` is NULL for a null workplace, and
+        the years clause had no toggle at all."""
+        with self.conn.cursor() as cur:
+            cur.execute("update postings set workplace = null, years_min = null "
+                        "where legacy_id = 'pm-new'")
+        self.assertIn("pm-new", self.found(wp=["remote"]))
+        self.assertNotIn("pm-new", self.found(wp=["remote"], unk_wp=False))
+        self.assertIn("pm-new", self.found(exp=3))
+        self.assertNotIn("pm-new", self.found(exp=3, unk_exp=False))
+
+    def test_a_countryless_remote_posting_follows_include_remote(self):
+        """The board keeps genuinely location-free remote work in a scoped
+        search, and only when asked: "Only genuinely location-free remote work
+        answers a search for somewhere specific, and only when asked for."
+        v2 dropped every country-less posting from a scoped search, so the
+        include-remote box had nothing to widen."""
+        with self.conn.cursor() as cur:
+            cur.execute("update postings set country = null, remote = true "
+                        "where legacy_id = 'pm-new'")
+            # The fixture leaves `country` null on every row, so the control
+            # below needs a posting that actually names one. Without this it
+            # asserts nothing: a null-country row is dropped by the scope
+            # whichever way the toggle is set, so the assertion would pass for
+            # the wrong reason.
+            cur.execute("update postings set country = 'IN' "
+                        "where legacy_id = 'pm-old'")
+        self.assertIn("pm-new", self.found(loc=["IN"]))
+        self.assertNotIn("pm-new", self.found(loc=["IN"], inc_remote=False))
+        # A posting that names a country is unaffected by the toggle: the
+        # clause is about the null case, and a rule that let any remote posting
+        # through any country filter is the one the board's comment warns about
+        # ("Remote - Canada" answering a search for India).
+        self.assertIn("pm-old", self.found(loc=["IN"], inc_remote=False))
