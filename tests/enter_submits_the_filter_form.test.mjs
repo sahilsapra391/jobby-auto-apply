@@ -6,7 +6,8 @@
 // it. This form has three -- keyword, "Hide jobs mentioning", company names --
 // so Enter did nothing: "product manager" typed, Enter pressed, and the URL,
 // the chips and the count stayed put. Found from a screen recording on
-// 2026-09-10, reproduced with real keystrokes on the deployed board.
+// 2026-09-10, on a real keyboard. The cause is the measured form structure, not
+// a reproduction: see the next note for why the pane could not reproduce it.
 //
 // Two halves, and neither is enough alone:
 //
@@ -21,9 +22,14 @@
 //                adds nothing, and a keyword already chipped is not added again
 //                but the box still clears.
 //
-// **What neither half can see**, said rather than implied: whether the browser
-// actually delivers the keydown and navigates. That is only answered by typing
-// into the deployed board, which is how this was found.
+// **What neither half can see**, said rather than implied: whether a real
+// keyboard's Enter reaches the handler. And the browser pane cannot answer it
+// either -- its `type` fires no keydown and its `key` action delivers none, so a
+// keyboard test there is unfalsifiable. It made the original bug look
+// reproduced and then made this fix look broken, in one session. The pane can
+// verify the handler with a synthetic keydown (defaultPrevented, form submits,
+// 2,421 jobs to 312 on the deployed board); only a real keyboard verifies
+// delivery.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
