@@ -925,6 +925,33 @@ def claim_all(prefix):
         raise TickError(f"claim returned junk for {prefix}") from exc
 
 
+def drop_found_no_session(result):
+    """True when drop.py refused because the application has no session."""
+    if result.returncode == 0:
+        return False
+    try:
+        return json.loads(result.stdout or "{}").get("error") == NO_SESSION
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
+def withdraw_apply(aid, limit=10):
+    """Take every queued Apply for one application off the queue, and count them.
+
+    `claim_one` with an id takes that application's entry or nothing
+    (kvqueue.mjs `takeFrom`), never the oldest, so this cannot remove somebody
+    else's click. The queue dedupes per application, so one entry is the normal
+    case; the limit stops a queue that keeps answering from looping forever, and
+    reaching it is a fault rather than a count.
+    """
+    taken = 0
+    for _ in range(limit):
+        if not claim_one("apply/", application_id=aid):
+            return taken
+        taken += 1
+    raise TickError(f"the Apply queue still held {aid} after {limit} withdrawals")
+
+
 PROVIDER_ACTIONS = frozenset(("connect", "disconnect", "refresh"))
 
 
@@ -2433,10 +2460,34 @@ DOCUMENT_PHASES = {
 }
 
 
-def set_phase_if_changed(aid, phase, detail):
-    """Write a board phase only when its visible value actually changed."""
+#: What `store.py session-load` and `drop.py` both say when an application has
+#: no session at all. A v2 Apply has none until it reaches the head of the queue,
+#: so the tick has to tell "absent" apart from "the store could not be read", and
+#: this text is the only thing that separates them.
+#: `NoSessionWordingIsOneContract` runs both scripts and checks they still say it.
+NO_SESSION = "no session with that id"
+
+
+def session_absent(result):
+    """True when a failed `session-load` means the session does not exist.
+
+    Only that. A store that could not be read fails as well, and reading that as
+    "no session" would skip work an application still needs, so every other
+    failure stays a failure.
+    """
+    return result.returncode != 0 and NO_SESSION in (result.stderr or "")
+
+
+def set_phase_if_changed(aid, phase, detail, missing_ok=False):
+    """Write a board phase only when its visible value actually changed.
+
+    `missing_ok` answers False for an application that has no session instead
+    of raising, and waives nothing else: an unreadable store still raises.
+    """
     loaded = store(["session-load", "--id", aid])
     if loaded.returncode != 0:
+        if missing_ok and session_absent(loaded):
+            return False
         raise TickError(f"no application session for {aid}")
     try:
         entry = json.loads(loaded.stdout or "{}")
@@ -2605,6 +2656,22 @@ def tick(force_publish=False):
                 if slot and release_browser_slot(aid, slot):
                     changed.setdefault("browserSlotsReleased", []).append(
                         {"applicationId": aid, "slot": slot})
+            elif drop_found_no_session(r):
+                # **A Stop on an application the device never started.** There
+                # is nothing here for drop.py to mark, but its Apply is still
+                # queued, and the drop has already been taken off its own queue.
+                # Before this, those two facts together meant the Stop was lost
+                # and the application ran once it reached the head, after the
+                # board had already shown it as Dropped. So the Apply goes too.
+                withdrawn = withdraw_apply(aid)
+                dropped.append(aid)
+                changed.setdefault("droppedBeforeSession", []).append(
+                    {"applicationId": aid, "appliesWithdrawn": withdrawn})
+            else:
+                # Claimed above, so this Stop exists nowhere else now. Say so.
+                changed.setdefault("dropFailed", []).append(
+                    {"applicationId": aid,
+                     "why": ((r.stdout or "") + (r.stderr or "")).strip()[:200]})
         if dropped:
             changed["dropped"] = dropped
 
@@ -2794,9 +2861,20 @@ def tick(force_publish=False):
     # Tail applications stay visible as queued, but only the head can submit or
     # Poll one serial document lane on this device. Tail applications remain
     # queued so document generation stays bounded and preserves click order.
+    #
+    # **A waiting application with no session is skipped, not a fault.** v2
+    # enqueues a bare `apply` (apps/web/app/_ui/queue.ts) and the session is
+    # created when the application reaches the head, in
+    # ensure_application_session below. This loop runs first, so raising on a
+    # missing session here failed every tick before any head was given one.
+    # Five Apply presses on 2026-09-12 at 03:40Z did exactly that: 60 failed
+    # ticks in seven minutes on the second press's id, no session for any of
+    # the five, and all five cards reading Queued. A single press has no tail,
+    # which is why one Apply always worked.
     for item in apply_tail:
         aid = item.get("applicationId") if isinstance(item, dict) else None
-        if aid and set_phase_if_changed(aid, "Queued", "Waiting for an earlier application"):
+        if aid and set_phase_if_changed(aid, "Queued", "Waiting for an earlier application",
+                                        missing_ok=True):
             changed.setdefault("queued", []).append(aid)
 
     provider_status = select_provider_for_work(apply_head, bool(q.get("scan")))

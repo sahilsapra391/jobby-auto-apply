@@ -1835,3 +1835,194 @@ class ParkedSlotAlarmTests(unittest.TestCase):
             reason = watch.unhealthy_reason()
         self.assertIn("BOARD", reason)
         self.assertIn("SLOTS", reason)
+
+
+class AWaitingApplyWithoutASessionDoesNotWedgeTheLane(TickHarnessMixin,
+                                                       unittest.TestCase):
+    """Five v2 Apply presses wedged the lane on 2026-09-12, and one never did.
+
+    v2 enqueues a bare `apply` and relies on `ensure_application_session` to
+    create the head's session when it gets there. The tick marks every waiting
+    application "Waiting for an earlier application" first, and that marking
+    raised on a missing session, so two or more sessionless presses failed every
+    tick on the second one and no head was ever given a session: 60 failed ticks
+    in seven minutes on the real queue, with all five cards reading Queued.
+
+    These call tick with the store answering the way the real one does for a
+    missing session, wording included, and `NoSessionWordingIsOneContract` pins
+    that wording to the scripts that produce it.
+    """
+
+    HEAD, TAIL = "head-app", "tail-app"
+    ABSENT = SimpleNamespace(
+        returncode=2, stdout="",
+        stderr="job-application store: no session with that id\n")
+    UNREADABLE = SimpleNamespace(
+        returncode=2, stdout="",
+        stderr="job-application store: file not found: /nowhere/sessions\n")
+
+    @contextmanager
+    def _two_presses(self, sessions, missing=None, drops=None, drop_answer=None):
+        """Head then tail in the Apply queue, neither started, and a store that
+        holds a session only for the ids in `sessions`.
+
+        Yields the harness calls plus `ensured`, the patched
+        ensure_application_session, `claim`, a claim_one that behaves like the
+        queue, and `kv`, the Apply entries the queue still holds.
+        """
+        missing = missing or self.ABSENT
+
+        def store_answer(args):
+            if args[:1] == ["session-load"]:
+                aid = args[args.index("--id") + 1]
+                # The head's session is ensure_application_session's job, and
+                # that is patched to say it proceeded, so the head has one.
+                if aid == self.HEAD or aid in sessions:
+                    return self.result(json.dumps({"applicationId": aid, "status": "watch"}))
+                return missing
+            return self.fake_store(args)
+
+        def run_answer(argv, **kwargs):
+            argv = [str(value) for value in argv]
+            self.run_calls.append(argv)
+            if drop_answer is not None and len(argv) > 1 and argv[1].endswith("drop.py"):
+                return drop_answer
+            return self.result()
+
+        with self.tick_harness("openai", {"state": "queued", "provider": "openai"},
+                               item={"applicationId": self.HEAD}) as calls:
+            calls["queue"]["apply"].append({"applicationId": self.TAIL})
+            kv = [dict(entry) for entry in calls["queue"]["apply"]]
+
+            def claim(prefix, application_id=""):
+                for index, entry in enumerate(kv):
+                    if not application_id or entry["applicationId"] == application_id:
+                        return [kv.pop(index)]
+                return []
+
+            real_subprocess_run = subprocess.run
+
+            def subprocess_answer(argv, *args, **kwargs):
+                if "queue.mjs" in [str(value) for value in argv] and "drop/" in argv:
+                    return SimpleNamespace(returncode=0, stdout=json.dumps(drops or []),
+                                           stderr="")
+                return real_subprocess_run(argv, *args, **kwargs)
+
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(watch, "store", side_effect=store_answer))
+                stack.enter_context(mock.patch.object(watch, "run", side_effect=run_answer))
+                stack.enter_context(mock.patch.object(watch, "do_not_start", return_value=None))
+                calls["claim"] = stack.enter_context(
+                    mock.patch.object(watch, "claim_one", side_effect=claim))
+                calls["ensured"] = stack.enter_context(mock.patch.object(
+                    watch, "ensure_application_session", return_value=(None, False)))
+                if drops is not None:
+                    calls["queue"]["drop"] = list(drops)
+                    # The drop claim builds its environment before the call, and
+                    # queue_env refuses a checkout with no Cloudflare credentials,
+                    # which is every checkout but production's.
+                    stack.enter_context(mock.patch.object(
+                        watch.toolpath, "queue_env", return_value={}))
+                    stack.enter_context(mock.patch.object(
+                        watch.toolpath, "node", return_value="node"))
+                    stack.enter_context(mock.patch.object(
+                        watch.subprocess, "run", side_effect=subprocess_answer))
+                calls["kv"] = kv
+                yield calls
+
+    def _phase_writes_for(self, aid):
+        return [argv for argv in self.run_calls
+                if any(part.endswith("phase.py") for part in argv) and aid in argv]
+
+    def test_a_sessionless_tail_does_not_stop_the_head_being_given_one(self):
+        with self._two_presses(sessions=set()) as calls:
+            changed = watch.tick()
+        calls["ensured"].assert_called_once_with(self.HEAD)
+        self.assertNotIn(self.TAIL, changed.get("queued", []))
+        self.assertEqual(self._phase_writes_for(self.TAIL), [],
+                         "a waiting application with no session had a phase written")
+
+    def test_a_tail_that_has_a_session_is_still_marked_waiting(self):
+        with self._two_presses(sessions={self.TAIL}) as calls:
+            changed = watch.tick()
+        calls["ensured"].assert_called_once_with(self.HEAD)
+        self.assertIn(self.TAIL, changed.get("queued", []))
+        self.assertTrue([argv for argv in self._phase_writes_for(self.TAIL)
+                         if "Waiting for an earlier application" in argv])
+
+    def test_a_store_that_cannot_be_read_still_fails_the_tick(self):
+        """Could not look is not "no session": skipping here would hide a
+        broken store behind a lane that quietly stops marking anything."""
+        with self._two_presses(sessions=set(), missing=self.UNREADABLE):
+            with self.assertRaisesRegex(watch.TickError, self.TAIL):
+                watch.tick()
+
+    def test_a_stop_on_an_application_with_no_session_takes_its_apply_off_the_queue(self):
+        no_session = SimpleNamespace(
+            returncode=1, stderr="",
+            stdout=json.dumps({"applicationId": self.TAIL, "error": watch.NO_SESSION}))
+        with self._two_presses(sessions=set(), drops=[{"applicationId": self.TAIL}],
+                               drop_answer=no_session) as calls:
+            changed = watch.tick()
+        calls["claim"].assert_any_call("apply/", application_id=self.TAIL)
+        self.assertEqual([entry["applicationId"] for entry in calls["kv"]], [self.HEAD])
+        self.assertIn(self.TAIL, changed["dropped"])
+        self.assertEqual(changed["droppedBeforeSession"],
+                         [{"applicationId": self.TAIL, "appliesWithdrawn": 1}])
+        calls["ensured"].assert_called_once_with(self.HEAD)
+
+    def test_a_drop_that_fails_for_another_reason_withdraws_nothing_and_says_so(self):
+        broken = SimpleNamespace(
+            returncode=1, stderr="",
+            stdout=json.dumps({"applicationId": self.TAIL, "error": "could not save session"}))
+        with self._two_presses(sessions=set(), drops=[{"applicationId": self.TAIL}],
+                               drop_answer=broken) as calls:
+            changed = watch.tick()
+        for call in calls["claim"].call_args_list:
+            self.assertNotEqual(call.kwargs.get("application_id"), self.TAIL)
+        self.assertEqual([entry["applicationId"] for entry in calls["kv"]],
+                         [self.HEAD, self.TAIL])
+        self.assertNotIn(self.TAIL, changed.get("dropped", []))
+        self.assertEqual([entry["applicationId"] for entry in changed["dropFailed"]],
+                         [self.TAIL])
+
+
+class WithdrawApplyTakesOnlyThatApplication(unittest.TestCase):
+    def test_it_counts_what_it_took_and_stops_when_the_queue_has_none_left(self):
+        answers = iter([[{"applicationId": "x"}], []])
+        with mock.patch.object(watch, "claim_one",
+                               side_effect=lambda *a, **k: next(answers)) as claim:
+            self.assertEqual(watch.withdraw_apply("x"), 1)
+        claim.assert_called_with("apply/", application_id="x")
+
+    def test_a_queue_that_keeps_answering_is_a_fault_not_a_count(self):
+        with mock.patch.object(watch, "claim_one", return_value=[{"applicationId": "x"}]):
+            with self.assertRaisesRegex(watch.TickError, "still held x"):
+                watch.withdraw_apply("x", limit=3)
+
+
+class NoSessionWordingIsOneContract(unittest.TestCase):
+    """The tick tells "no session" from "could not read the store" by wording,
+    so the wording is one contract across three files. This runs the two that
+    produce it rather than restating the string, against a throwaway store."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = dict(os.environ, HOME=self.tmp.name, JOB_APPLICATION_DIR=self.tmp.name)
+
+    def test_the_store_says_it_for_a_missing_session(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "store.py"), "--root", self.tmp.name,
+             "session-load", "--id", "never-existed"],
+            capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(watch.session_absent(result), result.stderr)
+
+    def test_drop_says_it_for_a_missing_session(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "drop.py"), "--id", "never-existed",
+             "--no-publish"],
+            capture_output=True, text=True, env=self.env, timeout=120)
+        self.assertTrue(watch.drop_found_no_session(result),
+                        (result.returncode, result.stdout[-300:], result.stderr[-300:]))
