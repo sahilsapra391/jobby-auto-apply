@@ -4,7 +4,7 @@ import {
 } from "../../_ui/writes";
 import { pool } from "../../_ui/db";
 import {
-  ACTION_QUEUE, DECISION_QUEUE, EVENT_QUEUE, STATUS_QUEUE, QueueRefused, order,
+  ACTION_QUEUE, DECISION_QUEUE, EVENT_QUEUE, STATUS_QUEUE, orderFlags, QueueRefused, order,
 } from "../../_ui/queue";
 
 /**
@@ -28,6 +28,11 @@ type Body = {
   /** Named so the refusal below can be about a field rather than a stranger. */
   phase?: string;
   event?: string;
+  /**
+   * A Retry rather than a first Apply: the device starts an application parked
+   * in Needs you only for an order carrying this. See `orderFlags`.
+   */
+  retry?: boolean;
   /** The Found path: a posting the reader decided about. */
   postingId?: string;
   decision?: string;
@@ -220,7 +225,7 @@ export async function POST(request: NextRequest) {
   // ordering them; see STATUS_QUEUE.
   if (body.status && STATUS_QUEUE[body.status]) {
     try {
-      await order(STATUS_QUEUE[body.status], legacyId);
+      await order(STATUS_QUEUE[body.status], legacyId, orderFlags(body));
     } catch (err) {
       if (err instanceof QueueRefused) {
         return NextResponse.json({ error: err.message }, { status: err.status });
