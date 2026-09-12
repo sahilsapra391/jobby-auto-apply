@@ -102,6 +102,33 @@ export const STATUS_QUEUE: Record<string, string> = {
 };
 
 /**
+ * The flags a status order carries to the device beside the id, which today is
+ * one: `retry`.
+ *
+ * **Retry is the apply queue plus a flag, and v2 sent the queue without the
+ * flag.** The Python board's `/api/retry` adds `{ retry: true }`
+ * (`deploy/api/board.js`), and the device's `do_not_start` waives its "parked
+ * in Needs you" refusal only for an entry carrying it (`watch.py`,
+ * `retry=apply_head.get("retry") is True`). v2's Retry sent
+ * `status: "inflight"`, which reached the same queue with no flag, so the
+ * device refused every Retry on a parked card, claimed it, and said so only in
+ * its own log. Observed on 2026-09-12: Retry on Davies c9fcfeed85ae12c8 was
+ * queued by 04:39:44Z, and the tick at 04:39:48Z logged `notStarted: "it is
+ * parked in Needs you, waiting on the user"` while v2 redrew the card in In
+ * flight as Queued with nothing behind it.
+ *
+ * `=== true` and nothing looser, for the reason `deploy/queue.mjs` gives for
+ * its own flags: a flag that waives a refusal must not be switched on by the
+ * string "false". And only for a status the apply queue carries, because a
+ * retry is a statement about running the agent again; on a Stop it would mean
+ * nothing, and on any other queue it would be a flag nobody reads.
+ */
+export function orderFlags(body: { status?: string; retry?: unknown }): Record<string, true> {
+  if (body.retry !== true || !body.status) return {};
+  return STATUS_QUEUE[body.status] === "apply" ? { retry: true } : {};
+}
+
+/**
  * The queue an *action* goes to. Not a status, and the distinction is the
  * design rather than tidiness.
  *

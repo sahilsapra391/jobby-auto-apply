@@ -183,6 +183,9 @@ test('every key the route acts on is one this file walks', () => {
     applicationId: 'the subject, not a decision about it',
     postingId: 'the Found path, checked by DECISION_QUEUE below',
     decision: 'the Found path, checked by DECISION_QUEUE below',
+    retry: 'a flag on the apply order a status already makes, not an order of ' +
+           'its own; what it reaches is checked by ' +
+           'tests/v2_retry_reaches_the_device_as_a_retry.test.mjs',
     phase: 'written by the daemon reporting its own progress; no control ' +
            'sends one, and a control that did would be ordering a state ' +
            'rather than work, which is the mistake this whole file is about',

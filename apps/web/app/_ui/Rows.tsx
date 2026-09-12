@@ -677,7 +677,7 @@ export function ActCard(row: Row) {
       </ul>
       <div className="act">
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
-             body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+             body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
           Retry
         </Act>
         {/* **The lane's primary action, and it was rendered disabled.** A
@@ -746,7 +746,7 @@ export function FlightCard(row: Row) {
           ? <span className="why">{s(row.phase_detail)}</span> : null}</p>
       <div className="act">
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
-             body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+             body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
           Retry
         </Act>
         <Act className="btn drop" subject={row.id} rowId={row.id}
