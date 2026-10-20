@@ -14,14 +14,14 @@ REPO = SCRIPT_DIR.parent
 DEPLOY = REPO / "deploy"
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import provider_status  # noqa: E402
 import providers  # noqa: E402
-import settings_panel  # noqa: E402
 import toolpath  # noqa: E402
 
 
 def publish_status(status):
     """Best-effort live settings update. Authentication does not depend on it."""
-    payload = settings_panel.public_payload(status)
+    payload = provider_status.public_payload(status)
     descriptor, temporary = tempfile.mkstemp(prefix="jobby-providers-", suffix=".json")
     try:
         os.fchmod(descriptor, 0o600)

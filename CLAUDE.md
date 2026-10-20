@@ -1600,6 +1600,27 @@ inline-literal reader called `FoundActions` stranded when it is not. What it
 cannot resolve it reports as unverified rather than as either a pass or a
 failure.
 
+### One owner-only surface: the resume wording editor, 2026-10-20
+
+**The site stays public. The wording editor is the single exception**, by the
+owner's decision, because the wording is his employment history in his own
+words. `isOwner()` (`apps/web/app/_ui/owner.ts`) gates its page section,
+`GET /api/profile/wording` and `POST /api/profile/wording`, and nothing else;
+`tests/wording_stays_owner_only.test.mjs` fails if a new caller appears. The
+session is an HMAC-signed HttpOnly, Secure, SameSite=Lax cookie, 30 days,
+keyed on `JOBBY_SESSION_SECRET` and bound to `JOBBY_OWNER_PASSWORD`, so
+rotating either ends every session. Either variable unset (or shorter than 12
+and 32 characters) and the editor says how to turn it on.
+
+The wording still never enters Postgres. The device publishes it, with its
+rendered preview, to `jobby:owner:resume-wording` (`scripts/wording_publish.py`,
+spawned by `watch.refresh_owner_wording` when its inputs' stamps move and
+forced after an accepted wording edit), and only that route reads the key.
+Saves go through `resumeEdits` like v1's. Two side doors are closed with it:
+the public `/api/profile` refuses a `content` edit, and a wording edit's
+outcome records no `submitted`, because `edit_outcomes` reaches the public
+Profile page; `db.editOutcomes` also drops it for rows written before.
+
 ## Security invariants
 
 Provider processes receive allowlisted environment variables, bounded output,

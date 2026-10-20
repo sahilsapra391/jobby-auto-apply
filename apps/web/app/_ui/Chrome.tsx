@@ -33,12 +33,15 @@ function themeSegment(theme: Theme) {
  * a moon is how two boards end up with different suns, and the icons are the
  * only part of a theme control anybody looks at.
  */
-export function AppBar({ here, theme = "system", home = "/" }: {
+export function AppBar({ here, theme = "system", home = "/", openQuestions = null }: {
   here: "home" | "profile" | "settings";
   theme?: Theme;
   /** Where the logo and Home go. The board's rule is that the logo returns to
    *  the board, and the board means the lane the reader was last on. */
   home?: string;
+  /** Memory Bank questions still waiting on an answer, from `db.openQuestions`.
+   *  `null` when the count could not be read, which draws no badge. */
+  openQuestions?: number | null;
 }) {
   return (
     <>
@@ -71,6 +74,17 @@ export function AppBar({ here, theme = "system", home = "/" }: {
           </Link>
           <Link href="/profile" {...(here === "profile" ? { "aria-current": "page" as const } : {})}>
             Profile
+            {/* The board's badge (`dashboard.py`, `profile_badge`): an
+                outstanding question is the only thing on the Profile page
+                costing the user anything, so it is the only count the nav
+                carries. Absent at zero rather than drawn hidden, since v2
+                has no script that would later unhide it. */}
+            {openQuestions ? (
+              <span className="nav-n"
+                    aria-label={`${openQuestions} open question${openQuestions === 1 ? "" : "s"}`}>
+                {openQuestions}
+              </span>
+            ) : null}
           </Link>
           <Link href="/settings" {...(here === "settings" ? { "aria-current": "page" as const } : {})}>
             Settings

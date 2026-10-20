@@ -12,7 +12,8 @@ import { AnswersModal } from "./_ui/AnswersModal";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
-  accountId, boardMeta, counts, filtersFrom, laneQuery, page, readerName, savedSearch,
+  accountId, boardMeta, counts, filtersFrom, laneQuery, openQuestions, page,
+  readerName, savedSearch,
 } from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
 import { RememberLane } from "./_ui/RememberLane";
@@ -105,7 +106,7 @@ export default async function Board({
     : (words ? { q: words } : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
-  const [tally, first, writes, meta, pool, scope, archive, reader] =
+  const [tally, first, writes, meta, pool, scope, archive, reader, open] =
     await Promise.all([
     counts(active, filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
@@ -125,6 +126,9 @@ export default async function Board({
     // `ARCHIVE_LIMIT` is a ceiling far above that rather than a page size.
     page("dropped", null, ARCHIVE_LIMIT, "new"),
     readerName(),
+    // The Profile nav badge. A failed count draws no badge rather than a
+    // failed board: it is a pointer to another page, not this page's data.
+    openQuestions().catch(() => null),
   ]);
   const stamp = boardStamp(meta?.updatedAt ?? null);
 
@@ -151,7 +155,8 @@ export default async function Board({
     <>
       {/* The logo returns to the board, and the board means the lane the
           reader was last on rather than whichever one is first. */}
-      <AppBar here="home" theme={theme} home={tabHref(active)} />
+      <AppBar here="home" theme={theme} home={tabHref(active)}
+              openQuestions={open} />
       <RememberLane lane={active} />
       <div className="wrap">
         <div className="top">

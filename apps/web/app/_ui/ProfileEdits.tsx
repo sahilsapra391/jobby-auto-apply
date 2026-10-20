@@ -51,7 +51,8 @@ type Edits = {
   stateOf: (slot: string) => EditState;
   /** Post one edit. Resolves to the refusal text, or null when it was taken. */
   send: (edit: { kind: "answer" | "resume"; slot: string }
-              & Record<string, unknown>)
+              & Record<string, unknown>,
+         route?: string)
     => Promise<string | null>;
 };
 
@@ -147,7 +148,10 @@ export function EditsProvider({ enabled, outcomes: initial, children }: {
 
   const send = useCallback(async (edit: {
     kind: "answer" | "resume"; slot: string;
-  } & Record<string, unknown>): Promise<string | null> => {
+  } & Record<string, unknown>,
+  // The owner-only wording editor posts to its own route; everything else on
+  // this page goes to the public write path.
+  route: string = "/api/profile"): Promise<string | null> => {
     const editId = mintEditId();
     const { slot, ...body } = edit;
     const entry: Sent = { editId, slot, at: Date.now() };
@@ -157,7 +161,7 @@ export function EditsProvider({ enabled, outcomes: initial, children }: {
       return next;
     });
     try {
-      const res = await fetch("/api/profile", {
+      const res = await fetch(route, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -193,6 +197,9 @@ export function EditsProvider({ enabled, outcomes: initial, children }: {
                         [enabled, stateOf, send]);
   return <EditsContext.Provider value={value}>{children}</EditsContext.Provider>;
 }
+
+/** The resume wording's slot: one document, no target. */
+export const WORDING_SLOT = slotOf("resumeEdits", null);
 
 /** One value, as a reader can compare it. An answer is a string; the wording
  *  is an object; an empty answer is a real edit and says so. */
@@ -245,7 +252,10 @@ export function EditStateLine({ slot, local }: { slot: string; local?: string | 
       <p>{state.reason || "The store gave no reason."}</p>
       <dl className="identity-rows">
         <div className="identity-row">
-          <dt>You sent</dt><dd>{shown(state.submitted) || "(nothing)"}</dd>
+          {/* A wording edit's submission is never recorded where the public
+              outcomes list could carry it, so "nothing" would be false. */}
+          <dt>You sent</dt><dd>{shown(state.submitted)
+            || (slot === WORDING_SLOT ? "the wording in the editor above" : "(nothing)")}</dd>
         </div>
         <div className="identity-row">
           <dt>The store holds</dt>

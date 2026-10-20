@@ -722,16 +722,57 @@ export async function editOutcomes(): Promise<EditOutcome[]> {
     `select edit_id, queue, state, target, submitted, held, reason, at
        from edit_outcomes where account_id = $1
       order by at desc limit $2`, [account, OUTCOMES_SHOWN]);
-  return rows.map((r) => ({
-    editId: r.edit_id,
-    queue: r.queue,
-    state: r.state,
-    target: r.target ?? null,
-    submitted: r.submitted ?? null,
-    held: r.held ?? null,
-    reason: r.reason ?? null,
-    at: r.at ?? null,
-  }));
+  return rows.map((r) => {
+    const wording = isWordingEdit(r.queue, r.target);
+    return {
+      editId: r.edit_id,
+      queue: r.queue,
+      state: r.state,
+      target: r.target ?? null,
+      // **Never the wording.** A resume wording edit's `submitted` is the
+      // whole document, and this list reaches the public Profile page and the
+      // public `GET /api/profile`. The device stopped recording it there when
+      // the owner-only editor landed, but rows written before that are still
+      // in `edit_outcomes`, so the public read drops both value fields for
+      // that one kind of edit rather than trusting the table to be clean.
+      submitted: wording ? null : (r.submitted ?? null),
+      held: wording ? null : (r.held ?? null),
+      reason: r.reason ?? null,
+      at: r.at ?? null,
+    };
+  });
+}
+
+/**
+ * Whether an outcome belongs to a resume wording edit.
+ *
+ * The wording is one document with no key, so it is the only `resumeEdits`
+ * entry with no target (`watch._edit_subject`). Every registry edit names the
+ * base it changes.
+ */
+export function isWordingEdit(queue: unknown, target: unknown): boolean {
+  return queue === "resumeEdits" && (target === null || target === undefined);
+}
+
+/**
+ * How many Memory Bank questions are still waiting on an answer, for the
+ * Profile nav badge.
+ *
+ * The board's own rule (`dashboard.bank_counts`): no value, not dismissed.
+ * Its third exclusion, `remembered is False`, is not mirrored to
+ * `answer_bank`; measured 2026-10-20 it matched no entry without a value, so
+ * the count agrees today and would overcount by exactly those entries if one
+ * ever appeared. `value` is the mirrored answer (`class_b.answer_row`), and an
+ * all-whitespace value counts as none, as `store.answered` reads it.
+ */
+export async function openQuestions(): Promise<number> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select count(*)::int as n from answer_bank
+      where account_id = $1
+        and (value is null or btrim(value) = '')
+        and state is distinct from 'dismissed'`, [account]);
+  return rows[0]?.n ?? 0;
 }
 
 /**

@@ -2,10 +2,10 @@ import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { SelectFace } from "../_ui/SelectFace";
-import { providers } from "../_ui/db";
+import { openQuestions, providers } from "../_ui/db";
 import { accountId, writesEnabled } from "../_ui/writes";
 import { PROVIDER_LABELS } from "../providers.generated";
-import { ProviderAction } from "../_ui/ProviderAction";
+import { ProviderCards } from "../_ui/ProviderCards";
 
 /**
  * Settings. One row per provider, and the row is the board's own shape:
@@ -47,7 +47,9 @@ export default async function Settings() {
   // The logo returns to the lane the reader came from, which is the board's
   // own rule and what v2 lost by always sending them to Found.
   const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
-  const links = await providers();
+  const [links, open] = await Promise.all([
+    providers(), openQuestions().catch(() => null)]);
+  const firstOrder = Math.min(...links.map((l) => l.order ?? 1e9));
   // Whether the control is *offered*, never authorisation: `/api/providers`
   // reads the same flag against the same database before it enqueues, so a
   // client that ignores this gets a 503 and a button that says why. Same
@@ -55,7 +57,7 @@ export default async function Settings() {
   const writes = await writesEnabled(await accountId()).catch(() => false);
   return (
     <>
-      <AppBar here="settings" theme={theme} home={home} />
+      <AppBar here="settings" theme={theme} home={home} openQuestions={open} />
       <div className="wrap">
         <section className="settings-page">
           {/* The board's own framing, which v2 reduced to a one-line banner.
@@ -84,67 +86,25 @@ export default async function Settings() {
             local signed-in browser.
           </div>
 
-          <div className="provider-grid">
-            {links.length === 0 ? (
-              <p className="hint">
-                No provider connections are recorded. Connect one on your
-                device; the board reads what the device mirrors and invents
-                nothing.
-              </p>
-            ) : null}
-            {links.map((p) => {
-              const connected = p.status === "connected";
-              return (
-              // `article`, like the board: `.provider-grid > article` is what
-              // the stylesheet sizes, and a `div` in its place left the three
-              // cards at different heights because the descriptions wrap.
-              <article className="provider-card" key={p.provider}
-                       data-provider-card={p.provider}>
-                <div className="provider-head">
-                  <div>
-                    <h3>{PROVIDER_LABELS[p.provider]?.name ?? p.provider}</h3>
-                    <p>{PROVIDER_LABELS[p.provider]?.agent ?? p.provider} &middot; {p.model}</p>
-                  </div>
-                  {/* The failover order, which the old board explains and v2
-                      dropped. New work probes connected accounts in this order
-                      and takes the first that can invoke its pinned model. */}
-                  {p.order != null ? (
-                    <span className="chip" title="Failover order">
-                      {p.order === Math.min(...links.map((l) => l.order ?? 1e9))
-                        ? "Default" : `#${p.order}`}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="host-row" data-host="local">
-                  <div>
-                    <strong>Your Device</strong>
-                    <span>Resumes, cover letters, and application forms</span>
-                  </div>
-                  {/* The board's own three states, not an invented pair.
-                      settings_panel.py writes `provider-state`, with `pending`
-                      while a check is in flight and `bad` on an error; v2 had
-                      `ok`/`warn`, which the stylesheet does not define and
-                      which no board has ever emitted. */}
-                  <span className={connected
-                          ? (p.health && p.health !== "healthy"
-                             ? "provider-state bad" : "provider-state")
-                          : "provider-state pending"}
-                        data-provider-state="local">
-                    {connected
-                      ? (p.health && p.health !== "healthy"
-                         ? `Connected, ${p.health}` : "Connected")
-                      : "Not connected"}
-                  </span>
-                </div>
-                <ProviderAction provider={p.provider} enabled={writes}
-                                action={connected ? "disconnect" : "connect"}>
-                  {connected ? "Disconnect" : "Connect"}
-                </ProviderAction>
-                <p className="provider-detail">{p.detail ?? ""}</p>
-              </article>
-              );
-            })}
-          </div>
+          {/* Three cards always, like the board: a provider with no
+              `provider_links` row is a provider not connected, not a provider
+              that does not exist. The cards then follow the device's live
+              status; see `_ui/ProviderCards`. */}
+          <ProviderCards enabled={writes} cards={Object.entries(PROVIDER_LABELS)
+            .map(([id, label]) => {
+              const link = links.find((l) => l.provider === id);
+              return {
+                id, name: label.name, agent: label.agent,
+                model: link?.model ?? null,
+                // The failover order, which the old board explains and v2
+                // dropped. New work probes connected accounts in this order
+                // and takes the first that can invoke its pinned model.
+                orderChip: link?.order == null ? null
+                  : link.order === firstOrder ? "Default" : `#${link.order}`,
+                stored: link ? { status: link.status, health: link.health,
+                                 detail: link.detail } : undefined,
+              };
+            })} />
           {/* Where credentials live, which is the one thing a reader wants
               settled before connecting anything. v2 dropped it entirely. */}
           <p className="credential-note">

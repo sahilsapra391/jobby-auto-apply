@@ -16,7 +16,9 @@ import { gzipSync } from 'node:zlib';
 
 export const BOARD_KEY = 'jobby:board';
 export const BOARD_STATE_KEY = 'jobby:board-state';
-export const LOCAL_STATUS_KEY = 'jobby:worker:local:status';
+// Declared once, in device_keys.mjs, which v2 reads a generated copy of.
+import { LOCAL_STATUS_KEY } from './device_keys.mjs';
+export { LOCAL_STATUS_KEY };
 export const WORKER_STATUS_KEY = 'jobby:worker:documents:status';
 export const docKey = (name) => `jobby:doc:${name}`;
 

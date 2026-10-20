@@ -14,6 +14,7 @@
 // era so the Python callers did not have to change when the backend did.
 import { readQueue, enqueue, claimOne, claimAll, takeConfig, QUEUES } from './kvqueue.mjs';
 import { kvGet, kvDelete } from './kv.mjs';
+import { UPLOAD_KEY_PREFIX } from './device_keys.mjs';
 
 const [cmd, prefix = 'marked/', id, extraJson] = process.argv.slice(2);
 
@@ -71,8 +72,8 @@ try {
     // Take an uploaded base resume and remove it. One read, one delete, and the
     // document never touches the shared queue key.
     if (!prefix || !/^[A-Za-z0-9._-]+$/.test(prefix)) die('usage: queue.mjs upload-take <uploadId>');
-    const value = await kvGet(env, `jobby:upload:${prefix}`);
-    if (value !== null) await kvDelete(env, `jobby:upload:${prefix}`);
+    const value = await kvGet(env, `${UPLOAD_KEY_PREFIX}${prefix}`);
+    if (value !== null) await kvDelete(env, `${UPLOAD_KEY_PREFIX}${prefix}`);
     console.log(JSON.stringify({ uploadId: prefix, pdf: value }));
   } else if (cmd === 'config-take') {
     console.log(JSON.stringify(await takeConfig(env)));

@@ -186,13 +186,25 @@ test('Connect is driven, by name', () => {
   // rather than a list. Settings renders `<ProviderAction>` now, whose own
   // button this walk finds in `_ui/ProviderAction.tsx`, so the assertion is
   // about that button rather than about the settings page carrying a raw one.
+  //
+  // The cards moved into `_ui/ProviderCards.tsx` when they started following
+  // the device's live status, so the page renders that and that renders
+  // `<ProviderAction>`. Both links are asserted: either one breaking strands
+  // the button.
   const settings = readFileSync(join(APP, 'settings/page.tsx'), 'utf8');
-  assert.ok(settings.includes('<ProviderAction'),
-    "Settings no longer renders ProviderAction; if the control moved, point " +
+  const cards = readFileSync(join(APP, '_ui/ProviderCards.tsx'), 'utf8');
+  assert.ok(settings.includes('<ProviderCards'),
+    "Settings no longer renders ProviderCards; if the control moved, point " +
     "this at whatever replaced it rather than deleting the case");
-  assert.ok(!/<button[^>]*provider-action/.test(settings),
-    "Settings is back to a raw provider-action button, which is the state it " +
-    "was in when Connect sent nothing");
+  assert.ok(cards.includes('<ProviderAction'),
+    "ProviderCards no longer renders ProviderAction; if the control moved, " +
+    "point this at whatever replaced it rather than deleting the case");
+  for (const [name, text] of [['settings/page.tsx', settings],
+                              ['_ui/ProviderCards.tsx', cards]]) {
+    assert.ok(!/<button[^>]*provider-action/.test(text),
+      `${name} is back to a raw provider-action button, which is the state ` +
+      "Settings was in when Connect sent nothing");
+  }
 
   const control = found.filter((c) => c.file.includes('ProviderAction.tsx'));
   assert.ok(control.length >= 1, 'ProviderAction renders no button');

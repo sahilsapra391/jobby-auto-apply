@@ -4,6 +4,9 @@ import {
 } from "../../_ui/writes";
 import { PROVIDER_QUEUE, QueueRefused, order } from "../../_ui/queue";
 import { PROVIDER_LABELS } from "../../providers.generated";
+import { readDeviceJson } from "../../_ui/deviceKv";
+// @ts-expect-error -- generated from deploy/device_keys.mjs, plain JS.
+import { LOCAL_STATUS_KEY, freshStatus } from "../../_ui/deviceKeys.generated.mjs";
 
 /**
  * Connect, Disconnect and Refresh, ordered on the device.
@@ -44,6 +47,40 @@ type Body = { provider?: string; action?: string };
  */
 function connectionKey() {
   return `1-${String(Date.now()).padStart(13, "0")}-${crypto.randomUUID()}`;
+}
+
+/**
+ * The device's live provider status, for Settings to poll.
+ *
+ * Read from `jobby:worker:local:status`, which `provider_login.publish_status`
+ * writes with `provider_status.public_payload`'s fields and nothing else: no
+ * credential has a field there. Postgres' `provider_links` is the same facts
+ * one mirror hop later, which is fine for a page load and too slow for
+ * "Waiting for sign-in" turning into "Connected" while somebody watches.
+ *
+ * **Stale and unreadable are different answers.** A status older than
+ * `STATUS_STALE_MS` means the device stopped publishing, and the card says the
+ * device is offline. A KV failure means this deployment could not look, and
+ * the response is a 503 naming why, never `local: null`, which would draw a
+ * healthy device as offline.
+ */
+export async function GET() {
+  const read = await readDeviceJson<Record<string, unknown>>(LOCAL_STATUS_KEY);
+  if (read.state === "unreadable") {
+    return NextResponse.json({ ok: false, error: read.why },
+      { status: 503, headers: { "cache-control": "no-store" } });
+  }
+  const raw = read.state === "found" ? read.value : null;
+  const local = freshStatus(raw);
+  return NextResponse.json({
+    ok: true,
+    local,
+    // Why `local` is null, so the card can say "offline since" rather than
+    // only "offline": `absent` when the device never published, `stale` when
+    // it stopped.
+    lastHeard: raw && typeof raw.checkedAt === "string" ? raw.checkedAt : null,
+    why: local ? null : raw ? "stale" : "absent",
+  }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(request: NextRequest) {
