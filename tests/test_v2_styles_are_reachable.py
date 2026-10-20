@@ -50,21 +50,12 @@ ALLOWED = {
         "new lane instead of dimming it in place.",
     "ref":
         "a board-only affordance for a card arrived at from a deep link.",
-    "fault":
-        "`parkClass: capability`, drawn red on the card and its chip to say "
-        "the fault is Jobby's rather than the employer's. v2 does not surface "
-        "park classification yet.",
     "done":
         "the board ticks off individual blockers within a Needs you card. v2 "
         "renders the list and the count and has no per-item done state.",
     "wide":
         "the board widens the filter row inside a table lane. v2's table lanes "
         "carry their own `LaneSearch` row instead.",
-    "landed":
-        "saved-search feedback. The control that produces it is Save search, "
-        "which is item 21 and behind the write gate.",
-    "lost":
-        "the same control's failure state. Item 21.",
 }
 
 #: Classes carried by elements on the rendered Found lane, read out of the live
@@ -138,8 +129,11 @@ UNRENDERED = {
         "why": "both need columns the Found query does not select. "
                "`job_scores.parts` is already selected and `postings.sources` "
                "is not, so this is a change to the generated SQL in "
-               "`scripts/v2_lanes.py` and then markup, with no write in it.",
-        "classes": {"jb-bars", "jb-bar", "jb-sight", "jb-more", "jb-skipped",
+               "`scripts/v2_lanes.py` and then markup, with no write in it.\n\n"
+               "`jb-sight` left this group when the Found query began "
+               "selecting the sightings (`v2_lanes.SIGHTINGS`) and the panel "
+               "began drawing \"see more on\".",
+        "classes": {"jb-bars", "jb-bar", "jb-more", "jb-skipped",
                     "jb-footer"},
     },
     "what is left of the answer record modal after it landed: the four "
@@ -223,20 +217,11 @@ UNRENDERED = {
         "why": "the banner is a read of the last sweep and the slot fleet: "
                "`board_meta`, `meta.slotsParked` and the ingest report all "
                "carry it already. Only the Scan now button is a write, and "
-               "that is `scan`, which is in ALLOWED rather than here.",
-        "classes": {"scanbar", "scanmsg", "sysbanner", "capacity"},
-    },
-    "the board's Found actions row, below the filters": {
-        "state": "architectural",
-        "why": "**not unbuilt: removed, and the row with it.** The board keeps "
-               "Save search and a second Clear in a row below the filters. v2 "
-               "saves the filters when they change rather than when somebody "
-               "presses a button, and its one reset control sits in the filter "
-               "row beside the thing it resets, so a reader counting Clear "
-               "buttons finds one rather than two. With both controls gone the "
-               "row has nothing to hold, and a container rendered around "
-               "nothing is not a gap.",
-        "classes": {"jb-actions"},
+               "that is `scan`, which is in ALLOWED rather than here.\n\n"
+               "`sysbanner` and `capacity` left with the stopped banner above "
+               "the app bar and the parked-slots line in In flight, both "
+               "reads of `board_meta` the board already had.",
+        "classes": {"scanbar", "scanmsg"},
     },
     "the board's single-document navigation": {
         "state": "architectural",
@@ -261,10 +246,15 @@ UNRENDERED = {
                "nothing selecting it, so drawing the span would have drawn an "
                "empty one on every In-flight card. The gap was the mirror "
                "rather than the markup, which is the distinction this file "
-               "already draws for `sight` and `jb-sight`.",
-        "classes": {"ago", "applymsg", "aside", "chip-sm", "contact",
-                    "direct", "dropping", "err", "fault-note",
-                    "jb-decidefail", "jb-linkmsg", "jb-out", "jb-pill",
+               "already draws for `sight` and `jb-sight`.\n\n"
+               "Four more left together: `direct` (the source chip when the "
+               "best sighting is ATS-direct), `jb-out` (the new-tab arrow on "
+               "a sighting), `chip-sm` (the discipline under a Watching role) "
+               "and `fault-note` (a capability park, which migration 0025 "
+               "mirrors as `park_class`).",
+        "classes": {"ago", "applymsg", "aside", "contact",
+                    "dropping", "err",
+                    "jb-decidefail", "jb-linkmsg", "jb-pill",
                     "jb-vt", "jb-wide", "msg", "note", "ok", "pill", "stub",
                     "undo"},
     },
@@ -275,8 +265,7 @@ UNRENDERED = {
         "why": "each has an entry in ALLOWED saying where the behaviour "
                "actually lives. They are here only so the two checks agree "
                "about what exists.",
-        "classes": {"done", "fault", "gate", "landed", "lost", "marked",
-                    "ref", "scan", "wide"},
+        "classes": {"done", "marked", "ref", "scan", "wide"},
     },
 }
 

@@ -115,6 +115,8 @@ export type Filters = {
   unkwp?: boolean;
   unkexp?: boolean;
   incremote?: boolean;
+  /** The application lane's select. Absent or empty is "All". */
+  facet?: string;
 };
 
 /**
@@ -211,6 +213,10 @@ export const FILTER_KEYS = [
   { key: "unkwp", kind: "onflag" },
   { key: "unkexp", kind: "onflag" },
   { key: "incremote", kind: "onflag" },
+  // **The application lanes' select**: one option of `v2_lanes.FACET_ARMS`,
+  // `fresh`, `region:IN`, `ready`, `interview` and so on. Found's SQL never
+  // names it, so a stray one on a Found URL is carried and ignored.
+  { key: "facet", kind: "one" },
 ] as const;
 
 export function filtersFrom(params: URLSearchParams): Filters {
@@ -285,6 +291,11 @@ function filterValues(f: Filters | undefined) {
     unk_wp: f?.unkwp !== false,
     unk_exp: f?.unkexp !== false,
     inc_remote: f?.incremote !== false,
+    // "" is the select's "All" option, which a GET form submits as `facet=`.
+    // Passed through it would be a facet that matches no arm, which is the
+    // `[] || null` shape: the loosest choice the form offers, emptying the
+    // lane.
+    facet: f?.facet?.trim() || null,
   };
 }
 
@@ -395,6 +406,25 @@ export async function counts(active: Lane,
     }),
   );
   return out;
+}
+
+/**
+ * The options a lane's select offers: the board's fixed ones, then the ones
+ * read off the lane's own rows. Empty for a lane with no select.
+ *
+ * **The query is generated beside the predicate it feeds** (`v2_lanes.
+ * facets_sql`), so the regions offered and the region clause cannot spell the
+ * lane differently.
+ */
+export async function laneFacets(lane: Lane): Promise<[string, string][]> {
+  const spec = LANES[lane].facets;
+  if (!spec) return [];
+  const fixed = spec.static.map(([v, label]) => [v, label] as [string, string]);
+  if (!spec.sql || !spec.params) return fixed;
+  const account = await accountId();
+  const { rows } = await pool().query(spec.sql, argsFor(spec.params, { account }));
+  return [...fixed,
+    ...rows.map((r) => [String(r.value), String(r.label)] as [string, string])];
 }
 
 /**
@@ -670,6 +700,29 @@ export async function savedSearch(): Promise<{
     : locations.length === 1 ? `${locations[0]}`
     : `${locations.length} countries`;
   return { words, locations, scope, extra };
+}
+
+/**
+ * The saved search's version as the device last applied it, and the device's
+ * own stop reason.
+ *
+ * `version` is what `search_config.save` bumps on every save it accepts and
+ * what the class B mirror carries into `board_meta.search_config`, so it
+ * moving is the only proof a save was applied rather than merely parked.
+ * `blocked` is read beside it because a save the schema refuses is reported
+ * there and nowhere else (`watch.take_saved_config`).
+ */
+export async function savedSearchState(): Promise<{
+  version: number | null; blocked: string | null;
+}> {
+  const account = await accountId();
+  const { rows } = await pool().query(
+    `select (search_config->>'version')::int as version, blocked
+       from board_meta where account_id = $1`, [account]);
+  return {
+    version: typeof rows[0]?.version === "number" ? rows[0].version : null,
+    blocked: rows[0]?.blocked ?? null,
+  };
 }
 
 /** One base resume, as the registry describes it. No wording, no path. */

@@ -38,7 +38,7 @@
 // @ts-expect-error -- generated from deploy/kvqueue.mjs, plain JS with no
 // types. Same idiom as r2.generated.mjs in the artifact route: one way of
 // importing these, not two.
-import { enqueue, configured, putConfig } from "./kvqueue.generated.mjs";
+import { enqueue, configured, putConfig, readQueue, CONFIG_FIELD } from "./kvqueue.generated.mjs";
 
 /** Raised when the queue cannot take the work, so the caller writes nothing. */
 export class QueueRefused extends Error {
@@ -285,4 +285,41 @@ export async function saveSearch(config: Record<string, unknown>) {
       `the work queue would not take this search, so nothing was written: ` +
       `${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Whether a saved search is still parked for the device, and since when.
+ *
+ * **A save is two writes on two machines, so "Saved" has two meanings.** The
+ * POST parks the config in the queue key; the device claims it within a tick,
+ * runs `search_config.py save`, and the class B mirror writes the new version
+ * into `board_meta.search_config`. Between those the search is accepted and
+ * not yet applied, and the queue key is read-modify-write with no
+ * compare-and-swap, so a save landing in the same instant as a claim can be
+ * lost. The board answered that with this same read (`board.js`
+ * `handleSearchConfig` GET): still parked is "waiting", gone with the version
+ * moved is "applied", gone without it is a save that did not land.
+ *
+ * `null` is "nothing parked". A deployment with no queue raises the same named
+ * refusal `saveSearch` does, because "could not look" is never "nothing there".
+ */
+export async function pendingSearch(): Promise<{ at: string | null } | null> {
+  const e = env();
+  if (!configured(e)) {
+    const missing = Object.entries(e).filter(([, v]) => !v).map(([k]) => k);
+    throw new QueueRefused(
+      `the work queue is not configured on this deployment, so whether a ` +
+      `saved search is waiting cannot be read. Set ${missing.join(", ")}.`,
+      503);
+  }
+  let held: { at?: unknown } | null;
+  try {
+    held = (await readQueue(e))[CONFIG_FIELD] ?? null;
+  } catch (err) {
+    throw new QueueRefused(
+      `the work queue could not be read: ` +
+      `${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!held) return null;
+  return { at: typeof held.at === "string" ? held.at : null };
 }

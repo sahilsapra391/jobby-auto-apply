@@ -311,6 +311,17 @@ def save(root, config, bump=True):
     # A setting the board cannot show is still a setting the user chose.
     merged = dict(current or {})
     merged.update(config)
+    # **One level deeper for the one nested setting.** `includeUnknowns` is an
+    # object of four switches and v2 draws three of them (degree has no control
+    # there, because no posting carries a degree). Merged at the top level only,
+    # a save carrying three switches replaced the object and `validate` filled
+    # the missing one from DEFAULTS -- the same silent reset the comment above
+    # describes, one key down.
+    stored_unknowns = (current or {}).get("includeUnknowns")
+    if isinstance(stored_unknowns, dict) and isinstance(
+            config.get("includeUnknowns"), dict):
+        merged["includeUnknowns"] = {**stored_unknowns,
+                                     **config["includeUnknowns"]}
     checked = validate(merged)
     if bump:
         previous = (current or {}).get("version", 0)

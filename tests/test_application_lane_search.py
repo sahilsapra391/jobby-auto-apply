@@ -44,8 +44,8 @@ FIXTURE = seed_shape_fixture.EMPLOYER
 APP = seed_shape_fixture.APPLICATION
 
 #: The fixture's application in each lane. The shape fixture seeds four of
-#: them; Dropped is added here, and Submitted needs the completed event the
-#: fixture does not write.
+#: them, and the completed event that puts one in Submitted; Dropped is added
+#: here.
 IN_LANE = {
     "watch": f"{APP}-watch",
     "flight": f"{APP}-inflight",
@@ -90,13 +90,14 @@ class ApplicationLaneSearchTests(pgtest.SchemaCase):
                                                  company, role)
                        values (%s, %s, %s, 'Unrelated Co', 'Analyst')""",
                     (self.account, legacy, status))
-            # Submitted is a completed event, not a status.
+            # Submitted is a completed event, not a status. The fixture
+            # writes its own; this is the control row's.
             cur.execute(
                 """insert into application_events (account_id, application_id,
                                                    kind)
                    select account_id, id, 'completed' from applications
-                    where legacy_id in (%s, %s)""",
-                (IN_LANE["done"], OTHER["done"][0]))
+                    where legacy_id = %s""",
+                (OTHER["done"][0],))
             # The archive's own fields, the way the mirror writes them.
             cur.execute(
                 """insert into applications (account_id, legacy_id, status,

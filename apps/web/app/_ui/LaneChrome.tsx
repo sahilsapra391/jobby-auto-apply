@@ -1,5 +1,6 @@
 import { LANE_EMPTY, LANE_HINTS, LANE_SEARCH_PLACEHOLDER } from "../lane_chrome.generated";
 import type { Lane } from "../lanes.generated";
+import { SubmitOnChange } from "./SubmitOnChange";
 
 /**
  * A lane's subtitle, its search row and what it says when it holds nothing.
@@ -26,8 +27,23 @@ export function LaneHint({ lane, count }: { lane: Lane; count: number }) {
  * board's `data-search` attributes drive a client-side filter over an embedded
  * payload; v2 pages from Postgres, so the honest equivalent is a predicate.
  */
-export function LaneSearch({ lane, q, shown, total, whole }: {
-  lane: Lane; q?: string; shown: number; total: number;
+export function LaneSearch({ lane, q, facet, options = [], shown, total, whole }: {
+  lane: Lane; q?: string;
+  /** The select's current value, when one is chosen. */
+  facet?: string;
+  /**
+   * The select's options, `[value, label]`, from `laneFacets`.
+   *
+   * **The board's `filter_bar` select, as a parameter.** Watching filters to
+   * fresh postings, a region or a discipline; Needs you to ready or still
+   * blocked; Submitted to an outcome. The board does it in the browser over
+   * `data-` attributes, so it costs nothing and needs no URL; here each option
+   * is a clause in the generated lane SQL and the URL carries which, so a
+   * filtered lane is linkable and pages correctly. Absent when a lane has
+   * nothing to select, which is the board's rule too.
+   */
+  options?: [string, string][];
+  shown: number; total: number;
   /**
    * The lane's size with no search applied, which decides whether this row is
    * drawn at all.
@@ -40,19 +56,34 @@ export function LaneSearch({ lane, q, shown, total, whole }: {
 }) {
   const laneSize = whole ?? total;
   if (!laneSize) return null;
+  const narrowed = !!q || !!facet;
   return (
-    <form className="filters" method="get" action="/" data-scope={lane}>
+    <form className="filters" method="get" action="/" data-scope={lane}
+          data-lane-filter="">
       <input type="hidden" name="lane" value={lane} />
       <input type="search" name="q" defaultValue={q ?? ""}
              data-search={lane} placeholder={LANE_SEARCH_PLACEHOLDER}
              aria-label={`Search ${lane}`} />
-      {q ? <a className="btn ghost" href={`/?lane=${lane}`}>Clear</a> : null}
+      {options.length ? (
+        // `SubmitOnChange` applies it, like every select on Found: a select
+        // that waits for Enter in a different box is a control that does not
+        // look like it works.
+        <select name="facet" data-filter={lane} defaultValue={facet ?? ""}
+                aria-label={`Filter ${lane}`}>
+          <option value="">All</option>
+          {options.map(([value, label]) => (
+            <option value={value} key={value}>{label}</option>
+          ))}
+        </select>
+      ) : null}
+      {narrowed ? <a className="btn ghost" href={`/?lane=${lane}`}>Clear</a> : null}
       <span className="fcount" data-count={lane}>
-        {q && total !== laneSize
+        {narrowed && total !== laneSize
           ? `${total.toLocaleString()} of ${laneSize.toLocaleString()} match`
           : shown === total ? `${total.toLocaleString()} shown`
           : `${shown.toLocaleString()} of ${total.toLocaleString()} shown`}
       </span>
+      {options.length ? <SubmitOnChange /> : null}
     </form>
   );
 }

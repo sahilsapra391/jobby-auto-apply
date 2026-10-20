@@ -822,6 +822,55 @@ class SavedSearchMergeTests(unittest.TestCase):
             b = search_config.save(root, {"postedWithin": "30d"})
             self.assertGreater(b["version"], a["version"])
 
+    def test_an_explicitly_emptied_field_clears_what_was_saved(self):
+        # The merge keeps what a save omits, so clearing has to be said. v2's
+        # Save sends every field its form holds, empty ones as empty, and each
+        # of these must replace the stored value rather than fall through to
+        # it: otherwise a reader who removes every keyword and presses Save
+        # keeps sourcing on the old keywords.
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            search_config.save(root, dict(
+                search_config.DEFAULTS, keywords=["product manager", "analyst"],
+                excludeKeywords=["intern"], companies=["Acme", "Initech"],
+                companiesMode="only", maxExperienceYears=3,
+                locations=[{"country": "GB"}], workplace=["remote"]))
+            out = search_config.save(root, {
+                "keywords": [], "excludeKeywords": [], "companies": [],
+                "companiesMode": "all", "maxExperienceYears": None,
+                "locations": [], "workplace": []})
+            self.assertEqual(out["keywords"], [])
+            self.assertEqual(out["excludeKeywords"], [])
+            self.assertEqual(out["companies"], [])
+            self.assertEqual(out["companiesMode"], "all")
+            self.assertIsNone(out["maxExperienceYears"])
+            self.assertEqual(out["locations"], [])
+            # Empty is "no workplace opinion", which validate stores as all.
+            self.assertEqual(sorted(out["workplace"]),
+                             sorted(search_config.WORKPLACES))
+
+    def test_a_keyword_phrase_is_kept_whole(self):
+        # One chip is one keyword. Splitting "product manager" into two is
+        # what the first v2 reader did, and ingest ORs keywords.
+        with tempfile.TemporaryDirectory() as d:
+            out = search_config.save(pathlib.Path(d),
+                                     {"keywords": ["product manager", "data"]})
+            self.assertEqual(out["keywords"], ["product manager", "data"])
+
+    def test_unknown_switches_merge_one_level_down(self):
+        # v2 draws three of the four switches. A save carrying three must not
+        # reset the fourth to its default, which a top-level merge did.
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            search_config.save(root, dict(search_config.DEFAULTS, includeUnknowns={
+                "experience": True, "degree": False, "workplace": True,
+                "postedAt": True}))
+            out = search_config.save(root, {"includeUnknowns": {
+                "experience": False, "workplace": True, "postedAt": False}})
+            self.assertEqual(out["includeUnknowns"], {
+                "experience": False, "degree": False, "workplace": True,
+                "postedAt": False})
+
     def test_every_setting_the_board_omits_is_covered_by_the_merge(self):
         # The general guard: whatever the client stops sending, the merge keeps.
         with tempfile.TemporaryDirectory() as d:

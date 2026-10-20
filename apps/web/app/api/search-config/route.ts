@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   accountId, remember, replay, requireWritesEnabled, WriteRefused,
 } from "../../_ui/writes";
-import { QueueRefused, saveSearch } from "../../_ui/queue";
+import { pendingSearch, QueueRefused, saveSearch } from "../../_ui/queue";
+import { savedSearchState } from "../../_ui/db";
 
 /**
  * Save search.
@@ -18,6 +19,47 @@ import { QueueRefused, saveSearch } from "../../_ui/queue";
  * nothing. That is the state a person only finds by pressing it.
  */
 export const dynamic = "force-dynamic";
+
+/**
+ * The prefix `watch.take_saved_config` writes into `meta.blocked` when the
+ * schema refuses a parked save. `tests/save_search_sends_what_the_form_holds.test.mjs`
+ * reads it back out of `watch.py`, so a reworded refusal fails there rather
+ * than turning a refused save into one that waits for ever.
+ */
+const REFUSED_PREFIX = "The saved search was not accepted";
+
+/**
+ * Did the last save land? **GET only reads**, like every GET on this board.
+ *
+ *   pending    the config is still parked in the queue for the device
+ *   version    `board_meta.search_config.version`, which the device bumps on
+ *              every save it accepts; the button compares it with the one it
+ *              read before posting
+ *   refused    the device's own sentence, when the schema refused the save
+ *
+ * The board's endpoint returned the parked config itself. This returns only
+ * that one is parked and when, because the page needs the fact and not the
+ * search, and a public route has no reason to print it.
+ */
+export async function GET() {
+  let pending: { at: string | null } | null;
+  try {
+    pending = await pendingSearch();
+  } catch (err) {
+    if (err instanceof QueueRefused) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
+  const { version, blocked } = await savedSearchState();
+  return NextResponse.json({
+    ok: true,
+    pending: pending !== null,
+    pendingAt: pending?.at ?? null,
+    version,
+    refused: blocked && blocked.startsWith(REFUSED_PREFIX) ? blocked : null,
+  });
+}
 
 export async function POST(request: NextRequest) {
   let account: string;

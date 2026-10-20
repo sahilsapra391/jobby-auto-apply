@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
 import { SelectFace } from "../_ui/SelectFace";
-import { providers } from "../_ui/db";
+import { boardMeta, providers } from "../_ui/db";
 import { accountId, writesEnabled } from "../_ui/writes";
 import { PROVIDER_LABELS } from "../providers.generated";
 import { ProviderAction } from "../_ui/ProviderAction";
@@ -53,9 +53,12 @@ export default async function Settings() {
   // client that ignores this gets a 503 and a button that says why. Same
   // contract `Act` states for the lanes.
   const writes = await writesEnabled(await accountId()).catch(() => false);
+  // Only for the page-wide stopped banner; a board with no meta has none.
+  const meta = await boardMeta().catch(() => null);
   return (
     <>
-      <AppBar here="settings" theme={theme} home={home} />
+      <AppBar here="settings" theme={theme} home={home}
+              stopped={meta?.blocked} />
       <div className="wrap">
         <section className="settings-page">
           {/* The board's own framing, which v2 reduced to a one-line banner.

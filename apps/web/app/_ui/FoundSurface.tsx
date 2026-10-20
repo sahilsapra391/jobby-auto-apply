@@ -1,5 +1,5 @@
 import { WINDOWS, SORT_LABELS, type Sort } from "../lanes.generated";
-import { AddPosting, FindSources } from "./FoundActions";
+import { AddPosting, FindSources, SaveSearch } from "./FoundActions";
 import { ANY_WINDOW, DEFAULT_WINDOW } from "./window";
 import { anyFilterSet, laneQuery, type BoardMeta, type Filters } from "./db";
 import { SubmitOnChange } from "./SubmitOnChange";
@@ -100,8 +100,11 @@ export function ScanBanner({ meta, writesEnabled = false }: {
         {n("gatedOut") != null
           ? <> &middot; {n("gatedOut")!.toLocaleString()} filtered out</> : null}
         {n("pruned") != null ? <> &middot; {n("pruned")} closed by the employer</> : null}
-        {meta?.blocked ? <> &middot; <b>{meta.blocked}</b></> : null}
-        {meta?.slotsParked ? <> &middot; <b>{meta.slotsParked}</b></> : null}
+        {/* `blocked` and `slotsParked` used to sit here in bold, where a
+            stopped device read like a sweep note and nothing outside Found
+            showed it. They have the board's own places now: the red banner
+            above the app bar on every route, and the capacity line at the top
+            of In flight. */}
         {raw === null ? (
           <> &middot; <span className="muted">problems not recorded</span></>
         ) : problems.length ? (
@@ -540,13 +543,16 @@ export function Filters({ q, within, direct, sort, shown, total, pool, scope,
         </div>
       </details>
       </form>
-      {/* **The actions row is gone, and both of its controls with it.**
-          Save search was a button for a thing that should never have needed
-          one: the filters you are looking at are the search, so they are saved
-          when they change rather than when you remember to press something.
-          `SaveFilters` does that. And the second Clear was the same control as
-          the one in the filter row, three hundred pixels away, so a reader
-          counting Clear buttons found two and could not tell which was which. */}
+      {/* **Save search is back, as a press, in the board's actions row**
+          (`found_lane.py`, `jb-row jb-actions` under the filters). The version
+          that saved on every change is gone for the reason `FoundActions`
+          records -- it turned any URL into the sweep's input -- and the board
+          never had that problem because its Save was a button. The second
+          Clear stays gone: it was the same control as the one in the filter
+          row, and a reader counting Clear buttons found two. */}
+      <div className="jb-row jb-actions">
+        <SaveSearch enabled={writesEnabled} />
+      </div>
     </div>
   );
 }

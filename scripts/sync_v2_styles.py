@@ -392,7 +392,46 @@ def rubric_module():
             f"export const COMPONENTS = {json.dumps(list(found_lane.COMPONENTS))} as const;\n\n"
             f"export const WEIGHTS: Record<string, number> = "
             f"{json.dumps(dict(found_lane.MATCH_WEIGHTS))};\n\n"
-            f"export const SECTION_POINTS = {int(found_lane.SECTION_POINTS)};\n")
+            f"export const SECTION_POINTS = {int(found_lane.SECTION_POINTS)};\n\n"
+            "// What a board calls itself on a chip, from found_lane.SOURCE_LABELS.\n"
+            "// A source not in it is title-cased, which is the board's fallback.\n"
+            "export const SOURCE_LABELS: Record<string, string> = "
+            f"{json.dumps(found_lane.SOURCE_LABELS, sort_keys=True)};\n\n"
+            "// found_lane.tidy_tag's two word lists and the card's caps: tags\n"
+            "// are kept to MAX_TAGS when compacted and the card draws four.\n"
+            "// `tests/card_words_read_like_the_board.test.mjs` runs both.\n"
+            "export const KEEP_UPPER: string[] = "
+            f"{json.dumps(sorted(found_lane.KEEP_UPPER))};\n\n"
+            "export const SMALL_WORDS: string[] = "
+            f"{json.dumps(sorted(found_lane.SMALL_WORDS))};\n\n"
+            f"export const MAX_TAGS = {int(found_lane.MAX_TAGS)};\n\n"
+            "// found_lane.DAY_WORDS: the rubric persisted \"posted 1 days ago\",\n"
+            "// and the board mends it wherever it draws a reason.\n"
+            "export const DAY_WORDS: [string, string][] = "
+            f"{json.dumps([list(p) for p in found_lane.DAY_WORDS])};\n\n"
+            "// The Submitted Status chip per history event, from dashboard.py's\n"
+            "// own `outcome_chip`: [chip modifier, label].\n"
+            "export const OUTCOME_CHIPS: Record<string, [string, string]> = "
+            f"{json.dumps(_outcome_chips(), sort_keys=True)};\n")
+
+
+def _outcome_chips():
+    """`dashboard.py`'s `outcome_chip`, read out of the source.
+
+    Local to `build`, so it cannot be imported; parsed with `ast` for the
+    reason `lane_chrome_module` gives about `EMPTY`.
+    """
+    import ast
+    source = (REPO / "scripts" / "dashboard.py").read_text(encoding="utf-8")
+    block = re.search(r"    outcome_chip = (\{.*?\})\n", source, re.S)
+    if not block:
+        raise SystemExit("dashboard.py's outcome_chip dict could not be found; "
+                         "v2's Submitted Status column would draw nothing")
+    chips = {k: list(v) for k, v in ast.literal_eval(block.group(1)).items()}
+    if "completed" not in chips or len(chips) < 5:
+        raise SystemExit(f"outcome_chip parsed as {sorted(chips)}; expected "
+                         f"completed and the four outcomes")
+    return chips
 
 
 def logos_module():
