@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SECTION_POINTS } from "../rubric.generated";
+import {
+  CLOSED, disclose, readPosting, sectionNote, type Disclosure, type Sections,
+} from "./cardDisclosure";
 
 /**
  * The board's card disclosure: hover previews it, a click pins it open.
@@ -13,11 +17,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * correct markup and a correct stylesheet and rendered nothing: two correct
  * halves and no third thing to join them.
  *
- * The interaction is the board's, rule for rule, from `found_lane.py:1830`:
+ * The interaction is the board's, rule for rule, from `found_lane.py:1840`,
+ * and the rules themselves live in `cardDisclosure.ts` where a test runs them:
  *
  *   hover opens a preview, so a glance costs nothing
  *   a click pins it, so a read does not have to be undone
  *   **hover never closes what a click opened**
+ *   a second click closes it, with the pointer still on the card
  *   the panel is built on first open, never for the fifty cards on the page
  *
  * The last one is why `everOpened` latches instead of tracking `open`: React
@@ -28,22 +34,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** Fetched sections, kept for the life of the page like the board's own cache. */
 const cache = new Map<string, Sections>();
 
-type Sections = { responsibilities: string[]; requirements: string[] };
-
-/** The board's caps, so a v2 card and a board card cut a long line alike. */
-const POINTS = 6;
-
 export function CardDetails(
   { id, unknowns }: { id: string; unknowns?: unknown },
 ) {
-  const [pinned, setPinned] = useState(false);
-  const [hovered, setHovered] = useState(false);
+  const [disclosure, setDisclosure] = useState<Disclosure>(CLOSED);
   const [everOpened, setEverOpened] = useState(false);
   const [sections, setSections] = useState<Sections | null>(
     () => cache.get(id) ?? null);
   const [failed, setFailed] = useState(false);
   const slot = useRef<HTMLDivElement | null>(null);
-  const open = pinned || hovered;
+  const open = disclosure.shown;
 
   // The card is rendered by a server component, so the hover lives here and is
   // attached to the article this sits in rather than to a wrapper: an extra
@@ -52,8 +52,8 @@ export function CardDetails(
   useEffect(() => {
     const el = slot.current?.closest<HTMLElement>(".jb-card");
     if (!el) return;
-    const enter = () => setHovered(true);
-    const leave = () => setHovered(false);
+    const enter = () => setDisclosure((was) => disclose(was, "enter"));
+    const leave = () => setDisclosure((was) => disclose(was, "leave"));
     el.addEventListener("mouseenter", enter);
     el.addEventListener("mouseleave", leave);
     return () => {
@@ -138,30 +138,29 @@ export function CardDetails(
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!live) return;
-        if (!data?.ok) { setFailed(true); return; }
-        const value: Sections = {
-          responsibilities: data.responsibilities ?? [],
-          requirements: data.requirements ?? [],
-        };
+        const value = readPosting(data);
+        if (!value) { setFailed(true); return; }
         cache.set(id, value);
         setSections(value);
       })
       // Never silent, and never an error the reader has to act on: the rest of
-      // the panel still stands, and a posting whose row has been pruned is a
-      // 404 rather than a fault.
+      // the panel still stands. A pruned posting (404), any other non-ok
+      // answer and a network error all land here and say the read failed,
+      // which is not the same claim as a posting with no headings.
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [everOpened, sections, failed, id]);
 
-  const toggle = useCallback(() => setPinned((was) => !was), []);
+  const toggle = useCallback(
+    () => setDisclosure((was) => disclose(was, "click")), []);
 
   const missing = Array.isArray(unknowns)
     ? unknowns.map((u) => String(u)).filter(Boolean) : [];
   const rows: [string, string[]][] = sections
-    ? [["Key responsibilities", sections.responsibilities.slice(0, POINTS)],
-       ["Requirements", sections.requirements.slice(0, POINTS)]]
+    ? [["Key responsibilities", sections.responsibilities.slice(0, SECTION_POINTS)],
+       ["Requirements", sections.requirements.slice(0, SECTION_POINTS)]]
     : [];
-  const anySection = rows.some(([, lines]) => lines.length > 0);
+  const note = sectionNote(sections, failed);
 
   return (
     <>
@@ -183,11 +182,7 @@ export function CardDetails(
                   <ul>{lines.map((line, i) => <li key={i}>{line}</li>)}</ul>
                 </div>
               ) : null)}
-              {(sections && !anySection) || failed ? (
-                <p className="jb-loading">
-                  This posting does not use headings this can read.
-                </p>
-              ) : null}
+              {note ? <p className="jb-loading">{note}</p> : null}
             </div>
             {/* Gates are not repeated here. They are already chips on the card
                 face, and the board's own note about the excerpt applies: an

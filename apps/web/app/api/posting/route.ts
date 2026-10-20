@@ -20,8 +20,8 @@ import { pool } from "../../_ui/db";
  * of prose in every page load to serve the one card a reader opens, and the
  * board's own reasoning holds for the same reason: only an opened card pays.
  *
- * The middleware gates this like every other path, so an unauthenticated
- * request never reaches it.
+ * Public, like every read on this board since 2026-09-09. The middleware
+ * refuses only cross-site mutations, and this route has no POST.
  */
 export const dynamic = "force-dynamic";
 
@@ -54,8 +54,8 @@ export async function GET(request: NextRequest) {
   if (result.rowCount === 0) {
     // A posting that has been pruned is gone rather than empty, and saying so
     // is what lets the caller tell "no headings" from "no posting". The card
-    // draws the same either way today; the distinction is for whoever reads
-    // this next.
+    // draws "Could not read the posting." for this, and "does not use
+    // headings" only for an ok answer whose two lists are both empty.
     return NextResponse.json({ error: "no such posting" }, { status: 404 });
   }
   const sections = (result.rows[0].sections ?? {}) as Record<string, unknown>;

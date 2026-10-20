@@ -10,8 +10,8 @@ import { LANES, SORT_LABELS, type Lane, type Sort } from "../../lanes.generated"
  * parity does not know about, and the file store would fall behind on exactly
  * the records it touched.
  *
- * The middleware gates this like every other path, so an unauthenticated
- * request never reaches it.
+ * Public, like every read on this board since 2026-09-09. The middleware
+ * refuses only cross-site mutations, and this route has no POST.
  */
 export const dynamic = "force-dynamic";
 
