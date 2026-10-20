@@ -108,7 +108,7 @@ def output_names(profile, company, role, application_id=None):
     corpus and not of the rule, which is exactly the kind of thing that holds
     until it doesn't: **14 documents from before this contract existed share
     six filenames between them**, three Glance applications to three different
-    roles all claiming `Sahil_Sapra_Glance_Resume.pdf`, and the result is that
+    roles all claiming `Alex_Example_Glance_Resume.pdf`, and the result is that
     KV holds one object for three tailored resumes and nobody can say which
     application received which.
 
@@ -199,6 +199,10 @@ def _resume_content_problem(value):
         if not isinstance(row, dict) or not isinstance(row.get("label"), str) \
                 or not isinstance(row.get("items"), str):
             return f"technical row {index + 1} needs a label and items"
+    frame = value.get("frame")
+    if frame is not None and (not isinstance(frame, dict) or any(
+            not isinstance(item, str) for item in frame.values())):
+        return "frame must be an object of text"
     roles = value.get("roles")
     if not isinstance(roles, list) or not roles:
         return "roles must be a non-empty list"

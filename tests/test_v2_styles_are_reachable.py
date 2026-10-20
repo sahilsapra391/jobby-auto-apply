@@ -150,27 +150,18 @@ UNRENDERED = {
                "wrong in the other direction.",
         "classes": {'ans-src-provided', 'ans-src-profile', 'ans-src-generated', 'ans-src-stored'},
     },
-    "the resume wording editor: the fields, the role blocks and the rendered "
-    "frame beside them": {
-        "state": "gated",
-        "why": "**not the flag, and not a mirror decision anybody may take.** "
-               "`class_b._PROFILE_EXCLUDED` keeps `resume-content.json` out of "
-               "`profiles` for two reasons and only one was written down. The "
-               "recorded one is integrity: the same wording in two places with "
-               "no rule about which wins is the fault that served one "
-               "application's wording in place of another's for as long as the "
-               "feature existed. The other is that the wording travels to a "
-               "provider inside the AES-256-GCM job bundle, so mirroring it "
-               "puts a person's employment history in their own words in the "
-               "clear in Postgres, on a connection that is the database owner "
-               "today. That is Class 1 plaintext where the plan puts Class 2 "
-               "ciphertext. Gated on Phase 5's per-account encryption keys, "
-               "written as a requirement in `docs/plans/"
-               "jobby-v2-rebuild-plan.md`. The rest of the Profile write half "
-               "landed without it: the bank, the registry and `edit_outcomes` "
-               "are live.",
-        "classes": {"wording-field", "wording-list", "wording-role",
-                    "resume-frame"},
+    "the resume wording editor's field-by-field layout": {
+        "state": "architectural",
+        "why": "**not unbuilt: superseded on the board itself.** The wording "
+               "editor landed in v2 on 2026-10-20 as the board's document "
+               "editor, owner-only: the rendered resume in a `resume-frame` "
+               "iframe with its text slots made editable, read from the one KV "
+               "key `/api/profile/wording` serves to the signed-in owner. These "
+               "three style the earlier editor that drew one textarea per "
+               "field and one block per role. `profile_panel.py` still carries "
+               "their CSS and renders none of them, so v2 matching the board "
+               "means rendering none of them either.",
+        "classes": {"wording-field", "wording-list", "wording-role"},
     },
     "the Memory Bank's alternative answers, and the button that reveals them": {
         "state": "buildable",
@@ -190,27 +181,6 @@ UNRENDERED = {
                "ways of narrowing the same list on one page is worse than "
                "either.",
         "classes": {"bank-group", "bank-list"},
-    },
-    "uploading your own PDF for a new base resume": {
-        "state": "buildable",
-        "why": "the form is live and copies an existing base, which is what "
-               "supplies the contact block and the document. Uploading a file "
-               "instead needs the other half of `watch.install_uploaded_"
-               "resume`: the board writes the PDF to its own KV key and the "
-               "device takes it from there, and v2 has no route that writes "
-               "that key. A file control before that route exists is a button "
-               "with nothing behind it.",
-        "classes": {"base-file"},
-    },
-    "provider connection state on the Settings page": {
-        "state": "buildable",
-        "why": "drawing whether a provider is connected is a read of "
-               "`provider_links`, which v2 already queries. `provider-message` "
-               "left this group when Connect was wired: the control needs a "
-               "status line to report a refusal into, so the class the board "
-               "already had is the one it reports into. `provider-active` is "
-               "the remaining read.",
-        "classes": {"provider-active"},
     },
     "the scan banner and its progress": {
         "state": "buildable",
@@ -232,7 +202,7 @@ UNRENDERED = {
                "finding from the other side: the same CSS that rendered a "
                "blank page there is correct to be inert here.",
         "classes": {"settings-view", "profile-view", "back-board",
-                    "settings-link", "nav-n", "ui-separator"},
+                    "settings-link", "ui-separator"},
     },
     "board-only affordances with no v2 equivalent decided yet": {
         "state": "buildable",

@@ -27,8 +27,8 @@ SUBMITTED = [
     {"event": "completed", "applicationId": "app-captured", "company": "Acme",
      "role": "Product Manager", "at": "2026-08-20T10:00:00Z",
      "confirmation": "Thanks for applying.",
-     "resumeVariant": "Sahil_Acme_Resume.pdf",
-     "coverLetter": "Sahil_Acme_CoverLetter.pdf"},
+     "resumeVariant": "Alex_Acme_Resume.pdf",
+     "coverLetter": "Alex_Acme_CoverLetter.pdf"},
     {"event": "completed", "applicationId": "app-old", "company": "Older Ltd",
      "role": "Staff PM", "at": "2026-07-01T10:00:00Z",
      "confirmation": "Application received."},
@@ -183,7 +183,7 @@ class ValueDisplayTests(unittest.TestCase):
         return page[page.index("function answerRow"):page.index("function renderAnswers")]
 
     def test_a_sensitive_answer_renders_like_any_other_answer(self):
-        # Sahil's own board, Sahil's own salary. Covering it was friction with
+        # The owner's own board, the owner's own salary. Covering it was friction with
         # no reader it protected against.
         block = self.block()
         self.assertNotIn("field.sensitive", block)

@@ -95,7 +95,7 @@ class StdoutErrorLineTests(unittest.TestCase):
         """The stream carries the model's own draft. A failure reason that
         quoted it would put resume text in a log, so a run whose stdout has
         no error line reports nothing rather than something."""
-        raw = (b'{"event":"step_update","text":"Sahil led a 12 person team"}\n'
+        raw = (b'{"event":"step_update","text":"Alex led a 12 person team"}\n'
                b'{"event":"step_update","text":"and shipped the platform"}\n')
         self.assertEqual(self.line(raw), "")
 
@@ -212,7 +212,7 @@ class AgyLogReasonTests(unittest.TestCase):
         allowlist is what keeps an email address out of every failure log."""
         oauth = ("ERROR: logging before google.Init: E0827 23:44:52.223854     1 "
                  "server_oauth.go:190] applyAuthResult: "
-                 "email=sahilpsapra03@gmail.com, authMethod=consumer")
+                 "email=alex.example@example.com, authMethod=consumer")
         self.write("cli-1.log",
                    f"Created conversation {self.CONVERSATION}\n{oauth}\n")
         self.assertEqual(self.reason(), "")

@@ -1,12 +1,14 @@
 import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
-import { accountId, boardMeta, profile } from "../_ui/db";
+import { accountId, boardMeta, openQuestions, profile } from "../_ui/db";
 import { writesEnabled } from "../_ui/writes";
 import { BANK_KINDS } from "../bank.generated";
 import { EditsProvider } from "../_ui/ProfileEdits";
 import { AddBaseResume, BankRow, ResumeCard } from "../_ui/ProfileSurface";
 import { categoryLabel } from "../_ui/bankLabels";
+import { WordingEditor } from "../_ui/WordingEditor";
+import { config as ownerConfig, isOwner } from "../_ui/owner";
 
 /**
  * Profile: what every tailored resume starts from, and what Jobby answers with.
@@ -28,15 +30,13 @@ import { categoryLabel } from "../_ui/bankLabels";
  * `edit_outcomes`. Nothing on this page draws a change it has not been told
  * happened.
  *
- * **The wording editor is the one control still dark, and it is a security
- * property rather than unfinished work.** The resume wording travels to a
- * provider inside the AES-256-GCM job bundle;
- * `class_b._PROFILE_EXCLUDED` keeps it out of `profiles`, so mirroring it to
- * make it editable here would put a person's employment history in their own
- * words in the clear in Postgres, on a connection that is the database owner
- * today, behind a shared password. That is Class 1 plaintext where the plan
- * puts Class 2 ciphertext. Reversing it is gated on the per-account
- * encryption keys in Phase 5, which is where the requirement is written.
+ * **The wording editor is owner-only, and still not mirrored.** The resume
+ * wording travels to a provider inside the AES-256-GCM job bundle, and
+ * `class_b._PROFILE_EXCLUDED` keeps it out of `profiles`: mirroring it would
+ * put a person's employment history in their own words in the clear in
+ * Postgres, which every public page here reads. So the device publishes it to
+ * one KV key that one route reads, and that route answers only the signed-in
+ * owner (`_ui/owner.ts`). See `api/profile/wording/route.ts`.
  */
 export const dynamic = "force-dynamic";
 
@@ -66,8 +66,11 @@ export default async function Profile({ searchParams }: {
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
-  const [{ resumes, bank, outcomes }, writes, meta] = await Promise.all([
+  const ownerCfg = ownerConfig();
+  const [{ resumes, bank, outcomes }, writes, owner, open, meta] = await Promise.all([
     profile(), accountId().then(writesEnabled),
+    ownerCfg.ok ? isOwner() : Promise.resolve(false),
+    openQuestions().catch(() => null),
     // Only for the page-wide stopped banner; a board with no meta has none.
     boardMeta().catch(() => null),
   ]);
@@ -120,7 +123,7 @@ export default async function Profile({ searchParams }: {
   return (
     <>
       <AppBar here="profile" theme={theme} home={home}
-              stopped={meta?.blocked} />
+              stopped={meta?.blocked} openQuestions={open} />
       <EditsProvider enabled={writes} outcomes={outcomes}>
       <div className="wrap">
         <section className="profile-page">
@@ -135,7 +138,7 @@ export default async function Profile({ searchParams }: {
               <p>
                 Your base resumes and every answer Jobby has learned. Nothing on
                 this page is stored in the page itself; it is read from Postgres
-                when you open it, behind the same password.
+                when you open it.
               </p>
             </div>
           </div>
@@ -186,44 +189,13 @@ export default async function Profile({ searchParams }: {
 
             <AddBaseResume resumes={resumes} />
 
-            {/* **The resume editor is dark because the wording is not
-                mirrored, not because writes are off.** `_PROFILE_EXCLUDED`
-                keeps `resume-content.json` out of `profiles`, so Postgres has
-                nothing for v2 to render and an editor over nothing is worse
-                than a stage that says why. The stage says why. */}
-            <details className="wording">
-              <summary>
-                <span>Edit your resume</span>
-                <span className="wording-hint">
-                  The document itself. Click any line and type.
-                </span>
-              </summary>
-              <div className="wording-body">
-                <div className="split-note">
-                  <strong>The words are yours, the layout is the
-                    template&apos;s.</strong> You are editing the real document,
-                  so what you see is what the PDF will be. Lines can say
-                  anything; there is always the same number of them, because the
-                  layout is what the page-fit check measures against.
-                </div>
-                <div className="resume-stage">
-                  <p className="bank-note">
-                    Not shown here, and that is deliberate. Your resume wording
-                    is your employment history in your own words, and it
-                    reaches an AI provider inside an encrypted bundle rather
-                    than sitting in the board&apos;s database. Putting it here
-                    would mean storing it in the clear, so it waits for
-                    per-account encryption. Editing it on your device still
-                    works, and nothing about your applications is affected.
-                  </p>
-                </div>
-                <div className="wording-act">
-                  <span className="profile-message" role="status">
-                    Not editable here, by design. It stays encrypted.
-                  </span>
-                </div>
-              </div>
-            </details>
+            {/* **Owner-only, and the only owner-only thing on the site.** The
+                wording is not mirrored (`_PROFILE_EXCLUDED`) and never reaches
+                this page's markup: the editor fetches it from
+                `/api/profile/wording`, which answers a signed-in owner and
+                nobody else. A visitor sees the section and a sign-in link. */}
+            <WordingEditor configured={ownerCfg.ok} owner={owner}
+                           why={ownerCfg.ok ? null : ownerCfg.why} />
           </section>
 
           <section className="profile-block" aria-labelledby="bank-title">

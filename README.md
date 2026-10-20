@@ -1,394 +1,183 @@
-<div align="center">
+# Jobby
 
-<img src="docs/logo.png" alt="Jobby" width="720">
+Jobby is an agent that finds jobs for you and applies to them on your behalf.
+The agent work runs on your own Mac: it tailors a resume and cover letter for
+each posting, opens the application in a browser it controls, fills the form,
+and submits it. A web board shows what it found, what it is working on, what it
+needs from you, and what went out.
 
-**I stopped applying to jobs myself. Jobby agents do it now.**
+It is built for one person running it for themselves. Applications go out
+under your real name and cannot be recalled, so most of the code is about
+refusing to guess.
 
-One tailored resume and cover letter per posting. Forms filled and submitted end to end.
-A board that tells me the truth about what is actually happening.
+## How it works
 
-`MIT` · `OpenAI` · `Anthropic` · `Gemini` · `macOS`
+**Sourcing.** A sweep pulls postings from applicant-tracking systems
+(Greenhouse, Lever, Ashby, Workday, SmartRecruiters and others) and from job
+feeds and search APIs. Connectors live in `scripts/sources/`. Each sweep is
+gated before anything is believed: a source that suddenly returns half its usual
+volume keeps its postings but loses the right to have its absences read as
+closures, so one bad fetch cannot close an employer's whole catalogue.
 
-</div>
+**The board.** Postings land in five lanes. Found holds new matches with a
+score breakdown. Watching is your shortlist. In flight shows applications the
+agent is preparing or filling. Needs you holds the ones that stopped on a
+question only you can answer, a verification code, or a form the agent could
+not finish. Submitted is the record of what went out, with the documents and
+the answers each employer received. Dropped is an archive off to the side.
 
----
+**Documents.** For each application, a provider model proposes changes to your
+base resume and drafts a cover letter. Trusted Python then checks the result
+before anything renders: no duplicated or near-duplicate bullets, no changed
+numbers, dates or employers, no invented claims, no doubled greeting or
+signature in a letter. Rendering, PDF output and page-geometry checks all run
+locally.
 
-Jobby is a provider-neutral agent pipeline with two local workers. Press **Apply** on a role and
-the serial document worker builds and checks a resume and cover letter on Your Device. Once both
-files pass the fixed gates, a separate local agent opens the form, fills it, and submits it.
-OpenAI Codex, Anthropic Claude Code, and Gemini CLI use the same bounded task contracts.
+**Filling forms.** The form agent never gets a raw browser. A local MCP
+firewall (`scripts/browser_mcp_proxy.py`) gives it a small fixed tool set with
+no navigation, JavaScript, shell or network tools, blocks Enter-to-submit, and
+lets it upload only the two documents staged for that application, checked by
+path, inode, size and SHA-256. Questions are answered from your own answer
+bank; anything it cannot answer from there goes to Needs you.
 
-It does not invent anything. Every claim on a generated resume has to trace back to a resume you
-wrote, an answer you gave, or a story you told it. Where it cannot answer honestly, it stops.
+**Submitting.** Submission is a two-step handshake. The agent asks for a
+one-use nonce before it clicks Submit, which writes a `submitting` event, and
+can only record the application as complete by presenting that nonce along
+with the confirmation text the employer's page showed. A crash mid-submit
+leaves a visible record rather than a silent duplicate.
 
-## Where things live
+**Providers.** OpenAI (through Codex), Anthropic and Gemini share one local
+registry. Each task pins an exact model. Jobby tries your connected accounts in
+the order you set and moves new work to the next healthy one when a login,
+quota or model check fails. API keys stay in owner-only files on your Mac and
+never reach the board or any cloud service.
 
-The goal is that only the intelligence stays on your machine. Everything else is in the cloud.
+## Repository layout
 
-| | Where | Why there |
-|---|---|---|
-| Job pool, decisions, history | **Postgres (Neon)** | 15,400 jobs at 5.8 KB each. A file meant every process loaded all of it: 342 MB resident today, about 4.4 GB at the 200,000 cap. A query costs 38 MB and does not grow with the pool. |
-| Resumes, cover letters, answer records | **Cloudflare R2** | 666 objects, 31 MB. A staged copy exists only for the seconds a form is open, then is deleted, on a signal too. |
-| The board's published state | **Cloudflare KV** | A slice the renderer reads. Being retired in favour of live reads, see `docs/plans/live-board.md`. |
-| The renderer | **Vercel** | Deploys from the git commit being served. |
-| Provider CLIs and their keys | **Your Mac** | The intelligence. Your OpenAI, Anthropic or Gemini account, never ours. |
-| Chrome profiles and form filling | **Your Mac** | A file chooser needs a real filesystem, and employer sites treat a home connection better than a datacenter one. |
+    apps/web/          the board: Next.js on Vercel, reading Postgres
+    apps/worker/       Cloudflare Worker and Durable Object for live updates
+    scripts/           everything that runs on your Mac: the watcher, document
+                       worker, form runner, browser firewall, answer store and
+                       sourcing connectors
+    packages/schema/   Postgres migrations, the migration runner, feature flags
+    deploy/            device helpers, the sourcing container image, and the
+                       retired first version of the board
+    templates/         resume and cover-letter templates, with fictional
+                       example content
+    references/        data the scripts read: question taxonomy, model prices,
+                       the source registry
+    docs/              architecture decisions and the migration policy
+    tests/             Python and Node test suites
 
-The two on your Mac are physics rather than preference. Everything above them has moved or is moving.
-
-Slot browsers run headless. One opens with a window only when you press **Open and finish** on
-something in Needs you, because that is the only moment you want to watch.
-
-## The board
-
-Five workflow lanes show the path from Found through Submitted. Dropped roles sit in a separate
-archive opened from the trash control at the lower left, so rejected work does not look active.
-
-The interface uses the Soft Premium visual system: warm stone surfaces in light mode, graphite
-surfaces in dark mode, restrained violet actions, and a serif display face paired with a compact
-system sans serif for dense job data. Three compact icons select System, Light, or Dark. System
-tracks the operating system without saving an override.
-
-Home and Settings use native page transitions where the browser supports them. Lane changes,
-cards, dialogs, buttons, and provider cards share one easing curve, while reduced-motion settings
-disable decorative animation. Job cards lift and reveal more detail on hover, and remain expandable
-by click or keyboard. The Jobby mark sits at the right of the hero and keeps its mascot reveal as an
-optional hover detail. The Found status banner contains the one Scan now action.
-
-Employer marks come from trusted job feeds, direct employer posting domains, and employer-owned
-links published inside job descriptions. They load through the authenticated same-origin
-`/api/company-logo` proxy. Jobby never presents Greenhouse, Workday, Lever, or another recruiting
-vendor as the employer logo. If a source exposes no trustworthy company identity, the card shows a
-stable company monogram instead.
-
-### Needs you
-
-Applications that hit something only a person can do: creating an account, typing a password,
-clearing a CAPTCHA. Each card says what to do and what doing it buys you. Creating one Workday
-account unblocks every future role at that company, because the agent's browser keeps the session
-and the saved password.
-
-<img src="docs/needs-you.png" alt="Needs you" width="900">
-
-**Retry** re-runs the agent once you have cleared the blocker: it reuses the documents already
-built and picks up at the form. **Open & finish** raises the tab the agent left behind, with the
-form still filled, rather than opening a fresh copy of the application.
-
-Document handoff selects the exact role-specific filenames generated by the
-document contract. An older generic resume in the same company folder cannot
-make a valid pair look ambiguous. If ATS provenance rejects one generated
-resume override group, the worker drops that group, falls back to the verified
-base wording for that section, and validates the artifacts again. A runner that
-still refuses before opening a form returns the application to its prior lane
-and releases its empty browser slot instead of sitting in In flight forever.
-OpenAI strict output cannot encode resume list lengths that come from the base
-file. If those dynamic lengths are wrong, the worker inherits the complete
-verified base resume. The employer and role on the letter always come from the
-trusted job request, never from model spelling.
-
-### Watching
-
-Roles it found, newest first, with the experience bar, the location, the core skills, and an
-honest read on how you line up, including where you fall short. **Apply** starts the pipeline.
-The **×** drops the role.
-
-<img src="docs/watching.png" alt="Watching" width="900">
-
-### Submitted
-
-What actually went out, with the exact resume and cover letter each employer received. Nothing
-reaches this lane without a confirmation quoted off the page after submitting. Not "the click
-succeeded", the words the site showed.
-
-<img src="docs/submitted.png" alt="Submitted" width="900">
-
-### In flight and Dropped
-
-**In flight** shows live progress through building documents, filling, submitting and verifying,
-and lets you **Stop** a run mid-form. The lower-left **Dropped** control expands on hover and opens
-the archive. It records the lane each role came from and how far it had got: *not started*,
-*waiting on you: create a Workday account*, or *Filling the form (14 of 18 fields)*.
-
-<img src="docs/dropped.png" alt="Dropped" width="900">
-
-## What makes it different
-
-**A resume and a cover letter per posting.** Never a reused file. It clones your existing layout
-exactly and rewords only the content. Before either is uploaded, `scripts/resume_pdf.py verify`
-diffs the rebuilt PDF against your original and fails on a changed margin, a missing accent
-colour, or a font size with no counterpart. Content is checked separately: employers, dates,
-titles and numbers all have to trace back to your real resume.
-
-**One application per job description, enforced.** Not audited afterwards, blocked before the
-browser opens. The same posting reaches a watch list under different ids depending on where it was
-found, so the guard matches on application id, on normalised company and role, and on the posting
-URL with tracking stripped.
-
-**It stops rather than guesses.** No account creation, no passwords, no one-time codes, no
-CAPTCHAs, and no ticking a truth attestation on a form where anything was inferred. Those land in
-Needs you with the exact clause quoted.
-
-**Region-aware.** Indian postings get the India resume and phone; US postings get the US ones.
-Your street address goes into application forms when they ask, and never onto a resume header.
+`CLAUDE.md` is the contributor guide. It covers the rules that have to hold
+(worktree discipline, the firewall, the nonce, the document gates, test
+isolation) and is worth reading before changing anything.
 
 ## Setting it up
 
-```bash
-python3 scripts/store.py init          # create the local store
-python3 scripts/publish.py --setup     # link Vercel, set a board password
-python3 scripts/watch.py --install     # install watcher and local document service
-python3 scripts/queue_check.py --write # prove the queue works end to end
-```
+You need macOS, Python 3.12, Node 24, Google Chrome, a Postgres database (the
+project uses Neon), and at least one of the Codex CLI, an Anthropic API key or a
+Gemini API key.
 
-The installer retains the Python executable recorded in the launchd plist. If
-macOS privacy denies a new interpreter access to a repository under Documents,
-rerun the install once with an interpreter that already has access:
+The device keeps its state in `~/.job-application/`. Create it and bind the
+repository's commit hook:
 
 ```bash
-python3 scripts/watch.py --install --service-python /absolute/path/to/python3
+python3 scripts/store.py init
+python3 scripts/install_hooks.py
 ```
 
-The control queue, encrypted document jobs, submitted PDFs, and sanitized board state live in
-Cloudflare Workers KV. Vercel serves and executes the dashboard renderer from the exact Git
-commit being deployed. KV never stores executable board HTML as the active page, so a preview or
-production deployment cannot silently keep the interface from an older release. Put these in
-`deploy/.env.local`:
-
-```
-CF_ACCOUNT_ID=...
-CF_KV_NAMESPACE_ID=...
-CF_API_TOKEN=...            # scoped to Workers KV Storage: Edit, nothing else
-```
-
-Machine-local settings go in `~/.job-application/config.env`, which nothing overwrites:
-
-```
-HEALTHCHECKS_URL=https://hc-ping.com/<uuid>
-JOBBY_WORKER_KEY=<local document queue 32-byte base64 key>
-JOBBY_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
-```
-
-Set the last one through a private prompt rather than by editing the file, so the password never
-reaches a command line, where `ps` shows it to every process on the machine:
+Private settings go in `~/.job-application/config.env`, which nothing in the
+repository overwrites. Set the sensitive ones through prompts that never echo,
+so a password never lands on a command line:
 
 ```bash
-python3 scripts/worker_key.py set-database   # prompts, echoes nothing, reports the host only
-python3 scripts/migrate_to_postgres.py       # dry run: what would move
-python3 scripts/migrate_to_postgres.py --apply
+python3 scripts/worker_key.py ensure              # the local document-queue key
+python3 scripts/worker_key.py set-database        # JOBBY_DATABASE_URL
+python3 scripts/worker_key.py set-r2              # R2 bucket credentials
+python3 scripts/worker_key.py set-healthchecks <ping-url>   # optional
 ```
 
-The migration writes nothing back to the files and deletes nothing. It verifies by sampling 300
-records byte-for-byte against the store they came from, because comparing row counts compares a
-read against itself and cannot fail.
+Apply the schema, then install the three launchd services that do the work:
 
-Use `python3 scripts/worker_key.py set-healthchecks https://hc-ping.com/<uuid>`
-to replace the ping URL atomically without printing it or changing the worker
-key.
+```bash
+python3 packages/schema/migrate.py apply
+python3 scripts/watch.py --install
+python3 scripts/watch.py --status
+```
 
-Open `/settings` on the board and connect one or more providers. Before new work starts, Jobby
-checks connections in their saved order and selects the first account that can invoke its exact
-pinned model. A failed login, exhausted account, or unavailable model hands new work to the next
-healthy connection. A document process already running keeps its provider, while the later form
-stage and retries may use the newly selected provider. OpenAI uses the local Codex ChatGPT login.
-Anthropic and Gemini use API keys saved in owner-only files on Your Device. The keys never enter
-the dashboard, Vercel, or Cloudflare, and Disconnect removes the matching local key. Jobby's
-shared registry stores only connection order, health, a safe diagnostic, and exact-model
-verification time.
-Every run uses a fixed model: `gpt-5.6-luna` for OpenAI, `claude-sonnet-5` for Anthropic, and
-`gemini-3.7-flash` for Gemini. Jobby never inherits a provider CLI's changing default model.
-If no connection can invoke its requested model, the connection set fails closed and the board
-shows a red blocked banner.
+If macOS privacy settings deny a new Python interpreter access to a repository
+under `~/Documents`, pass one that already has access:
+`python3 scripts/watch.py --install --service-python /absolute/path/to/python3`.
 
-`scripts/watch.py --install` installs three local services. `ai.jobby.providers` owns the Settings
-control lane and checks it every two seconds, so Connect and Disconnect never wait behind resume,
-scan, or application probes. The Settings page paints the pending state immediately and polls once
-per second until the local status confirms the change. `ai.jobby.watch` owns orchestration, and
-`ai.jobby.documents` owns serial resume and cover-letter generation.
-
-Codex document jobs use `--output-schema`, with OpenAI's required-property rules represented by
-nullable inheritance fields that trusted Python removes before validation. Resume rewrites are
-length-bounded against the original layout. The integrity gate also rejects exact or near-duplicate
-bullets, changed numeric facts and versions, lost source meaning, bullet-count drift, and rewrites
-that grow beyond a keyword-level edit. Luna cover-letter paragraphs are capped for the verified
-one-page template. On macOS, PDF rendering uses the original headless Chrome profile path;
-the constrained low-memory private profile is Linux-only. Every accepted result still passes the
-same ATS provenance, resume geometry, PDF, cover-letter completeness, and street-address gates.
-
-OpenAI Connect runs the supported `codex login` browser flow for local subscription access.
-Anthropic Connect opens the Anthropic Console key page, and Gemini Connect opens Google AI Studio.
-Each also opens a private terminal prompt for the key and validates the exact pinned model before
-the card becomes Connected. A consumer Claude or Gemini membership is not treated as API access.
-
-Home and Settings appear as two centred pills in the top app bar, between the Jobby logo and the
-theme control. Home is the full application dashboard. Settings owns the three provider
-connections. A future Profile pill can join the same control without changing the dashboard
-lanes.
-
-Then sign the agent's browser in once, which every later run inherits:
+Sign the agent's browser in to the sites you apply through, once:
 
 ```bash
 python3 scripts/browser.py --login https://www.linkedin.com
 ```
 
-## How it actually works
+Your profile, base resume and standing answers are set up through the intake
+described in `SKILL.md`. Your base resume wording lives in
+`~/.job-application/resume-content.json`; the copy in `templates/` is a
+fictional example. Answers to work-authorisation and sponsorship questions are
+read from `~/.job-application/work-authorization.json`, and with no such file
+those questions always come to you.
 
-A page on Vercel cannot start a process on your laptop. Every button queues a request.
-`scripts/watch.py` reads the control queue and coordinates the pipeline. The launchd installation
-also starts `scripts/document_worker.py --loop --local`, which claims one encrypted document job
-at a time on the same Mac. Cloudflare KV sees encrypted document work plus the minimum sanitized
-state needed to draw the password-gated board. Provider credentials and the candidate's full
-profile never enter KV. The local result is authenticated, validated as one complete set, and
-installed before form filling starts.
+### The board
 
-Runs are spawned detached and tracked by a pid lock file. One application at a time, and a
-forty-five minute run never freezes the board. A dead pid releases the lock on its own, so a
-runner killed mid-flight cannot wedge the pipeline.
+`apps/web` deploys to Vercel. It reads these environment variables:
 
-The board is a published snapshot, and that is the next thing to change. A click is acted on in
-seconds, but nothing appears until the next publish rebuilds the whole state, at most every fifteen
-minutes. `docs/plans/live-board.md` has the measurements and the design: decisions written straight
-to Postgres by the API, the page reading live, and the snapshot machinery retired.
+    JOBBY_DATABASE_URL            Postgres connection string
+    JOBBY_USER_ID                 the R2 key prefix for documents (default account-1)
+    CF_ACCOUNT_ID                 Cloudflare account, for the work queue in KV
+    CF_KV_NAMESPACE_ID            the KV namespace holding the queue
+    CF_API_TOKEN                  a token scoped to Workers KV edit only
+    R2_ACCOUNT_ID                 R2 account for generated documents
+    R2_BUCKET                     the private bucket name
+    R2_ACCESS_KEY_ID              R2 credentials
+    R2_SECRET_ACCESS_KEY
+    JOBBY_CHANNEL_URL             the Worker that carries live updates
+    JOBBY_CHANNEL_TOKEN           the shared secret the board posts events with
+    NEXT_PUBLIC_JOBBY_CHANNEL_WS  the WebSocket URL browsers subscribe to
 
-`scripts/publish.py` writes a gzip-compressed `jobby:board-state` envelope. The Vercel Python
-function in `deploy/api/page.py` reads that state and renders it through `deploy/renderer/`, which
-is a deterministic deployment copy of the renderer modules and required brand SVGs. After changing
-the renderer, run `python3 scripts/sync_vercel_renderer.py`. The test suite fails if the deployment
-copy differs from its source, which turns renderer drift into a build failure instead of a stale UI.
-
-Spawned form sessions attach over CDP to one long-lived Chrome per application slot. A local MCP
-firewall exposes only bounded form actions. It removes arbitrary JavaScript, shell, network-log,
-storage, and navigation tools, blocks Enter-based submission, and permits uploads only for the two
-hash-verified PDFs staged for that application. That is what makes a parked application resumable
-without giving page text a general code-execution path.
-
-Submission is a two-step local state transition. `pre_submit` writes a `submitting` event and
-returns a one-use nonce. `record_completed` requires that nonce, the same application, the latest
-event still being `submitting`, and exact visible confirmation text. A page cannot move a role to
-Submitted by merely telling the model to call the completion tool.
-
-The watcher reports to [healthchecks.io](https://healthchecks.io), failures included. Its quiet
-heartbeat is every 55 minutes, which fits a one-hour check with ten minutes of grace. If the local
-service dies, the pings stop.
-
-## What reaches the board
-
-Every real posting inside thirty days, and the reader filters. Three gates used to decide before
-you ever saw a job; two are gone.
-
-The **keyword gate** is removed. It held four terms belonging to one person's search and did most
-of the filtering: on the sweep before it went, 8,485 of 23,104 postings were rejected for matching
-none of them, against 361 kept.
-
-The **score floor** is 0. The match percentage still sorts the board; it no longer decides what
-reaches it. A floor filters invisibly, and the postings it drops are the ones nobody sees to
-disagree with.
-
-The **date window** is thirty days, not sixty. Windows offered are 6 hours, 24 hours, 7 days,
-14 days and 30 days. A posting older than a month is usually a requisition nobody is working, and
-it crowds out the fresh ones.
-
-The pool cap is 200,000. Past roughly 50,000 the binding constraint stops being disk and becomes
-memory, which is why the pool moved to Postgres.
-
-## Job discovery and ATS coverage
-
-The Found lane is fed by twenty-seven Tier-1 channels. Fifteen are direct ATS
-board connectors: Greenhouse, Lever, Ashby, SmartRecruiters, Workable,
-Recruitee, Personio, Breezy, Rippling, Workday CXS, Pinpoint, Teamtailor,
-JazzHR, Oracle Recruiting Cloud and Gem. The rest are public feeds and keyed
-search APIs.
-The scan header distinguishes jobs seen from jobs newly admitted. A connector
-can be healthy and report zero new jobs when its boards are unchanged, or when
-every result was already stored, filtered, or merged.
-
-Found uses one compact hierarchical location picker instead of a wall of
-pills. It contains 199 fully named locations under North America, South
-America, Europe, Asia, Africa, and Oceania. A continent checkbox selects or
-clears every country in that group. Each country remains independently
-selectable and has an `Only` action that clears every other location.
-`Worldwide` selects the complete set, while `Clear all` gives a blank starting
-point for a narrow search. An empty saved `locations` array still means
-Worldwide for compatibility. Partial selections save explicit country codes,
-and old region-pack searches expand into their country checkboxes on load.
-
-ATS coverage is company-driven. These systems do not expose a global stream of
-every customer's jobs. Each request needs a verified company board token, so a
-connector with no known tenants adds no postings. Public endpoints are connected
-only after their live shape has been verified. Auth-walled systems remain marked
-`planned` or `blocked` in [`references/sources-registry.md`](references/sources-registry.md)
-rather than returning a convincing empty result. The implementation and next
-connector groups are tracked in
-[`docs/plans/ats-coverage-triage.md`](docs/plans/ats-coverage-triage.md).
-
-The registry grows during every ingest. Any normalized sighting that contains a
-real ATS URL can add or complete that employer's tenant record even when the job
-itself fails today's search gate. Aggregator URLs never become tenant evidence.
-Workable direct-posting URLs are also excluded from tenant discovery because
-`apply.workable.com/j/<job-id>` does not contain the employer's board slug.
-Curated, live-verified tenants outrank learned records, and invalid learned
-tokens are discarded with an explicit registry status rather than retried on
-every sweep.
-The fifty explicitly requested ATS families have a machine-checked accounting
-contract in `scripts/sources_registry.py`; connected, planned and blocked are
-all visible states, while absence is a test failure.
-
-Transient HTTP failures retry with exponential backoff. Once one host exhausts
-those retries, a per-sweep circuit breaker prevents every tenant on that host
-from being hammered. A 404 stays tenant-specific and does not open the circuit.
-Failures remain visible in the scan report, while earlier stored sightings stay
-in the pool.
-
-The production-registry repair on 2026-08-24 exercised Workable, Workday,
-Pinpoint, Teamtailor, JazzHR, Oracle Recruiting Cloud and Gem from an isolated
-copy of the store. Seven requests returned 19 bounded postings with no skipped
-channel and no connector error. The current search admitted three and visibly
-gated the other sixteen by age, keywords or country.
-
-Aggregator access follows the same honesty rule. Tsenta is planned pending an
-authorized discovery-feed API. Simplify and Wellfound prohibit the collection
-needed for a local job database, Indeed's APIs require an approved partner use,
-and Naukri blocked automated access during verification. Their reasons are in
-the source registry rather than hidden behind empty runs.
-
-Date labels, date filters, and newest sorting use the source's posting date only.
-`firstSeenAt` records when Jobby discovered a record, but it is internal ingestion
-provenance and never stands in for job age. A source timestamp supports the
-6-hour filter. A calendar-only date cannot honestly prove that a job was posted
-within six hours, and a source with no publish field displays `Posted date
-unknown`. Workday CXS ages such as `Posted 13 Days Ago` resolve to an Eastern
-calendar date when fetched. Tests pass the real compact payload into the client
-filter so a producer and consumer date mismatch fails visibly.
-
-## Things it learned the hard way
-
-Each of these is a comment in the code, because each cost real time:
-
-- launchd gives an agent `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. Homebrew is
-  invisible. Every queue read died for hours while the watcher logged healthy cycles, because a
-  crashed check and an empty queue both exit non-zero.
-- `vercel` and `npx` are `#!/usr/bin/env node` scripts. An absolute path does not save you: `env`
-  resolves `node` against the child's PATH.
-- Free tiers price *listing* a collection far more harshly than reading a key. Workers KV allows
-  100,000 reads a day and 1,000 list requests. The application queue uses one key. Provider
-  connection actions use one local-device lane, and the retired remote-provider lane is not polled.
-- Publishing the board used to redeploy the site. Vercel allows 100 deploys a day and one
-  application reports several phases. Publishing now writes sanitized state to KV. The deployed
-  Vercel function renders that state with its own commit, so data refreshes do not deploy and code
-  deploys do not depend on a separately published HTML page.
-- A worker that processes one item must delete one item. `claim` once destroyed fourteen queued
-  Apply clicks after running the first.
-
-## What it will not do
-
-Solve CAPTCHAs. Create accounts or type passwords. Read one-time codes. Tick a truthfulness
-attestation on a form where anything was inferred. Agree to a binding legal document you have not
-authorised. Invent an answer to a required field.
+Then connect a provider from the board's Settings page. OpenAI runs
+`codex login`; Anthropic and Gemini ask for an API key in a private terminal
+prompt and check the pinned model before the card shows Connected.
 
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q
+HOME=$(mktemp -d) PYTHONPYCACHEPREFIX=/private/tmp/jobby-pycache \
+  python3 -m unittest discover -s tests
+node --test tests/*.test.mjs
+cd apps/web && npm ci && npx tsc --noEmit
 ```
 
-The suite includes Python tests, Node API and queue tests, real Chrome render checks, provider
-command-contract tests, and browser-firewall protocol tests.
+Redirecting `HOME` keeps the suite away from a real `~/.job-application`.
+Database tests use `JOBBY_TEST_DATABASE_URL` and skip without it; they refuse to
+run against the database in your `config.env`. A few tests check a real
+profile and skip on a machine that has none. `tests/test_apply_end_to_end.py`
+drives a real Chrome and skips unless an apply slot is free.
+
+## Safety and privacy
+
+Everything Jobby submits goes out under your name, and a submitted application
+cannot be taken back. Start with the practice form in
+`tests/fixtures/practice-form.html`, keep the daily cap low, and read Needs you
+often.
+
+The board has no login of its own. Reads are public by default and only writes
+are gated (same-origin, JSON, and a request header). The board shows the
+companies you applied to, your match scores and your profile, and the document
+route serves rendered resumes that carry your contact details. Think about that
+before deploying it with real data, and put an access gate in front of it if
+anyone else could find the URL.
+
+Generated documents, screenshots and anything under `applications/` are
+gitignored, and the commit hook refuses images outside the brand directories.
+`tests/test_no_pii.py` scans every tracked file for values taken from the local
+profile.
+
+## License
+
+MIT. See `LICENSE`.

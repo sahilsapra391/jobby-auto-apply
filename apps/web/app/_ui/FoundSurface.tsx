@@ -13,7 +13,7 @@ import {
 } from "../search.generated";
 import { READ_ONLY } from "./actions";
 
-/** Eastern, like the board: the reader is in Charlotte and so is the sweep. */
+/** Eastern, like the board: the reader and the sweep both keep US Eastern time. */
 const clock = (iso: string | null) => {
   if (!iso) return null;
   return new Date(iso).toLocaleTimeString("en-US", {

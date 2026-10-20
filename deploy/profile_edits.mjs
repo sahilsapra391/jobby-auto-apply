@@ -125,3 +125,59 @@ export function planResumeEdit(body) {
   }
   return { queue: 'resumeEdits', editId, extra };
 }
+
+// ------------------------------------------------------------ the upload
+
+/**
+ * Two megabytes, the same ceiling `watch.MAX_UPLOAD_BYTES` enforces when it
+ * takes the document. Not the 12 MB `document_contract` accepts: that is for
+ * anything a document job might carry, and a resume that does not fit in 2 MB
+ * is a scan of a resume rather than a resume.
+ */
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+export const PDF_MAGIC = '%PDF-';
+
+/**
+ * An uploaded base resume, checked before it is parked for the device.
+ *
+ * Returns `{ uploadId, encoded, bytes }` or a refusal naming what is wrong.
+ * The caller writes `encoded` to `UPLOAD_KEY_PREFIX + uploadId` in
+ * `device_keys.mjs` and nothing else; the resume edit that names the upload
+ * goes through `planResumeEdit` as `uploadId` on an `add`.
+ *
+ * Moved here from `deploy/api/board.js` when v2 grew the same control, so the
+ * two boards refuse the same files for the same reasons. The device checks
+ * size and magic again when it takes the key (`watch.install_uploaded_resume`):
+ * a board that let a bad file through still cannot install one.
+ *
+ * **Checked by content, never by the name the browser reported.** A file
+ * called resume.pdf that is not a PDF would otherwise fail on the device, in
+ * the middle of building a real application.
+ */
+export function planResumeUpload(body) {
+  body = body || {};
+  const uploadId = boundedString(body.uploadId, LIMITS.editId);
+  if (!uploadId || !ID.test(uploadId)) return bad('bad uploadId');
+  const encoded = typeof body.pdf === 'string' ? body.pdf : '';
+  if (!encoded) return bad('no file');
+  // Strict base64. `Buffer.from` silently skips characters it does not know,
+  // so a body that is not base64 at all would decode to a few stray bytes and
+  // be refused for the wrong reason; the device's own decode is `validate=True`.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+    return bad('that file could not be read');
+  }
+  // Bounded before decoding, so an enormous body costs nothing to refuse.
+  if (encoded.length > Math.ceil(MAX_UPLOAD_BYTES / 3) * 4) {
+    return bad('that file is over the 2 MB limit', 413);
+  }
+  const bytes = Buffer.from(encoded, 'base64');
+  if (!bytes.length) return bad('that file is empty');
+  // Decoded length, not the base64 length: the cap is about the document.
+  if (bytes.length > MAX_UPLOAD_BYTES) {
+    return bad(`that file is ${Math.round(bytes.length / 1024)} KB; the limit is 2 MB`, 413);
+  }
+  if (bytes.subarray(0, PDF_MAGIC.length).toString('latin1') !== PDF_MAGIC) {
+    return bad('that file is not a PDF', 415);
+  }
+  return { uploadId, encoded, bytes: bytes.length };
+}

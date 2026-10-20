@@ -1012,7 +1012,7 @@ function NameCell({ row, plain, discipline }: {
  * recorded value.** `documentSiblings` groups on
  * `lower(split_part(payload->>'resumeVariant', '/', -1))`, and 18 of the 100
  * recorded `resumeVariant` values are paths -- `applications/Ramp/
- * Sahil_Sapra_Ramp_Resume.pdf` rather than the bare name. Every one of those
+ * Alex_Example_Ramp_Resume.pdf` rather than the bare name. Every one of those
  * missed, `shared` fell back to 1, and the row dropped through to "not
  * stored".
  *

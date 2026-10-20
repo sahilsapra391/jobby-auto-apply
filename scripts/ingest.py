@@ -626,7 +626,7 @@ def add_postings(root, postings, now=None):
 
     The agent sweep used to write `status: "watch"` sessions directly, so
     anything it found landed in Watching without the user ever seeing it in
-    Found. Sahil's rule is that a scan fills Found and only the eye moves a job
+    Found. The owner's rule is that a scan fills Found and only the eye moves a job
     to Watching, so the sweep needs a door into the pool — and it has to be this
     door, not a second one. A job added here is scored by the same rubric,
     resolved by the same identity rules and merged into the same records as one

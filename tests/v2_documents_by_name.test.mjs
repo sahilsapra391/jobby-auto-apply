@@ -91,12 +91,12 @@ test.beforeEach(() => {
 });
 
 test('an indexed document is read from R2 under the key the index names', async () => {
-  // The Glance shape: three applications recorded one name, the file sits
+  // The shared-name shape: three applications recorded one name, the file sits
   // under one of them, and the other two have nothing at their own key.
   const key = 'u/account-1/app/04f960acfe932252/resume.pdf';
   objects.set(key, Buffer.from('%PDF the stored resume'));
-  index({ 'Sahil_Sapra_Glance_Resume.pdf': { key, contentType: 'application/pdf' } });
-  const read = await docs.readByName(env, 'Sahil_Sapra_Glance_Resume.pdf');
+  index({ 'Alex_Example_Acme_Resume.pdf': { key, contentType: 'application/pdf' } });
+  const read = await docs.readByName(env, 'Alex_Example_Acme_Resume.pdf');
   assert.equal(read.ok, true);
   assert.equal(read.status, 200);
   assert.equal(read.contentType, 'application/pdf');
@@ -203,7 +203,7 @@ test('a name that is not a plain filename is refused before anything is read', a
 });
 
 test('a filename with spaces in it is served, not refused', async () => {
-  const name = 'Sahil Sapra - Resume - Senior Project Manager.pdf';
+  const name = 'Alex Example - Resume - Senior Project Manager.pdf';
   const key = 'u/account-1/app/bd7c44165d98d10a/resume.pdf';
   objects.set(key, Buffer.from('%PDF spaced'));
   index({ [name]: { key } });
@@ -259,8 +259,8 @@ test('a missing index is an empty answer, not a fault', async () => {
 });
 
 test('basename takes the last path segment of a recorded value', () => {
-  assert.equal(docs.basename('applications/Ramp/Sahil_Sapra_Ramp_Resume.pdf'),
-               'Sahil_Sapra_Ramp_Resume.pdf');
+  assert.equal(docs.basename('applications/Initech/Alex_Example_Initech_Resume.pdf'),
+               'Alex_Example_Initech_Resume.pdf');
   assert.equal(docs.basename('Plain.pdf'), 'Plain.pdf');
   assert.equal(docs.basename(null), '');
 });

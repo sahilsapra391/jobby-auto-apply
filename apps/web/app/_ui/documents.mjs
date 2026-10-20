@@ -11,8 +11,8 @@
 // in the name. It is not right for the documents written before, which v1
 // reached through `jobby:doc-index` in KV:
 //
-//   - a filename several applications recorded (three Glance roles, one
-//     `Sahil_Sapra_Glance_Resume.pdf`) is stored once, under whichever
+//   - a filename several applications recorded (three roles at one company, one
+//     `Alex_Example_Acme_Resume.pdf`) is stored once, under whichever
 //     application the index attributed it to, so the other two have nothing at
 //     their own key. Measured on production 2026-10-20: 14 Submitted cells,
 //     every one indexed, every one served by v1 and shown as "not attributable"
@@ -38,7 +38,7 @@ export const DOC_INDEX_KEY = 'jobby:doc-index';
 export const docKey = (name) => `jobby:doc:${name}`;
 
 // A plain filename. The space is deliberate: ten stored artifacts are named
-// "Sahil Sapra - Resume - Senior Project Manager.pdf", from before
+// "Alex Example - Resume - Senior Project Manager.pdf", from before
 // document_contract owned the naming, and v1's first guard refused them so
 // their links were always dead. A space cannot escape a path segment or open a
 // second KV key, and it never reaches the R2 key, which comes from the index.

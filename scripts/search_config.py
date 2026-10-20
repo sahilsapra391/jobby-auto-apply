@@ -56,7 +56,7 @@ LEGACY_POSTED_WITHIN = {"90d": "30d", "60d": "30d"}
 SEARCH_SCOPES = ("title", "title+description")
 # How the board is ordered and whether it hides aggregator copies. These are
 # view state rather than anything ingest reads, but they are still "the search
-# Sahil set up", and a saved search that forgets them is a saved search that
+# the owner set up", and a saved search that forgets them is a saved search that
 # reverts two controls every time the board republishes.
 SORTS = ("new", "score")
 # "Direct first" was a third sort that did what the direct-listings-only
@@ -103,7 +103,7 @@ DEFAULTS = {
     # invisibly, before the posting ever reaches the page. The score is still
     # computed and still sorts the board -- it just no longer gates.
     "minScoreToKeep": 0,
-    # Six sweeps a day, Sahil's call: hourly was more polite traffic than the
+    # Six sweeps a day, the owner's call: hourly was more polite traffic than the
     # boards change, and a four-hour gap still puts a morning posting on the
     # board the same morning.
     "tier1IntervalMinutes": 4 * 60,

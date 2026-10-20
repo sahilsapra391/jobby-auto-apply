@@ -127,14 +127,14 @@ const fromSql = sqlKey();
 
 /** Real recorded values, both shapes, taken from production. */
 const RECORDED = [
-  'applications/Ramp/Sahil_Sapra_Ramp_Resume.pdf',
-  'applications/Datadog/Sahil_Sapra_Datadog_Resume.pdf',
-  'applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf',
-  'applications/Amazon Web Services/Sahil_Sapra_AWS_Resume.pdf',
-  'applications/Customer.io/Sahil_Sapra_Customer.io_Resume.pdf',
-  'Sahil_Sapra_Glance_Resume.pdf',
-  'Sahil_Sapra_Justworks_CoverLetter.pdf',
-  'Sahil_Sapra_Plaid_Resume.PDF',
+  'applications/Ramp/Alex_Example_Ramp_Resume.pdf',
+  'applications/Datadog/Alex_Example_Datadog_Resume.pdf',
+  'applications/Cohere/Alex_Example_Cohere_Resume.pdf',
+  'applications/Amazon Web Services/Alex_Example_AWS_Resume.pdf',
+  'applications/Customer.io/Alex_Example_Customer.io_Resume.pdf',
+  'Alex_Example_Glance_Resume.pdf',
+  'Alex_Example_Justworks_CoverLetter.pdf',
+  'Alex_Example_Plaid_Resume.PDF',
 ];
 
 test('the two halves agree on every recorded shape', () => {
@@ -151,17 +151,17 @@ test('the two halves agree on every recorded shape', () => {
 test('a path keys as its basename, not as itself', () => {
   // The case that was wrong. Without this the test above passes on a helper
   // that returns its argument unchanged, since both halves would agree.
-  assert.equal(fromTs('applications/Ramp/Sahil_Sapra_Ramp_Resume.pdf'),
-               'sahil_sapra_ramp_resume.pdf');
-  assert.notEqual(fromTs('applications/Ramp/Sahil_Sapra_Ramp_Resume.pdf'),
-                  'applications/ramp/sahil_sapra_ramp_resume.pdf');
+  assert.equal(fromTs('applications/Ramp/Alex_Example_Ramp_Resume.pdf'),
+               'alex_example_ramp_resume.pdf');
+  assert.notEqual(fromTs('applications/Ramp/Alex_Example_Ramp_Resume.pdf'),
+                  'applications/ramp/alex_example_ramp_resume.pdf');
 });
 
 test('a bare filename keys as itself, lowercased', () => {
-  assert.equal(fromTs('Sahil_Sapra_Glance_Resume.pdf'),
-               'sahil_sapra_glance_resume.pdf');
-  assert.equal(fromTs('Sahil_Sapra_Plaid_Resume.PDF'),
-               'sahil_sapra_plaid_resume.pdf');
+  assert.equal(fromTs('Alex_Example_Glance_Resume.pdf'),
+               'alex_example_glance_resume.pdf');
+  assert.equal(fromTs('Alex_Example_Plaid_Resume.PDF'),
+               'alex_example_plaid_resume.pdf');
 });
 
 test('the two absence words are one word', () => {

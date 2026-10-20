@@ -27,12 +27,14 @@ import { useState } from "react";
  * Connect wins.
  */
 export function ProviderAction({
-  provider, action, enabled, children,
+  provider, action, enabled, children, onSent,
 }: {
   provider: string;
   action: "connect" | "disconnect" | "refresh";
   enabled: boolean;
   children: React.ReactNode;
+  /** Told when the queue took the click, so the card can wait on the device. */
+  onSent?: (action: "connect" | "disconnect" | "refresh") => void;
 }) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
   const [why, setWhy] = useState<string>("");
@@ -73,6 +75,7 @@ export function ProviderAction({
               return;
             }
             setState("sent");
+            onSent?.(action);
           } catch (err) {
             setWhy(err instanceof Error ? err.message : String(err));
             setState("failed");

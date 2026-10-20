@@ -137,7 +137,7 @@ class CanonicalUrlTest(unittest.TestCase):
 
     def test_a_host_that_already_answers_is_left_alone(self):
         for url in ("https://www.jobby.fyi", "https://jobby-board.vercel.app",
-                    "https://jobby-board-abc-sahilsapra.vercel.app/x"):
+                    "https://jobby-board-abc-example.vercel.app/x"):
             self.assertEqual(self.publish.canonical_url(url), url)
 
     def test_a_query_and_fragment_survive(self):

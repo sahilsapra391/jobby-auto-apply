@@ -169,7 +169,7 @@ class RenderIsUnchangedTest(unittest.TestCase):
             "jobs": {f"j{n}": dict(a_record(), id=f"j{n}", company=f"Co{n}")
                      for n in range(25)},
             "sessions": [], "history": [], "roles": {}, "meta": {},
-            "profile": {"firstName": "Sahil"}, "searchConfig": None, "providers": {},
+            "profile": {"firstName": "Alex"}, "searchConfig": None, "providers": {},
         }
         original = dashboard.state_slim
         if not slim:

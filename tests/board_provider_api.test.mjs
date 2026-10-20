@@ -322,12 +322,12 @@ test('live Mac status takes precedence over the last board publication', async (
 async function publishBank(bank) {
   await putBoardState(process.env, JSON.stringify({
     userId: 'account-1',
-    profile: { firstName: 'Sahil' },
+    profile: { firstName: 'Alex' },
     sessions: [], history: [], roles: {}, meta: {}, jobs: {},
     memoryBank: {
       userId: 'account-1',
       identities: [{ key: 'us', countryScope: ['US'], isDefault: true,
-                     contact: { location: 'Charlotte, NC' }, resumeRef: 'Resume.pdf' }],
+                     contact: { location: 'Springfield, IL' }, resumeRef: 'Resume.pdf' }],
       resumeContent: { banner: 'PRODUCT MANAGER' },
       answers: bank,
     },

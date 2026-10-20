@@ -42,7 +42,7 @@ CASES = [
     {"key": "u/account-1/app/bc839847c93d9e46/resume.pdf", "expires": 300, "headers": None},
     {"key": "u/account-1/app/bc839847c93d9e46/cover.html", "expires": 60, "headers": None},
     {"key": "u/account-1/app/bc839847c93d9e46/confirmation.png", "expires": 3600, "headers": None},
-    {"key": "u/account-1/unfiled/Keka HR/Sahil_Sapra_KekaHR_Resume.pdf",
+    {"key": "u/account-1/unfiled/Keka HR/Alex_Example_KekaHR_Resume.pdf",
      "expires": 300, "headers": None},
     {"key": "u/account-1/unfiled/Leucine (AI for Pharma)/CV.pdf", "expires": 300, "headers": None},
     {"key": "u/account-1/unfiled/Cognite - AI for Industry/a&b.pdf", "expires": 300, "headers": None},
@@ -52,7 +52,7 @@ CASES = [
     {"key": "u/account-1/unfiled/Star*Co/100%.pdf", "expires": 300, "headers": None},
     {"key": "u/account-1/app/aa/resume.pdf", "expires": 300, "headers": {
         "response-content-type": "application/pdf",
-        "response-content-disposition": 'inline; filename="Sahil Sapra (Resume).pdf"'}},
+        "response-content-disposition": 'inline; filename="Alex Example (Resume).pdf"'}},
     {"key": "u/account-1/app/aa/cover.html", "expires": 300, "headers": {
         "response-content-type": "text/html; charset=utf-8",
         "response-content-disposition": 'inline; filename="a&b.html"'}},

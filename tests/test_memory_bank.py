@@ -530,12 +530,12 @@ class HostileTextTests(BankTest):
 class BaseResumeTests(BankTest):
     def profile(self, **over):
         base = {
-            "firstName": "Sahil",
+            "firstName": "Alex",
             "resumes": [
                 {"key": "us", "path": "/r/us.pdf", "default": True, "appliesTo": ["US"],
-                 "identity": {"phone": "5550001111", "location": "Charlotte, NC"}},
+                 "identity": {"phone": "5550001111", "location": "Springfield, IL"}},
                 {"key": "in", "path": "/r/in.pdf", "default": False, "appliesTo": ["IN"],
-                 "identity": {"phone": "5550002222", "location": "Navi Mumbai, MH"}},
+                 "identity": {"phone": "5550002222", "location": "Pune, MH"}},
             ],
         }
         base.update(over)
@@ -581,7 +581,7 @@ class BaseResumeSelectionTests(BankTest):
 
     def profile(self, resumes):
         store.cmd_profile_replace(ns(root=self.root, input=self.write({
-            "firstName": "Sahil", "resumes": resumes})))
+            "firstName": "Alex", "resumes": resumes})))
 
     def base(self, key, countries, default=False, priority=0):
         return {"key": key, "path": f"/r/{key}.pdf", "default": default,
@@ -755,17 +755,31 @@ class ResumeWordingTests(BankTest):
             store.cmd_resume_content_put(ns(root=self.root, input=self.write(shorter)))
         self.assertIn("role 1", str(caught.exception))
 
+    def test_an_edit_that_omits_the_frame_keeps_the_stored_one(self):
+        """The frame holds employers, dates and education. An editor that only
+        rewords bullets does not send it, and dropping it would make every later
+        render refuse for want of it."""
+        framed = dict(json.loads(json.dumps(self.BASE)),
+                      frame={"org0": "Northwind Logistics Inc."})
+        (pathlib.Path(self.root) / "resume-content.json").write_text(json.dumps(framed))
+        reworded = json.loads(json.dumps(self.BASE))
+        reworded["summary"] = "A better summary."
+        store.cmd_resume_content_put(ns(root=self.root, input=self.write(reworded)))
+        saved = store.cmd_resume_content_get(ns(root=self.root))
+        self.assertEqual(saved["frame"], {"org0": "Northwind Logistics Inc."})
+        self.assertEqual(saved["summary"], "A better summary.")
+
 
 class PublishedShapeTests(BankTest):
     """What leaves the device, and what must not reach the page."""
 
     def state(self):
         return {
-            "profile": {"firstName": "Sahil", "resumes": [
-                {"key": "us", "path": "/home/someone/Resumes/Sahil Resume.pdf",
+            "profile": {"firstName": "Alex", "resumes": [
+                {"key": "us", "path": "/home/someone/Resumes/Alex Resume.pdf",
                  "default": True, "appliesTo": ["US"],
-                 "identity": {"phone": "5550001111", "location": "Charlotte, NC",
-                              "fullAddress": {"oneLine": "1 Main St, Charlotte NC"}}}]},
+                 "identity": {"phone": "5550001111", "location": "Springfield, IL",
+                              "fullAddress": {"oneLine": "1 Main St, Springfield IL"}}}]},
             "sessions": [], "history": [], "roles": {}, "meta": {}, "jobs": {},
             "searchConfig": None, "providers": {},
             "answers": {
@@ -871,7 +885,7 @@ class PublishedShapeTests(BankTest):
         """A path is a directory layout on one person's machine and says
         nothing a reader of the board needs."""
         identity = dashboard.publishable_state(self.state())["memoryBank"]["identities"][0]
-        self.assertEqual(identity["resumeRef"], "Sahil Resume.pdf")
+        self.assertEqual(identity["resumeRef"], "Alex Resume.pdf")
         self.assertNotIn("/home/someone", json.dumps(identity))
         self.assertTrue(identity["isDefault"])
         self.assertEqual(identity["countryScope"], ["US"])
