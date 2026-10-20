@@ -25,10 +25,22 @@ import { useEffect } from "react";
  * has three: the keyword box, "Hide jobs mentioning" and the company names.
  * Removing the Filter button was correct and is what made the sentence false,
  * because Enter only ever worked through the button that was removed. Found
- * from a screen recording on 2026-09-10: "product manager" typed, Enter
- * pressed, and the URL, the chips and the count all stayed exactly where they
- * were. Reproduced with real keystrokes; a synthetic `keydown` from script does
- * not trigger implicit submission, so it could not have reproduced this.
+ * from a screen recording on 2026-09-10: "product manager" typed on a real
+ * keyboard, Enter pressed, and the URL, the chips and the count all stayed
+ * exactly where they were. The cause is measured rather than reproduced: the
+ * form has three blocking fields and no submit button.
+ *
+ * **An earlier version of this comment said the bug was "reproduced with real
+ * keystrokes" in the browser pane, and that was false.** The pane's `type`
+ * inserts text without firing `keydown`, and its `key` action delivers no DOM
+ * keydown at all: a window capture-phase logger recorded zero events for seven
+ * typed characters and an Enter. So "pressed Enter, nothing happened" was
+ * identical whether the page ignored Enter or the key never arrived. The
+ * reproduction proved nothing, and after the fix deployed the same method made
+ * the working handler look broken. What does verify this handler is a
+ * synthetic `keydown` dispatched at the box: it is `defaultPrevented`, the form
+ * submits, and the lane went from 2,421 jobs to 312. That proves the handler
+ * and the submit path, not hardware delivery, which only a real keyboard does.
  *
  * Two correct changes, and a property that only existed between them -- the
  * composition failure CLAUDE.md records for the blank Settings page.
