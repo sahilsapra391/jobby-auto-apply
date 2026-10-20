@@ -71,7 +71,8 @@ const APPLICATION_ID = /^[A-Za-z0-9._-]{1,128}$/;
  * Measured 2026-09-09 across v2's whole surface: the only values any control
  * sends are `inflight`, `dropped`, `watch`, the `focus` action and the
  * `completed` event. All five have queues, so this refuses nothing a reader
- * can click.
+ * can click. The `abandoned` event joined them on 2026-10-20, with its own
+ * queue, for "It did not go through".
  *
  * `phase` is refused outright and has no map on purpose. It is Class B, the
  * device owns it, and the board writing it is the `coalesce(excluded.phase,
@@ -217,6 +218,38 @@ export async function POST(request: NextRequest) {
   if (!body.status && !body.event) {
     return NextResponse.json(
       { error: "a status or an event is required" }, { status: 400 });
+  }
+  // **"It did not go through" answers one question and only that one.** An
+  // `abandoned` after a `completed` retracts a submission, which is a
+  // different claim from "this submit never went in", and a click on a stale
+  // card must not be able to make it. So it is refused here unless the latest
+  // event is `submitting`, before anything is queued, and the device applies
+  // the same rule again when it claims the click (`apply_marks.apply_unsent`).
+  //
+  // Refused in flight as well. A latest `submitting` on an `inflight` row is
+  // usually a run between `pre_submit` and `record_completed`, and an
+  // `abandoned` landing under it fails the agent's own confirmation. The card
+  // offers the answers only in Needs you, and this keeps a crafted request to
+  // the same rule rather than writing a row the device will then refuse.
+  if (body.event === "abandoned") {
+    const { rows } = await pool().query(
+      `select a.status,
+              (select h.kind from application_events h
+                where h.application_id = a.id
+                order by h.at desc nulls last limit 1) as latest
+         from applications a
+        where a.account_id = $1 and a.legacy_id = $2`,
+      [account, legacyId]);
+    if (rows[0]?.latest !== "submitting") {
+      return NextResponse.json(
+        { error: "there is no unresolved submit to answer for this application" },
+        { status: 409 });
+    }
+    if (rows[0]?.status === "inflight") {
+      return NextResponse.json(
+        { error: "a run may still be confirming this submit; answer it once it reaches Needs you" },
+        { status: 409 });
+    }
   }
 
   // ---- the queue, then the commit ---------------------------------------

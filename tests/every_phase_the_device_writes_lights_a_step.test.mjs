@@ -68,6 +68,14 @@ function phasesInCirculation() {
   for (const terminal of ['Failed', 'Stalled', 'Stopped', 'Needs you']) {
     found.add(terminal);
   }
+
+  // The phases `phase.py` writes on its own flags (`--unconfirmed`,
+  // `--not-sent`), read off the constants that hold them rather than listed.
+  const phasePy = readFileSync(join(REPO, 'scripts/phase.py'), 'utf8');
+  const own = [...phasePy.matchAll(/^[A-Z_]+_PHASE = "([^"]+)"$/gm)].map((m) => m[1]);
+  assert.ok(own.length >= 2,
+    `phase.py declared ${own.length} phases of its own; the matcher has stopped matching`);
+  for (const phase of own) found.add(phase);
   return [...found].sort();
 }
 
