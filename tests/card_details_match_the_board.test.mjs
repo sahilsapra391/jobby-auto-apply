@@ -1,12 +1,11 @@
-// The Found card's details panel behaves like the board's, and that is run
-// rather than read.
+// The Found card's details panel behaves the way the board always has, and
+// that is run rather than read.
 //
-// `CardDetails.tsx` claimed rule-for-rule parity with `found_lane.py` and
-// broke three of the rules: a second click did not close the panel while the
-// pointer was on the card, a failed read told the reader the posting had no
-// headings, and it drew six points a section under a comment calling six the
-// board's cap when the board draws five. Each test below fails when its fix is
-// reverted.
+// `CardDetails.tsx` claimed rule-for-rule parity with the original Python
+// board and broke three of the rules: a second click did not close the panel
+// while the pointer was on the card, a failed read told the reader the posting
+// had no headings, and it drew six points a section where the board drew
+// five. Each test below fails when its fix is reverted.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -121,19 +120,12 @@ test('the component draws the note sectionNote returns and no headings line of i
   assert.match(fetchRel, /readPosting\(data\)/);
 });
 
-test('v2 draws as many points a section as the board does', () => {
-  const lane = readFileSync(join(REPO, 'scripts/found_lane.py'), 'utf8');
-  const py = lane.match(/^SECTION_POINTS = (\d+)$/m);
-  assert.ok(py, 'found_lane.SECTION_POINTS not found');
-  // The board's script spells it again in its own JS; both must agree.
-  const js = lane.match(/var SECTION_POINTS = (\d+);/);
-  assert.ok(js, "found_lane's script no longer declares SECTION_POINTS");
-  assert.equal(js[1], py[1], 'the board disagrees with itself about SECTION_POINTS');
-
-  const gen = readFileSync(join(REPO, 'apps/web/app/rubric.generated.ts'), 'utf8');
-  const v2 = gen.match(/export const SECTION_POINTS = (\d+);/);
-  assert.ok(v2, 'rubric.generated.ts carries no SECTION_POINTS; run scripts/sync_v2_styles.py');
-  assert.equal(v2[1], py[1]);
+test('v2 draws five points a section, from one constant', () => {
+  // Five is what the original board drew. Six was the regression.
+  const rubric = readFileSync(join(REPO, 'apps/web/app/rubric.ts'), 'utf8');
+  const v2 = rubric.match(/export const SECTION_POINTS = (\d+);/);
+  assert.ok(v2, 'rubric.ts carries no SECTION_POINTS');
+  assert.equal(v2[1], '5');
 
   // And the component slices by that constant, not by a number of its own.
   const tree = parse('apps/web/app/_ui/CardDetails.tsx');
@@ -149,7 +141,7 @@ test('v2 draws as many points a section as the board does', () => {
   assert.ok(slices.length >= 2, `found ${slices.length} slices in CardDetails.tsx`);
   for (const bound of slices) assert.equal(bound, 'SECTION_POINTS');
   const imported = tree.statements.some((s) => ts.isImportDeclaration(s)
-    && s.moduleSpecifier.text === '../rubric.generated'
+    && s.moduleSpecifier.text === '../rubric'
     && /\bSECTION_POINTS\b/.test(s.importClause?.getText() ?? ''));
-  assert.ok(imported, 'CardDetails.tsx must import SECTION_POINTS from rubric.generated');
+  assert.ok(imported, 'CardDetails.tsx must import SECTION_POINTS from rubric');
 });

@@ -95,11 +95,11 @@ test('the scope select emits a value filterValues actually tests for', () => {
   // "all" -- and so reported the fixed code as broken. A checker that cannot
   // tell one select from another is confidently wrong in whichever direction
   // its default points.
-  // It lives in `search.generated.ts`, generated from
+  // It lives in `search.ts`, generated from
   // `found_lane.SCOPE_OPTIONS`, so the vocabulary is already single-sourced
   // across the two languages. The defect was never drift in the list: it was
   // `db.ts` comparing against a value that has never been in it.
-  const vocabFile = [join(REPO, 'apps/web/app/search.generated.ts'),
+  const vocabFile = [join(REPO, 'apps/web/app/search.ts'),
                      join(REPO, 'apps/web/app/_ui/FoundSurface.tsx')]
     .find((f) => { try { return DECL.test(readFileSync(f, 'utf8')); }
                    catch { return false; } });

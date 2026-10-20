@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Move submitted applications out of Watching, then republish the board.
+"""Move submitted applications out of Watching, and reconcile the pool.
 
 An application that has gone out still has a watch-list session, so without
 this it appears in both Watching and Submitted at once. The store's own rule is
 that the session is deleted on confirmed submission and history is what
-persists; this enforces it and refreshes the published board in one step.
+persists; this enforces it. It also flows each session's decision into the job
+pool and archives watched roles whose posting has closed.
 
-  python3 scripts/sync_board.py            # sync and publish
-  python3 scripts/sync_board.py --no-publish
+  python3 scripts/sync_board.py
+
+Nothing is published from here. The board reads Postgres, which the class A and
+class B mirrors write as the store changes. `--no-publish` is still accepted
+and does nothing: a watcher that has not been restarted since this changed
+still passes it, and refusing the flag would fail its reconcile.
 """
 
 import argparse
@@ -91,16 +96,17 @@ def reconcile_pool(sessions, latest):
             if not changed:
                 edit_state["write"] = False
     except Exception as exc:                      # noqa: BLE001 - reported, not fatal
-        # Publishing the board matters more than reconciling it, and a busy
-        # lock is the ordinary case rather than a fault.
+        # A busy lock is the ordinary case rather than a fault, and the
+        # retirement below still has to run.
         return {"changed": [], "why": f"{type(exc).__name__}: {exc}"[:160]}
     return {"changed": changed}
 
 
 def main():
     ap = argparse.ArgumentParser(description="Sync the board with submitted applications.")
-    ap.add_argument("--no-publish", action="store_true", help="tidy the store, do not deploy")
-    args = ap.parse_args()
+    ap.add_argument("--no-publish", action="store_true",
+                    help="accepted for compatibility; nothing publishes")
+    ap.parse_args()
 
     sessions = read(["session-list"])
     history = read(["history-list"])
@@ -143,7 +149,7 @@ def main():
     # session, so a submitted role's pool record stayed `watched` for good.
     # Every submission added one, which is why fourteen of them had piled up.
     # Doing it here rather than in finish.py makes it continuous: any drift
-    # from any cause is corrected on the next publish, rather than only the
+    # from any cause is corrected on the next reconcile, rather than only the
     # drift created from now on.
     #
     # Before the retirement loop, deliberately: after it, the session that
@@ -179,20 +185,6 @@ def main():
     if reconciled.get("why"):
         result["reconcileSkipped"] = reconciled["why"]
 
-    if not args.no_publish:
-        pub = subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
-                             capture_output=True, text=True)
-        result["published"] = pub.returncode == 0
-        if not result["published"]:
-            # Carry the reason up. Reporting published:false and dropping the
-            # message meant a spent deployment quota looked identical to a
-            # broken build, and the watcher could not tell it should stop
-            # trying rather than retry every tick.
-            blob = ((pub.stderr or "") + (pub.stdout or "")).strip()
-            result["error"] = blob[-500:] or f"publish.py exited {pub.returncode}"
-        for line in (pub.stdout or "").splitlines():
-            if line.startswith("Board published:"):
-                result["url"] = line.split(": ", 1)[1].strip()
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

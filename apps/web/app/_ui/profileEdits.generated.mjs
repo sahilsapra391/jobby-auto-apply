@@ -2,20 +2,18 @@
 //
 // Copied from deploy/profile_edits.mjs. Change that file.
 //
-// Verbatim. Two boards write the same queue and one device claims
-// it, so the rules an edit has to satisfy are written once.
+// Verbatim. The board writes the queue and the device claims it,
+// so the rules an edit has to satisfy are written once.
 // What a Profile-page edit has to look like before it reaches the queue.
 //
-// **One validator, because there are two boards and one device.** The Python
-// board posts these to `api/board.js` and v2 posts them to its own route, and
-// both land in the same `answerEdits` / `resumeEdits` arrays that `watch.py`
-// claims. A second hand-written copy of these rules is the one that drifts,
-// and drift here is an edit the device refuses for a reason the board that
-// sent it does not know about.
+// **One validator, written once.** v2 posts these to its own route, and they
+// land in the `answerEdits` / `resumeEdits` arrays that `watch.py` claims. A
+// second hand-written copy of these rules is the one that drifts, and drift
+// here is an edit the device refuses for a reason the board that sent it does
+// not know about.
 //
 // It plans rather than responds: no `Response`, no status codes beyond the one
-// each refusal names, so the same function serves a Vercel handler and a Next
-// route without either of them owning the rules.
+// each refusal names, so the route that calls it does not own the rules.
 //
 // Everything is bounded because every one of these rides the single KV key the
 // watcher polls every few seconds, and an unbounded field there is a way to
@@ -151,10 +149,9 @@ export const PDF_MAGIC = '%PDF-';
  * `device_keys.mjs` and nothing else; the resume edit that names the upload
  * goes through `planResumeEdit` as `uploadId` on an `add`.
  *
- * Moved here from `deploy/api/board.js` when v2 grew the same control, so the
- * two boards refuse the same files for the same reasons. The device checks
- * size and magic again when it takes the key (`watch.install_uploaded_resume`):
- * a board that let a bad file through still cannot install one.
+ * The device checks size and magic again when it takes the key
+ * (`watch.install_uploaded_resume`): a board that let a bad file through still
+ * cannot install one.
  *
  * **Checked by content, never by the name the browser reported.** A file
  * called resume.pdf that is not a PDF would otherwise fail on the device, in

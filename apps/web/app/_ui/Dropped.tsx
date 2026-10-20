@@ -1,4 +1,4 @@
-import { DROPPED_DOCK } from "../chrome.generated";
+import { DROPPED_DOCK } from "../chrome";
 import { raw } from "./Chrome";
 import { DroppedArchive } from "./DroppedArchive";
 import { LaneEmpty } from "./LaneChrome";

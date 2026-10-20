@@ -1,6 +1,5 @@
-// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.
-// The five action icons, from found_lane.SCRIPT's own ICONS.
-// Redrawing them is how two boards end up with different eyes.
+// The five action icons, as path and circle data. This file is the source:
+// edit it directly.
 
 export type Icon = { paths: string[]; circles: number[][] };
 

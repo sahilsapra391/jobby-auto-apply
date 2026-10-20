@@ -4,7 +4,7 @@
 The provider is a research process, not a persistence process. It receives a
 bounded search brief, can use only its native web search and fetch tools, and
 returns JSON. This trusted runner validates that JSON, removes known roles with
-seen.py, adds them to the Found lane through ingest.py, and republishes the board.
+seen.py, adds them to the Found lane through ingest.py, and reconciles the store.
 
   python3 scripts/run_scan.py --check   # exit 0 if a scan is waiting
   python3 scripts/run_scan.py           # claim one and run it
@@ -872,10 +872,6 @@ def sync_board(root=None, *, runner=subprocess.run):
         output = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
         raise ScanPersistenceError("board sync returned invalid JSON") from exc
-    if output.get("published") is False:
-        raise ScanPersistenceError(
-            f"board sync did not publish: {str(output.get('error') or 'unknown error')[:200]}"
-        )
     return output
 
 

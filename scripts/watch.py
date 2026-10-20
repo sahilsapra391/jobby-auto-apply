@@ -105,21 +105,12 @@ DOCUMENT_STATUS_INTERVAL_SECONDS = 30
 DOCUMENT_STATUS_STALE_SECONDS = 15 * 60
 _last_document_status_poll = 0.0
 _document_status_cache = None
-# Publishing shells out to vercel, so it is debounced behind an actual change,
-# with a floor so a long quiet stretch still refreshes eventually.
+# The board reconcile is debounced behind an actual change, with a floor so a
+# long quiet stretch still runs it eventually.
 PUBLISH_FLOOR_SECONDS = 900
-# A board older than twice the floor is stale, and staleness is its own alarm.
-#
-# The existing alarm fires when a publish is attempted and fails, and that was
-# not enough. On 2026-08-27 the board sat a day out of date and nothing rang.
-# Two silent conditions stacked: the Vercel quota cooldown makes publish()
-# return early without raising, so no attempt means no failure; and underneath
-# it the state had grown past the size ceiling, so every attempt after the
-# cooldown lifted refused. Both leave a real, complete, wrong board being
-# served, and a board cannot announce its own staleness.
-#
-# So this watches the outcome rather than the attempt. LAST_DEPLOY is written
-# only after a publish actually goes out, which makes its age the one honest
+# A reconcile older than twice the floor is stale, and staleness is its own
+# alarm. It watches the outcome rather than the attempt: LAST_DEPLOY is written
+# only after `sync_board.py` succeeds, which makes its age the one honest
 # measure of whether the thing is working, whatever the reason it is not.
 PUBLISH_STALE_SECONDS = 2 * PUBLISH_FLOOR_SECONDS
 # The configured check expects one ping per hour with ten minutes of grace.
@@ -161,8 +152,9 @@ def now_stamp():
 # `run` was the one that never got it, which is how publishing froze the whole
 # watcher for nineteen minutes on 2026-08-25 while an Apply sat waiting.
 SUBPROCESS_TIMEOUT_SECONDS = 300
-# Publishing is the one that actually hung. sync_board reaches Cloudflare KV and
-# Vercel, so it is slower than anything local and still nowhere near this.
+# The board reconcile gets its own, shorter ceiling. Publishing was the helper
+# that once hung the tick for nineteen minutes; the reconcile that replaced it
+# is local and nowhere near this.
 PUBLISH_TIMEOUT_SECONDS = 120
 # 124 is what `timeout(1)` returns, and it cannot collide with a real exit code
 # from any helper here.
@@ -517,10 +509,9 @@ R2_SYNC_LOG = "r2-sync.log"
 def r2_sync_due(now=None):
     """Whether a catch-all R2 sweep should start now.
 
-    `publish.py` ran `r2_sync.sync(root, apply=True)` on every publish, which
-    caught any artifact the per-application uploads (`document_job`,
-    `finish.py`) missed. The device stopped publishing when v1 was retired, so
-    nothing ran that sweep any more; this puts it back on the watcher.
+    `r2_sync.sync(root, apply=True)` catches any artifact the per-application
+    uploads (`document_job`, `finish.py`) missed. It used to ride on the old
+    board's publish, which no longer exists, so the watcher runs it itself.
 
     Paced by the sweep's own log. `spawn` writes a `=== spawn` line into it
     before the child starts, so its mtime is never older than the last start,
@@ -1236,14 +1227,13 @@ def poll_queues():
 # --- board ------------------------------------------------------------------
 
 def fingerprint():
-    """Signature of what is worth spending a deployment on.
+    """Signature of what is worth running the board reconcile for.
 
-    Deliberately excludes `phase`. Publishing the board means redeploying the
-    whole site, Vercel's free plan allows 100 of those a day, and a single
-    application reports six phases on its way through. Including phase here
-    turned thirty applications into a hundred deployments and the quota was
-    gone by the afternoon. Which lane a role is in is worth a deployment; how
-    far along it is inside In flight is not.
+    Deliberately excludes `phase`. A single application reports six phases on
+    its way through, and none of them moves a session between lanes or a pool
+    record between states, which is all `sync_board.py` acts on. Which lane a
+    role is in is worth a reconcile; how far along it is inside In flight is
+    not.
     """
     s = store(["session-list"])
     h = store(["history-list"])
@@ -1252,11 +1242,10 @@ def fingerprint():
     sessions = json.loads(s.stdout or "[]")
     history = json.loads(h.stdout or "[]")
     parts = sorted(f"{x.get('applicationId')}:{x.get('status')}" for x in sessions)
-    # The Found lane is part of the board now, so a scan that brought in new
-    # jobs has to count as a change. Without this the pool would fill up and
-    # the published board would keep showing the last set of sessions.
+    # A scan that brought in new jobs counts as a change, so the reconcile
+    # runs over the pool it just wrote.
     return (f"{len(history)}|{blocked_message()}|{found_signature()}|"
-            f"{provider_signature()}|{render_version()}|{search_config_version()}|"
+            f"{provider_signature()}|{search_config_version()}|"
             f"{profile_signature()}|"
             + "|".join(parts))
 
@@ -1298,54 +1287,6 @@ def search_config_version():
         # Unreadable is a real fault, but publishing is not where it gets
         # reported. A stable distinct value is all this owes.
         return "unreadable"
-
-
-def render_modules():
-    """Every module the rendered board is built from, from one source of truth.
-
-    This used to name three files. The deployed bundle carries eleven, because
-    dashboard.py and found_lane.py import the rest, so a change to premium_ui,
-    company_logos, match_score, jobs_store, brand, ats_match, search_config or
-    store altered the page while leaving the fingerprint identical. The board in
-    KV then kept serving the previous render against freshly deployed code, and
-    the two drifted with nothing reporting it.
-
-    Read from sync_vercel_renderer.FILES so the list cannot be right in one
-    place and stale in the other: the same set that gets copied into the
-    deployment is the set that decides whether to republish.
-    """
-    try:
-        sys.path.insert(0, str(REPO / "scripts"))
-        import sync_vercel_renderer
-        return tuple(sync_vercel_renderer.FILES)
-    except Exception:
-        # Never let a fingerprint failure stop a tick. Falling back to the
-        # renderers proper still catches the common case.
-        return ("dashboard.py", "found_lane.py", "settings_panel.py")
-
-
-def render_version():
-    """What the board would be rendered *by*, not what it would be rendered from.
-
-    The fingerprint above is entirely about data, so a code change that alters
-    every card on the board is invisible to it: after a merge the watcher goes
-    on serving the previous render until some session happens to move. That is
-    exactly what happened when the discovery engine landed — the deploy went
-    out, the board did not change, and it looked like the merge had not worked.
-
-    A hash of the two modules that decide what the page looks like. Cheap, and
-    it makes the publish self-triggering: one republish on the first tick after
-    any change to either, and none after that.
-    """
-    digest = hashlib.sha256()
-    for name in render_modules():
-        try:
-            digest.update((REPO / "scripts" / name).read_bytes())
-        except OSError:
-            # A missing renderer is a real fault, but it is publish.py's to
-            # report. Here it just has to be a stable, distinct value.
-            digest.update(b"missing:" + name.encode())
-    return digest.hexdigest()[:12]
 
 
 #: The last provider signature this process actually read. See
@@ -1425,24 +1366,16 @@ def found_signature():
 
 
 
-# publish.py writes this whenever a publish reaches KV, whichever route ran it.
-LAST_PUBLISH = STATE_DIR / "last-publish"
-
-
 def board_staleness():
-    """Seconds since the board last actually published, or None if never.
+    """Seconds since the board reconcile last succeeded, or None if never.
 
     Deliberately not "since the last attempt" and not "since the last tick".
     Every failure mode this has had looked healthy from the attempt side.
-
-    Both markers count, and the newer wins. LAST_DEPLOY is the watcher's own,
-    LAST_PUBLISH is written by publish.py however it was invoked. Reading only
-    the watcher's marker meant a publish run by hand left the alarm ringing over
-    a board that was seconds old, which is how an alarm stops being believed.
+    `LAST_DEPLOY` is stamped by `publish()` only after `sync_board.py` exits 0.
     """
-    stamps = [path.stat().st_mtime for path in (LAST_DEPLOY, LAST_PUBLISH)
-              if path.exists()]
-    return time.time() - max(stamps) if stamps else None
+    if not LAST_DEPLOY.exists():
+        return None
+    return time.time() - LAST_DEPLOY.stat().st_mtime
 
 
 #: How many scheduled sweeps may be missed before the pool being unchanged is
@@ -1467,12 +1400,11 @@ def pool_staleness():
     So the root is `STATE_DIR`, the same constant every other path here uses,
     and the only caught error is the pool file being absent.
 
-    **The pool, not the publish.** `board_staleness` reads the mtimes of
-    LAST_DEPLOY and LAST_PUBLISH, which answer "when did we last publish" and
-    not "when did the data last change". Publishing keeps succeeding over a
-    frozen store, because it publishes whatever the store holds; on 2026-09-01
-    every sweep died for seventeen hours and the board was republished the
-    whole time, fresh and a day old at once.
+    **The pool, not the reconcile.** `board_staleness` reads the mtime of
+    LAST_DEPLOY, which answers "when did the reconcile last succeed" and not
+    "when did the data last change". The reconcile keeps succeeding over a
+    frozen store; on 2026-09-01 every sweep died for seventeen hours and the
+    board kept refreshing the whole time, fresh and a day old at once.
     """
     import jobs_store
     pool = jobs_store.paths(STATE_DIR)["jobs"]
@@ -1504,13 +1436,13 @@ def stale_sweep_warning():
     watcher spawns `ingest.py` detached and `spawn` never waits on it, so a
     sweep that dies writes its traceback to `ingest-runs.log`, exits non-zero,
     releases its lock, and is observed by nothing. Of the three warnings the
-    dead-man ping was composed from, board staleness measured the publish
+    dead-man ping was composed from, board staleness measured the reconcile
     rather than the data, the parked-slot warning fired three hundred times
     about a different and lesser problem, and the Chrome flag warning is
     unrelated.
 
     Measured on the outage this was written for: the pool went unwritten from
-    15:08Z to 14:31 the next afternoon while the board published normally
+    15:08Z to 14:31 the next afternoon while the board refreshed normally
     throughout. At the configured four-hour interval this fires after eight.
 
     Outcome rather than cause, deliberately: a sweep can fail to land for
@@ -1525,8 +1457,8 @@ def stale_sweep_warning():
     if age <= limit:
         return ""
     return (f"no sweep has written the job pool for {age / 3600:.1f} hours, "
-            f"against a {limit / 3600:.1f} hour limit. The board is still "
-            f"publishing, so it looks current and is not. Read "
+            f"against a {limit / 3600:.1f} hour limit. The board still "
+            f"renders, so it looks current and is not. Read "
             f"~/.job-application/logs/ingest-runs.log for the reason.")
 
 
@@ -1540,7 +1472,7 @@ def stale_board_warning():
             f"against a {PUBLISH_STALE_SECONDS / 60:.0f} minute limit, so "
             "submitted roles stay in Watching and closed postings are not "
             "archived. The board still renders, so it looks fine and is not. "
-            "Run `python3 scripts/sync_board.py --no-publish` to see the reason.")
+            "Run `python3 scripts/sync_board.py` to see the reason.")
 
 
 # A parked slot is a designed state: an agent filled what it could and left the
@@ -1819,23 +1751,16 @@ LAST_DEPLOY = STATE_DIR / "last-deploy"
 def publish():
     """Reconcile the store against the pool and the history. Pushes nothing.
 
-    **The v1 board was retired on 2026-10-20.** This used to run
-    `sync_board.py`, which reconciled and then ran `publish.py`: a full store
-    read, an R2 sweep and a KV write of `jobby:board-state` for the
-    `jobby-board` project. jobby.fyi is v2 now, and v2 reads Postgres, which
-    the class A and class B mirrors write on every change, so there is nothing
-    left to push. The publish was also the slow half of the tick: measured
-    2026-09-12, one publishing tick took 43 seconds against nine for every
-    other, and the watcher claimed nothing while it waited.
-
-    **The reconcile is not v1's and it stays.** It moves pool records to match
-    sessions, retires submitted sessions from Watching and archives watched
-    roles whose posting closed. v2 draws from the store those writes land in.
+    The board reads Postgres, which the class A and class B mirrors write on
+    every change, so there is nothing to push. What remains is the reconcile:
+    it moves pool records to match sessions, retires submitted sessions from
+    Watching and archives watched roles whose posting closed. The name stays
+    because the tick, its tests and `force_publish` all call it this.
 
     `LAST_DEPLOY` is still stamped on success, so `stale_board_warning` keeps
     meaning "the reconcile has stopped succeeding".
     """
-    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py"), "--no-publish"],
+    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
             timeout=PUBLISH_TIMEOUT_SECONDS)
     try:
         out = json.loads(r.stdout or "{}")

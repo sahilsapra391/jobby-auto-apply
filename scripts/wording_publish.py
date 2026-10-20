@@ -58,8 +58,7 @@ def render(root, content):
 
     Rendered here, on the machine that owns the template, because no deployed
     bundle carries `templates/`. Returns "" when anything is missing, and the
-    editor says so rather than drawing an empty page. Same steps as the retired
-    board's `dashboard._render_base_resume`.
+    editor says so rather than drawing an empty page.
     """
     try:
         import resume_build

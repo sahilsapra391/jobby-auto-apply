@@ -2,10 +2,9 @@
 
 **Three times now, v2 has shipped markup carrying a class whose styling exists
 and whose activating state nothing sets.** Each was invisible in review, because
-both halves are correct: the stylesheet is the board's, generated from
-`premium_ui.py`, and the markup is the board's too. What is missing is the
-third thing, the code that puts the state on, and no assertion about either
-half can see it.
+both halves are correct: the stylesheet and the markup both came across from the
+original Python board. What is missing is the third thing, the code that puts
+the state on, and no assertion about either half can see it.
 
     .company-mark img.loaded    46 working logos painted at opacity 0
     .posted.fresh               the freshest role in Watching drawn like the oldest
@@ -16,9 +15,10 @@ and v2's markup emits one of them, then v2 has to be able to set the others.**
 A base class with no reachable state is markup dressed for a treatment it can
 never receive.
 
-`board.css` is generated from the board, which has script v2 does not, so a
-long tail of board-only states is expected and each one is named below with the
-reason. What is not expected, and what fails here, is a *new* one.
+`board.css` began as the original board's stylesheet, and that board had script
+v2 does not, so a long tail of its states is expected and each one is named
+below with the reason. What is not expected, and what fails here, is a *new*
+one. Deleting the dead rules from `board.css` is the way to shorten the list.
 
 The emitted set is deliberately broad: every whitespace-separated token of
 every string and template literal under `apps/web/app`. A narrower reader
@@ -158,9 +158,9 @@ UNRENDERED = {
                "iframe with its text slots made editable, read from the one KV "
                "key `/api/profile/wording` serves to the signed-in owner. These "
                "three style the earlier editor that drew one textarea per "
-               "field and one block per role. `profile_panel.py` still carries "
-               "their CSS and renders none of them, so v2 matching the board "
-               "means rendering none of them either.",
+               "field and one block per role. `board.css` still carries their "
+               "CSS from the original board, which rendered none of them "
+               "either.",
         "classes": {"wording-field", "wording-list", "wording-role"},
     },
     "the Memory Bank's alternative answers, and the button that reveals them": {
@@ -283,7 +283,7 @@ def _attribute_values(src):
         class=\"a b\"                    escaped HTML in a generated string
 
     The third is not hypothetical: the whole `jb-select-*` family is set that
-    way inside `chrome.generated.ts`, and the old reader missed every one.
+    way inside `chrome.ts`, and the old reader missed every one.
     """
     out = []
     for match in re.finditer(r"\bclass(?:Name)?\s*=\s*", src):

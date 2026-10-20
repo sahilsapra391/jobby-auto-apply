@@ -1,16 +1,15 @@
 import {
   DAY_WORDS, KEEP_UPPER, MAX_TAGS, SMALL_WORDS, SOURCE_LABELS,
-} from "../rubric.generated";
+} from "../rubric";
 
 /**
  * The words a Found card prints that the store did not write that way.
  *
- * **One contract in two languages.** `found_lane.tidy_tag`, `tidy_days` and the
- * source label's title-case fallback run in Python on the board and here on
- * v2, and the word lists both read are generated from the Python
- * (`rubric.generated.ts`). `tests/card_words_read_like_the_board.test.mjs`
- * runs both implementations over the same inputs and compares the output,
- * because a port that restates the rule passes while it drifts.
+ * Ported from the original Python board's tag tidier, day mender and source
+ * label fallback; the word lists are in `rubric.ts`.
+ * `tests/card_words_read_like_the_board.test.mjs` runs these over a fixed set
+ * of inputs and compares against what that board printed for them, because a
+ * port that restates the rule passes while it drifts.
  *
  * Plain module, no `"use client"`: the Found card is a server component and
  * calls these during render. CLAUDE.md records what a value imported across

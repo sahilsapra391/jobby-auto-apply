@@ -36,12 +36,18 @@ test('the cadence is the board\'s: a second while waiting, thirty otherwise', ()
   assert.equal(SLOW_POLL_MS, 30000);
 });
 
-test('the labels are the board\'s own words', () => {
-  const python = readFileSync(join(REPO, 'scripts/settings_panel.py'), 'utf8');
-  for (const [state, label] of Object.entries(LABELS)) {
-    assert.ok(python.includes(`"${state}": "${label}"`),
-      `${state} reads "${label}" here and something else on the board`);
-  }
+test('the labels are the words the board has always used', () => {
+  // Recorded from the original Python board's Settings panel when it was
+  // removed (2026-10-20), so a relabel is a decision rather than a drift.
+  assert.deepEqual(LABELS, {
+    connected: 'Connected',
+    disconnected: 'Not connected',
+    connecting: 'Waiting for sign-in',
+    checking: 'Checking',
+    needs_auth: 'Sign-in needed',
+    missing_cli: 'CLI not installed',
+    error: 'Connection error',
+  });
 });
 
 test('the provider in use is marked Active', () => {
@@ -119,8 +125,11 @@ test('fifteen minutes is the line, on both sides of it', () => {
 });
 
 test('v2 reads the key the device writes', async () => {
-  const kvcontent = await import(join(REPO, 'deploy/kvcontent.mjs'));
-  assert.equal(v2keys.LOCAL_STATUS_KEY, kvcontent.LOCAL_STATUS_KEY);
+  // `local-status.mjs` is the device's writer and imports its key from here.
+  const writer = readFileSync(join(REPO, 'deploy/local-status.mjs'), 'utf8');
+  assert.match(writer, /import \{ LOCAL_STATUS_KEY \} from '\.\/device_keys\.mjs';/);
+  const device = await import(join(REPO, 'deploy/device_keys.mjs'));
+  assert.equal(v2keys.LOCAL_STATUS_KEY, device.LOCAL_STATUS_KEY);
   assert.equal(v2keys.LOCAL_STATUS_KEY, 'jobby:worker:local:status');
   const route = readFileSync(join(REPO, 'apps/web/app/api/providers/route.ts'), 'utf8');
   assert.match(route, /readDeviceJson<.*>\(LOCAL_STATUS_KEY\)/);

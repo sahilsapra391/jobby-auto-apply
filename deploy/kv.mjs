@@ -1,9 +1,8 @@
 // Low-level Cloudflare Workers KV access over the REST API, shared by the click
-// queue and the board content.
+// queue, the document jobs and the status keys the device writes.
 //
-// Both moved here off Vercel: the queue because Blob suspended the store under
-// polling, the board because baking it into the deployment meant a redeploy for
-// every change and Vercel's free plan allows a hundred of those a day.
+// The queue moved here off Vercel Blob, which suspended the store under
+// polling.
 
 export function conf(env) {
   const account = env.CF_ACCOUNT_ID;

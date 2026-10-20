@@ -55,10 +55,10 @@ class TheLayoutExists(unittest.TestCase):
 
     def test_the_running_product_has_not_been_moved(self):
         """The three launchd services execute scripts/ by absolute path, and
-        deploy/ is the Vercel project root. Moving either during Phase 0 stops
+        run the KV helpers in deploy/ from that directory. Moving either stops
         production to gain a tidier tree."""
         self.assertTrue((REPO / "scripts" / "watch.py").exists())
-        self.assertTrue((REPO / "deploy" / "vercel.json").exists())
+        self.assertTrue((REPO / "deploy" / "queue.mjs").exists())
 
 
 class ThePlanIsInTheRepository(unittest.TestCase):

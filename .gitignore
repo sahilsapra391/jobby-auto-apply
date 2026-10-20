@@ -7,8 +7,8 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Vercel hosting: the generated module carries real application data,
-# and .vercel holds the project link
+# Files the retired Python board generated. The board is gone, but a machine
+# that ran it may still hold them, and they carry real application data.
 deploy/api/_dashboard.js
 deploy/api/_documents.js
 # Delivered resumes and cover letters: real name, phone and street address.
@@ -31,7 +31,7 @@ deploy/node_modules/
 # committed even though browser.py now writes them outside the repo.
 .playwright-mcp/
 
-# Local board render used for browser-testing the dashboard JS.
+# A local render of the retired board, which may still sit on a machine.
 .board-preview.html
 
 # Agent screenshots land at the repo root. They are confirmation pages
@@ -53,13 +53,7 @@ deploy/node_modules/
 # The scan in tests/test_no_pii.py fails any tracked image by rule.
 **/*.png
 !assets/**/*.png
-!deploy/public/*.png
 !apps/web/public/*.png
-# The generated brand-pack copy the serverless bundle carries. Written
-# only by sync_vercel_renderer.py, out of assets/brand/, which is already
-# allowed above. Vercel keeps deploy/public/ out of the function, so the
-# board reads its favicons from here instead.
-!deploy/assets/**/*.png
 
 # Scratch renders from a run. Same contents as an application: a real
 # address, phone and email on every page.

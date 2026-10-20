@@ -1,4 +1,4 @@
-import { COUNTRY_NAMES, CONTINENT_COUNTRIES } from "../search.generated";
+import { COUNTRY_NAMES, CONTINENT_COUNTRIES } from "../search";
 import { ClearAllLocations, OnlyThisCountry } from "./LocationActions";
 
 /**
@@ -8,7 +8,7 @@ import { ClearAllLocations, OnlyThisCountry } from "./LocationActions";
  * CLAUDE.md sets the contract and it is carried, not re-decided: **empty saved
  * `locations` means Worldwide**, a partial selection stores explicit country
  * codes, and `CONTINENT_COUNTRIES` assigns each of the 199 to exactly one
- * display group. Both tables are generated into `search.generated.ts` from
+ * display group. Both tables are generated into `search.ts` from
  * `found_lane.py` rather than retyped, because a second answer to "which group
  * is Turkey in" parts from the first on the first edit.
  *

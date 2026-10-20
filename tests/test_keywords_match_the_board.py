@@ -1,11 +1,10 @@
 """A keyword is a phrase, keywords are OR'd, and the scope picks the haystack.
 
-All three are the board's, copied rather than invented (`found_lane.matches`,
-`found_lane.haystack`):
+All three are the original Python board's rules, carried into v2's SQL:
 
-    hay.indexOf(keywords[i].toLowerCase()) !== -1   one chip, one substring
-    for (...) { if (hit) break; }                   any of them, not all
-    scope === 'title' ? job.ti : ti + co + sum + tg
+    one chip, one substring
+    any of them, not all
+    the scope picks title alone, or title + company + summary + tags
 
 v2 ran `websearch_to_tsquery('english', q)` over `search_tsv`, which ANDs bare
 terms and stems them. "product manager" therefore meant "product somewhere and
@@ -29,9 +28,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
 import v2_lanes  # noqa: E402
-
-BOARD = (REPO / "scripts" / "found_lane.py").read_text()
-
 
 def sql_only(block):
     """The SQL, with its comments removed.
@@ -75,21 +71,6 @@ class TheKeywordPredicateMatchesTheBoardTests(unittest.TestCase):
                          "the keyword predicate is negated, so a row matching "
                          "a keyword is now excluded by it")
         self.assertNotIn("= all (", FILTERS.lower())
-
-    def test_the_board_still_ors_and_still_substrings(self):
-        """**The other half of a two-language contract.**
-
-        This asserts against `found_lane.py` rather than restating what it
-        does, so the day the board changes its mind the copy is told.
-        """
-        self.assertIn("hay.indexOf(keywords[i].toLowerCase()) !== -1", BOARD,
-                      "the board no longer matches a keyword as a substring; "
-                      "v2 copies it and now disagrees")
-        self.assertRegex(
-            BOARD, r"if \(hay\.indexOf\(keywords\[i\]\.toLowerCase\(\)\) !== -1\)"
-                   r" \{ hit = true; break; \}",
-            "the board no longer breaks on the first hit, so it may have "
-            "stopped OR'ing")
 
     def test_an_empty_keyword_list_is_the_filter_being_off(self):
         """**`is null` alone read `{}` as "match nothing".**
@@ -157,5 +138,3 @@ class TheKeywordBoxBehavesLikeTheBoardsTests(unittest.TestCase):
                       "keywords are not deduped. The box submits alongside the "
                       "chips, so Enter on a keyword that is already a chip adds "
                       "it twice.")
-        self.assertIn("keywords.indexOf(word) === -1", BOARD,
-                      "the board no longer dedupes, so this copy now disagrees")

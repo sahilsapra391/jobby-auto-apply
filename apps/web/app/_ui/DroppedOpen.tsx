@@ -7,8 +7,8 @@ import { useEffect } from "react";
  * backdrop close it.
  *
  * A `<dialog>` closes on Escape by itself, but nothing opens it without a call
- * to showModal, and the board's own opener lives in dashboard.py's script
- * rather than in premium_ui.SCRIPT. This draws nothing.
+ * to showModal, and the original board's opener lived in its page script,
+ * which v2 does not carry. This draws nothing.
  *
  * **One listener on the document, not one on the dock.** The dock is raw
  * markup with the count interpolated into it (`Dropped.tsx`), so when a soft

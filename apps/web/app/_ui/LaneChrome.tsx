@@ -1,11 +1,11 @@
-import { LANE_EMPTY, LANE_HINTS, LANE_SEARCH_PLACEHOLDER } from "../lane_chrome.generated";
+import { LANE_EMPTY, LANE_HINTS, LANE_SEARCH_PLACEHOLDER } from "../lane_chrome";
 import type { Lane } from "../lanes.generated";
 import { SubmitOnChange } from "./SubmitOnChange";
 
 /**
  * A lane's subtitle, its search row and what it says when it holds nothing.
  *
- * All three come from `dashboard.py` through `lane_chrome.generated.ts`. They
+ * All three come from `dashboard.py` through `lane_chrome.ts`. They
  * are copy, and copy that names the control which fills a lane is data: "Press
  * Apply on something in Watching", "Press Scan now and it will go looking".
  * v2 shipped "Nothing in this lane." for all five, which reads as broken.

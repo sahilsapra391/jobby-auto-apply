@@ -1,17 +1,10 @@
 /*
- * GENERATED. Do not edit.
+ * The board's stylesheet. This file is the source: edit it directly.
  *
- * `python3 scripts/sync_v2_styles.py` takes the complete <style> block that
- * `dashboard.build` emits -- dashboard's own CSS, then found_lane,
- * settings_panel, profile_panel and premium_ui in that order, premium_ui last
- * so it overrides -- and writes it here verbatim.
- *
- * The v2 board has to look one for one identical to the board that exists, and
- * a hand-port delivers that on the day it is written and drifts from then on.
- * This makes identity a property of the build. tests/test_v2_styles_are_
- * current.py fails when the two disagree.
- *
- * Change the styling in scripts/premium_ui.py and re-run the generator.
+ * It was generated from the original Python board until that board was
+ * removed, and it starts as a byte-for-byte copy of the last generated
+ * version, so v2 looks exactly as it did. Tokens and responsive overrides come
+ * last in the file so they win, which is the order the generator kept.
  */
 
   :root {

@@ -14,11 +14,11 @@ import { config as ownerConfig, isOwner } from "../_ui/owner";
  * Profile: what every tailored resume starts from, and what Jobby answers with.
  *
  * **Built out of the board's own components, which were shipping unused.**
- * `board.css` is generated from the board, so 37 rules across 16 classes --
+ * `board.css` began as the original board's stylesheet, so 37 rules across 16 classes --
  * `profile-block`, `block-head`, `identity-grid`, `identity-card`,
  * `bank-tools`, `bank-search`, `bank-filters`, `bank-chip`, `chip-n`,
  * `bank-cats`, `bank-cat`, `bank-groups`, `bank-row`, `bank-q`, `bank-a`,
- * `bank-count` -- were in v2's stylesheet from the day it was generated. The
+ * `bank-count` -- were in v2's stylesheet from the day it was copied. The
  * first version of this page used Settings' `provider-card` and the lane tab
  * strip instead, which is why it looked substantially different from the board
  * while being made of the board's CSS.

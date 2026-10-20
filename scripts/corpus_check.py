@@ -73,7 +73,6 @@ MODULES = (
     "tests.test_resume_build",
     "tests.test_resume_pdf",
     "tests.test_cover_letter",
-    "tests.test_state_slim",
     "tests.test_no_pii",
     "tests.test_board_key",
     "tests.test_backfill",

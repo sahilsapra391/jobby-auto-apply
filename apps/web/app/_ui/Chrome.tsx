@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LOCKUP, DEFS, THEMESEG_PROPS, THEMESEG_INNER } from "../chrome.generated";
+import { LOCKUP, DEFS, THEMESEG_PROPS, THEMESEG_INNER } from "../chrome";
 import type { Theme } from "./theme";
 import { RouteBody } from "./RouteBody";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { HERO_INTRO } from "../chrome.generated";
+import { HERO_INTRO } from "../chrome";
 
 /**
  * The hero mark's first-paint flourish, and its replay on click.

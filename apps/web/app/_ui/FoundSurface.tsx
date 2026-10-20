@@ -10,7 +10,7 @@ import {
   // the note above the Max experience row.
   EXPERIENCE_OPTIONS,
   SCOPE_OPTIONS, UNKNOWN_TOGGLES, WORKPLACES, type Option,
-} from "../search.generated";
+} from "../search";
 import { READ_ONLY } from "./actions";
 
 /** Eastern, like the board: the reader and the sweep both keep US Eastern time. */

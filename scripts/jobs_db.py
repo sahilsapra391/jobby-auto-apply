@@ -2,7 +2,8 @@
 """The job pool and the decision store, in Postgres.
 
 Why this exists. `jobs.json` was 97 MB for 15,400 records and every process
-that touched it loaded the whole thing: ingest, publish, dashboard, sync_board.
+that touched it loaded the whole thing: ingest, sync_board and the old
+board's publish.
 Measured 2026-08-29, that is about 360 MB resident at today's size and roughly
 4.7 GB at the 200,000-record cap, on a machine with 16 GB and about 4.8 GB free,
 with ingest and publish routinely overlapping. Disk was never the constraint.

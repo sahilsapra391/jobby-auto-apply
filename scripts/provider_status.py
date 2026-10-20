@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """What the device publishes about its provider connections, and nothing else.
 
-This lived in `settings_panel.py`, which is the retired Python board's Settings
-UI. `provider_login.publish_status` calls `public_payload` on every watcher tick
-that publishes `jobby:worker:local:status`, so deleting the v1 renderer would
-have broken the device's live provider status with it. The payload is a
-device-side contract read by v2's `/api/providers` GET, so it lives with the
-device rather than with a board.
-
-`settings_panel` re-exports these names until the v1 board is deleted.
+`provider_login.publish_status` calls `public_payload` on every watcher tick
+that publishes `jobby:worker:local:status`. The payload is a device-side
+contract read by v2's `/api/providers` GET, so it lives with the device rather
+than with a board. `PROVIDERS` also feeds v2's display names
+(`apps/web/app/providers.generated.ts`, through `scripts/sync_v2_styles.py`).
 """
 
 PROVIDERS = (

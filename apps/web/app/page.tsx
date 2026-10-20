@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { MORPH } from "./chrome.generated";
+import { MORPH } from "./chrome";
 import { HeroIntro } from "./_ui/HeroIntro";
 import { LANES, SORT_LABELS, type Lane, type Sort } from "./lanes.generated";
 import { AppBar, boardStamp, raw } from "./_ui/Chrome";

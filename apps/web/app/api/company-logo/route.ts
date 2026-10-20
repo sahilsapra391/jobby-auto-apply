@@ -13,7 +13,7 @@ import { candidates, faviconFor, trustedSource } from "../../_ui/logo_source";
  * a real logo, so v2 was showing a monogram for every company where the board
  * it replaces shows one for about one in six.
  *
- * Ported from `deploy/api/board.js`, and the trusted host set is generated
+ * Ported from the original board's logo route, and the trusted host set is generated
  * from `company_logos.TRUSTED_SOURCE_HOSTS` rather than typed again: a host
  * removed there and left in a hand-written copy here is an open redirect
  * nobody is watching.

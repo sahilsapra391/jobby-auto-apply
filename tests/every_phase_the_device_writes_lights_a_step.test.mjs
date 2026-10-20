@@ -5,11 +5,12 @@
 // fourteen strings in circulation, so the strip was unlit for the whole
 // document stage -- which is where a run spends most of its wall clock -- and
 // lit for the first time only when the agent reached "Filling the form".
-// `dashboard.py:749` has always prefix-matched on eight characters with a
+// The original Python board always prefix-matched on eight characters with a
 // default of 0, under a comment saying why: "Match on prefix so an agent's
 // wording does not have to be exact."
 //
-// Ported in #238. This is the census that keeps it ported.
+// Ported in #238. That board is gone; its rule is written out below as the
+// reference, and this is the census that keeps v2 on it.
 //
 // **The list is read out of the device's own code, not typed here.** That is
 // the whole point: a phase added to `DOCUMENT_PHASES` or a new `set_phase`
@@ -111,14 +112,10 @@ function helpers() {
   return mod.exports;
 }
 
-/** `dashboard.py:749`, the rule this is a port of, read off the Python. */
+/** The original board's rule, as it stood when that board was removed:
+ *  default a missing phase to Queued, prefix-match each step on eight
+ *  characters, and fall back to step one. */
 function boardRule() {
-  const src = readFileSync(join(REPO, 'scripts/dashboard.py'), 'utf8');
-  assert.match(src, /phase\.lower\(\)\.startswith\(st\.lower\(\)\[:8\]\)/,
-    'dashboard.py no longer prefix-matches on eight characters, so this file ' +
-    'is comparing against a rule that has moved');
-  assert.match(src, /entry\.get\("phase"\) or "Queued"/,
-    'dashboard.py no longer defaults a missing phase to Queued');
   const steps = ["Queued", "Building documents", "Filling the form",
                  "Submitting", "Verifying"];
   return (phase) => {
@@ -176,26 +173,22 @@ test('every phase renders its own words', () => {
   }
 });
 
-test('both boards prefix-match on the same number of characters', () => {
+test('v2 prefix-matches on the reference rule\'s eight characters', () => {
   // **The claim this replaces was false, and the mutation is what said so.**
   // It asserted the eight characters were "what tells the two document steps
   // apart", and shortening the prefix to three passes every case here: no two
   // step labels collide at three characters in today's phase set. Eight is a
   // margin, not a discriminator.
   //
-  // What is load-bearing is that the two implementations use the *same*
-  // margin. A board matching on eight and a v2 matching on three agree on
-  // every string in circulation now and can part on the next one added, which
-  // is the drift this whole file exists to prevent -- and it would be silent,
-  // because both answers look reasonable.
-  const py = readFileSync(join(REPO, 'scripts/dashboard.py'), 'utf8');
-  const board = py.match(/st\.lower\(\)\[:(\d+)\]/);
-  assert.ok(board, 'dashboard.py no longer slices the step label');
+  // What is load-bearing is that v2 keeps the reference rule's margin. A
+  // match on eight and a match on three agree on every string in circulation
+  // now and can part on the next one added, and it would be silent, because
+  // both answers look reasonable.
   const rows = readFileSync(join(REPO, 'apps/web/app/_ui/Rows.tsx'), 'utf8');
   const v2 = rows.match(/st\.toLowerCase\(\)\.slice\(0,\s*(\d+)\)/);
   assert.ok(v2, 'Rows.tsx no longer slices the step label');
-  assert.equal(Number(v2[1]), Number(board[1]),
-    `v2 prefix-matches on ${v2[1]} characters and the board on ${board[1]}; ` +
+  assert.equal(Number(v2[1]), 8,
+    `v2 prefix-matches on ${v2[1]} characters and the reference rule on 8; ` +
     `they agree on every phase in circulation today and will part on the next ` +
     `one added`);
   // And the pair the margin exists for still resolves.
@@ -206,9 +199,9 @@ test('both boards prefix-match on the same number of characters', () => {
 test('a phase nobody told the board about falls to step one, on both', () => {
   // **A mutation that passes, explained rather than left standing.** Adding a
   // phase to `DOCUMENT_PHASES` does not fail this file, and that is correct:
-  // `dashboard.py`'s `next(..., 0)` gives an unrecognised phase step one too,
-  // so parity holds and the card draws the new words over a lit strip. The
-  // property is agreement with the board, not recognition of every string.
+  // the reference rule's fallback gives an unrecognised phase step one too, so
+  // the card draws the new words over a lit strip. The property is agreement
+  // with the rule, not recognition of every string.
   const invented = 'Zzz a phase nobody told the board about';
   assert.equal(phaseStep(invented).at, 0);
   assert.equal(phaseStep(invented).at, v1(invented));

@@ -229,45 +229,6 @@ class ItNeverAffectsTheCaller(unittest.TestCase):
         self.assertIn(("jobs_store", "save_jobs", "_persist_pool"), seen)
 
 
-class TheDeployedBundleWorksWithoutTheSidecar(unittest.TestCase):
-    """`scripts/store.py` is copied into `deploy/renderer/` and shipped to
-    Vercel; `scripts/write_path_coverage.py` is not.
-
-    So the hook's `try: import write_path_coverage` is load-bearing in the
-    deployment rather than defensive, and it is the same class as the favicon
-    the renderer once read from `deploy/public/`: present on every laptop,
-    absent from the bundle, and invisible until it is live. Checked against the
-    real bundle with nothing else on the path, because reading the try/except
-    and being satisfied is what that outage was made of.
-    """
-
-    def test_the_bundled_store_writes_with_the_sidecar_absent(self):
-        import shutil
-        import subprocess
-        bundle_src = REPO / "deploy" / "renderer"
-        if not (bundle_src / "store.py").exists():
-            self.skipTest("no rendered bundle in this checkout")
-        with tempfile.TemporaryDirectory() as d:
-            bundle = Path(d) / "bundle"
-            shutil.copytree(bundle_src, bundle)
-            self.assertFalse((bundle / "write_path_coverage.py").exists(),
-                             "the sidecar is in the bundle now, so this test "
-                             "no longer covers the case it was written for")
-            target = Path(d) / "out.json"
-            program = (
-                "import sys\n"
-                f"sys.path = [r'{bundle}'] + "
-                "[p for p in sys.path if 'jobby-auto-apply' not in p]\n"
-                "import store\n"
-                f"store.write_private(r'{target}', {{'a': 1}})\n")
-            result = subprocess.run([sys.executable, "-c", program],
-                                    capture_output=True, text=True, cwd=d,
-                                    env={**os.environ, "JOB_APPLICATION_DIR": d})
-            self.assertEqual(result.returncode, 0,
-                             f"the bundled store failed: {result.stderr[-400:]}")
-            self.assertEqual(json.loads(target.read_text()), {"a": 1})
-
-
 class TheReportAnswersTheGate(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()

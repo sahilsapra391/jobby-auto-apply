@@ -1,16 +1,9 @@
 # What a PR has to prove before it can reach the board.
 #
-# The board is deployed by two routes that meet only in production: code goes
-# out when main merges and Vercel rebuilds, state is published to Cloudflare KV
-# from the laptop every few minutes. Nothing used to check that the two agreed,
-# and twice that cost a day. Once when three commits of UI work sat in the repo
-# because deploy/renderer was never re-synced, so the deployment kept serving an
-# older interface. Once when the renderer read a favicon out of deploy/public/,
-# which exists on every laptop and is not in the serverless bundle, so it
-# rendered locally, passed every test, and 502'd on every deployed request.
-#
-# Both are the same shape: the working tree is not the thing that ships. These
-# checks run against what ships.
+# The working tree is not the thing that ships. The board (apps/web) is built
+# and served from a traced bundle, and a file the server reads that the tracer
+# never carried renders locally, passes every test, and fails on every deployed
+# request. These checks run against what ships.
 #
 # The suite is run by `unittest discover`, with no exclusion list. It used to
 # name two modules to skip, test_resume_pdf and test_resume_build, on the
@@ -77,8 +70,8 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # The version Vercel builds the function with. Matching it here is the
-          # point: 3.13 on a laptop will happily run code the deployment cannot.
+          # The version the sourcing container runs. Matching it here is the
+          # point: 3.13 on a laptop will happily run code the container cannot.
           python-version: '3.12'
 
       - uses: actions/setup-node@v5
@@ -102,21 +95,6 @@ jobs:
           cd apps/web
           npm ci
 
-      - name: The deployed renderer matches scripts/
-        run: |
-          # Scoped to the two directories sync_vercel_renderer.py generates.
-          # The rest of deploy/ — api/, the .mjs helpers, vercel.json — is
-          # hand-written, and failing a PR for editing those would teach
-          # everyone to ignore this check. --porcelain rather than a diff so a
-          # newly added asset shows up as untracked instead of silently passing.
-          python3 scripts/sync_vercel_renderer.py
-          stale="$(git status --porcelain -- deploy/renderer deploy/assets)"
-          if [ -n "$stale" ]; then
-            echo "$stale"
-            echo "::error::The deployed renderer bundle is stale. Run 'python3 scripts/sync_vercel_renderer.py' and commit deploy/renderer and deploy/assets, or Vercel keeps building the old one."
-            exit 1
-          fi
-
       - name: Python tests
         # The same command CLAUDE.md's Verification section tells a person to
         # run. One command in both places means CI and the laptop cannot drift
@@ -139,32 +117,24 @@ jobs:
             exit 1
           fi
 
-      - name: The v2 stylesheet matches the board
-        # Same shape as the renderer check above and the same reason: the
-        # requirement is that v2 looks one for one identical to the board it
-        # replaces, and nothing but a regenerate-and-diff can hold that.
+      - name: v2's generated files match their sources
+        # Each of these is a value the device and the board have to agree on
+        # (the lane SQL, the logo allowlist, the bank labels, the provider
+        # names, and the device's KV, queue, edit-rule, key and R2 helpers),
+        # so it is written once and copied. Nothing but a regenerate-and-diff
+        # can hold a copy to its source.
         run: |
           python3 scripts/sync_v2_styles.py
-          # apps/web/public/ is in this list because every file in it is
-          # reachable only by URL: site.webmanifest names three PNGs and the
-          # head links a fourth, so a stale or missing one is a 404 that no
-          # render and no HTML assertion can see.
-          stale="$(git status --porcelain -- apps/web/app/board.css \
-                     apps/web/app/chrome.generated.ts \
+          stale="$(git status --porcelain -- \
                      apps/web/app/lanes.generated.ts \
-                     apps/web/app/rubric.generated.ts \
                      apps/web/app/logos.generated.ts \
-                     apps/web/app/lane_chrome.generated.ts \
-                     apps/web/app/icons.generated.ts \
                      apps/web/app/bank.generated.ts \
                      apps/web/app/providers.generated.ts \
-                     apps/web/app/search.generated.ts \
                      apps/web/app/_ui/r2.generated.mjs \
                      apps/web/app/_ui/kv.generated.mjs \
                      apps/web/app/_ui/kvqueue.generated.mjs \
                      apps/web/app/_ui/profileEdits.generated.mjs \
-                     apps/web/app/_ui/deviceKeys.generated.mjs \
-                     apps/web/public)"
+                     apps/web/app/_ui/deviceKeys.generated.mjs)"
           if [ -n "$stale" ]; then
             echo "$stale"
             echo "::error::v2's generated files are stale. Run 'python3 scripts/sync_v2_styles.py' and commit the result."
@@ -172,10 +142,7 @@ jobs:
           fi
 
       - name: Node tests
-        # One glob again: apps/web/test/ held the hand-written design-system
-        # tests, and the stylesheet is generated from dashboard.py now, so
-        # those assertions moved to tests/test_v2_styles_are_current.py.
-        # An unmatched glob under `bash -e` passes the literal string to node,
+        # One glob. An unmatched glob under `bash -e` passes the literal string to node,
         # so a dead glob is a failure waiting for the first clean checkout.
         # tests/test_ci_covers_everything.py asserts every *.test.mjs on disk
         # is reached by a glob here, so adding a directory fails until this
@@ -183,9 +150,8 @@ jobs:
         run: node --test tests/*.test.mjs
 
       - name: The /v2 board builds and deploys the shape it was tested in
-        # The Next.js half of the renderer-sync check above, and it exists for
-        # the same two reasons. Dependencies are installed further up, before
-        # the node tests that also need them. The deployed-shape check builds,
+        # Dependencies are installed further up, before the node tests that
+        # also need them. The deployed-shape check builds,
         # strips the source tree away, and serves the traced bundle: an asset
         # URL that forgets the basePath or a file the server reads that the
         # tracer never carried fails the PR instead of the board.
@@ -238,6 +204,5 @@ jobs:
 
       - name: Syntax
         run: |
-          python3 -m py_compile scripts/*.py deploy/api/page.py \
-            packages/schema/*.py
+          python3 -m py_compile scripts/*.py packages/schema/*.py
           bash -n deploy/oci/setup.sh

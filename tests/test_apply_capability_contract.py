@@ -174,26 +174,22 @@ class CapacityReachesTheBoardTests(unittest.TestCase):
     raised it is a warning that outlives its cause.
     """
 
-    def page(self, meta):
-        import dashboard
-        return dashboard.build(
-            {"sessions": [], "jobs": [], "history": [], "profile": {}, "meta": meta},
-            "now",
-        )
+    def test_the_mirror_carries_it_to_the_board(self):
+        import class_b
+        row = class_b.meta_row({"slotsParked": "5 of 5 browser slots are parked"})
+        self.assertEqual(row.get("slots_parked"), "5 of 5 browser slots are parked")
 
-    def test_a_full_fleet_says_so_where_the_question_gets_asked(self):
-        page = self.page({"slotsParked": "5 of 5 browser slots are parked, oldest 0.8h"})
-        self.assertIn("5 of 5 browser slots are parked", page)
-        flight = page[page.index('id="p-flight"'):]
-        self.assertLess(flight.index("5 of 5 browser slots"), flight.index("p-done"))
+    def test_a_working_fleet_mirrors_nothing(self):
+        import class_b
+        self.assertIsNone(class_b.meta_row({}).get("slots_parked"))
 
-    def test_it_is_not_the_automation_stopped_alarm(self):
-        """Capacity gone and automation stopped are different facts."""
-        page = self.page({"slotsParked": "5 of 5 browser slots are parked"})
-        self.assertNotIn("Automation is stopped", page)
-
-    def test_a_working_fleet_leaves_no_trace(self):
-        self.assertNotIn("capacity", self.page({}).split("<style")[0])
+    def test_the_board_draws_it_in_the_in_flight_lane(self):
+        """Where the question gets asked, and not as the stopped alarm."""
+        page = (ROOT / "apps" / "web" / "app" / "page.tsx").read_text()
+        at = page.index("meta?.slotsParked")
+        self.assertIn('active === "flight"', page[at - 60:at])
+        self.assertIn('className="capacity"', page[at:at + 200])
+        self.assertNotIn("Automation is stopped", page[at - 200:at + 200])
 
     def test_the_watcher_writes_it_every_tick_so_it_clears_itself(self):
         source = (ROOT / "scripts" / "watch.py").read_text()
@@ -239,11 +235,12 @@ class PreflightRunsPerAttemptTests(unittest.TestCase):
 
 
 class TheBoardShowsTheDifferenceTests(unittest.TestCase):
-    """The tag has to survive publication, or it is a local variable.
+    """The tag has to survive the mirror, or it is a local variable.
 
-    SESSION_PUBLIC_FIELDS is an allowlist. A field the runner writes and the
-    allowlist does not know is dropped between the store and the board, so the
-    card renders exactly as it did before and nothing says the fix is inert.
+    `class_b.session_row` names the columns it writes. A field the runner
+    writes and the row does not carry is dropped between the store and the
+    board, so the card renders exactly as it did before and nothing says the
+    fix is inert.
     """
 
     def session(self, **extra):
@@ -254,31 +251,21 @@ class TheBoardShowsTheDifferenceTests(unittest.TestCase):
         base.update(extra)
         return base
 
-    def test_the_tag_survives_the_public_field_filter(self):
-        import dashboard
-        published = dashboard.publishable_state(
-            {"sessions": [self.session(parkClass="capability")], "jobs": [],
-             "history": [], "meta": {}}
-        )
-        self.assertEqual(published["sessions"][0].get("parkClass"), "capability")
+    def test_the_tag_survives_the_mirror(self):
+        import class_b
+        row = class_b.session_row(self.session(parkClass="capability"))
+        self.assertEqual(row.get("park_class"), "capability")
 
     def test_a_capability_park_does_not_read_as_work_for_the_user(self):
-        import dashboard
-        page = dashboard.build(
-            {"sessions": [self.session(parkClass="capability")], "jobs": [],
-             "history": [], "meta": {}, "profile": {}},
-            "now",
-        )
-        self.assertIn("system fault", page)
-        self.assertIn("not a step for you", page)
+        rows = (ROOT / "apps" / "web" / "app" / "_ui" / "Rows.tsx").read_text()
+        self.assertIn('const fault = row.park_class === "capability";', rows)
+        self.assertIn('<span className="chip fault">system fault</span>', rows)
+        self.assertIn("not a step for", rows)
 
     def test_a_real_blocker_still_reads_as_work_for_the_user(self):
-        import dashboard
-        page = dashboard.build(
-            {"sessions": [self.session(
-                pendingFields=[{"question": "Do you need sponsorship?"}])],
-             "jobs": [], "history": [], "meta": {}, "profile": {}},
-            "now",
-        )
-        self.assertIn("1 to do", page)
-        self.assertNotIn("system fault", page)
+        import class_b
+        row = class_b.session_row(self.session(
+            pendingFields=[{"question": "Do you need sponsorship?"}]))
+        self.assertIn(row.get("park_class"), (None, ""))
+        rows = (ROOT / "apps" / "web" / "app" / "_ui" / "Rows.tsx").read_text()
+        self.assertIn("{pending.length} to do", rows)

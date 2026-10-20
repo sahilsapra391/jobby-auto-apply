@@ -1,6 +1,6 @@
 ---
 name: job-application
-description: Apply to jobs end to end - read the user's resume, run a one-time intake so later applications need almost no input, find matching roles, fill applications on LinkedIn Easy Apply, Greenhouse, Lever, Ashby, Workday, iCIMS, Google Careers and company forms, surface referral contacts, build a resume and cover letter tailored to each posting, and produce a dashboard artifact showing what still needs the user. Use this whenever the user wants to apply to a job, shares a job or careers URL, asks for a shortlist of roles, says "apply for me", "find me jobs", "fill this application", or asks about tailoring answers, cover letters or referral messages to a posting. Prefer this over ad-hoc browser driving, because applications carry the user's name and mistakes are expensive to undo.
+description: Apply to jobs end to end - read the user's resume, run a one-time intake so later applications need almost no input, find matching roles, fill applications on LinkedIn Easy Apply, Greenhouse, Lever, Ashby, Workday, iCIMS, Google Careers and company forms, surface referral contacts, build a resume and cover letter tailored to each posting, and keep a board showing what still needs the user. Use this whenever the user wants to apply to a job, shares a job or careers URL, asks for a shortlist of roles, says "apply for me", "find me jobs", "fill this application", or asks about tailoring answers, cover letters or referral messages to a posting. Prefer this over ad-hoc browser driving, because applications carry the user's name and mistakes are expensive to undo.
 allowed-tools: Read, Write, Bash, Skill, Agent, Artifact, mcp__claude-in-chrome__*, mcp__Claude_Browser__*
 ---
 
@@ -138,7 +138,7 @@ LinkedIn shows, on most postings: first-degree connections at the company, alumn
 
 **A referral on a role with 200 applicants is worth more than being applicant 201.** So for any role with a connection, surface it *before* filling the form, and treat "apply plus referral message" as the default plan rather than applying alone.
 
-Draft the referral message and put it in the dashboard for the user to send. Sending on their behalf needs explicit per-message permission.
+Draft the referral message and put it on the board for the user to send. Sending on their behalf needs explicit per-message permission.
 
 If a form asks "were you referred by an employee," and a referral is realistically obtainable, raise it before answering — answering "no" forecloses something worth having.
 
@@ -318,26 +318,22 @@ After any step that might have submitted, **verify**: look for a confirmation st
 
 Log `reviewed` when a form reaches final review; log `completed` only on confirmed submission. Keeping these apart prevents duplicate applications weeks later.
 
-## Phase 5: The dashboard
+## Phase 5: The board
 
-After a working session, generate a dashboard artifact. The user has been away while you worked; the dashboard is how they act on it in minutes rather than reconstructing state from conversation.
-
-```bash
-python3 "<skill-dir>/scripts/dashboard.py" --out <path>.html
-```
-
-It reads the store and produces four sections:
+The board is the web app in `apps/web`, served from the user's own URL. It
+reads Postgres, which the store's mirrors write as the store changes, so there
+is nothing to generate or publish: saving a session, appending history or
+setting a phase is what moves a card. The lanes it draws:
 
 1. **In flight** — applications currently being worked on, each showing the stage it has reached. Set status `inflight` and report progress with `scripts/phase.py` as each stage completes, or the board shows nothing between the click and the result, which reads as broken.
-2. **Needs you** — every blocked application, what specifically is missing, and a link that opens the exact page. This is the section that matters; put it first and make each item one click plus one action.
+2. **Needs you** — every blocked application, what specifically is missing, and a link that opens the exact page. This is the lane that matters; make each item one click plus one action.
 3. **Submitted** — what went out, so nothing gets applied to twice.
 4. **Watching** — roles found but not yet started.
 
-Then publish it with the Artifact tool and give the user the link.
-
-**If the user wants the board on their own URL**, `references/hosting.md` covers it. `python3 "<skill-dir>/scripts/publish.py"` renders the board and deploys it to Vercel behind a password, overwriting the same production URL every time. When `store.py meta-get --key dashboardUrl` returns a URL, that is the board the user is reading, so publish there rather than creating a fresh artifact beside it.
-
-Regenerate it whenever the state meaningfully changes. Store its URL after the first publish — `store.py meta-set --key artifactUrl --value <url>` — and pass that stored URL to the Artifact tool on every republish, so the user keeps one link rather than accumulating them.
+Run `scripts/sync_board.py` after a submission. It retires the Watching session
+for anything confirmed submitted and archives watched roles whose posting
+closed, so a role never shows in Watching and Submitted at once. The watcher
+runs it on its own every few minutes as well.
 
 ## Running as a standing agent
 
@@ -352,7 +348,7 @@ One cycle is:
 3. **Triage**: read full bodies, rank on fit and on applicant-count-versus-age. Reject anything whose stated minimum experience is above five years, before scoring; the screen filters on it before a human reads the resume.
 4. **Apply** to anything that needs no new information, using the stored profile and answers, within the daily volume cap. Each application gets its own resume and cover letter, drafted on Claude Opus 5 and verified against the base before upload. **One agent owns one application from start to finish.** Up to five run at once, each in its own browser, and no agent ever holds two. The isolation is the whole safety story: two agents sharing a browser drift onto the same tab, and a stray keystroke in one tab has already submitted an application early. If you are filling by hand rather than through the watcher, work one at a time.
 5. **Park** anything blocked as a session with its pending fields and reasons. Anything blocked on an act only the user can perform (account creation, a password, an OTP or emailed verification link, a CAPTCHA, a binding legal agreement, or an accuracy attestation on a form where some answer had to be inferred) is saved with status `review`, not `watch`, so it lands in **Needs you** rather than sitting in Watching where it reads as not-yet-started. Name the specific blocker in `pendingFields` so the card says what to do.
-6. **Regenerate the dashboard** and republish to the same artifact URL. Run `scripts/sync_board.py` after every application rather than once per cycle: it deletes the watch-list session for anything confirmed submitted and republishes, so a role never shows in Watching and Submitted at the same time.
+6. **Reconcile the board.** Run `scripts/sync_board.py` after every application rather than once per cycle: it deletes the watch-list session for anything confirmed submitted, so a role never shows in Watching and Submitted at the same time.
 7. **Report**: what is new, what went out, what needs them, in a few lines.
 
 Steps 1 through 5 need no user input, which is the entire point of the intake phase. A cycle that interrupts three times has usually skipped something that intake should have captured.
@@ -378,16 +374,6 @@ Browser output is the expensive part of a cycle, and it compounds: page dumps fr
 - **Reuse instead of re-deriving.** The posting extraction in the watch entry, the fill plan from `answers-resolve`, and the platform recipes in `references/platforms.md` each exist so the same discovery is never paid for twice. If a cycle is re-reading a posting or re-probing a form layout it already knew, something upstream failed to write.
 
 Between cycles, hold the state in the store rather than in conversation. A cycle should be able to start cold, read the store, and know exactly where things stand.
-
-### Keeping the dashboard current
-
-Republish to the **same artifact URL** every cycle: read it with `store.py meta-get --key artifactUrl` and pass it to the Artifact tool. The user keeps one bookmark that is always current, rather than accumulating links.
-
-If `dashboardUrl` is set, the same rule applies to the hosted board: run `scripts/publish.py` at the end of the cycle and it overwrites that URL in place. Either way the user keeps one link.
-
-Be accurate about what this is: the page is regenerated when a cycle runs, not continuously live. If asked for genuinely live updating, say plainly that a published page can only refresh itself where the runtime grants it a data capability, and check `artifact-capabilities` for what is actually available rather than promising it.
-
-The stored URL is what lets a fresh session update the board rather than duplicate it; setting it after the first publish is part of finishing that first cycle.
 
 ### Reporting between cycles
 

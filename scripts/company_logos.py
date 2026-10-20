@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safe company-logo metadata for the self-contained dashboard.
+"""Safe company-logo metadata for the board.
 
 Real feed logos and direct employer domains are used when the stored record
 actually knows them. ATS and aggregator hosts are never shown as the employer.

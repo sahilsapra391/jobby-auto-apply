@@ -51,17 +51,16 @@ import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 # accepted: jobs.json is read and rewritten whole, so at 2.8 KB a record this
 # is a ~140 MB file at the ceiling rather than ~8 MB.
 #
-# The board does not carry this. dashboard.publishable_jobs publishes the
-# EMBED_CAP slice plus the true totals, because KV tops out long before this
-# number does.
+# The board reads postings from Postgres and pages them, so this cap bounds
+# the device's own file rather than anything the board carries.
 # 200,000, because the goal is every posting inside the thirty-day window
 # rather than a curated slice. Measured on the real store at 15,400 records:
 # 5,773 bytes each on disk, so 200,000 is about 1.1 GB of jobs.json, and
 # `load_jobs` needs roughly 4.7 GB resident to parse it.
 #
 # That memory figure is the real ceiling, not the disk one, and it is not a
-# number this constant can fix: ingest, publish, dashboard and sync_board each
-# load the whole file. Somewhere well before this cap the store has to stop
+# number this constant can fix: ingest and sync_board each load the whole
+# file. Somewhere well before this cap the store has to stop
 # being one JSON document -- SQLite, or the relational store in
 # docs/plans/multi-tenant-architecture.md. Raising this further without doing
 # that trades a bounded board for an unbootable daemon.

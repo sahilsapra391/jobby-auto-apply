@@ -6,10 +6,9 @@ that dies writes a traceback to `ingest-runs.log`, exits non-zero, releases its
 lock, and is observed by nothing at all. The dead-man ping was composed from
 three warnings and not one of them could see it:
 
-  · `stale_board_warning` reads LAST_DEPLOY and LAST_PUBLISH, which answer
-    "when did we last publish" and not "when did the data last change". The
-    publish keeps succeeding over a frozen store, because it publishes whatever
-    the store holds.
+  · `stale_board_warning` reads LAST_DEPLOY, which answers "when did the board
+    last refresh" and not "when did the data last change". The refresh keeps
+    succeeding over a frozen store.
   · `parked_slot_warning` fired three hundred times during the outage, about a
     different and much less serious problem.
   · `chrome_flag_warning` is unrelated.
@@ -144,7 +143,6 @@ class PoolStalenessTests(unittest.TestCase):
     def test_it_reads_the_pool_and_not_the_publish_stamp(self):
         body = code_of("pool_staleness")
         self.assertIn("jobs_store", body)
-        self.assertNotIn("LAST_PUBLISH", body)
         self.assertNotIn("LAST_DEPLOY", body)
 
     def test_it_returns_a_number_for_a_pool_that_exists(self):
