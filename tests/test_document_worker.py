@@ -883,6 +883,49 @@ class WorkerPipelineTests(unittest.TestCase):
         ):
             self.assertNotIn(private, log)
 
+    def test_a_render_failure_names_its_step_and_cause_in_the_job_log(self):
+        """Job 7762a006, 2026-09-12: "content validated", then "generated
+        artifacts failed validation", and no cause anywhere.
+
+        The renderer here is the real `render_provider_content`, failing inside
+        itself the way a Chrome fault does. The message carries text that must
+        never reach the log, because the repository's own exceptions
+        interpolate document text and paths into theirs.
+        """
+        self.worker.artifact_renderer = worker.render_provider_content
+        leak = worker.resume_pdf.ToolError(
+            "Chrome produced no PDF: Private Candidate private@example.test")
+        with mock.patch.object(worker, "_base_resume_content", return_value={}), \
+                mock.patch.object(worker, "_read_small_json", return_value={}), \
+                mock.patch.object(worker.resume_build, "merge", side_effect=leak):
+            self.worker.run_once()
+
+        self.assertEqual(self.transport.failed[0][2], "result_invalid")
+        log = (self.worker.log_dir / f"{JOB_ID}.log").read_text()
+        lines = [line for line in log.splitlines() if "artifact step failed" in line]
+        self.assertEqual(len(lines), 1, log)
+        self.assertIn("render: resume-pdf.ToolError, raised as ResultInvalid", lines[0],
+                      "the root cause should come first, where the cap cannot cut it")
+        for private in ("Private Candidate", "private@example.test", "Chrome produced"):
+            self.assertNotIn(private, log)
+        # Nothing new crosses the transport: the failure is still one fixed code.
+        self.assertNotIn("ToolError", json.dumps(self.transport.failed, default=str))
+
+    def test_a_validator_failure_is_named_as_validation_not_render(self):
+        def refuse(_runtime):
+            raise worker.ResultInvalid("rendered resume HTML is too large")
+        self.worker.artifact_validator = refuse
+        self.worker.run_once()
+        log = (self.worker.log_dir / f"{JOB_ID}.log").read_text()
+        self.assertIn("artifact step failed artifact validation: ResultInvalid\n", log)
+        self.assertNotIn("rendered resume HTML", log.split("artifact step failed")[1]
+                         .split("\n")[0])
+
+    def test_an_os_error_is_named_by_errno_and_not_by_path(self):
+        exc = FileNotFoundError(2, "No such file", "/Users/someone/Private_Resume.pdf")
+        said = worker.failure_chain(exc)
+        self.assertEqual(said, "FileNotFoundError ENOENT")
+
     def test_once_claims_at_most_one_job(self):
         self.transport.claims.append(claim())
         self.worker.run_once()
