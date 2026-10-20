@@ -414,11 +414,16 @@ export function WatchRow(row: Row) {
               and the column is sized for exactly that. */}
           <Posting url={row.apply_url} />
           <div className="rowacts-btns">
-            <Act className="btn apply" subject={row.id} rowId={row.id}
-                 title="Start work on this one"
-                 body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
-              Apply
-            </Act>
+            {/* An application parked in Watching with a submit nobody has
+                answered gets the answers rather than Apply, which the device
+                refuses in that state for the same reason it refuses Retry. */}
+            {row.unresolved_submit === true ? <SubmitAnswers row={row} /> : (
+              <Act className="btn apply" subject={row.id} rowId={row.id}
+                   title="Start work on this one"
+                   body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+                Apply
+              </Act>
+            )}
             <Act className="xbtn drop" subject={row.id} rowId={row.id}
                  label="Drop this role"
                  body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
@@ -676,6 +681,13 @@ export function ActCard(row: Row) {
         })()}
       </ul>
       <div className="act">
+        {/* **A submit nobody has answered gets the two answers and no Retry.**
+            The device refuses Retry while the latest event is `submitting`, so
+            an enabled Retry here is a button that does nothing. Open & finish
+            goes too: its re-fill is fill-only, which `do_not_start` lets past
+            a `submitting`, and putting the same form back in front of a person
+            who may already have sent it is how it goes in twice. */}
+        {row.unresolved_submit === true ? <SubmitAnswers row={row} /> : (<>
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
              body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
           Retry
@@ -702,6 +714,7 @@ export function ActCard(row: Row) {
              body={{ applicationId: s(row.legacy_id), event: "completed" }}>
           Confirm submitted
         </Act>
+        </>)}
         <Act className="btn drop" subject={row.id} rowId={row.id}
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Drop
@@ -715,6 +728,33 @@ export function ActCard(row: Row) {
         <span className="ats">{s(row.ats) ?? ""}</span>
       </div>
     </article>
+  );
+}
+
+/**
+ * The two honest answers to an unresolved submit: it went in, or it did not.
+ *
+ * Confirm submitted writes `completed` through `apply_marks.py`, the path
+ * Needs you has always used. "It did not go through" writes `abandoned` with
+ * `confirmedBy: user` through the same script's `--unsent`, and hands the
+ * application back to Needs you, where Retry starts a fresh run because the
+ * latest event is no longer `submitting`. Stop is not one of them: it is a
+ * drop, it writes no event, and the submit stays unresolved for ever.
+ */
+function SubmitAnswers({ row }: { row: Row }) {
+  return (
+    <>
+      <Act className="btn mark" subject={row.id} rowId={row.id}
+           title="Record that this one went in"
+           body={{ applicationId: s(row.legacy_id), event: "completed" }}>
+        Confirm submitted
+      </Act>
+      <Act className="btn ghost" subject={row.id} rowId={row.id} keep
+           title="Nothing arrived, so nothing was sent; Retry can start a fresh run"
+           body={{ applicationId: s(row.legacy_id), event: "abandoned" }}>
+        It did not go through
+      </Act>
+    </>
   );
 }
 
@@ -745,10 +785,20 @@ export function FlightCard(row: Row) {
         {s(row.phase_detail)
           ? <span className="why">{s(row.phase_detail)}</span> : null}</p>
       <div className="act">
-        <Act className="btn retry" subject={row.id} rowId={row.id} keep
-             body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
-          Retry
-        </Act>
+        {/* **No Retry while a submit is unanswered**, because the device
+            refuses it. Nor the two answers: an In flight card with a latest
+            `submitting` is usually a run between `pre_submit` and
+            `record_completed`, and an `abandoned` written under it would make
+            the agent's own confirmation fail its nonce check. The device moves
+            the card to Needs you, where the answers are, the moment no runner
+            holds it (`run_apply.hand_back_unconfirmed_submit`, and
+            `watch.sweep_stuck` for a runner that died). */}
+        {row.unresolved_submit === true ? null : (
+          <Act className="btn retry" subject={row.id} rowId={row.id} keep
+               body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
+            Retry
+          </Act>
+        )}
         <Act className="btn drop" subject={row.id} rowId={row.id}
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Stop
