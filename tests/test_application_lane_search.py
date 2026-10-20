@@ -186,6 +186,3 @@ class ApplicationLaneSearchTests(pgtest.SchemaCase):
         self.assertEqual(
             self.lane([("lane", "watch"), ("q", "posting closed")])["rows"], [])
 
-
-if __name__ == "__main__":
-    unittest.main()
