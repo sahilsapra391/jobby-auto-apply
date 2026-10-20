@@ -632,8 +632,45 @@ def _set_phase(application_id, *args):
     )
 
 
+def hand_back_unconfirmed_submit(application_id, outcome):
+    """Put a run that clicked Submit and saw nothing where a person can act.
+
+    `submission_unverified` means the latest event is `submitting` with no
+    `completed` or `abandoned` after it. Nothing marks it completed, because
+    nobody saw a confirmation, and nothing restores it, because the form may
+    well have gone in. What was missing was the move: the session stayed
+    `inflight` at phase "Submitting", so the card sat in In flight offering a
+    Retry the device refuses and a Stop that resolves nothing. Davies
+    c9fcfeed85ae12c8 on 2026-09-12.
+
+    `phase.py --unconfirmed` moves it to Needs you with one pending item asking
+    the user to check their email or the employer's portal, and refuses a
+    dropped application like every other branch there. Returns what it did,
+    or None when the outcome was something else.
+    """
+    if (outcome or {}).get("terminal") != "submission_unverified":
+        return None
+    moved = _set_phase(application_id, "--unconfirmed")
+    try:
+        answer = json.loads(moved.stdout or "{}")
+    except json.JSONDecodeError:
+        answer = {}
+    if moved.returncode != 0:
+        return {"moved": False,
+                "why": (moved.stderr or moved.stdout or "phase update failed").strip()[:200]}
+    if answer.get("refused"):
+        return {"moved": False, "why": answer.get("why") or answer["refused"]}
+    return {"moved": True, "status": answer.get("status"), "phase": answer.get("phase")}
+
+
 def restore_preflight_refusal(application_id, slot, reason):
-    """Return a refused start to its prior lane and release its empty slot."""
+    """Return a refused start to its prior lane and release its empty slot.
+
+    A start refused because the user dropped the application stays dropped:
+    `phase.py --restore` refuses every dropped session, which is what keeps
+    this handler from undoing the drop it is honouring (Tabby
+    cf038ad790a47994, 2026-09-12).
+    """
     _set_phase(
         application_id,
         "--restore",
@@ -1201,6 +1238,7 @@ def _run(argv=None):
                 "--detail",
                 f"{detail}; see {log.name}",
             )
+    unconfirmed = hand_back_unconfirmed_submit(application_id, outcome)
 
     print(json.dumps({
         "ran": application_id,
@@ -1214,6 +1252,7 @@ def _run(argv=None):
         "authFailed": auth_failed,
         "outcome": outcome,
         "browserSlotRelease": slot_release,
+        "unconfirmedSubmit": unconfirmed,
         "log": str(log),
     }, indent=2))
     return result_code

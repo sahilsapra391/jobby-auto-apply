@@ -182,7 +182,22 @@ COMPLETED_AT = """(select h.at from application_events h
                where h.application_id = a.id and h.kind = 'completed'
                order by h.at desc limit 1)"""
 
+#: Whether a submit was attempted and nothing has answered it: the latest event
+#: is `submitting`, with no `completed` or `abandoned` after it.
+#:
+#: **The card decides its controls from this, not from `status` or `phase`.**
+#: The device refuses Retry in exactly this state (`watch.do_not_start`), so a
+#: card offering an enabled Retry here offers a button that does nothing; and
+#: the two controls that do resolve it, Confirm submitted and It did not go
+#: through, belong on whichever lane the card is in. Davies c9fcfeed85ae12c8
+#: sat in In flight at phase "Submitting" offering Retry and Stop and neither
+#: could resolve it. `nulls last` because `desc` sorts a NULL `at` first.
+UNRESOLVED_SUBMIT = """coalesce((select h.kind from application_events h
+               where h.application_id = a.id
+               order by h.at desc nulls last limit 1) = 'submitting', false)"""
+
 APPLICATION_COLUMNS = f"""a.id, a.legacy_id, a.status, a.phase, a.phase_detail,
+             {UNRESOLVED_SUBMIT} as unresolved_submit,
              a.updated_at,
              a.created_at, a.posting_id,
              a.posting_id is not null as linked,

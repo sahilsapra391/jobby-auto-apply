@@ -65,21 +65,44 @@ def load_entries():
     return out
 
 
-def plan(entries):
+def person_stem(profile):
+    """The name part of a legacy filename, `First_Last`, from the profile.
+
+    Read from the profile rather than written here, so the rule names nobody.
+    An empty profile gives an empty stem, which matches no real file: the
+    caller learns nothing was attributed rather than being handed a guess.
+    """
+    profile = profile or {}
+    return "_".join(part for part in (slug(profile.get("firstName")),
+                                      slug(profile.get("lastName"))) if part)
+
+
+def load_profile():
+    root = Path(os.environ.get("JOB_APPLICATION_DIR")
+                or "~/.job-application").expanduser()
+    try:
+        return json.loads((root / "profile.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def plan(entries, person):
     """Decide each application's filename stem, disambiguating shared companies."""
     per_company = Counter(slug(c) for c, _ in entries.values() if c)
     stems = {}
+    if not person:
+        return stems
     for aid, (company, role) in entries.items():
         if not company:
             continue
-        stem = f"Sahil_Sapra_{slug(company)}"
+        stem = f"{person}_{slug(company)}"
         if per_company[slug(company)] > 1:
             stem += f"_{short_role(role)}"
         stems[aid] = (company, stem)
     return stems
 
 
-def cmd_migrate(args, stems):
+def cmd_migrate(args, stems, person):
     moved, collisions = 0, []
     by_slug = {}
     for aid, (company, stem) in stems.items():
@@ -90,7 +113,8 @@ def cmd_migrate(args, stems):
         if not src_dir.exists():
             continue
         for f in sorted(src_dir.glob("*.pdf")):
-            m = re.match(r"Sahil_Sapra_(.+?)_(Resume|CoverLetter)\.pdf$", f.name)
+            m = re.match(re.escape(person) + r"_(.+?)_(Resume|CoverLetter)\.pdf$",
+                         f.name)
             if not m:
                 collisions.append(f"unparsed filename, left in place: {f.name}")
                 continue
@@ -138,8 +162,13 @@ def main():
 
     APPS.mkdir(parents=True, exist_ok=True)
     os.chmod(APPS, 0o700)
-    stems = plan(load_entries())
-    result = cmd_check(args, stems) if args.check else cmd_migrate(args, stems)
+    person = person_stem(load_profile())
+    if not person:
+        print("file_docs: the profile has no name, so no filename can be planned",
+              file=sys.stderr)
+        return 1
+    stems = plan(load_entries(), person)
+    result = cmd_check(args, stems) if args.check else cmd_migrate(args, stems, person)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

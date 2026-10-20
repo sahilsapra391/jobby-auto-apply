@@ -11,13 +11,17 @@ Run from the repo root: python3 -m unittest discover -s tests
 import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -180,8 +184,8 @@ class LayoutTest(unittest.TestCase):
         cls.aid = "bc839847c93d9e46"
         session = {"applicationId": cls.aid, "company": "Acme Corp",
                    "role": "Product Manager", "status": "active",
-                   "resumeVariant": "Sahil_Sapra_Acme_PM_Resume.pdf",
-                   "coverLetter": "Sahil_Sapra_Acme_PM_CoverLetter.pdf"}
+                   "resumeVariant": "Alex_Example_Acme_PM_Resume.pdf",
+                   "coverLetter": "Alex_Example_Acme_PM_CoverLetter.pdf"}
         payload = cls.tmp / "s.json"
         payload.write_text(json.dumps(session), encoding="utf-8")
         store(cls.store_root, "session-save", "--id", cls.aid, "--input", str(payload))
@@ -189,8 +193,8 @@ class LayoutTest(unittest.TestCase):
         cls.apps = cls.tmp / "applications"
         folder = cls.apps / "Acme Corp"
         folder.mkdir(parents=True)
-        (folder / "Sahil_Sapra_Acme_PM_Resume.pdf").write_bytes(b"%PDF resume")
-        (folder / "Sahil_Sapra_Acme_PM_CoverLetter.pdf").write_bytes(b"%PDF cover")
+        (folder / "Alex_Example_Acme_PM_Resume.pdf").write_bytes(b"%PDF resume")
+        (folder / "Alex_Example_Acme_PM_CoverLetter.pdf").write_bytes(b"%PDF cover")
         (folder / f"jd-{cls.aid}.txt").write_text("the posting", encoding="utf-8")
         (folder / f"questions-{cls.aid}.json").write_text('{"q":"a"}', encoding="utf-8")
         (folder / f"confirm-{cls.aid}.png").write_bytes(b"\x89PNG capture")
@@ -206,9 +210,9 @@ class LayoutTest(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def test_generated_documents_are_keyed_by_application_and_kind(self):
-        self.assertEqual(self.keys["Sahil_Sapra_Acme_PM_Resume.pdf"],
+        self.assertEqual(self.keys["Alex_Example_Acme_PM_Resume.pdf"],
                          f"u/account-1/app/{self.aid}/resume.pdf")
-        self.assertEqual(self.keys["Sahil_Sapra_Acme_PM_CoverLetter.pdf"],
+        self.assertEqual(self.keys["Alex_Example_Acme_PM_CoverLetter.pdf"],
                          f"u/account-1/app/{self.aid}/cover.pdf")
 
     def test_the_job_description_and_answers_ride_with_their_application(self):
@@ -245,7 +249,7 @@ class LayoutTest(unittest.TestCase):
 
     def test_a_pdf_is_served_as_a_pdf(self):
         kinds = {a["name"]: a["contentType"] for a in self.plan["artifacts"]}
-        self.assertEqual(kinds["Sahil_Sapra_Acme_PM_Resume.pdf"], "application/pdf")
+        self.assertEqual(kinds["Alex_Example_Acme_PM_Resume.pdf"], "application/pdf")
         self.assertEqual(kinds[f"confirm-{self.aid}.png"], "image/png")
 
     def test_the_plan_is_stable_across_runs(self):
@@ -942,3 +946,30 @@ class PreferenceSurvivesEvictionTest(unittest.TestCase):
                               apply=True, client=self.client)
         self.assertGreater(result.get("refusedDowngrade", 0), 0,
                            "the guard's own branch has to execute in some test")
+
+
+class DeadlineTest(unittest.TestCase):
+    """`--deadline` bounds the watcher's periodic sweep from inside the child."""
+
+    def test_a_sweep_past_its_deadline_exits_3_and_says_so(self):
+        def slow_sync(*args, **kwargs):
+            time.sleep(5)
+            return {}
+
+        stderr = io.StringIO()
+        with mock.patch.object(r2_sync.r2_artifacts, "collect", return_value={"artifacts": []}), \
+             mock.patch.object(r2_sync, "sync", side_effect=slow_sync), \
+             contextlib.redirect_stderr(stderr):
+            started = time.time()
+            code = r2_sync.main(["--apply", "--deadline", "1"])
+        self.assertEqual(code, 3)
+        self.assertLess(time.time() - started, 4)
+        self.assertIn("gave up after 1s", stderr.getvalue())
+
+    def test_a_sweep_inside_its_deadline_is_unaffected_and_disarms_the_alarm(self):
+        stdout = io.StringIO()
+        with mock.patch.object(r2_sync.r2_artifacts, "collect", return_value={"artifacts": []}), \
+             mock.patch.object(r2_sync, "sync", return_value={"objects": 0}), \
+             contextlib.redirect_stdout(stdout):
+            self.assertEqual(r2_sync.main(["--apply", "--deadline", "60"]), 0)
+        self.assertEqual(signal.alarm(0), 0)

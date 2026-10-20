@@ -27,8 +27,8 @@ TEMPLATE = ROOT / "templates" / "resume.html"
 BASE = ROOT / "templates" / "resume-content.json"
 
 SAMPLE = """<style>.x{y:1}</style>
-<div class="name">SAHIL SAPRA</div>
-<div class="contact">Charlotte, NC | someone@example.com</div>
+<div class="name">ALEX EXAMPLE</div>
+<div class="contact">Springfield, IL | someone@example.com</div>
 <div class="banner">PRODUCT MANAGER</div>
 <div class="body summary">A summary with R&amp;D and a &rsquo; in it.</div>
 <div class="sec">AREAS OF EXPERTISE</div>
@@ -37,7 +37,7 @@ SAMPLE = """<style>.x{y:1}</style>
 <div class="sec">TECHNICAL PROFICIENCIES</div>
 <div class="tech"><b>Languages:</b> Python, SQL</div>
 <div class="sec">EXPERIENCE</div>
-<div class="org">CAMP Systems, Charlotte, NC<span class="when">2024 &ndash; 2026</span></div>
+<div class="org">Northwind Logistics, Springfield, IL<span class="when">2024 &ndash; 2026</span></div>
 <div class="jobtitle">Technical Product Manager (2025 &ndash; 2026)</div>
 <div class="body lede">Owned the tooling.</div>
 <ul>
@@ -67,12 +67,12 @@ class RoundTripTests(unittest.TestCase):
 
     def test_the_frozen_parts_stay_in_the_template(self):
         template, content = rb.extract(SAMPLE)
-        for frozen in ("SAHIL SAPRA", "CAMP Systems", "Technical Product Manager",
+        for frozen in ("ALEX EXAMPLE", "Northwind Logistics", "Technical Product Manager",
                        "2025 &ndash; 2026", "someone@example.com"):
             self.assertIn(frozen, template, frozen)
         # and are not something a caller can set
-        self.assertNotIn("SAHIL SAPRA", json.dumps(content))
-        self.assertNotIn("CAMP Systems", json.dumps(content))
+        self.assertNotIn("ALEX EXAMPLE", json.dumps(content))
+        self.assertNotIn("Northwind Logistics", json.dumps(content))
 
 
 class MergeTests(unittest.TestCase):
@@ -209,14 +209,27 @@ def profile_has_a_name():
     return bool(name.strip())
 
 
+FIXTURE_PROFILE = {
+    "firstName": "Alex", "lastName": "Example", "email": "alex@example.com",
+    "resumes": [{"key": "us", "default": True, "appliesTo": ["US"],
+                 "identity": {"location": "Springfield, IL", "phone": "5550100100"}}],
+}
+
+
 class ShippedTemplateTests(unittest.TestCase):
     def test_the_shipped_template_and_base_render_together(self):
+        """The fictional profile supplies the identity, so this runs anywhere
+        and never depends on whose machine it is."""
         if not (TEMPLATE.exists() and BASE.exists()):
             self.skipTest("template not present")
-        if not profile_has_a_name():
-            self.skipTest("no profile on this machine to render an identity from")
-        out = rb.render(TEMPLATE.read_text(), json.loads(BASE.read_text()))
-        self.assertIn("SAHIL SAPRA", out)
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "profile.json").write_text(json.dumps(FIXTURE_PROFILE))
+            content = json.loads(BASE.read_text())
+            content["storeRoot"] = root
+            out = rb.render(TEMPLATE.read_text(), content)
+        self.assertIn("ALEX EXAMPLE", out.upper())
+        self.assertIn("Northwind Logistics Inc.", out)
         self.assertNotIn("{{", out)
 
     def test_the_template_leaves_no_placeholder_unfilled(self):
@@ -250,6 +263,57 @@ class ShippedTemplateTests(unittest.TestCase):
             self.skipTest("base content not present")
         base = json.loads(BASE.read_text())
         rb.assert_integrity(base, base)
+
+class FrameTests(unittest.TestCase):
+    """Employers, dates, titles and education come from the content's frame.
+
+    They used to be literal text in the tracked template, which put one
+    person's work history in the repository. A missing frame value refuses by
+    name: a resume with a blank employer line is a document with a hole in it.
+    """
+
+    TEMPLATE = ('<div class="org">{{frame_org0}}<span class="when">'
+                '{{frame_when0}}</span></div>')
+
+    def test_the_frame_fills_its_slots_and_keeps_entities(self):
+        out = rb.fill_frame(self.TEMPLATE, {"frame": {
+            "org0": "Northwind &amp; Co", "when0": "2024 &ndash; 2026"}})
+        self.assertEqual(out, '<div class="org">Northwind &amp; Co<span class="when">'
+                              '2024 &ndash; 2026</span></div>')
+
+    def test_a_missing_frame_is_refused(self):
+        with self.assertRaises(SystemExit):
+            rb.fill_frame(self.TEMPLATE, {})
+
+    def test_a_missing_value_is_refused_by_name(self):
+        with self.assertRaises(SystemExit) as caught:
+            rb.fill_frame(self.TEMPLATE, {"frame": {"org0": "Northwind"}})
+        self.assertIn("when0", str(caught.exception))
+
+    def test_markup_in_a_frame_value_cannot_reach_the_page(self):
+        out = rb.fill_frame(self.TEMPLATE, {"frame": {
+            "org0": "<script>x</script>", "when0": "2024"}})
+        self.assertNotIn("<script>", out)
+
+    def test_a_template_without_slots_needs_no_frame(self):
+        self.assertEqual(rb.fill_frame("<p>plain</p>", {}), "<p>plain</p>")
+
+    def test_the_shipped_template_has_no_employer_written_into_it(self):
+        if not (TEMPLATE.exists() and BASE.exists()):
+            self.skipTest("template not present")
+        base = json.loads(BASE.read_text())
+        text = TEMPLATE.read_text()
+        for value in base["frame"].values():
+            if len(value) > 6 and value not in ("Head of Product",
+                                                 "ENTREPRENEURIAL VENTURES"):
+                self.assertNotIn(value, text, value)
+
+    def test_a_provider_override_cannot_reach_the_frame(self):
+        base = {"frame": {"org0": "Northwind"}, "banner": "B", "summary": "S",
+                "areasOfExpertise": [], "technical": [], "roles": []}
+        merged = rb.merge(base, {"frame": {"org0": "Somewhere else"}})
+        self.assertEqual(merged["frame"], {"org0": "Northwind"})
+
 
 class VariableTechnicalTests(unittest.TestCase):
     """Regrouping Technical Proficiencies is part of the tailoring.

@@ -799,7 +799,7 @@ def _save_watch_sessions(candidates, root=None, id_factory=_candidate_id):
 def _save_found_jobs(candidates, root=None):
     """Put validated candidates into the Found lane.
 
-    Sahil's rule: a scan may only add to Found. Watching is his shelf and the
+    The owner's rule: a scan may only add to Found. Watching is their shelf and the
     eye is the only route onto it. A sweep that writes watch entries puts roles
     in front of him he never chose, which is the opposite of what the lane is
     for — and it is how 44 of 49 live watch entries got there.

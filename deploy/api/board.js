@@ -493,7 +493,7 @@ async function handleDocument(request, pathname) {
   // untrusted: only a plain filename may become a KV key or reach the index.
   //
   // The space is deliberate and was a real bug. Ten of the 426 stored artifacts
-  // are named like "Sahil Sapra - Resume - Senior Project Manager.pdf", from
+  // are named like "Alex Example - Resume - Senior Project Manager.pdf", from
   // before document_contract owned the naming, and two of them are documents an
   // employer actually received and the Submitted tab actually links to. The
   // guard rejected them before anything was even looked up, so those two links

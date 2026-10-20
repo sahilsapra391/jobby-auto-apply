@@ -113,11 +113,11 @@ class RenderSourceTests(unittest.TestCase):
             path = pathlib.Path(d) / ".resume.html"
             path.write_text(
                 "<style>.x{color:red}</style>"
-                "<div class='org'>CAMP Systems &amp; Co</div>"
+                "<div class='org'>Northwind Logistics &amp; Co</div>"
                 "<script>var a=1</script>"
                 "<ul><li>Raised coverage from 62% to 81%&rsquo;s peak</li></ul>")
             text = ats.document_text(path)
-            self.assertIn("CAMP Systems & Co", text)
+            self.assertIn("Northwind Logistics & Co", text)
             self.assertIn("62%", text)
             self.assertNotIn("<div", text)
             self.assertNotIn("&amp;", text)

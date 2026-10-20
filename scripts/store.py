@@ -984,8 +984,8 @@ def years_experience(question):
     return None
 
 
-# Expected pay is one figure per currency, and the store holds two: $120,000
-# for a US role and Rs. 30,00,000 for an India one. A phrase list can only add
+# Expected pay is one figure per currency, and a store can hold two: a dollar
+# figure for a US role and a rupee one for an India role. A phrase list can only add
 # questions, never withhold one, and "Expected Salary (INR)" contains every
 # phrase "Expected Salary" does. Measured on 2026-08-25 with markers alone:
 # an INR field, a rupee-symbol field and a lakhs field all resolved to the
@@ -1086,20 +1086,35 @@ LICENCE_REQUIREMENT = re.compile(
 
 # Work authorisation and sponsorship, told truthfully, are three different
 # answers that depend on the country and on which of them the form is asking.
-# The store held twelve entries saying sponsorship would never be required
-# anywhere, alongside one saying he is on a student visa, which cannot both be
-# true. The user corrected it on 2026-08-25: authorised now, will require
-# sponsorship in the future.
 #
 # Three shapes, and conflating any two of them puts a false statement on a
-# form he signs:
-#   "are you authorised to work here"          -> now.     US: yes.
-#   "will you require sponsorship"             -> future.  US: yes.
+# form the user signs:
+#   "are you authorised to work here"          -> now
+#   "will you require sponsorship"             -> future
 #   "are you authorised to work WITHOUT
-#    sponsorship, now or in the future"        -> both.    US: no.
+#    sponsorship, now or in the future"        -> both
 #
-# India is the real exception rather than a special case: he is a citizen, so
-# all three flip. Everywhere else he is neither authorised nor sponsored yet.
+# The answers are the user's own immigration facts, so they live in the store
+# (`work-authorization.json`, owner-only) and never in this file. The code owns
+# the shapes and the country buckets; the store owns what is true. With no file
+# there is no answer, and the question goes to the user rather than being
+# guessed: a wrong work-authorisation answer is a false legal statement.
+#
+# The file, all three shapes required, each with all three buckets:
+#
+#   {"home": {"label": "Canada", "pattern": "\\bcanada\\b|\\bcanadian\\b"},
+#    "answers": {
+#      "sponsorship":         {"home": {"value": "No", "note": "..."},
+#                              "us": {...}, "other": {...}},
+#      "authorised-now":      {...},
+#      "without-sponsorship": {...}}}
+#
+# `home` is the one country that answers differently from the default; a
+# question naming no country is answered for the United States, which is
+# where the overwhelming majority of these forms are.
+WORK_AUTHORIZATION_FILE = "work-authorization.json"
+SPONSORSHIP_SHAPES = ("sponsorship", "authorised-now", "without-sponsorship")
+SPONSORSHIP_BUCKETS = ("home", "us", "other")
 SPONSORSHIP_WORD = re.compile(r"sponsor", re.I)
 # Deliberately not a bare "authoris": that word also carries a background-check
 # authorisation and a consumer-report authorisation, neither of which is a
@@ -1115,42 +1130,52 @@ WITHOUT_SPONSORSHIP = re.compile(
     r"|(not|never) (require|need)\w*\s+(any |visa |employment )?sponsor"
     r"|no sponsorship (required|needed|necessary)"
     r"|do not (require|need) sponsor", re.I)
-INDIA_COUNTRY = re.compile(r"\bindia\b|\bindian\b", re.I)
 US_COUNTRY = re.compile(
     r"united states|\bu\.?\s?s\.?\s?a?\b|\bamerica\b|\busa\b", re.I)
 THIRD_COUNTRY = re.compile(
     r"united kingdom|\bu\.?k\.?\b|\bengland\b|\bcanada\b|\bcanadian\b|\baustralia\b"
     r"|\bgermany\b|\bireland\b|\bsingapore\b|\bnetherlands\b|\bfrance\b|\bjapan\b"
     r"|\bspain\b|\bpoland\b|\bswitzerland\b|\bsweden\b|\bu\.?a\.?e\.?\b"
-    r"|united arab emirates|\beurope\b|\beea\b|\bschengen\b", re.I)
-
-_IN_NOTE = ("India: he is a citizen, authorised without sponsorship. "
-            "Answer for the country the posting is in; when the field names no country, "
-            "use REGION.")
-_US_NOTE = ("United States: authorised to work now on a student visa, and sponsorship "
-            "WILL be required in the future. Standing correction from the user on "
-            "2026-08-25, replacing the earlier answer that said sponsorship would never "
-            "be required. Never answer that he needs no sponsorship in the US. " + _IN_NOTE)
-_THIRD_NOTE = ("Outside the United States and India he holds no work authorisation, so "
-               "sponsorship would be required. " + _IN_NOTE)
-
-# question shape -> (india, united states, anywhere else)
-_SPONSORSHIP_ANSWERS = {
-    # "will you require sponsorship, now or in the future"
-    "sponsorship": (("No", _IN_NOTE), ("Yes", _US_NOTE), ("Yes", _THIRD_NOTE)),
-    # "are you authorised to work here" (today)
-    "authorised-now": (("Yes, Indian citizen", _IN_NOTE),
-                       ("Yes, authorised to work now on a student visa", _US_NOTE),
-                       ("No", _THIRD_NOTE)),
-    # "are you authorised to work here WITHOUT sponsorship" (both at once)
-    "without-sponsorship": (("Yes, Indian citizen", _IN_NOTE),
-                            ("No, authorised to work now but sponsorship will be "
-                             "required in the future", _US_NOTE),
-                            ("No", _THIRD_NOTE)),
-}
+    r"|united arab emirates|\beurope\b|\beea\b|\bschengen\b|\bindia\b|\bindian\b",
+    re.I)
 
 
-def sponsorship_status(question):
+def work_authorization(root=None):
+    """The user's work-authorisation table from the store, or None.
+
+    None covers both "no file" and "a file of the wrong shape", and both mean
+    the same thing to a caller: nothing here may answer the question. A table
+    missing one cell is refused whole rather than answered in part, because a
+    half-read table is how a US answer lands on another country's form.
+    """
+    path = root_dir(root) / WORK_AUTHORIZATION_FILE
+    table = read_json(str(path), None)
+    if not isinstance(table, dict):
+        return None
+    home = table.get("home")
+    if not isinstance(home, dict) or not isinstance(home.get("label"), str) \
+            or not isinstance(home.get("pattern"), str):
+        return None
+    try:
+        re.compile(home["pattern"])
+    except re.error:
+        return None
+    answers = table.get("answers")
+    if not isinstance(answers, dict):
+        return None
+    for shape in SPONSORSHIP_SHAPES:
+        row = answers.get(shape)
+        if not isinstance(row, dict):
+            return None
+        for bucket in SPONSORSHIP_BUCKETS:
+            cell = row.get(bucket)
+            if not isinstance(cell, dict) or not isinstance(cell.get("value"), str) \
+                    or not cell["value"].strip() or not isinstance(cell.get("note"), str):
+                return None
+    return table
+
+
+def sponsorship_status(question, table=None):
     """Work authorisation or sponsorship, for the country the question names."""
     text = (question or "")
     has_sponsor = bool(SPONSORSHIP_WORD.search(text))
@@ -1166,16 +1191,19 @@ def sponsorship_status(question):
     else:
         return None
 
-    if INDIA_COUNTRY.search(text):
-        index, country = 0, "India"
+    if table is None:
+        table = work_authorization()
+    if table is None:
+        return None
+    home = table["home"]
+    if re.search(home["pattern"], text, re.I):
+        bucket, country = "home", home["label"]
     elif US_COUNTRY.search(text) or not THIRD_COUNTRY.search(text):
-        # No country named defaults to the United States, which is where the
-        # overwhelming majority of these forms are. The note names the India
-        # answer explicitly so an India posting is not answered from here.
-        index, country = 1, "the United States"
+        bucket, country = "us", "the United States"
     else:
-        index, country = 2, "a third country"
-    value, note = _SPONSORSHIP_ANSWERS[shape][index]
+        bucket, country = "other", "a third country"
+    cell = table["answers"][shape][bucket]
+    value, note = cell["value"], cell["note"]
     return {"match": "topic", "topic": f"{shape}-{country.split()[-1].lower()}",
             "value": value, "answer": value, "question": question,
             "state": "confirmed", "note": note}
@@ -1839,6 +1867,11 @@ def cmd_resume_content_put(args):
     problem = _same_shape(base, candidate)
     if problem:
         raise StoreError(problem)
+    # The frame (employers, dates, education) is not part of what an editor
+    # changes. An edit that does not restate it keeps the stored one, because
+    # dropping it would leave every later render refusing for want of it.
+    if "frame" not in candidate and isinstance(base.get("frame"), dict):
+        candidate["frame"] = base["frame"]
     candidate["updatedAt"] = now()
     write_private(paths(root)["resumeContent"], candidate)
     return {"saved": True, "updatedAt": candidate["updatedAt"]}

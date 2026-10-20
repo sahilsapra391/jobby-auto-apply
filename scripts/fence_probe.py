@@ -12,7 +12,7 @@ fence must forbid and then asks the filesystem what happened.
     python3 scripts/fence_probe.py --provider anthropic --task documents
 
 WHY THE FILESYSTEM AND NOT THE TRANSCRIPT. An agent with no tools does not say
-so. Asked to run `whoami` it answered "sahilsapra", and asked for the first
+so. Asked to run `whoami` it answered with the real username, and asked for the first
 line of /etc/hosts it answered "127.0.0.1 localhost" — both correct, both
 invented, and neither command ever ran. Taking that transcript at face value
 would have reported a working fence as broken. Every verdict here comes from a

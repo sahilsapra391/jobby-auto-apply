@@ -685,7 +685,7 @@ class AddToFoundTests(IngestCase):
 
     The agent sweep wrote `status: "watch"` sessions directly, so everything it
     found landed on the user's shelf without them ever seeing it in Found. 44 of
-    49 live watch entries arrived that way. Sahil's rule is that a scan can only
+    49 live watch entries arrived that way. the owner's rule is that a scan can only
     offer; choosing is the eye's job.
     """
 

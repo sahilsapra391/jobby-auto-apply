@@ -85,7 +85,7 @@ class RecordFileTests(unittest.TestCase):
              "answer": "Yes", "source": "stored",
              "sourceKey": "legally-authorized-to-work-in-the-us",
              "readBack": "match"},
-            {"question": "First name", "answer": "Sahil", "source": "profile",
+            {"question": "First name", "answer": "Alex", "source": "profile",
              "readBack": "match"},
             {"question": "Why do you want this role?",
              "answer": "Written from the tailored resume.", "source": "generated",
@@ -108,14 +108,14 @@ class RecordFileTests(unittest.TestCase):
         self.assertTrue(record["capturedAt"].endswith("Z"))
 
     def test_the_record_is_filed_beside_that_company_s_documents(self):
-        self.write([{"question": "First name", "answer": "Sahil",
+        self.write([{"question": "First name", "answer": "Alex",
                      "source": "profile", "readBack": "match"}])
         self.assertTrue((self.apps / "Acme" / "answers-app-1.json").exists())
         self.assertEqual(answer_record.captured_ids(self.store), {"app-1"})
         self.assertEqual(answer_record.load("app-1")["company"], "Acme")
 
     def test_a_record_is_written_owner_only(self):
-        self.write([{"question": "First name", "answer": "Sahil",
+        self.write([{"question": "First name", "answer": "Alex",
                      "source": "profile", "readBack": "match"}])
         mode = (self.apps / "Acme" / "answers-app-1.json").stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
@@ -123,9 +123,9 @@ class RecordFileTests(unittest.TestCase):
     def test_two_roles_at_one_company_keep_separate_records(self):
         (self.store / "sessions" / "app-2.json").write_text(json.dumps({
             "applicationId": "app-2", "company": "Acme", "role": "Staff PM"}))
-        self.write([{"question": "First name", "answer": "Sahil",
+        self.write([{"question": "First name", "answer": "Alex",
                      "source": "profile", "readBack": "match"}])
-        self.write([{"question": "Last name", "answer": "Sapra",
+        self.write([{"question": "Last name", "answer": "Example",
                      "source": "profile", "readBack": "match"}], "app-2")
         self.assertEqual(answer_record.captured_ids(self.store), {"app-1", "app-2"})
         self.assertEqual(self.read("app-2")["fields"][0]["question"], "Last name")
@@ -136,7 +136,7 @@ class RecordFileTests(unittest.TestCase):
         self.write([
             {"question": "Enter the verification code we emailed you",
              "answer": "884213", "source": "provided", "readBack": "match"},
-            {"question": "First name", "answer": "Sahil", "source": "profile",
+            {"question": "First name", "answer": "Alex", "source": "profile",
              "readBack": "match"},
         ])
         raw = (self.apps / "Acme" / "answers-app-1.json").read_text()
@@ -272,7 +272,7 @@ class RecordFileTests(unittest.TestCase):
 
     def test_a_key_on_a_source_that_is_not_the_store_is_refused(self):
         with self.assertRaises(answer_record.RecordError):
-            self.write([{"question": "First name", "answer": "Sahil",
+            self.write([{"question": "First name", "answer": "Alex",
                          "source": "profile", "readBack": "match",
                          "sourceKey": "legally-authorized-to-work-in-the-us"}])
 
@@ -296,14 +296,14 @@ class RecordFileTests(unittest.TestCase):
     def test_the_same_question_twice_is_refused(self):
         with self.assertRaises(answer_record.RecordError):
             self.write([
-                {"question": "First name", "answer": "Sahil", "source": "profile"},
+                {"question": "First name", "answer": "Alex", "source": "profile"},
                 {"question": "first name", "answer": "Other", "source": "profile"},
             ])
 
     def test_a_refused_manifest_writes_nothing_at_all(self):
         with self.assertRaises(answer_record.RecordError):
             self.write([
-                {"question": "First name", "answer": "Sahil", "source": "profile"},
+                {"question": "First name", "answer": "Alex", "source": "profile"},
                 {"question": "Bad", "answer": "x", "source": "nonsense"},
             ])
         self.assertFalse((self.apps / "Acme").exists())
@@ -321,16 +321,16 @@ class RecordFileTests(unittest.TestCase):
         (self.store / "applications.jsonl").write_text(json.dumps({
             "event": "completed", "applicationId": "app-1", "company": "Acme",
             "role": "Product Manager"}) + "\n")
-        self.write([{"question": "First name", "answer": "Sahil",
+        self.write([{"question": "First name", "answer": "Alex",
                      "source": "profile"}])
         self.assertTrue((self.apps / "Acme" / "answers-app-1.json").exists())
 
     def test_a_control_character_in_a_question_does_not_survive(self):
-        self.write([{"question": "Full\x07 name", "answer": "Sahil\x00x",
+        self.write([{"question": "Full\x07 name", "answer": "Alex\x00x",
                      "source": "profile"}])
         field = self.read()["fields"][0]
         self.assertEqual(field["question"], "Full name")
-        self.assertEqual(field["answer"], "Sahilx")
+        self.assertEqual(field["answer"], "Alexx")
 
     def test_a_record_over_the_ceiling_is_refused(self):
         with self.assertRaises(answer_record.RecordError) as caught:
@@ -374,7 +374,7 @@ class PublicRecordTests(unittest.TestCase):
     def test_the_sensitive_flag_survives_even_though_nothing_draws_it(self):
         """The board shows pay and demographics plainly. The flag stays anyway.
 
-        Sahil's board has one reader who already knows his own salary, so
+        The owner's board has one reader who already knows his own salary, so
         covering it was friction protecting nobody. That is a decision about a
         display, and it does not make the data ordinary. The flag is what a
         second account's board masks on and what the plan's Class 2 field
@@ -386,7 +386,7 @@ class PublicRecordTests(unittest.TestCase):
                 {"question": "What are your salary expectations?",
                  "answer": "165000", "source": "stored", "readBack": "match",
                  "sensitive": True},
-                {"question": "First name", "answer": "Sahil", "source": "profile",
+                {"question": "First name", "answer": "Alex", "source": "profile",
                  "readBack": "match", "sensitive": False},
             ]})
         self.assertTrue(public["fields"][0]["sensitive"])
@@ -457,7 +457,7 @@ class ArtifactContractTests(unittest.TestCase):
         answer_record.APPS = apps
         self.addCleanup(setattr, answer_record, "APPS", real_apps)
         answer_record.write("app-1", [
-            {"question": "First name", "answer": "Sahil", "source": "profile",
+            {"question": "First name", "answer": "Alex", "source": "profile",
              "readBack": "match"}], root=store)
 
         plan = r2_artifacts.collect(root=str(store), apps_dir=str(apps))
@@ -514,7 +514,7 @@ class ArtifactContractTests(unittest.TestCase):
                 answer_record.APPS = apps
                 self.addCleanup(setattr, answer_record, "APPS", real)
                 answer_record.write("app-1", [
-                    {"question": "First name", "answer": "Sahil",
+                    {"question": "First name", "answer": "Alex",
                      "source": "profile", "readBack": "match"}], root=store)
 
                 # The premise, asserted rather than assumed. This case only
@@ -698,7 +698,7 @@ class SurvivesAPruneTests(unittest.TestCase):
         (self.root / "sessions" / "fresh.json").write_text(json.dumps(
             {"applicationId": "fresh", "company": "Acme", "role": "PM"}))
         answer_record.write("fresh", [
-            {"question": "First name", "answer": "Sahil", "source": "profile",
+            {"question": "First name", "answer": "Alex", "source": "profile",
              "readBack": "match"}], root=self.root)
         self.manifest({"u/account-1/app/pruned/answers.json": {
             "name": "answers-pruned.json", "bytes": 900,

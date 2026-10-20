@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -554,6 +555,10 @@ def prune(root=None, user_id=r2.DEFAULT_USER_ID, apps_dir=None, apply=False,
             "applied": bool(apply), "keys": orphans[:50]}
 
 
+class DeadlineExceeded(Exception):
+    """`--deadline` ran out. Not a RuntimeError, so it is reported as itself."""
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Sync Class 1 artifacts to Cloudflare R2.")
     ap.add_argument("--apply", action="store_true", help="actually upload (default is a dry run)")
@@ -572,7 +577,18 @@ def main(argv=None):
                     help="upload one application's artifacts now")
     ap.add_argument("--get", nargs=2, metavar=("NAME", "DEST"),
                     help="bring one evicted artifact back to disk by filename")
+    ap.add_argument("--deadline", type=int, metavar="SECONDS",
+                    help="give up after this long and exit 3 saying so. The "
+                         "watcher's periodic sweep sets it, because it never "
+                         "waits on the child and a hung upload would otherwise "
+                         "hold the sweep's lock forever")
     args = ap.parse_args(argv)
+
+    if args.deadline:
+        def _out_of_time(signum, frame):
+            raise DeadlineExceeded(f"gave up after {args.deadline}s")
+        signal.signal(signal.SIGALRM, _out_of_time)
+        signal.alarm(args.deadline)
 
     try:
         plan = r2_artifacts.collect(args.root, args.user, args.apps)
@@ -605,9 +621,17 @@ def main(argv=None):
         out.pop("index", None)
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
+    except DeadlineExceeded as exc:
+        # Uploads already made are kept: `sync` saves the manifest in a
+        # `finally`, so the next sweep starts where this one stopped.
+        print(f"r2-sync: {exc}", file=sys.stderr)
+        return 3
     except (r2.R2Error, RuntimeError) as exc:
         print(f"r2-sync: {exc}", file=sys.stderr)
         return 2
+    finally:
+        if args.deadline:
+            signal.alarm(0)
 
 
 if __name__ == "__main__":

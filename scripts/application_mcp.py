@@ -636,7 +636,11 @@ class ApplicationTools:
             raise ToolInputError("questions are too large")
         answers_path = Path(store.paths(store.root_dir(self.context.root))["answers"])
         answers = store.read_json(answers_path, {})
-        return {question: store.find_answer(answers, question) for question in cleaned}
+        # The work-authorisation table is read from the store root too, so it
+        # has to be the same root the answers came from.
+        with _store_root(self.context.root):
+            return {question: store.find_answer(answers, question)
+                    for question in cleaned}
 
     def _story_facts(self, args: dict[str, Any]) -> dict[str, Any]:
         """The confirmed story bank, which the prompt names and nothing served.

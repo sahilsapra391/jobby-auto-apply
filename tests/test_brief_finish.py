@@ -114,10 +114,10 @@ class CompletedTests(StoreTemp):
             "--id", "acme-pm", "--completed",
             "--nonce", nonce,
             "--confirmation", "Your application was successfully submitted.",
-            "--resume", "/abs/where/Sahil_Sapra_Acme_Resume.pdf",
-            "--cover", "/abs/where/Sahil_Sapra_Acme_CoverLetter.pdf"], self.root).stdout)
-        self.assertEqual(out["resumeVariant"], "Sahil_Sapra_Acme_Resume.pdf")
-        self.assertEqual(out["coverLetter"], "Sahil_Sapra_Acme_CoverLetter.pdf")
+            "--resume", "/abs/where/Alex_Example_Acme_Resume.pdf",
+            "--cover", "/abs/where/Alex_Example_Acme_CoverLetter.pdf"], self.root).stdout)
+        self.assertEqual(out["resumeVariant"], "Alex_Example_Acme_Resume.pdf")
+        self.assertEqual(out["coverLetter"], "Alex_Example_Acme_CoverLetter.pdf")
         event = [e for e in self.events() if e["event"] == "completed"][0]
         self.assertNotIn("/", event["resumeVariant"])
         self.assertEqual(event["confirmation"],
@@ -435,10 +435,10 @@ class DocumentOwnershipTests(unittest.TestCase):
         # documentsReady, and the prompt forbids rebuilding, so the run would
         # have uploaded another role's resume.
         folder = self.make([
-            "Sahil_Sapra_Google_OperationsSolutions_Resume.pdf",
-            "Sahil_Sapra_Google_OperationsSolutions_CoverLetter.pdf",
-            "Sahil_Sapra_Google_AndroidAuto_Resume.pdf",
-            "Sahil_Sapra_Google_AndroidAuto_CoverLetter.pdf"])
+            "Alex_Example_Google_OperationsSolutions_Resume.pdf",
+            "Alex_Example_Google_OperationsSolutions_CoverLetter.pdf",
+            "Alex_Example_Google_AndroidAuto_Resume.pdf",
+            "Alex_Example_Google_AndroidAuto_CoverLetter.pdf"])
         docs = brief.find_documents(folder, "Product Manager, Android Maps Reach")
         self.assertIsNone(docs["resume"])
         self.assertTrue(docs["ambiguous"])
@@ -446,22 +446,22 @@ class DocumentOwnershipTests(unittest.TestCase):
     def test_the_only_pair_in_a_folder_is_reused_on_a_retry(self):
         # Filenames often carry only the company, so requiring a role match
         # everywhere would force a needless rebuild on every retry.
-        folder = self.make(["Sahil_Sapra_Plaid_Resume.pdf",
-                            "Sahil_Sapra_Plaid_CoverLetter.pdf"])
+        folder = self.make(["Alex_Example_Plaid_Resume.pdf",
+                            "Alex_Example_Plaid_CoverLetter.pdf"])
         docs = brief.find_documents(folder, "Staff Product Manager, Internal AI")
         self.assertTrue(docs["resume"].endswith("Plaid_Resume.pdf"))
         self.assertFalse(docs["ambiguous"])
 
     def test_an_exact_generated_pair_wins_over_an_older_generic_pair(self):
         folder = self.make([
-            "Sahil_Sapra_IFS_Resume.pdf",
-            "Sahil_Sapra_IFS_CoverLetter.pdf",
-            "Sahil_Sapra_IFS_Outbound_PM_Resume.pdf",
-            "Sahil_Sapra_IFS_Outbound_PM_CoverLetter.pdf",
+            "Alex_Example_IFS_Resume.pdf",
+            "Alex_Example_IFS_CoverLetter.pdf",
+            "Alex_Example_IFS_Outbound_PM_Resume.pdf",
+            "Alex_Example_IFS_Outbound_PM_CoverLetter.pdf",
         ])
         expected = {
-            "resumePdf": "Sahil_Sapra_IFS_Outbound_PM_Resume.pdf",
-            "coverPdf": "Sahil_Sapra_IFS_Outbound_PM_CoverLetter.pdf",
+            "resumePdf": "Alex_Example_IFS_Outbound_PM_Resume.pdf",
+            "coverPdf": "Alex_Example_IFS_Outbound_PM_CoverLetter.pdf",
         }
         docs = brief.find_documents(folder, "Outbound PM", expected)
         self.assertTrue(docs["resume"].endswith(expected["resumePdf"]))
@@ -473,10 +473,10 @@ class DocumentOwnershipTests(unittest.TestCase):
         # overlap, the roles do not. Any scoring rule that picks here is one
         # coincidence away from uploading the wrong resume.
         folder = self.make([
-            "Sahil_Sapra_Google_AndroidAuto_Resume.pdf",
-            "Sahil_Sapra_Google_Operations_Resume.pdf",
-            "Sahil_Sapra_Google_AndroidAuto_CoverLetter.pdf",
-            "Sahil_Sapra_Google_Operations_CoverLetter.pdf"])
+            "Alex_Example_Google_AndroidAuto_Resume.pdf",
+            "Alex_Example_Google_Operations_Resume.pdf",
+            "Alex_Example_Google_AndroidAuto_CoverLetter.pdf",
+            "Alex_Example_Google_Operations_CoverLetter.pdf"])
         docs = brief.find_documents(folder, "Product Manager, Android Maps Reach")
         self.assertIsNone(docs["resume"])
         self.assertTrue(docs["ambiguous"])
@@ -533,8 +533,8 @@ class BriefTests(unittest.TestCase):
     def test_documents_are_found_and_the_render_source_is_not_offered(self):
         with tempfile.TemporaryDirectory() as d:
             folder = pathlib.Path(d)
-            (folder / "Sahil_Sapra_Acme_Resume.pdf").write_bytes(b"%PDF-1.4")
-            (folder / "Sahil_Sapra_Acme_CoverLetter.pdf").write_bytes(b"%PDF-1.4")
+            (folder / "Alex_Example_Acme_Resume.pdf").write_bytes(b"%PDF-1.4")
+            (folder / "Alex_Example_Acme_CoverLetter.pdf").write_bytes(b"%PDF-1.4")
             (folder / ".resume.html").write_text("<html></html>")
             docs = brief.find_documents(folder, "Product Manager")
             self.assertTrue(docs["resume"].endswith("Resume.pdf"))
@@ -545,7 +545,7 @@ class BriefTests(unittest.TestCase):
         # A required LinkedIn field parked the Justworks application on
         # 2026-08-25 while profile.links.linkedin was set the whole time. The
         # prompt sends an agent to IDENTITY, so the links have to be in it.
-        profile = {"firstName": "Sahil", "links": {
+        profile = {"firstName": "Alex", "links": {
             "linkedin": "https://www.linkedin.com/in/example-person/", "website": ""}}
         identity = brief.run_identity(profile, {"identity": {"phone": "5550001234"}})
         self.assertEqual(identity["links"]["linkedin"],
@@ -557,11 +557,11 @@ class BriefTests(unittest.TestCase):
         # Greenhouse asks School, Degree and Discipline as required dropdowns.
         # The Workato application parked on the degree one on 2026-08-25 with
         # every one of these fields set in the profile.
-        profile = {"education": [{"school": "Miami University",
-                                  "degree": "BS Quantitative Economics",
+        profile = {"education": [{"school": "Example State University",
+                                  "degree": "BS Economics",
                                   "start": "2019-08", "end": "2023-05"}]}
         identity = brief.run_identity(profile, {})
-        self.assertEqual(identity["education"][0]["school"], "Miami University")
+        self.assertEqual(identity["education"][0]["school"], "Example State University")
 
     def test_a_profile_with_no_links_adds_nothing(self):
         self.assertIsNone(brief.run_identity({}, {}))

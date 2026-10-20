@@ -13,7 +13,7 @@ All persistent state lives under `~/.job-application/` and is reached only throu
 
 Delivered documents do **not** live in the store. They live beside the skill in `applications/<Company>/`, one folder per company, so they are browsable in Finder rather than buried in a dotfile directory. That folder is gitignored (and `*.pdf` is ignored repo-wide as a second layer) because the documents carry a real street address and phone number. `store.py paths` prints its location.
 
-They are built by the `resume-tailor` skill from the region-matched base resume in `profile.resumes`. The base resume is never edited. **Every application gets its own pair**, named `Sahil_Sapra_<Company>_Resume.pdf` so the filename still means something in a recruiter's inbox. When a company has more than one open role, the role is added (`Sahil_Sapra_Anthropic_ClaudeCodeModelPerformance_Resume.pdf`), because company-only names collide and the second application silently overwrites the first. `scripts/file_docs.py --check` audits every application for its pair. Both filenames go on the `completed` event, as `resumeVariant` and `coverLetter`, so the user can pull up exactly what an interviewer is reading. See `references/tailoring.md` for the checks a pair has to pass before upload.
+They are built by the `resume-tailor` skill from the region-matched base resume in `profile.resumes`. The base resume is never edited. **Every application gets its own pair**, named `Alex_Example_<Company>_Resume.pdf` so the filename still means something in a recruiter's inbox. When a company has more than one open role, the role is added (`Alex_Example_Anthropic_ClaudeCodeModelPerformance_Resume.pdf`), because company-only names collide and the second application silently overwrites the first. `scripts/file_docs.py --check` audits every application for its pair. Both filenames go on the `completed` event, as `resumeVariant` and `coverLetter`, so the user can pull up exactly what an interviewer is reading. See `references/tailoring.md` for the checks a pair has to pass before upload.
 
 ## Commands
 
@@ -43,7 +43,7 @@ Pass JSON through a private temp file with `umask 077`, and delete it afterwards
 
 ```json
 {"key": "us", "default": true, "appliesTo": ["US"],
- "path": "~/…/Sahil Resume 2026 PM.pdf",
+ "path": "~/…/Alex Resume 2026 PM.pdf",
  "identity": {"phone": "(555) 010-1234", "location": "Springfield, IL 62704"}}
 ```
 

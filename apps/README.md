@@ -16,7 +16,7 @@ is a place to put code early.
 
 `scripts/` and `deploy/` are the running product and stay where they are until
 the phase that replaces them. The three launchd services execute
-`/Users/sahilsapra/Documents/Development.nosync/jobby-auto-apply/scripts/*.py`
+`/Users/you/Documents/Development.nosync/jobby-auto-apply/scripts/*.py`
 **by absolute path**, so moving that directory stops the daemon on the user's
 machine, and `deploy/` is the Vercel project root. A repo layout is worth
 nothing measured against a production outage, and Phase 0's job is to make the

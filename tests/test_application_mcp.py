@@ -22,9 +22,9 @@ class ApplicationMcpTests(unittest.TestCase):
         self.store_root = root / "state"
         self.store_root.mkdir()
         (self.store_root / "answers.json").write_text("{}")
-        self.resume = root / "Sahil_Acme_PM_Resume.pdf"
-        self.cover = root / "Sahil_Acme_PM_CoverLetter.pdf"
-        self.resume_html = root / ".Sahil_Acme_PM.resume.html"
+        self.resume = root / "Alex_Acme_PM_Resume.pdf"
+        self.cover = root / "Alex_Acme_PM_CoverLetter.pdf"
+        self.resume_html = root / ".Alex_Acme_PM.resume.html"
         self.resume.write_bytes(b"%PDF-1.4\nresume")
         self.cover.write_bytes(b"%PDF-1.4\ncover")
         self.resume_html.write_text(
@@ -367,8 +367,8 @@ class RecordAnswersToolTests(unittest.TestCase):
         }))
         (self.store_root / "sessions" / "acme-pm.json").write_text(json.dumps({
             "applicationId": "acme-pm", "company": "Acme", "role": "Product Manager"}))
-        self.resume = root / "Sahil_Acme_PM_Resume.pdf"
-        self.cover = root / "Sahil_Acme_PM_CoverLetter.pdf"
+        self.resume = root / "Alex_Acme_PM_Resume.pdf"
+        self.cover = root / "Alex_Acme_PM_CoverLetter.pdf"
         self.resume.write_bytes(b"%PDF-1.4\nresume")
         self.cover.write_bytes(b"%PDF-1.4\ncover")
         self.apps = root / "applications"
@@ -391,7 +391,7 @@ class RecordAnswersToolTests(unittest.TestCase):
         # The application id is bound when the server starts and is not an
         # argument, so a run cannot file a manifest against a different job.
         result = self.tools.call("record_answers", {"fields": [
-            {"question": "First name", "answer": "Sahil", "source": "profile",
+            {"question": "First name", "answer": "Alex", "source": "profile",
              "readBack": "match"},
         ]})
         self.assertEqual(result["fields"], 1)

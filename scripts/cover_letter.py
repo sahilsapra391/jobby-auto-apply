@@ -149,7 +149,7 @@ LEADING_DEAR = re.compile(r"^(?:dear\b[\s,]*)+", re.I)
 # followed by more prose") is deliberately not in this list.
 # The sign-off words are case-insensitive via a scoped flag; the signature
 # name stays strictly capitalised so "give my regards to the whole team."
-# is prose and "Regards, Sahil Sapra" is a signature. A blanket re.I would
+# is prose and "Regards, Alex Example" is a signature. A blanket re.I would
 # let the name group swallow lowercase prose after a sign-off word.
 # The left boundary deliberately excludes sentence-ending punctuation, so
 # stripping "... contribute. Sincerely, Name" leaves the prose its period.
