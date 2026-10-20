@@ -144,9 +144,12 @@ class DoNotStartTests(unittest.TestCase):
         # so the tick log printed "waiting on the user" -- true, circular, and
         # naming nothing to press -- while the sentence naming Confirm
         # submitted and Stop never appeared. Same set of refusals, different
-        # sentence, and the sentence is the whole value of a refusal.
+        # sentence, and the sentence is the whole value of a refusal. It now
+        # names the two answers on the card, Confirm submitted and It did not
+        # go through; Stop recorded nothing and is no longer offered.
         why = self.gate(CHAINGUARD_SESSION, CHAINGUARD_HISTORY)
-        self.assertIn("Press Confirm submitted", why)
+        self.assertIn("Confirm submitted", why)
+        self.assertIn("It did not go through", why)
         self.assertNotIn("parked in Needs you", why)
 
     def test_the_park_alone_refuses_a_normal_run_and_admits_both_others(self):

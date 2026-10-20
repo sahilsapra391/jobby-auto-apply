@@ -340,7 +340,3 @@ class TheTickClaimsTheUnsentQueueTests(unittest.TestCase):
         self.assertTrue(unsent, "the tick never looks at the unsent queue")
         self.assertTrue(walked, "the tick no longer takes apply_items; this check is stale")
         self.assertLess(min(unsent), min(walked))
-
-
-if __name__ == "__main__":
-    unittest.main()
