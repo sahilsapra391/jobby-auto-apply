@@ -981,6 +981,35 @@ function DocLink({ row, kind, label, value }: {
     );
   }
   const shared = siblings.get(basename(name)) ?? 1;
+  // **Not at its own key is not the same as not openable.** The documents
+  // written before the id went into the filename were indexed by name, and v1
+  // opened every one of them through `jobby:doc-index` or its KV copy.
+  // `/api/artifact` falls back to that same lookup when the fixed key is
+  // absent, so a name `servable_names` lists gets the link. Measured on
+  // production 2026-10-20: 14 cells drew "not attributable" over a document
+  // the index resolves.
+  //
+  // A shared name still says it is shared. One file exists under it and the
+  // link opens that file, which is what v1 opened; the label and the title are
+  // what keep "this is the file under that name" from reading as "this is
+  // exactly what this application sent".
+  const byName = row.servable_names as string[] | null | undefined;
+  const servable = Array.isArray(byName) && byName.includes(name.slice(name.lastIndexOf("/") + 1));
+  if (servable) {
+    return (
+      <a className="go" href={`/api/artifact?app=${encodeURIComponent(app)}&kind=${kind}`}
+         target="_blank" rel="noopener"
+         title={shared > 1
+           ? `${name} is recorded by ${shared} applications to different roles at this company. One file is stored under that name and this opens it; nothing records which application received it.`
+           : `${name}: stored under its filename from before documents were keyed by application`}
+         aria-label={`${label}: ${name}`}>
+        {shared > 1 ? <>shared PDF &#8599;</> : <>PDF &#8599;</>}
+      </a>
+    );
+  }
+  if (byName === null) {
+    return <span className="muted" title={`${name}: the document index could not be read, so whether this document can be opened is unknown`}>unknown</span>;
+  }
   if (shared > 1) {
     return (
       <span className="chip hold"

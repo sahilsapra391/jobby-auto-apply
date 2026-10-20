@@ -503,6 +503,58 @@ def spawn(name, argv, logname, note=""):
     return proc.pid
 
 
+# --- the R2 catch-all sweep -------------------------------------------------
+
+#: The sweep's own lock, so two never overlap and nothing else waits on it.
+R2_SYNC_LOCK = "r2-sync"
+#: At most one sweep started per this many seconds.
+R2_SYNC_INTERVAL_SECONDS = 30 * 60
+#: How long one sweep may run before it gives up and says so.
+R2_SYNC_DEADLINE_SECONDS = 20 * 60
+R2_SYNC_LOG = "r2-sync.log"
+
+
+def r2_sync_due(now=None):
+    """Whether a catch-all R2 sweep should start now.
+
+    `publish.py` ran `r2_sync.sync(root, apply=True)` on every publish, which
+    caught any artifact the per-application uploads (`document_job`,
+    `finish.py`) missed. The device stopped publishing when v1 was retired, so
+    nothing ran that sweep any more; this puts it back on the watcher.
+
+    Paced by the sweep's own log. `spawn` writes a `=== spawn` line into it
+    before the child starts, so its mtime is never older than the last start,
+    and a missing log is a sweep that has never run here. That keeps the
+    schedule out of the store and survives a watcher restart, which an
+    in-memory timestamp would not: every deploy restarts the watcher and would
+    otherwise start a sweep.
+    """
+    now = time.time() if now is None else now
+    try:
+        last = (LOG_DIR / R2_SYNC_LOG).stat().st_mtime
+    except FileNotFoundError:
+        return True
+    return now - last >= R2_SYNC_INTERVAL_SECONDS
+
+
+def maybe_spawn_r2_sync(now=None):
+    """Start the sweep when it is due and not already running. The pid, or None.
+
+    Detached and never waited on, like every runner here, and called after the
+    tick rather than inside it, so a slow bucket cannot hold up an Apply. Its
+    stdout and stderr go to `logs/r2-sync.log`, never `/dev/null`: an upload
+    that fails says why there or nowhere. `--deadline` bounds it in the child,
+    which is the only place a bound can be enforced without the watcher
+    waiting on it.
+    """
+    if lock_holder(R2_SYNC_LOCK) is not None or not r2_sync_due(now):
+        return None
+    return spawn(R2_SYNC_LOCK,
+                 [sys.executable, str(REPO / "scripts" / "r2_sync.py"), "--apply",
+                  "--deadline", str(R2_SYNC_DEADLINE_SECONDS)],
+                 R2_SYNC_LOG, note="r2 catch-all sweep")
+
+
 # --- queues -----------------------------------------------------------------
 
 # Three applications at once, each owned start to finish by one agent. More than
@@ -3686,6 +3738,13 @@ def main():
                 spawn("corpus", [sys.executable, str(corpus_check.RUNNER),
                                  "--run"],
                       "corpus-check.log", note="corpus tests")
+            # The R2 catch-all that publish used to run. A spawn that cannot
+            # start is reported and does not take the loop down with it.
+            try:
+                maybe_spawn_r2_sync()
+            except OSError as exc:
+                print(f"{now_stamp()} r2-sync could not start: {exc}",
+                      file=sys.stderr, flush=True)
             stale = unhealthy_reason()
             if stale:
                 # Fails the dead-man check rather than pinging healthy. A quiet

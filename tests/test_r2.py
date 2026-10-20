@@ -11,13 +11,17 @@ Run from the repo root: python3 -m unittest discover -s tests
 import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -942,3 +946,30 @@ class PreferenceSurvivesEvictionTest(unittest.TestCase):
                               apply=True, client=self.client)
         self.assertGreater(result.get("refusedDowngrade", 0), 0,
                            "the guard's own branch has to execute in some test")
+
+
+class DeadlineTest(unittest.TestCase):
+    """`--deadline` bounds the watcher's periodic sweep from inside the child."""
+
+    def test_a_sweep_past_its_deadline_exits_3_and_says_so(self):
+        def slow_sync(*args, **kwargs):
+            time.sleep(5)
+            return {}
+
+        stderr = io.StringIO()
+        with mock.patch.object(r2_sync.r2_artifacts, "collect", return_value={"artifacts": []}), \
+             mock.patch.object(r2_sync, "sync", side_effect=slow_sync), \
+             contextlib.redirect_stderr(stderr):
+            started = time.time()
+            code = r2_sync.main(["--apply", "--deadline", "1"])
+        self.assertEqual(code, 3)
+        self.assertLess(time.time() - started, 4)
+        self.assertIn("gave up after 1s", stderr.getvalue())
+
+    def test_a_sweep_inside_its_deadline_is_unaffected_and_disarms_the_alarm(self):
+        stdout = io.StringIO()
+        with mock.patch.object(r2_sync.r2_artifacts, "collect", return_value={"artifacts": []}), \
+             mock.patch.object(r2_sync, "sync", return_value={"objects": 0}), \
+             contextlib.redirect_stdout(stdout):
+            self.assertEqual(r2_sync.main(["--apply", "--deadline", "60"]), 0)
+        self.assertEqual(signal.alarm(0), 0)
