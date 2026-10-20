@@ -687,12 +687,25 @@ def _mirror_providers(conn, account_id, payload):
     ceiling: there are three providers, so any proportion is one or two rows
     and the ceiling would either never fire or fire on a real disconnect.
     """
-    connections = (payload or {}).get("connections")
-    if not connections:
+    # **A registry the provider module wrote always says which version it is,
+    # so "empty" has two meanings and only one is a read failure.** The floor
+    # used to refuse any empty `connections`, and that included the real one:
+    # on 2026-10-05 the last provider was disconnected, providers.json became
+    # `{"connections": {}, "version": ...}`, this refused it on every write, and
+    # `provider_links` went on saying "connected, healthy" for fifteen days
+    # while no document or form run could start. A payload with no version, or
+    # no `connections` map at all, is still refused.
+    payload = payload or {}
+    connections = payload.get("connections")
+    if not isinstance(connections, dict) or "version" not in payload:
         raise ClassBError(
-            "refusing to mirror an empty providers payload: that would record "
-            "every provider as disconnected, and an empty providers.json is a "
-            "read failure far more often than it is the truth")
+            "refusing to mirror a providers payload with no version or no "
+            "connections map: that is a read failure, not a disconnect")
+    if not connections:
+        with conn.cursor() as cur:
+            cur.execute("delete from provider_links where account_id = %s",
+                        (account_id,))
+        return
 
     rows = [provider_row(pid, entry) for pid, entry in sorted(connections.items())
             if isinstance(entry, dict)]

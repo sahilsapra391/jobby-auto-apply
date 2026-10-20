@@ -326,6 +326,53 @@ class ItMirrorsIntoTheRightTables(pgtest.SchemaCase):
             class_b.mirror(self.conn, self.account, "not-a-kind", {})
 
 
+class ADisconnectReachesTheBoard(pgtest.SchemaCase):
+    """Disconnecting the last provider is the truth, not a read failure.
+
+    The floor refused every empty `connections`, so the real disconnect of the
+    last provider was refused on every write and `provider_links` kept saying
+    "connected, healthy" for fifteen days while nothing could run. A payload
+    the provider module wrote carries `version`; that is what separates the
+    two meanings of empty.
+    """
+
+    prefix = "classbproviders"
+
+    def setUp(self):
+        super().setUp()
+        migrate.run(self.conn, migrate.MIGRATIONS)
+        with self.conn.cursor() as cur:
+            cur.execute("insert into accounts (email) values ('p@example.com') "
+                        "returning id")
+            self.account = cur.fetchone()[0]
+
+    def count(self):
+        with self.conn.cursor() as cur:
+            cur.execute("select count(*) from provider_links where account_id = %s",
+                        (self.account,))
+            return cur.fetchone()[0]
+
+    def connect_one(self):
+        class_b.mirror(self.conn, self.account, "providers", {
+            "version": 1, "nextConnectionOrder": 2,
+            "connections": {"openai": {"connected": True, "connectionOrder": 1,
+                                       "health": "healthy"}}})
+        self.assertEqual(self.count(), 1)
+
+    def test_disconnecting_the_last_provider_empties_the_table(self):
+        self.connect_one()
+        class_b.mirror(self.conn, self.account, "providers",
+                       {"version": 1, "nextConnectionOrder": 2, "connections": {}})
+        self.assertEqual(self.count(), 0)
+
+    def test_a_payload_with_no_version_is_still_refused(self):
+        self.connect_one()
+        for payload in ({}, None, {"connections": {}}, {"version": 1}):
+            with self.assertRaises(class_b.ClassBError):
+                class_b.mirror(self.conn, self.account, "providers", payload)
+        self.assertEqual(self.count(), 1)
+
+
 class OnlyASessionSetsAStatus(pgtest.SchemaCase):
     """The session file is the authority on what state an application is in.
 
