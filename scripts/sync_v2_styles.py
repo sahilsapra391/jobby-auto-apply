@@ -378,15 +378,21 @@ def rubric_module():
     component, and `possible` is `match_score.WEIGHTS`. Retyping five integers
     into a TSX file is how the two boards end up disagreeing about what a
     perfect title match is worth, silently, in a bar that still renders.
+
+    `SECTION_POINTS` rides here for the same reason. v2's details panel was
+    retyped with a cap of 6 under a comment calling it the board's, while the
+    board draws 5.
     """
     import found_lane
     import json
     return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
             "// The rubric's own component order and weights, from\n"
-            "// found_lane.COMPONENTS and match_score.WEIGHTS.\n\n"
+            "// found_lane.COMPONENTS and match_score.WEIGHTS, and the\n"
+            "// details panel's per-section cap, from found_lane.SECTION_POINTS.\n\n"
             f"export const COMPONENTS = {json.dumps(list(found_lane.COMPONENTS))} as const;\n\n"
             f"export const WEIGHTS: Record<string, number> = "
-            f"{json.dumps(dict(found_lane.MATCH_WEIGHTS))};\n")
+            f"{json.dumps(dict(found_lane.MATCH_WEIGHTS))};\n\n"
+            f"export const SECTION_POINTS = {int(found_lane.SECTION_POINTS)};\n")
 
 
 def logos_module():
