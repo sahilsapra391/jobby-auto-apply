@@ -107,8 +107,8 @@ def output_names(profile, company, role, application_id=None):
     the contract has never collided in production. That is a property of this
     corpus and not of the rule, which is exactly the kind of thing that holds
     until it doesn't: **14 documents from before this contract existed share
-    six filenames between them**, three Glance applications to three different
-    roles all claiming `Alex_Example_Glance_Resume.pdf`, and the result is that
+    six filenames between them**, three applications to one employer for three
+    different roles all claiming `Alex_Example_Acme_Resume.pdf`, and the result is that
     KV holds one object for three tailored resumes and nobody can say which
     application received which.
 

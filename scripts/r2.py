@@ -67,9 +67,9 @@ EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 def _between(text, opening, closing):
     """Every value between two literal tags, XML-unescaped. Enough for a listing.
 
-    The unescaping is the part that matters. One company folder here is called
-    "Dun & Bradstreet", and the listing returns that key as "Dun &amp;
-    Bradstreet". Taking it literally reported three objects that are present as
+    The unescaping is the part that matters. A company folder called
+    "Dewey & Cheatem" comes back from the listing as "Dewey &amp;
+    Cheatem". Taking it literally reported three objects that are present as
     missing and three that do not exist as orphans, which is exactly the wrong
     answer from the tool whose job is to say what is really in the bucket.
     """

@@ -141,36 +141,36 @@ class RetentionTests(StoreFixture, unittest.TestCase):
 class QueryKeyedUrlTests(StoreFixture, unittest.TestCase):
     """A careers page shared by every posting must not count as one posting.
 
-    stripe.com/jobs/search?gh_jid=<id> strips to stripe.com/jobs/search, which
-    258 different Stripe postings share (measured against the real pool on
+    careers.globex.example/jobs/search?gh_jid=<id> strips to the bare search
+    page, which one real employer's 258 postings share (measured against the real pool on
     2026-08-28, where 4,202 of 14,569 jobs carry their identity in the query).
-    One recorded Stripe role therefore declared every other Stripe job
+    One recorded role there therefore declared every other job there
     "already known", and the Apply that hit it wedged the watcher for 88
     consecutive ticks. Identity for these lives in the ATS key.
     """
 
     def test_a_second_posting_behind_the_same_careers_page_is_new(self):
-        self.watch("stripe-hw", "Stripe", "Hardware Program Manager",
-                   "https://stripe.com/jobs/search?gh_jid=8160754")
-        verdict = self.check(company="Stripe", role="Terminal Logistics Lead",
-                             url="https://stripe.com/jobs/search?gh_jid=9999999")
+        self.watch("globex-pm", "Globex", "Program Manager",
+                   "https://careers.globex.example/jobs/search?gh_jid=1000001")
+        verdict = self.check(company="Globex", role="Logistics Lead",
+                             url="https://careers.globex.example/jobs/search?gh_jid=9999999")
         self.assertFalse(verdict["known"], verdict)
 
     def test_the_same_query_keyed_posting_is_still_known(self):
-        self.watch("stripe-hw", "Stripe", "Hardware Program Manager",
-                   "https://stripe.com/jobs/search?gh_jid=8160754")
-        verdict = self.check(company="Stripe", role="HW PM (Terminal)",
-                             url="https://stripe.com/jobs/search?gh_jid=8160754")
+        self.watch("globex-pm", "Globex", "Program Manager",
+                   "https://careers.globex.example/jobs/search?gh_jid=1000001")
+        verdict = self.check(company="Globex", role="PM (Programs)",
+                             url="https://careers.globex.example/jobs/search?gh_jid=1000001")
         self.assertTrue(verdict["known"], verdict)
         self.assertIn("ATS", verdict["reason"])
 
     def test_a_stored_bare_careers_url_from_before_the_fix_does_not_match(self):
         # Records written before 2026-08-28 can hold the stripped page in the
         # urls set; a keyed candidate must not be matched against it.
-        self.watch("elastic-old", "Elastic", "Search PM",
-                   "https://jobs.elastic.co/jobs")
-        verdict = self.check(company="Elastic", role="Observability PM",
-                             url="https://jobs.elastic.co/jobs?gh_jid=1234567")
+        self.watch("initech-old", "Initech", "Search PM",
+                   "https://careers.initech.example/jobs")
+        verdict = self.check(company="Initech", role="Observability PM",
+                             url="https://careers.initech.example/jobs?gh_jid=1234567")
         self.assertFalse(verdict["known"], verdict)
 
     def test_a_path_borne_id_still_matches_by_url(self):

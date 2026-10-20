@@ -99,7 +99,7 @@ def url_identifies_posting(value):
     when the job id itself rides the query (?gh_jid=... on an employer's own
     careers page), the stripped URL is the page every posting there shares:
     stripe.com/jobs/search covered 258 different Stripe postings, and one
-    recorded Stripe role declared all of them already known. Measured
+    recorded role there declared all of them already known. Measured
     2026-08-28: 4,202 of 14,569 pool jobs carry their identity in the query.
     Such a URL must sit out URL matching entirely; the ATS key carries it.
     A path-borne id (boards.greenhouse.io/acme/jobs/123) survives the strip,

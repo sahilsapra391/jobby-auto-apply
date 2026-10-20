@@ -76,7 +76,7 @@ export const DECISION_QUEUE: Record<string, string> = {
  * called, `applications.status` was written anyway, and the daemon heard
  * nothing.
  *
- * Found by parity, on one row: Scale Media / Data Analyst, session file
+ * Found by parity, on one row: a real application, session file
  * `watch`, Postgres `inflight`, apply queue empty, POST recorded at
  * 2026-09-07T00:18:36Z with a 200. The board said it had started work on a
  * real application and no machine had.
@@ -112,7 +112,7 @@ export const STATUS_QUEUE: Record<string, string> = {
  * `retry=apply_head.get("retry") is True`). v2's Retry sent
  * `status: "inflight"`, which reached the same queue with no flag, so the
  * device refused every Retry on a parked card, claimed it, and said so only in
- * its own log. Observed on 2026-09-12: Retry on Davies c9fcfeed85ae12c8 was
+ * its own log. Observed on 2026-09-12: Retry on a real parked application was
  * queued by 04:39:44Z, and the tick at 04:39:48Z logged `notStarted: "it is
  * parked in Needs you, waiting on the user"` while v2 redrew the card in In
  * flight as Queued with nothing behind it.

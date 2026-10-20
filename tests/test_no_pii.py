@@ -148,6 +148,85 @@ class TrackedTextTests(unittest.TestCase):
                          + "\n".join(sorted(set(hits))))
 
 
+#: The application ids are read from the store at run time for the same reason
+#: the profile markers are: writing the owner's ids into the test that keeps
+#: them out of the tree would publish them. An id in a comment ties an employer,
+#: a date and an outcome to one real application, so a story that needs an
+#: application says "a real application" and a fixture uses an invented id.
+ID_SUFFIXES = TEXT_SUFFIXES | {".ts", ".tsx", ".cjs", ".jsonc", ".sql"}
+
+#: Applied migrations are exempt, and only them. Their checksums are recorded
+#: in production, so an edit to one is a migration that no longer matches what
+#: ran. A hit there is listed for the next migration to supersede, not fixed.
+ID_EXEMPT_PREFIX = "packages/schema/migrations/"
+
+
+def application_ids():
+    """Every application id the owner's store knows, or [] without a store.
+
+    Both places an id lives: the event log and the session files, by key and by
+    filename. Short values are skipped because they match ordinary words.
+    """
+    root = STORE.parent
+    ids = set()
+    events = root / "applications.jsonl"
+    if events.exists():
+        try:
+            lines = events.read_text(errors="replace").splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            try:
+                value = json.loads(line).get("applicationId")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if isinstance(value, str):
+                ids.add(value)
+    for session in sorted((root / "sessions").glob("*.json")):
+        ids.add(session.stem)
+        try:
+            value = json.loads(session.read_text(errors="replace")).get("applicationId")
+        except (json.JSONDecodeError, OSError, AttributeError):
+            continue
+        if isinstance(value, str):
+            ids.add(value)
+    return sorted(i for i in ids if len(i) >= 6)
+
+
+class TrackedApplicationIdTests(unittest.TestCase):
+    def setUp(self):
+        self.ids = application_ids()
+
+    def test_no_tracked_text_file_names_one_of_the_owners_applications(self):
+        if not self.ids:
+            self.skipTest(f"no application store beside {STORE}; the id scan cannot run here")
+        # Word-bounded, so a slug id cannot match inside a longer slug and a
+        # hex id cannot match inside a longer hash.
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(i) for i in self.ids)
+            + r")(?![A-Za-z0-9])")
+        hits, scanned = [], 0
+        for rel in tracked():
+            path = ROOT / rel
+            if rel.startswith(ID_EXEMPT_PREFIX) or path.suffix.lower() not in ID_SUFFIXES \
+                    or not path.exists():
+                continue
+            try:
+                body = path.read_text(errors="replace")
+            except OSError:
+                continue
+            scanned += 1
+            count = len(pattern.findall(body))
+            if count:
+                # The file and a count, never the id: a failure message is a
+                # log line, and the id is the thing being kept out of logs.
+                hits.append(f"{rel}: {count} application id(s)")
+        # A scan that matched no files at all would pass by looking at nothing.
+        self.assertGreater(scanned, 100, "the id scan read almost no files")
+        self.assertEqual(hits, [], "tracked files naming a real application id:\n"
+                         + "\n".join(hits))
+
+
 class TheApplicationsRuleIsAnchored(unittest.TestCase):
     """`/applications/` protects the delivered resumes, and only those.
 

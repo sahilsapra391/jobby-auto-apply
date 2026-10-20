@@ -283,7 +283,7 @@ export async function POST(request: NextRequest) {
   // **Which queue this click went to, so parity can tell "the device has not
   // answered yet" from "the device never answered".** Not a "v2 wrote this"
   // flag: that would be permanent, and the one v2 finding that exists today is
-  // a row nothing ever acted on. Scale Media 49dac26ae2c5c6ef holds `inflight`
+  // a row nothing ever acted on. One real application holds `inflight`
   // against a session file that has said `watch` since 2026-09-05, because v2
   // wrote it two hours before #206 added the enqueue. A provenance flag would
   // have hidden exactly that. `class_b` clears these when the device answers

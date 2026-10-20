@@ -421,7 +421,7 @@ def materialise_application(application_id, folder, root=None,
     drop.py --restore makes that outcome reversible, so a retried application
     can reach the runner with its documents safely in R2 and nothing on disk.
     The runner used to refuse with "the tailored resume and cover letter are
-    not both ready" and consume the click, observed on 6c3824319c68c547 on
+    not both ready" and consume the click, observed on a real application on
     2026-08-28. Restoring is bounded by the manifest's attribution for this
     application id, keyed under u/{user}/app/{id}/, verifies each stored hash,
     and leaves files already on disk alone.

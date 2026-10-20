@@ -88,7 +88,7 @@ LANES = {
     #: status says.** `applications.status` is a session's last-known state and
     #: a completed event is a statement about the world: an employer received
     #: this, under a real name, and it cannot be un-sent. One row had both --
-    #: `actively-ai-agent-product-manager`, status `active`, completed
+    #: a real application, status `active`, completed
     #: 2026-08-19 with no later abandonment -- and it drew in Needs you and in
     #: Submitted at once.
     #:
@@ -243,7 +243,7 @@ COMPLETED_AT = """(select h.at from application_events h
 #: The device refuses Retry in exactly this state (`watch.do_not_start`), so a
 #: card offering an enabled Retry here offers a button that does nothing; and
 #: the two controls that do resolve it, Confirm submitted and It did not go
-#: through, belong on whichever lane the card is in. Davies c9fcfeed85ae12c8
+#: through, belong on whichever lane the card is in. One real application
 #: sat in In flight at phase "Submitting" offering Retry and Stop and neither
 #: could resolve it. `nulls last` because `desc` sorts a NULL `at` first.
 UNRESOLVED_SUBMIT = """coalesce((select h.kind from application_events h
@@ -703,11 +703,11 @@ select {APPLICATION_COLUMNS}
 #:
 #: **`q` is a list, and this predicate used to cast it to one string.** #235
 #: made the keyword a list for every caller and moved only Found's predicate to
-#: `::text[]`. node-pg sends `["Scale Media"]` as the array literal
-#: `{"Scale Media"}`, so `%(q)s::text` read the braces and quotes as part of
+#: `::text[]`. node-pg sends `["Umbrella Corp"]` as the array literal
+#: `{"Umbrella Corp"}`, so `%(q)s::text` read the braces and quotes as part of
 #: the word, the pattern matched nothing, and every application lane answered
 #: a search with zero rows and no error. Measured on production: Watching held
-#: 19 rows and `&q=Scale%20Media` returned 0, and the same on all five lanes.
+#: 19 rows and a two-word company search returned 0, and the same on all five lanes.
 #:
 #: Found's semantics, on purpose: each keyword is one literal substring, so a
 #: two-word keyword is a phrase, and keywords are OR'd. Empty means off rather

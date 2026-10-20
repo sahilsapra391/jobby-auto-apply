@@ -70,9 +70,9 @@ class ResolveTests(unittest.TestCase):
     def job(self, **over):
         entry = {
             "id": "abc123",
-            "company": "Twilio",
+            "company": "Acme",
             "canonicalSource": "greenhouse",
-            "canonicalUrl": "https://job-boards.greenhouse.io/twilio/jobs/8136763",
+            "canonicalUrl": "https://job-boards.greenhouse.io/acme/jobs/1000003",
             "descriptionExcerpt": EXCERPT,
         }
         entry.update(over)

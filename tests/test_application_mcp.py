@@ -260,8 +260,8 @@ class ApplicationMcpTests(unittest.TestCase):
 class ParkGateTests(unittest.TestCase):
     """A park may not carry a question the store already answers.
 
-    The prompt has forbidden it since the Robinhood run parked on seven
-    stored answers (2026-08-28), and the TELUS run parked "Where did you
+    The prompt has forbidden it since a real run parked on seven
+    stored answers (2026-08-28), and another run parked "Where did you
     hear about us?" hours later with the answer confirmed since 2026-08-19.
     Saying it is not a guard; the tool refusing is. Disable the gate and
     the first test here fails, which is the point of it.

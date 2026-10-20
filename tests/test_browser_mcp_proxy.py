@@ -359,7 +359,7 @@ class AttachFileTests(unittest.TestCase):
     Playwright MCP's browser_file_upload answers only while a chooser is open,
     and the click that opens one is the click that hangs: a file input is
     usually a 1px transparent element behind a styled button, so Playwright
-    waits for actionability that never comes. Measured on a real GitLab form on
+    waits for actionability that never comes. Measured on a real employer's form on
     2026-08-27, where six upload calls returned "can only be used when there is
     related modal state present" and the application parked with neither PDF
     attached. setInputFiles needs no chooser and no visibility.

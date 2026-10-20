@@ -10,7 +10,7 @@ browser within a tick.
 
 That closure is what made "Open & finish" useless: it opens a window on a form
 the reconciler removed seconds earlier. Measured 2026-09-07 on a real
-Chainguard run -- parked 02:50:55Z, released 02:54:29Z, `tabs` 0.
+run -- parked 02:50:55Z, released 02:54:29Z, `tabs` 0.
 
 **So the hold comes back with the property the old one lacked: an end.** It is
 caused by a person pressing a button rather than by an application's state, it

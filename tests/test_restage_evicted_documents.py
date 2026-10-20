@@ -2,7 +2,7 @@
 
 Eviction removes local artifacts once an application reaches a terminal
 outcome, and drop.py --restore makes that outcome reversible. On 2026-08-28
-application 6c3824319c68c547 was restored, retried, and refused with "the
+a real application was restored, retried, and refused with "the
 tailored resume and cover letter are not both ready": the tick trusted the
 document job's ready state, the runner checked the disk, both PDFs sat safely
 in R2, and the click was consumed. The store already knew how to bring a file

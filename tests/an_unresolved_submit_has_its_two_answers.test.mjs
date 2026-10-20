@@ -1,6 +1,6 @@
 // A submit nobody has answered is answered from the card, and never retried.
 //
-// **Davies c9fcfeed85ae12c8, 2026-09-12.** The run clicked Submit, no
+// **A real application, 2026-09-12.** The run clicked Submit, no
 // confirmation appeared, and the latest event stayed `submitting`. The card sat
 // in In flight offering Retry, which the device refuses in exactly that state
 // (`watch.do_not_start`), and Stop, which is a drop: it writes no event and the

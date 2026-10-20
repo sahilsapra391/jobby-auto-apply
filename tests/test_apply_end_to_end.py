@@ -319,7 +319,7 @@ class RealBrowserUploadTests(unittest.TestCase):
         what landed, and the first version of this tool reported a 30-second
         timeout for an upload that had worked. An agent told its upload failed
         retries it, which on a real form is the expensive kind of wrong. Seen on
-        the live Justworks posting on 2026-08-27.
+        a live employer posting on 2026-08-27.
 
         What this test asserts changed on 2026-08-28. It used to prove only
         that the reply did not mention a timeout, and the code under it reached
@@ -354,16 +354,15 @@ class RealBrowserUploadTests(unittest.TestCase):
     def test_a_field_that_clears_itself_on_accept_is_not_called_a_failure(self):
         """The 2026-08-28 fault: a working attach reported as no file attached.
 
-        Two SmartRecruiters forms produced it the same night, Versant
-        6c3824319c68c547 and SWIGGY 40c1f32b247a885a. Versant proves the
-        direction on its own: both targeted calls returned "the input reported
+        Two SmartRecruiters forms produced it the same night, on two real
+        applications. The first proves the direction on its own: both targeted calls returned "the input reported
         no file after the attachment", and that application's own park note
         says the resume is attached. The snapshot it took immediately after the
         last failed call has the filename rendered beside the field.
 
         The component takes the file off the input and clears `input.value` so
         that re-choosing the same file still fires change, which empties
-        `node.files` on success. Measured on the live Versant posting on
+        `node.files` on success. Measured on a live SmartRecruiters posting on
         2026-08-28, where both file inputs sit in their own `spl-dropzone`
         shadow root and both carry id=file-input.
         """

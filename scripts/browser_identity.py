@@ -163,7 +163,7 @@ def signed_out_slots():
 #   3 of 88   parked on a verification code sent to Gmail  (knowable only mid-form)
 #
 # So the pre-run gate below covers one real case in four. The other three were
-# Rekise Marine, Chainguard and JPMorganChase, all on Greenhouse and Ashby and
+# three different employers, all on Greenhouse and Ashby and
 # similar, and no URL on earth predicts them. That is why `verification_wall`
 # exists beside it rather than the host check being sold as the whole answer.
 

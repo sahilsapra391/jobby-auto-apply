@@ -6,7 +6,7 @@ publishes nothing; the history below is why that matters.
 **A phase pill reading "Filling the form" over a parked application is worse
 than no pill.** It says work is happening. It is the only progress a person
 sees between pressing Apply and an outcome, and on 2026-09-09 it sat frozen for
-nine hours on the Spotify run while the application had long since parked, which
+nine hours on one real run while the application had long since parked, which
 is what made the whole pipeline look dead from the board.
 
 The cause was an ordering nobody had to get wrong on purpose. `phase.py` saved

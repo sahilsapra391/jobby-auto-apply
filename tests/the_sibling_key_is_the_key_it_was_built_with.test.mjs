@@ -125,16 +125,16 @@ function sqlKey() {
 const fromTs = tsKey();
 const fromSql = sqlKey();
 
-/** Real recorded values, both shapes, taken from production. */
+/** Recorded-value shapes from production, with the employers replaced. */
 const RECORDED = [
-  'applications/Ramp/Alex_Example_Ramp_Resume.pdf',
-  'applications/Datadog/Alex_Example_Datadog_Resume.pdf',
-  'applications/Cohere/Alex_Example_Cohere_Resume.pdf',
-  'applications/Amazon Web Services/Alex_Example_AWS_Resume.pdf',
-  'applications/Customer.io/Alex_Example_Customer.io_Resume.pdf',
-  'Alex_Example_Glance_Resume.pdf',
-  'Alex_Example_Justworks_CoverLetter.pdf',
-  'Alex_Example_Plaid_Resume.PDF',
+  'applications/Acme/Alex_Example_Acme_Resume.pdf',
+  'applications/Initech/Alex_Example_Initech_Resume.pdf',
+  'applications/Globex/Alex_Example_Globex_Resume.pdf',
+  'applications/Umbrella Web Services/Alex_Example_UWS_Resume.pdf',
+  'applications/Hooli.io/Alex_Example_Hooli.io_Resume.pdf',
+  'Alex_Example_Contoso_Resume.pdf',
+  'Alex_Example_Vandelay_CoverLetter.pdf',
+  'Alex_Example_Stark_Resume.PDF',
 ];
 
 test('the two halves agree on every recorded shape', () => {
@@ -151,17 +151,17 @@ test('the two halves agree on every recorded shape', () => {
 test('a path keys as its basename, not as itself', () => {
   // The case that was wrong. Without this the test above passes on a helper
   // that returns its argument unchanged, since both halves would agree.
-  assert.equal(fromTs('applications/Ramp/Alex_Example_Ramp_Resume.pdf'),
-               'alex_example_ramp_resume.pdf');
-  assert.notEqual(fromTs('applications/Ramp/Alex_Example_Ramp_Resume.pdf'),
-                  'applications/ramp/alex_example_ramp_resume.pdf');
+  assert.equal(fromTs('applications/Acme/Alex_Example_Acme_Resume.pdf'),
+               'alex_example_acme_resume.pdf');
+  assert.notEqual(fromTs('applications/Acme/Alex_Example_Acme_Resume.pdf'),
+                  'applications/acme/alex_example_acme_resume.pdf');
 });
 
 test('a bare filename keys as itself, lowercased', () => {
-  assert.equal(fromTs('Alex_Example_Glance_Resume.pdf'),
-               'alex_example_glance_resume.pdf');
-  assert.equal(fromTs('Alex_Example_Plaid_Resume.PDF'),
-               'alex_example_plaid_resume.pdf');
+  assert.equal(fromTs('Alex_Example_Contoso_Resume.pdf'),
+               'alex_example_contoso_resume.pdf');
+  assert.equal(fromTs('Alex_Example_Stark_Resume.PDF'),
+               'alex_example_stark_resume.pdf');
 });
 
 test('the two absence words are one word', () => {

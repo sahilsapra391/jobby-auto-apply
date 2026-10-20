@@ -74,7 +74,7 @@ class CategoryTests(unittest.TestCase):
             "Have you previously worked at this company?": "this-employer",
             "Do you consent to your interview being recorded?": "consent",
             "How many years of product management experience do you have?": "skills",
-            # Both captured from the live Axon TPM I form on 2026-08-28.
+            # Both captured from a live employer form on 2026-08-28.
             "Would you meet the requirements for a deemed export license to"
             " access EAR - controlled technology?": "work-authorisation",
             "Do you have any contractual obligations, agreements or"

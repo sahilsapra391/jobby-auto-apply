@@ -2,13 +2,13 @@
 
 Two faults from 2026-09-12, both against a real store in a temporary root.
 
-**Tabby cf038ad790a47994.** Dropped at 05:52:51Z inside a tick that had already
+**A dropped application.** Dropped at 05:52:51Z inside a tick that had already
 passed `do_not_start`. The runner refused the start as dropped and its refusal
 handler ran `phase.py --restore`, which set the status from `previousStatus`
 with no dropped check: the application came back as `review`, `droppedAt` still
 set, and Retry worked on it from Needs you.
 
-**Davies c9fcfeed85ae12c8.** The run clicked Submit, saw no confirmation, and
+**An unresolved submit.** The run clicked Submit, saw no confirmation, and
 ended with a latest `submitting`. The session stayed `inflight` at phase
 "Submitting", the stuck sweep would have told it to press Retry (which the
 device refuses), and nothing anywhere could write the `abandoned` that says it
@@ -101,7 +101,7 @@ class StoreCase(unittest.TestCase):
 
 class PhaseNeverUndropsTests(StoreCase):
     def test_restore_leaves_a_dropped_application_dropped(self):
-        # The exact Tabby call: the runner's refusal handler.
+        # The exact call from that drop: the runner's refusal handler.
         self.dropped()
         r = self.phase("--restore", "--phase", "Stopped",
                        "--detail", "the user cancelled this application")

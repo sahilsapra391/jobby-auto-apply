@@ -162,21 +162,21 @@ class UpsertAndMergeTests(unittest.TestCase):
         self.assertEqual(jobs["j1"]["canonicalUrl"], "https://gh/x")
 
     def test_an_aggregator_never_overwrites_the_ats_title(self):
-        ats = job("j1", company="Datadog", title="Manager, Internal Product Analytics",
+        ats = job("j1", company="Acme", title="Manager, Internal Product Analytics",
                   sources=[sighting("greenhouse", "https://gh/x", "ats")])
-        agg = job("j1", company="Datadog Inc", title="Manager Internal Product Analytics - NY",
+        agg = job("j1", company="Acme Inc", title="Manager Internal Product Analytics - NY",
                   sources=[sighting("adzuna", "https://adzuna/x", "aggregator")])
         merged = jobs_store.merge_records(ats, agg)
         self.assertEqual(merged["title"], "Manager, Internal Product Analytics")
-        self.assertEqual(merged["company"], "Datadog")
+        self.assertEqual(merged["company"], "Acme")
 
     def test_the_ats_record_does_overwrite_an_aggregator_one(self):
-        agg = job("j1", company="Datadog Inc", title="Manager Internal Product Analytics - NY",
+        agg = job("j1", company="Acme Inc", title="Manager Internal Product Analytics - NY",
                   sources=[sighting("adzuna", "https://adzuna/x", "aggregator")])
-        ats = job("j1", company="Datadog", title="Manager, Internal Product Analytics",
+        ats = job("j1", company="Acme", title="Manager, Internal Product Analytics",
                   sources=[sighting("greenhouse", "https://gh/x", "ats")])
         merged = jobs_store.merge_records(agg, ats)
-        self.assertEqual(merged["company"], "Datadog")
+        self.assertEqual(merged["company"], "Acme")
         self.assertEqual(merged["normTitle"], "manager internal product analytics")
 
     def test_the_fuller_description_survives_a_truncated_one(self):

@@ -2521,7 +2521,7 @@ def do_not_start(aid, fill_only=False, retry=False):
                 "did not.")
 
     # **Last, so the most consequential fact wins the message.** An application
-    # can be several of these at once, and Chainguard was two: parked on an
+    # can be several of these at once, and one real application was two: parked on an
     # emailed code *and* sitting at `submitting`. The park was checked first,
     # so the tick log said "it is parked in Needs you, waiting on the user" --
     # true, and circular for a user who was trying to act on it. The submitting
@@ -2826,7 +2826,7 @@ def tick(force_publish=False):
             # survive.** `reconcile_browser_slots` releases the slot and
             # `release_browser_slot` clears `browserSlot` off the session, so
             # `browser_slot_for_application` answers None minutes later.
-            # Measured on Chainguard `31c8aa9c1e988c56` on 2026-09-07: parked
+            # Measured on a real application on 2026-09-07: parked
             # 02:50:55Z, released 02:54:29Z, `browserSlot` None afterwards.
             #
             # None then travelled: `lock_path(None)` writes `None.lock` and
@@ -3265,7 +3265,7 @@ def tick(force_publish=False):
                 # starts.** `do_not_start` ran near the top of a tick that can
                 # take minutes in the document and provider stages, and a Drop
                 # pressed in between used to reach a spawned runner instead:
-                # Tabby cf038ad790a47994 was dropped at 05:52:51Z on 2026-09-12
+                # a real application was dropped at 05:52:51Z on 2026-09-12
                 # inside such a tick. The runner refuses a dropped start too,
                 # and `phase.py` now keeps it dropped whatever the runner's
                 # handler asks, but the cheapest refusal is the one that never

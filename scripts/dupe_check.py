@@ -55,8 +55,8 @@ def norm_url(value):
     """Strip tracking noise so the same posting matches across channels.
 
     A URL whose identity rides its query strips to the employer's shared
-    careers page: jobs.elastic.co/jobs names every Elastic posting at once,
-    and one submitted Elastic application matched all of them here (measured
+    careers page: one employer's shared /jobs page names every posting it has
+    at once, and one submitted application there matched all of them here (measured
     2026-08-28, 10 of 102 submitted URLs keyed this way). Those answer "" and
     match by (company, ATS key) instead; a path-borne id survives the strip
     and keeps matching by URL. seen.url_identifies_posting is the one place

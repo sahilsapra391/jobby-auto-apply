@@ -64,11 +64,11 @@ class ResolverTests(pgtest.SchemaCase):
     # -- the refusals -----------------------------------------------------
 
     def test_a_url_that_differs_only_in_its_query_is_not_a_match(self):
-        """**The Stripe shape, and the reason nothing is normalised here.**
+        """**The shared-careers-page shape, and the reason nothing is normalised here.**
 
         `norm_url` strips queries, and 4,202 of 14,569 pool jobs carry their
-        identity in the query. One recorded Stripe role already made
-        `seen.check` call every other Stripe job known. A different query is a
+        identity in the query. One recorded role at one employer already
+        made `seen.check` call every other job there known. A different query is a
         different posting until a board key says otherwise.
         """
         found, how = self.resolver.resolve(

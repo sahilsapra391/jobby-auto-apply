@@ -181,7 +181,7 @@ class LayoutTest(unittest.TestCase):
         cls.store_root = cls.tmp / "store"
         store(cls.store_root, "init")
 
-        cls.aid = "bc839847c93d9e46"
+        cls.aid = "0000000000000009"
         session = {"applicationId": cls.aid, "company": "Acme Corp",
                    "role": "Product Manager", "status": "active",
                    "resumeVariant": "Alex_Example_Acme_PM_Resume.pdf",
@@ -467,17 +467,17 @@ class ListingTest(unittest.TestCase):
     """Reading a bucket listing, which is the only XML this project parses."""
 
     def test_an_ampersand_in_a_company_folder_survives_the_listing(self):
-        # One real folder is "Dun & Bradstreet" and the listing returns its key
+        # A folder called "Dewey & Cheatem" comes back from the listing with its key
         # XML-escaped. Taking that literally reported three objects that exist
         # as missing and three that do not exist as orphans, which is the exact
         # opposite of what the tool is for.
         body = ("<ListBucketResult>"
-                "<Contents><Key>u/account-1/unfiled/Dun &amp; Bradstreet/.cover.html</Key></Contents>"
+                "<Contents><Key>u/account-1/unfiled/Dewey &amp; Cheatem/.cover.html</Key></Contents>"
                 "<Contents><Key>u/account-1/unfiled/A &lt;b&gt;/x.pdf</Key></Contents>"
                 "<Contents><Key>u/account-1/unfiled/O&apos;Reilly/y.pdf</Key></Contents>"
                 "</ListBucketResult>")
         self.assertEqual(r2._between(body, "<Key>", "</Key>"), [
-            "u/account-1/unfiled/Dun & Bradstreet/.cover.html",
+            "u/account-1/unfiled/Dewey & Cheatem/.cover.html",
             "u/account-1/unfiled/A <b>/x.pdf",
             "u/account-1/unfiled/O'Reilly/y.pdf",
         ])
@@ -573,12 +573,12 @@ class SidecarAttributionTest(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp())
         self.store_root = self.tmp / "store"
         store(self.store_root, "init")
-        self.aid = "actively-ai-agent-product-manager"
+        self.aid = "acme-ai-agent-product-manager"
         payload = self.tmp / "s.json"
-        payload.write_text(json.dumps({"applicationId": self.aid, "company": "Actively AI",
+        payload.write_text(json.dumps({"applicationId": self.aid, "company": "Acme AI",
                                        "role": "PM", "status": "active"}), encoding="utf-8")
         store(self.store_root, "session-save", "--id", self.aid, "--input", str(payload))
-        folder = self.tmp / "applications" / "Actively AI"
+        folder = self.tmp / "applications" / "Acme AI"
         folder.mkdir(parents=True)
         (folder / f"jd-{self.aid}.txt").write_text("posting", encoding="utf-8")
         (folder / "jd-some-application-nobody-has.txt").write_text("orphan", encoding="utf-8")
@@ -597,7 +597,7 @@ class SidecarAttributionTest(unittest.TestCase):
 
     def test_an_id_the_store_does_not_know_is_not_invented(self):
         self.assertEqual(self.keys["jd-some-application-nobody-has.txt"],
-                         "u/account-1/unfiled/Actively AI/jd-some-application-nobody-has.txt")
+                         "u/account-1/unfiled/Acme AI/jd-some-application-nobody-has.txt")
 
 
 class KeyTiebreakTest(unittest.TestCase):

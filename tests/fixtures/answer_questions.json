@@ -214,7 +214,7 @@
       "state": "confirmed"
     },
     {
-      "question": "At Remote, we are committed to transparency, innovation, and care for our employees and candidates. To support this and ensure we are able to focus on you, not on taking notes, we use brighthire.ai to record and auto-transcript our interviews. If we decide you are good potential fit for the role, do you consent to us using this tool during the interviewing process? Declining recording will not affect your candidacy.",
+      "question": "At Acme, we are committed to transparency, innovation, and care for our employees and candidates. To support this and ensure we are able to focus on you, not on taking notes, we use brighthire.ai to record and auto-transcript our interviews. If we decide you are good potential fit for the role, do you consent to us using this tool during the interviewing process? Declining recording will not affect your candidacy.",
       "tags": [
         "consent",
         "interview-recording"
@@ -222,7 +222,7 @@
       "state": "confirmed"
     },
     {
-      "question": "Axon Prohibited Possessor Questionnaire: 8 firearms-eligibility questions plus the Acknowledge checkbox and the truthfulness acknowledgment",
+      "question": "Initech Prohibited Possessor Questionnaire: 8 firearms-eligibility questions plus the Acknowledge checkbox and the truthfulness acknowledgment",
       "tags": [],
       "state": "confirmed"
     },
@@ -232,7 +232,7 @@
       "state": "confirmed"
     },
     {
-      "question": "By checking this box, I consent to Prove collecting, storing, and processing my responses to the demographic data surveys above.*",
+      "question": "By checking this box, I consent to Globex collecting, storing, and processing my responses to the demographic data surveys above.*",
       "tags": [],
       "state": "confirmed"
     },
@@ -297,7 +297,7 @@
       "state": "confirmed"
     },
     {
-      "question": "Do you consent to Remote using brighthire.ai to record and auto-transcribe your interviews?",
+      "question": "Do you consent to Acme using brighthire.ai to record and auto-transcribe your interviews?",
       "tags": [
         "consent",
         "interview-recording"
@@ -377,7 +377,7 @@
       "state": "confirmed"
     },
     {
-      "question": "Do you have any contractual obligations, agreements, relationships, or commitments to another person or entity that would impact, impede or interfere with your ability to join Axon?",
+      "question": "Do you have any contractual obligations, agreements, relationships, or commitments to another person or entity that would impact, impede or interfere with your ability to join Initech?",
       "tags": [],
       "state": "confirmed"
     },
@@ -654,7 +654,7 @@
       "state": "confirmed"
     },
     {
-      "question": "Robinhood government-official question: do you hold or have you held such a position, been referred by one, or have a close relationship with one?*",
+      "question": "Vandelay government-official question: do you hold or have you held such a position, been referred by one, or have a close relationship with one?*",
       "tags": [],
       "state": "confirmed"
     },
@@ -978,7 +978,7 @@
         "state": "confirmed"
       },
       {
-        "question": "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?*",
+        "question": "Do you opt-in to receive WhatsApp messages from Hooli Recruiting?*",
         "tags": [],
         "state": "confirmed"
       },
@@ -988,7 +988,7 @@
         "state": "confirmed"
       },
       {
-        "question": "Have you ever worked for Robinhood as an employee, intern or contractor? Note that providing false or misleading information may result in disqualification from the hiring process.",
+        "question": "Have you ever worked for Vandelay as an employee, intern or contractor? Note that providing false or misleading information may result in disqualification from the hiring process.",
         "tags": [
           "alias",
           "employment-history"

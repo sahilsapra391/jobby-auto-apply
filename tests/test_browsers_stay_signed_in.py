@@ -164,7 +164,7 @@ class WhenAGoogleSessionIsRequired(unittest.TestCase):
         for text in (
             "Email confirmation code (6-digit OTP) sent to someone@gmail.com",
             "Email verification code (8 characters) sent to someone@gmail.com",
-            "Email verification code from JPMorganChase (sent to someone@gmail.com)",
+            "Email verification code from Initech (sent to someone@gmail.com)",
         ):
             self.assertTrue(browser_identity.verification_wall(text), text)
 

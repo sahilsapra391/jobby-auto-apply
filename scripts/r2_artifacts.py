@@ -76,7 +76,7 @@ KIND_BY_CONTRACT_KEY = {
 # The id in the filename is matched loosely and then checked against the store,
 # rather than matched against an id shape. Only 37 of 187 application ids on
 # this machine are the 16-hex kind; the rest are slugs like
-# "actively-ai-agent-product-manager", and a hex-shaped pattern filed 13 of the
+# "acme-ai-agent-product-manager", and a hex-shaped pattern filed 13 of the
 # 39 job descriptions in the tree as unattributable. Membership in the store is
 # the guard, so a loose pattern cannot invent an application.
 SIDECARS = (
@@ -176,8 +176,8 @@ def name_map(applications, profile):
             continue
         # **Both generations, and the older one is not dead weight.** The
         # contract gained six characters of the application id on 2026-09-03
-        # because company and role alone collided: three Glance applications to
-        # three different roles all claimed one filename. Everything written
+        # because company and role alone collided: three applications to one
+        # employer, for three different roles, all claimed one filename. Everything written
         # before that day is still on disk and in KV under the untagged name,
         # so dropping it here would unattribute documents that resolve today.
         for tagged in (aid, None):

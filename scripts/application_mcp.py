@@ -465,8 +465,8 @@ def record_failure(line: str, log_path: Path | None = None) -> None:
 
     **The provider CLI does not forward this process's stderr.** codex, claude
     and agy each launch this server from the config `providers.py` builds, and
-    what it writes on stderr has never reached the runner's log. Measured 2026-09-12: a Davies run's `set_phase` timed out and its run log
-    held no `application_mcp` line at all; Chainguard on 2026-09-07 was the
+    what it writes on stderr has never reached the runner's log. Measured 2026-09-12: a real run's `set_phase` timed out and its run log
+    held no `application_mcp` line at all; another run on 2026-09-07 was the
     same. So stderr is kept, for a hand run in a terminal, and the line also
     goes to the file `run_apply` named on this server's argv, which it folds
     into the run log under `[application_mcp]` when the attempt ends.
@@ -546,8 +546,8 @@ class ApplicationTools:
         it was produced -- which is the rule this project has already paid for
         three times with `DEVNULL`, `ping_health` and `pool_staleness`.
 
-        Observed on a real run, 2026-09-07: `set_phase` failed once against the
-        live Chainguard application and the whole record of it was that
+        Observed on a real run, 2026-09-07: `set_phase` failed once against a
+        live application and the whole record of it was that
         sentence. The phase reached "Filling the form" a moment later, so
         whatever it was did not stop the run, and it is not knowable now.
 
@@ -649,7 +649,7 @@ class ApplicationTools:
         free-text answer may draw on, and the brief has always carried the
         story bank. It carried the PATH, and a form agent has no file access,
         so the source named in its own instructions was unreachable. Measured
-        on 2026-08-25: the Workato application parked on "why do you think you
+        on 2026-08-25: a real application parked on "why do you think you
         will be successful in this role" with a ten-story bank on disk.
 
         Read-only, one fixed file, no arguments. The document worker reads the
@@ -761,8 +761,8 @@ class ApplicationTools:
     # A park row that is a question the store can answer is the one park that
     # must never happen: it sends the user a question they already answered,
     # which is the exact job this product exists to remove. The prompt has
-    # said so since the Robinhood run parked on seven stored answers
-    # (2026-08-28), and the TELUS run parked "Where did you hear about us?"
+    # said so since a real run parked on seven stored answers
+    # (2026-08-28), and another run parked "Where did you hear about us?"
     # hours later with the answer confirmed in the bank since 2026-08-19.
     # Saying it is not a guard; this is the guard.
     #

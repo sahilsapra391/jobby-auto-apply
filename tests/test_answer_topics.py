@@ -2,7 +2,7 @@
 
 Some questions are recognisable by a phrase rather than by overall wording. A
 form buries "non-compete" in a paragraph of legalese, and overlap scoring cannot
-see past the surrounding words: the real Vanguard political-contributions
+see past the surrounding words: one real employer's political-contributions
 question scored under the 0.75 bar against the stored one and resolved to
 nothing, which would have parked an application over a question the user had
 already answered.
@@ -148,7 +148,7 @@ class ConsentTopicTests(unittest.TestCase):
         return store.find_answer(self.ANSWERS, question)
 
     def test_a_named_vendor_resolves(self):
-        q = ("At Remote we use brighthire.ai to record and auto-transcript our interviews. "
+        q = ("At Acme we use brighthire.ai to record and auto-transcript our interviews. "
              "Do you consent to us using this tool during the interviewing process?")
         self.assertEqual(self.find(q)["value"], "Yes")
 
@@ -188,8 +188,8 @@ class SourceQuestionTests(unittest.TestCase):
         return store.find_answer(self.ANSWERS, q)
 
     def test_the_company_name_in_the_question_does_not_break_it(self):
-        for q in ("How did you hear about Bevi? (required)",
-                  "How did you find out about this opportunity at Datadog?",
+        for q in ("How did you hear about Acme? (required)",
+                  "How did you find out about this opportunity at Initech?",
                   "Where did you hear about this role?"):
             self.assertEqual(self.find(q)["value"], "Company website", q)
 
@@ -357,16 +357,16 @@ STANDING_ANSWERS = {
              "state": "sensitive", "tags": ["compensation"]},
 }
 
-# The questions that parked Justworks and GitLab on 2026-08-25, shared by the
+# The questions that parked two real applications on 2026-08-25, shared by the
 # resolve tests and the over-match tests so both read the same fixture.
 
 
 class StandingAnswerTopicTests(unittest.TestCase):
     """The four topics that parked two real applications on 2026-08-25.
 
-    Justworks and GitLab were both filled to the last field and then parked:
-    Justworks on a LinkedIn URL, a flexwork acknowledgement and a
-    resume-documentation confirmation; GitLab on a post-employment restriction
+    Both were filled to the last field and then parked: one on a LinkedIn
+    URL, a flexwork acknowledgement and a resume-documentation
+    confirmation; the other on a post-employment restriction
     and on whether he had worked there before. Every one of those had an answer
     the user considers standing, and none of them resolved.
 
@@ -379,21 +379,21 @@ class StandingAnswerTopicTests(unittest.TestCase):
     def find(self, question):
         return store.find_answer(self.ANSWERS, question)
 
-    def test_the_real_gitlab_restriction_question_resolves(self):
+    def test_the_real_restriction_question_resolves(self):
         q = ("Are you subject to any employment agreements and/or post-employment "
              "restrictions with your current employer or a past employer?")
         self.assertEqual(self.find(q)["value"], "No")
 
-    def test_the_real_gitlab_prior_employment_question_resolves(self):
+    def test_the_real_prior_employment_question_resolves(self):
         self.assertEqual(
-            self.find("Have you previously worked at or consulted for GitLab?")["value"], "No")
+            self.find("Have you previously worked at or consulted for Globex?")["value"], "No")
 
-    def test_the_real_justworks_flexwork_question_resolves(self):
-        q = ("Justworks has a flexwork policy which requires employees to work in the "
+    def test_the_real_flexwork_question_resolves(self):
+        q = ("Initech has a flexwork policy which requires employees to work in the "
              "office at least 2 days per week. Does this work for you?")
         self.assertEqual(self.find(q)["value"], "Yes")
 
-    def test_the_real_justworks_documentation_question_resolves(self):
+    def test_the_real_documentation_question_resolves(self):
         q = ("Are you able to provide documentation of the employment and education "
              "history listed on your resume if requested?")
         self.assertEqual(self.find(q)["value"], "Yes")
@@ -403,8 +403,8 @@ class StandingAnswerTopicTests(unittest.TestCase):
             self.assertTrue(self.find(q)["value"].endswith("/example-person/"), q)
 
     def test_the_company_name_in_the_question_does_not_break_prior_employment(self):
-        for q in ("Have you previously worked for Datadog?",
-                  "Have you previously been employed by Stripe?",
+        for q in ("Have you previously worked for Initech?",
+                  "Have you previously been employed by Hooli?",
                   "Are you a former employee of this organisation?"):
             self.assertEqual(self.find(q)["value"], "No", q)
 
@@ -431,7 +431,7 @@ class StandingAnswerOverMatchTests(unittest.TestCase):
         # A relative working there is the conflicts topic, which is scanned
         # first, and it is a question about someone else either way.
         out = self.find("Do you have any relatives who are current or former "
-                        "employees of GitLab?")
+                        "employees of Globex?")
         self.assertNotEqual(out.get("topic"), "prior-employment-with-this-employer")
 
     def test_having_worked_at_a_kind_of_company_is_not_swept_in(self):
@@ -485,7 +485,7 @@ class EducationTopicTests(unittest.TestCase):
     """Three dropdowns, three answers.
 
     Greenhouse asks School, Degree and Discipline as separate required fields,
-    so they cannot share one topic. The Workato application parked on the
+    so they cannot share one topic. A real application parked on the
     degree one on 2026-08-25 with all three facts in the profile.
     """
 
@@ -624,12 +624,12 @@ class FreeTextBankTests(unittest.TestCase):
 
     def test_the_fit_essay_says_compose_rather_than_resolving_to_nothing(self):
         # There is no fixed text for this one and there should not be, but
-        # returning nothing is what parked Workato. The entry says what to
+        # returning nothing is what parked a real application. The entry says what to
         # build it from instead.
         for q in ("Why do you think you will be successful in this role?",
                   "Why are you interested in this role?",
                   "What makes you a strong candidate?",
-                  "Why do you want to work at Workato?"):
+                  "Why do you want to work at Vandelay?"):
             self.assertIn("COMPOSE IT", self.find(q)["value"], q)
 
     def test_an_unrelated_why_question_is_not_swept_into_the_fit_essay(self):
@@ -717,7 +717,7 @@ class AcknowledgementBoundaryTests(unittest.TestCase):
 
     def test_a_plain_acknowledgement_resolves(self):
         for q in ("I acknowledge that I have read the Prohibited Possessor Questionnaire.",
-                  "I understand and acknowledge that the GEICO companies are at-will employers.",
+                  "I understand and acknowledge that the Globex companies are at-will employers.",
                   "I acknowledge receipt of the employee handbook.",
                   "Please acknowledge the statement above."):
             self.assertIn("tick it", self.find(q)["value"], q)
@@ -1008,10 +1008,10 @@ class EeoTopicTests(unittest.TestCase):
         The last two are the substring failures CLAUDE.md records.
         """
         for question in (
-            # Conduct, not status. Real Axon question.
+            # Conduct, not status. A real employer's question.
             "Have you ever been discharged from the Armed Forces under dishonorable conditions?",
-            # Wants Yes or No; the stored value is a descriptive string. Real
-            # Versant question.
+            # Wants Yes or No; the stored value is a descriptive string. A real
+            # employer's question.
             "Are you Hispanic or Latino?",
             # Asks for something rather than stating a fact.
             "Do you require a reasonable accommodation for a disability during the interview?",
@@ -1035,7 +1035,7 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
     """A marker filed under the wrong topic answers with the wrong answer.
 
     Both entries below are a standing "No", so the mistake is invisible in the
-    value and only shows in which question the answer came from. Robinhood asks
+    value and only shows in which question the answer came from. One employer asks
     a bribery-and-corruption declaration about government officials; the
     conflicts entry is about a client's director. Answering the first from the
     second is sourcing a legal declaration from a question nobody asked.
@@ -1054,7 +1054,7 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
             "tags": ["legal-declaration", "government-official"]},
     }
 
-    ROBINHOOD = ("Robinhood adheres to applicable laws and regulations in relation to "
+    GOVERNMENT_OFFICIAL = ("Vandelay adheres to applicable laws and regulations in relation to "
                  "government officials given inherent bribery and/or corruption risk. "
                  "a) Do you currently hold or have you held, within the last 5 years, a "
                  "position as a government official? b) Have you been referred or "
@@ -1063,7 +1063,7 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
                  "official?")
 
     def test_it_answers_from_the_government_entry_not_the_client_one(self):
-        found = store.find_answer(self.ANSWERS, self.ROBINHOOD)
+        found = store.find_answer(self.ANSWERS, self.GOVERNMENT_OFFICIAL)
         self.assertEqual(found["value"], "No")
         self.assertEqual(found["topic"], "government-official")
 
@@ -1090,7 +1090,7 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
         close it is a topic that can say a question is not its own.
         """
         only_client = {"client-officer": self.ANSWERS["client-officer"]}
-        fell_through = store.find_answer(only_client, self.ROBINHOOD)
+        fell_through = store.find_answer(only_client, self.GOVERNMENT_OFFICIAL)
         self.assertEqual(fell_through.get("topic"), "relationships-conflicts")
 
 
@@ -1116,7 +1116,7 @@ PROFILE = {
 class ProfileAnswerTests(unittest.TestCase):
     """Facts the Profile page states outright can answer a form question.
 
-    Measured 2026-08-28: the TELUS run parked the recruiting-privacy consent
+    Measured 2026-08-28: a real run parked the recruiting-privacy consent
     into Needs you while the profile's standingConsents said "confirm on
     every application". The boundary matters as much as the coverage, so the
     refusal cases here are the point: a stale profile must fail toward
@@ -1148,7 +1148,7 @@ class ProfileAnswerTests(unittest.TestCase):
         self.assertIsNone(store.profile_answer(profile, "Are you willing to relocate?"))
 
     def test_the_privacy_notice_acknowledgment_is_standing(self):
-        got = self.answer("I have read and agree to the TELUS Digital Recruiting "
+        got = self.answer("I have read and agree to the Initech Digital Recruiting "
                           "Privacy Policy")
         self.assertEqual(got["value"], "Yes")
         self.assertIn("recruitmentPrivacyNotice", got["profileKey"])

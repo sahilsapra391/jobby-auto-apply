@@ -561,7 +561,7 @@ def cmd_answer_put(args):
 # Some questions are recognisable by a phrase rather than by overall wording.
 # A form asks about a non-compete in a paragraph of legalese, and overlap scoring
 # against a stored question cannot see past the surrounding words: measured, a
-# real Vanguard question scored under the 0.75 bar against the stored one and
+# real employer's question scored under the 0.75 bar against the stored one and
 # resolved to nothing.
 #
 # Only phrases specific enough to be unambiguous belong here, and only for
@@ -573,7 +573,7 @@ TOPIC_MARKERS = [
         "non-solicitation", "nonsolicitation", "non solicitation",
         "non-dealing", "restrictive covenant", "post-employment obligation",
         "post employment obligation", "garden leave",
-        # GitLab asks it as a restriction rather than an obligation, and asks
+        # One employer asks it as a restriction rather than an obligation, and asks
         # about the agreement itself rather than naming a clause. Measured on
         # 2026-08-25: the real question resolved to nothing and parked the
         # application on a topic the user answered on 2026-08-19.
@@ -593,7 +593,7 @@ TOPIC_MARKERS = [
     # a sensitive answer is barred from fuzzy matching on purpose, so the one
     # path left open to the others was closed to these by design.
     #
-    # So the Robinhood application parked on gender, race, military and
+    # So a real application parked on gender, race, military and
     # disability with every one of them answered on 2026-08-19, and the agent
     # was shown no candidate to follow up because there was none to show.
     #
@@ -602,9 +602,9 @@ TOPIC_MARKERS = [
     # wordings of one question. Measured over 254 real questions from the store
     # and the captured forms, plus nine adversarial probes: 2 correct hits each
     # and 0 false positives. Two phrases were cut by that measurement and are
-    # listed so nobody adds them back. "armed forces" matched Axon's "discharged
+    # listed so nobody adds them back. "armed forces" matched one employer's "discharged
     # from the Armed Forces under dishonorable conditions", which is conduct,
-    # not status. "hispanic or latino" matched Versant's "Are you Hispanic or
+    # not status. "hispanic or latino" matched another's "Are you Hispanic or
     # Latino?", which wants Yes or No and would have been handed a descriptive
     # ethnicity string. A bare "a disability" is absent too: it appears in
     # accommodation requests, which ask for something rather than state a fact.
@@ -732,7 +732,7 @@ TOPIC_MARKERS = [
         "related to, by birth", "related by birth", "birth, adoption or marriage",
         "immediate family member employed", "relative employed by",
         # Finance compliance blocks ask this without using either of the two
-        # words above. Robinhood asks for "Personal/Familial Relationships,
+        # words above. One employer asks for "Personal/Familial Relationships,
         # Outside Business Activities, qualifying investments, or Intellectual
         # Property Ownership" in one field, and asks separately whether the
         # applicant holds or has held a government position, was referred by
@@ -818,7 +818,7 @@ TOPIC_MARKERS = [
         "field of study", "course of study", "area of study", "your major",
         "major or field", "discipline",
     )),
-    # A bare field label, which is all Workday and Waymo put next to the
+    # A bare field label, which is all some Workday forms put next to the
     # control. The long wordings are already handled above by
     # work-authorisation-any-country; these are the one-word ones, which that
     # topic's phrases ("authorized to work in") cannot match.
@@ -1361,7 +1361,7 @@ def profile_answer(profile, question):
 
     The answer bank never held the whole account of the user: links,
     relocation, standing consents and certifications live on the Profile
-    page, and nothing consulted it. Measured on 2026-08-28: the TELUS run
+    page, and nothing consulted it. Measured on 2026-08-28: a real run
     parked "I agree to the Recruiting Privacy Policy" into Needs you while
     profile.preferences.standingConsents.recruitmentPrivacyNotice said
     "confirm on every application".
@@ -1726,7 +1726,7 @@ def cmd_answer_dismiss(args):
     The bank grows on its own: every application that parks on a question it
     cannot answer plants that question here. Nothing removed one that the user
     was never going to answer, so five Korean-language questions from one
-    dropped Coupang application sat in Needs you badging the nav with a number
+    dropped application sat in Needs you badging the nav with a number
     that could not reach zero.
     """
     return _bank_state_change(args, True, "dismissed")

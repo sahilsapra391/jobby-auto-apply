@@ -327,7 +327,7 @@ def _tool_definitions(upload_paths: Sequence[str]) -> tuple[dict[str, Any], ...]
             # file chooser is open, and the click that opens one is exactly the
             # click that hangs: a file input is usually zero-sized and covered,
             # so Playwright waits for actionability that never arrives and the
-            # call times out. Measured on GitLab on 2026-08-27, where every
+            # call times out. Measured on one employer's form on 2026-08-27, where every
             # upload returned "can only be used when there is related modal
             # state present" and the application parked with both PDFs
             # unattached. `setInputFiles` needs no chooser and no visibility,
@@ -480,7 +480,7 @@ ATTACH_FILE_CODE = """async (page) => {
   // and two sessions inferred from those logs that nth=0 and nth=1 had resolved
   // to the same element. The way out of the element can tell them apart: three
   // ancestors up, one is the apply-with-resume helper and the other the resume
-  // field. Measured on the live Versant posting on 2026-08-28.
+  // field. Measured on a live SmartRecruiters posting on 2026-08-28.
   const describe = (node) => {
     const bits = ['input'];
     for (const name of ['id', 'name']) {

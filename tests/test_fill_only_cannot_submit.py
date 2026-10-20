@@ -1,6 +1,6 @@
 """A fill-only run cannot submit, and the tool set is what makes that true.
 
-**The blocker this exists for.** A Chainguard application reached `submitting`
+**The blocker this exists for.** A real application reached `submitting`
 on 2026-09-07, parked on an 8-character code Greenhouse emails, and could not
 be finished: the slot browsers are headless so there was nothing on screen, and
 "Open & finish" could not re-fill the form because `do_not_start` refuses a run
@@ -60,34 +60,34 @@ import run_apply  # noqa: E402
 import watch  # noqa: E402
 
 
-#: Chainguard `31c8aa9c1e988c56` as it actually stood, read off the device on
-#: 2026-09-07. The point of copying it rather than inventing a fixture is that
-#: this state is the one the feature exists for, and a fixture drifting away
+#: A real session's shape as it stood on the device on 2026-09-07, with the
+#: employer, role, URL and ids replaced. The point of copying the shape rather
+#: than inventing one is that this state is the one the feature exists for, and a fixture drifting away
 #: from it would leave the tests passing about a case nobody has.
-CHAINGUARD_SESSION = {
-    "applicationId": "31c8aa9c1e988c56",
-    "company": "Chainguard",
-    "role": "Senior Technical Program Manager",
-    "url": "https://job-boards.greenhouse.io/chainguard/jobs/4707825006",
+PARKED_SUBMITTING_SESSION = {
+    "applicationId": "0000000000000002",
+    "company": "Initech",
+    "role": "Technical Program Manager",
+    "url": "https://job-boards.greenhouse.io/initech/jobs/1000000002",
     "status": "review",
     "phase": "Submitting",
     "pendingFields": [{
         "field": "Enter the 8-character security code sent to the user's inbox",
         "question": "Enter the 8-character security code sent to the user's inbox",
-        "reason": "Chainguard requires a human verification code before submission.",
+        "reason": "Initech requires a human verification code before submission.",
     }],
     "submissionGuard": {
-        "applicationId": "31c8aa9c1e988c56",
+        "applicationId": "0000000000000002",
         "nonceHash": "e4" + "0" * 62,
         "used": False,
     },
 }
-CHAINGUARD_HISTORY = [{
-    "applicationId": "31c8aa9c1e988c56",
+PARKED_SUBMITTING_HISTORY = [{
+    "applicationId": "0000000000000002",
     "at": "2026-09-07T02:48:32Z",
-    "company": "Chainguard",
+    "company": "Initech",
     "event": "submitting",
-    "eventId": "2203c115-ef6e-4c43-9684-3b298980b413",
+    "eventId": "00000000-0000-4000-8000-000000000002",
     "submissionNonceHash": "e4" + "0" * 62,
 }]
 
@@ -117,13 +117,13 @@ class DoNotStartTests(unittest.TestCase):
         watch.store = fake_store
         watch.browser_identity.any_signed_in = lambda: True
         try:
-            return watch.do_not_start("31c8aa9c1e988c56", **mode)
+            return watch.do_not_start("0000000000000002", **mode)
         finally:
             watch.store = real_store
             watch.browser_identity.any_signed_in = real_signed_in
 
     def test_a_normal_run_is_refused_on_the_real_chainguard_state(self):
-        why = self.gate(CHAINGUARD_SESSION, CHAINGUARD_HISTORY)
+        why = self.gate(PARKED_SUBMITTING_SESSION, PARKED_SUBMITTING_HISTORY)
         self.assertIsNotNone(why)
         self.assertIn("submit was already attempted", why)
 
@@ -131,29 +131,29 @@ class DoNotStartTests(unittest.TestCase):
         # Retry used to skip this function outright: the caller read
         # `apply_head.get("retry") is not True` and never asked. So the board's
         # Retry could start a fresh run of a form already at `submitting`.
-        why = self.gate(CHAINGUARD_SESSION, CHAINGUARD_HISTORY, retry=True)
+        why = self.gate(PARKED_SUBMITTING_SESSION, PARKED_SUBMITTING_HISTORY, retry=True)
         self.assertIsNotNone(why)
         self.assertIn("submit was already attempted", why)
 
     def test_a_fill_only_run_proceeds_on_that_same_state(self):
         self.assertIsNone(
-            self.gate(CHAINGUARD_SESSION, CHAINGUARD_HISTORY, fill_only=True))
+            self.gate(PARKED_SUBMITTING_SESSION, PARKED_SUBMITTING_HISTORY, fill_only=True))
 
     def test_the_message_is_the_one_that_names_an_action(self):
-        # Chainguard was parked *and* submitting. The park was checked first,
+        # The application was parked *and* submitting. The park was checked first,
         # so the tick log printed "waiting on the user" -- true, circular, and
         # naming nothing to press -- while the sentence naming Confirm
         # submitted and Stop never appeared. Same set of refusals, different
         # sentence, and the sentence is the whole value of a refusal. It now
         # names the two answers on the card, Confirm submitted and It did not
         # go through; Stop recorded nothing and is no longer offered.
-        why = self.gate(CHAINGUARD_SESSION, CHAINGUARD_HISTORY)
+        why = self.gate(PARKED_SUBMITTING_SESSION, PARKED_SUBMITTING_HISTORY)
         self.assertIn("Confirm submitted", why)
         self.assertIn("It did not go through", why)
         self.assertNotIn("parked in Needs you", why)
 
     def test_the_park_alone_refuses_a_normal_run_and_admits_both_others(self):
-        parked = dict(CHAINGUARD_SESSION)
+        parked = dict(PARKED_SUBMITTING_SESSION)
         why = self.gate(parked, [])
         self.assertIsNotNone(why)
         self.assertIn("parked in Needs you", why)
@@ -161,21 +161,21 @@ class DoNotStartTests(unittest.TestCase):
         self.assertIsNone(self.gate(parked, [], fill_only=True))
 
     def test_nothing_waives_a_drop(self):
-        dropped = dict(CHAINGUARD_SESSION, status="dropped")
+        dropped = dict(PARKED_SUBMITTING_SESSION, status="dropped")
         for mode in ({}, {"retry": True}, {"fill_only": True}):
             with self.subTest(mode=mode):
                 self.assertEqual(self.gate(dropped, [], **mode),
                                  "the user dropped it")
 
     def test_nothing_waives_an_application_already_submitted(self):
-        done = CHAINGUARD_HISTORY + [{
-            "applicationId": "31c8aa9c1e988c56",
+        done = PARKED_SUBMITTING_HISTORY + [{
+            "applicationId": "0000000000000002",
             "at": "2026-09-07T02:59:00Z",
             "event": "completed",
         }]
         for mode in ({}, {"retry": True}, {"fill_only": True}):
             with self.subTest(mode=mode):
-                self.assertEqual(self.gate(CHAINGUARD_SESSION, done, **mode),
+                self.assertEqual(self.gate(PARKED_SUBMITTING_SESSION, done, **mode),
                                  "it is already submitted")
 
     def test_nothing_waives_a_history_that_could_not_be_read(self):
@@ -192,7 +192,7 @@ class DoNotStartTests(unittest.TestCase):
         try:
             for mode in ({}, {"retry": True}, {"fill_only": True}):
                 with self.subTest(mode=mode):
-                    why = watch.do_not_start("31c8aa9c1e988c56", **mode)
+                    why = watch.do_not_start("0000000000000002", **mode)
                     self.assertIn("history could not be read", why or "")
         finally:
             watch.store = real_store
@@ -205,7 +205,7 @@ class SlotlessParkTests(unittest.TestCase):
     `reconcile_browser_slots` releases a parked application's slot within a
     tick and `release_browser_slot` clears `browserSlot` off the session, so
     the application "Open & finish" exists for is precisely the one that has
-    none. Measured on Chainguard `31c8aa9c1e988c56`, 2026-09-07: parked
+    none. Measured on a real application, 2026-09-07: parked
     02:50:55Z, released 02:54:29Z, `browserSlot` None afterwards.
 
     Both of the things None reached resolved it silently to something wrong,
@@ -218,7 +218,7 @@ class SlotlessParkTests(unittest.TestCase):
         for name in (None, "", "apply-99", "scan"):
             with self.subTest(name=name):
                 with self.assertRaises(watch.TickError):
-                    watch.hold_slot(name, "31c8aa9c1e988c56")
+                    watch.hold_slot(name, "0000000000000002")
         self.assertFalse((watch.LOCK_DIR / "None.lock").exists())
 
     def test_holding_a_real_slot_still_works(self):
@@ -226,9 +226,9 @@ class SlotlessParkTests(unittest.TestCase):
         # a function that refused everything would satisfy all of them.
         slot = watch.APPLY_LOCKS[-1]
         try:
-            watch.hold_slot(slot, "31c8aa9c1e988c56")
+            watch.hold_slot(slot, "0000000000000002")
             held = watch.lock_holder(slot)
-            self.assertEqual(held.get("note"), "31c8aa9c1e988c56")
+            self.assertEqual(held.get("note"), "0000000000000002")
             self.assertTrue(held.get("parked"))
             self.assertFalse(watch.hold_expired(held))
         finally:
@@ -313,7 +313,7 @@ class ArgvTests(unittest.TestCase):
     """The mode reaches the server on a command line the agent never touches."""
 
     def context(self, **extra):
-        return {"applicationId": "31c8aa9c1e988c56",
+        return {"applicationId": "0000000000000002",
                 "resume": "/tmp/r.pdf", "cover": "/tmp/c.pdf", **extra}
 
     def test_the_flag_is_on_the_argv_when_the_run_is_fill_only(self):
@@ -352,7 +352,7 @@ class ServedSurfaceTests(unittest.TestCase):
                 path.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n"
                                  b"trailer\n<<>>\n%%EOF\n")
             argv = [sys.executable, str(REPO / "scripts" / "application_mcp.py"),
-                    "--application-id", "31c8aa9c1e988c56",
+                    "--application-id", "0000000000000002",
                     "--resume", str(resume), "--cover", str(cover),
                     "--root", tmp]
             if fill_only:
