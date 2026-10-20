@@ -1,16 +1,16 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import { ICONS } from "../icons.generated";
+import { ICONS } from "../icons";
 
 /**
  * One of the board's five action marks.
  *
  * **The board draws these because five identical pills were hard to tell
  * apart**, which its own comment says; v2 shipped the pills without the marks.
- * The geometry is generated from `found_lane.SCRIPT`'s `ICONS` rather than
- * redrawn: the eye is a drawn eye because the emoji is a photoreal eyeball on
- * macOS, and redrawing it is how two boards end up with different eyes.
+ * The geometry lives in `icons.ts`, copied from the original board's own
+ * icons rather than redrawn: the eye is a drawn eye because the emoji is a
+ * photoreal eyeball on macOS.
  */
 export function ActionIcon({ name }: { name: string }) {
   const icon = ICONS[name];

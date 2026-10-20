@@ -60,8 +60,8 @@ never reach the board or any cloud service.
                        worker, form runner, browser firewall, answer store and
                        sourcing connectors
     packages/schema/   Postgres migrations, the migration runner, feature flags
-    deploy/            device helpers, the sourcing container image, and the
-                       retired first version of the board
+    deploy/            device helpers (KV queue, document jobs, status keys, R2),
+                       the sourcing container image, the OCI recovery path
     templates/         resume and cover-letter templates, with fictional
                        example content
     references/        data the scripts read: question taxonomy, model prices,
@@ -97,6 +97,11 @@ python3 scripts/worker_key.py set-database        # JOBBY_DATABASE_URL
 python3 scripts/worker_key.py set-r2              # R2 bucket credentials
 python3 scripts/worker_key.py set-healthchecks <ping-url>   # optional
 ```
+
+The device reaches the work queue in Cloudflare KV with the same
+`CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` and `CF_API_TOKEN` the board uses (see
+below). Put them in `config.env` too; `deploy/.env.local` is also read, for an
+older setup.
 
 Apply the schema, then install the three launchd services that do the work:
 

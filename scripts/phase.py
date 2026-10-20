@@ -152,10 +152,8 @@ def main():
         print(json.dumps({"error": (r.stderr or "").strip()[:150]}))
         return 2
 
-    # **Nothing is published from here, and nothing needs to be.** This spawned
-    # `publish.py` so the v1 board would show the phase while the run was still
-    # going. v1 was retired on 2026-10-20; v2 reads Postgres, and the
-    # session-save above already reaches it through the class B mirror.
+    # Nothing is published from here. The board reads Postgres, and the
+    # session-save above reaches it through the class B mirror.
     print(json.dumps({"id": args.id, "status": d["status"],
                       "previousStatus": d.get("previousStatus"),
                       "phase": d.get("phase")}))

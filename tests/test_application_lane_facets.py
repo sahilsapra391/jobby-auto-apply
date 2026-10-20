@@ -1,11 +1,10 @@
 """The select beside each application lane's search, from the URL to the rows.
 
-The board's Watching, Needs you and Submitted lanes each carry a select
-(`dashboard.py`'s `filter_bar`): posted in the last 7 days, a region or a
-discipline; ready to submit or still blocked; and the submission's outcome.
-The board filters an embedded payload on `data-` attributes. v2 pages from
-Postgres, so each option is a clause in the generated lane SQL
-(`v2_lanes.FACET_ARMS`) and the URL carries which one as `facet`.
+The Watching, Needs you and Submitted lanes each carry a select: posted in the
+last 7 days, a region or a discipline; ready to submit or still blocked; and
+the submission's outcome. v2 pages from Postgres, so each option is a clause in
+the generated lane SQL (`v2_lanes.FACET_ARMS`) and the URL carries which one
+as `facet`.
 
 **Every case starts from a query string the page produces**, and runs it
 through `tests/lane_query_runner.mjs`: the real `filtersFrom`, `filterValues`
@@ -23,7 +22,6 @@ it skips without them, like `test_application_lane_search`.
 """
 
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -47,19 +45,8 @@ PG_DRIVER = REPO / "apps" / "web" / "node_modules" / "pg"
 APP = seed_shape_fixture.APPLICATION
 
 
-class TheStaticOptionsAreTheBoards(unittest.TestCase):
-    """The labels v2 offers are the ones `dashboard.py` writes, read back."""
-
-    def test_each_static_option_is_in_the_board_source(self):
-        source = (REPO / "scripts" / "dashboard.py").read_text(encoding="utf-8")
-        for lane, options in v2_lanes.FACET_STATIC.items():
-            for value, label in options:
-                with self.subTest(lane=lane, value=value):
-                    self.assertRegex(
-                        source,
-                        re.escape(f'("{value}", "{label}")'),
-                        f"dashboard.py no longer offers {value!r} as "
-                        f"{label!r}; v2's {lane} select would drift from it")
+class EveryArmHasAnOption(unittest.TestCase):
+    """The static labels live in `v2_lanes.FACET_STATIC`; each clause needs one."""
 
     def test_a_lane_with_an_arm_is_a_lane_the_page_can_offer(self):
         # A facet arm with no option to reach it is a clause nobody can turn

@@ -21,15 +21,11 @@
 // compare-and-swap, so a click landing in the same instant as a claim can be
 // lost.
 //
-// **This used to say "already covered: the board re-sends clicks it
-// remembers", and that is true of the Python board and false of v2.**
-// `dashboard.CLICK_MEMORY` stamps a click into localStorage and replays it on
-// the next load; v2's `useWrite` posts once, keeps its idempotency key across
-// its own retries, and remembers nothing across a reload. A press v2 loses is
-// gone, and the reader of that sentence would have concluded otherwise. The
-// mistake is the one this repository keeps meeting: a confident sentence about
-// a mechanism, correct when written, describing a component the code no longer
-// only has one of.
+// **Nothing re-sends a lost click.** v2's `useWrite` posts once, keeps its
+// idempotency key across its own retries, and remembers nothing across a
+// reload. A press v2 loses is gone. (The board this replaced replayed clicks
+// from localStorage, and a comment here once said that covered the race; it
+// stopped being true when that board went.)
 //
 // What actually bounds it, stated so the next reader can check rather than
 // trust:
@@ -44,10 +40,10 @@
 //   entry. That is real and it is not the same as a press that arrives once
 //   and is overwritten.
 //
-//   v2's Apply is a single write. The Python board sent watch-then-apply as
-//   two POSTs, and the second eating the first is the 2026-08-28 sessionless
-//   head; `decide()` writes the decision and the application in one
-//   transaction and enqueues once, so that burst does not exist here.
+//   v2's Apply is a single write. Two POSTs for one press (watch, then
+//   apply) is how the second ate the first on 2026-08-28; `decide()` writes
+//   the decision and the application in one transaction and enqueues once,
+//   so that burst does not exist here.
 //
 // So: one press on an idle board is safe, and a burst is where this bites. The
 // fix is a version field with reject-on-mismatch, and until it exists the

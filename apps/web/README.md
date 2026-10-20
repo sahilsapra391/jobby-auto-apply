@@ -1,30 +1,21 @@
-# apps/web: the board (Phase 2)
+# apps/web: the board
 
-Next.js on Vercel, git-deployed. Empty until Phase 2 rewrites the board's data
-layer onto keyset pagination and the tenant channel.
+Built in Phase 2 of `docs/plans/jobby-v2-rebuild-plan.md`, and serving the
+board since. Next.js on Vercel, deployed from `main` on merge. It reads Postgres
+(`JOBBY_DATABASE_URL`) from server components, writes clicks as rows and as
+entries in the device's KV work queue, and proxies generated documents out of
+the private R2 bucket. The environment it needs is listed in the repository
+README under "The board".
 
-## The state of the decision, and one thing §2 gets wrong about it
+Most of `app/` is ordinary source. The files named `*.generated.ts` and
+`_ui/*.generated.mjs` are not: `scripts/sync_v2_styles.py` copies each from the
+one source the device also reads, and CI fails when a copy drifts. Edit the
+source and re-run the script.
 
-§2 chooses "Next.js on Vercel, git-deployed" and justifies it with "already
-works, already deploys on merge. Do not move it during a rebuild that is
-changing everything else."
+`board.css`, `chrome.ts`, `rubric.ts`, `icons.ts`, `lane_chrome.ts`, `search.ts`
+and `public/` began as copies of the original Python board's and are hand-owned
+now.
 
-Half of that is accurate and half of it is not, and the difference matters to
-whoever picks Phase 2 up. **Vercel and git-deploy are already true.** The
-deployed board is a Vercel project rooted at `deploy/`, built from
-`main` on merge. **Next.js is not.** The board today is
-`deploy/api/page.py`, a Python serverless function that renders sanitised KV
-state with a bundled copy of the renderer, plus `deploy/api/board.js` for the
-queue, document, logo, health and provider endpoints. There is no Next.js
-anywhere in the repository.
-
-So adopting Next.js is a rewrite of the web surface, not a continuation of it,
-and the sentence "do not move it" cannot mean both "keep what is there" and
-"build it in Next.js". Read the decision as: *the host and the deploy trigger
-stay; the framework is new in Phase 2.* That is the only reading consistent
-with Phase 2 retiring `jobby:board-state` and the publish floor.
-
-The migration is also not free in a way §2 does not mention: `deploy/api/page.py`
-is what `scripts/sync_vercel_renderer.py` keeps in step with `scripts/`, and
-that sync is enforced by CI. Whatever replaces it has to replace that check too,
-or the outage it was written for comes back.
+`tools/check_deployed_shape.mjs` builds the app with standalone output, removes
+the source tree, serves the traced bundle and crawls it, so a file the server
+reads that the tracer never carried fails CI instead of production.

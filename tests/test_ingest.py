@@ -1049,12 +1049,11 @@ class StalenessSweepTests(IngestCase):
     def test_a_closed_posting_leaves_the_found_lane(self):
         """What the user actually sees. Found is `new` only, so this is the end
         of the chain the screen recording was about."""
-        import found_lane
         a, b = self._two_postings()
         self.run_ingest({"greenhouse": channel([a, b])})
         _, jobs = self.run_ingest({"greenhouse": channel([a])})
-        shown, total = found_lane.select(jobs)
+        shown = [job for job in jobs.values() if job.get("state") == "new"]
         urls = [job.get("canonicalUrl") or "" for job in shown]
-        self.assertEqual(total, 1)
+        self.assertEqual(len(shown), 1)
         self.assertTrue(any("jobs/1" in u for u in urls))
         self.assertFalse(any("jobs/2" in u for u in urls))

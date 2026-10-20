@@ -21,7 +21,8 @@
  * `"use client"`. A function is that rule's sharper case, because it fails
  * loudly instead of silently, and only when a row exists to render it.
  *
- * `bank.generated.ts` is a plain constant module generated from the board, so
+ * `bank.generated.ts` is a plain constant module generated from
+ * `scripts/answer_categories.py`, so
  * there is nothing to move but the two lines that read it.
  */
 

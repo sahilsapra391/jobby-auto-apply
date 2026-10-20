@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### The original board is removed
+- The Python-rendered board and its Vercel stack are gone: `scripts/dashboard.py`, `found_lane.py`, `premium_ui.py`, `profile_panel.py`, `settings_panel.py`, `brand.py`, `state_slim.py`, `publish.py`, `sync_vercel_renderer.py`, and `deploy/api`, `deploy/renderer`, `deploy/assets`, `deploy/public` and `deploy/vercel.json`. The board is `apps/web`. Entries below that describe `publish.py` or the dashboard describe that removed board.
+- `sync_board.py` reconciles and publishes nothing; `--no-publish` is still accepted and does nothing. `ingest.py --publish` and `cloud_sweep.py --publish` are gone.
+- v2's stylesheet, chrome, rubric, icons, lane copy, search options and static icons were generated from the old board. They are hand-owned source in `apps/web` now.
+
 ### Safety and correctness
 - Page content is now explicitly data, not instructions: prompt-injection defenses for postings and forms, out-of-scope data requests (bank details, government ID) are hard stops, sensitive answers only go to fields that plainly ask for them.
 - Write-ahead `submitting` event makes submission crash-safe: a session dying mid-submit can no longer cause a duplicate application. Orphans surface in `stats` (`needsVerification`) and on the dashboard.

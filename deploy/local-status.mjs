@@ -2,7 +2,22 @@
 // Publish sanitized provider status for the Mac application worker.
 
 import { readFileSync } from 'node:fs';
-import { getLocalStatus, putLocalStatus } from './kvcontent.mjs';
+import { kvGet, kvPut } from './kv.mjs';
+import { LOCAL_STATUS_KEY } from './device_keys.mjs';
+
+async function getLocalStatus(env) {
+  const raw = await kvGet(env, LOCAL_STATUS_KEY);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function putLocalStatus(env, status) {
+  return kvPut(env, LOCAL_STATUS_KEY, JSON.stringify(status));
+}
 
 const [command, path] = process.argv.slice(2);
 const PROVIDERS = new Set(['openai', 'anthropic', 'gemini']);

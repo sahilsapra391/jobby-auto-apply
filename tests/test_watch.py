@@ -834,7 +834,7 @@ class TickHarnessMixin:
             stack.enter_context(mock.patch.object(watch, "sweep_stuck", return_value=[]))
             stack.enter_context(mock.patch.object(watch, "fingerprint", return_value="stable"))
             stack.enter_context(mock.patch.object(
-                watch, "publish", return_value={"published": False}))
+                watch, "publish", return_value={"reconciled": False}))
             stack.enter_context(mock.patch.object(watch, "lock_holder", return_value=None))
             stack.enter_context(mock.patch.object(watch, "running_applications", return_value={}))
             stack.enter_context(mock.patch.object(
@@ -1603,72 +1603,6 @@ class SlotReleaseTests(unittest.TestCase):
         self.assertIn("lock_path(slot).unlink(missing_ok=True)", window)
 
 
-class RenderVersionTests(unittest.TestCase):
-    """A code change has to reach the board on its own.
-
-    The publish fingerprint was entirely about data, so a merge that changed
-    every card was invisible to it and the watcher went on serving the previous
-    render until some session happened to move. When the discovery engine
-    landed, the deploy went out, the board did not change, and it read as the
-    merge having failed.
-    """
-
-    def test_it_moves_when_a_renderer_changes(self):
-        original = watch.REPO
-        with tempfile.TemporaryDirectory() as d:
-            fake = pathlib.Path(d)
-            (fake / "scripts").mkdir()
-            (fake / "scripts" / "dashboard.py").write_text("one")
-            (fake / "scripts" / "found_lane.py").write_text("two")
-            watch.REPO = fake
-            try:
-                before = watch.render_version()
-                (fake / "scripts" / "found_lane.py").write_text("two, changed")
-                after = watch.render_version()
-            finally:
-                watch.REPO = original
-        self.assertNotEqual(before, after)
-
-    def test_it_is_stable_when_nothing_changes(self):
-        self.assertEqual(watch.render_version(), watch.render_version())
-
-    def test_it_moves_when_the_settings_panel_changes(self):
-        original = watch.REPO
-        with tempfile.TemporaryDirectory() as d:
-            fake = pathlib.Path(d)
-            (fake / "scripts").mkdir()
-            (fake / "scripts" / "dashboard.py").write_text("dashboard")
-            (fake / "scripts" / "found_lane.py").write_text("found")
-            settings = fake / "scripts" / "settings_panel.py"
-            settings.write_text("settings one")
-            watch.REPO = fake
-            try:
-                before = watch.render_version()
-                settings.write_text("settings two")
-                after = watch.render_version()
-            finally:
-                watch.REPO = original
-        self.assertNotEqual(before, after)
-
-    def test_a_missing_renderer_is_still_a_stable_value(self):
-        original = watch.REPO
-        with tempfile.TemporaryDirectory() as d:
-            watch.REPO = pathlib.Path(d)
-            try:
-                self.assertEqual(watch.render_version(), watch.render_version())
-                self.assertTrue(watch.render_version())
-            finally:
-                watch.REPO = original
-
-    def test_the_fingerprint_carries_it(self):
-        # Structural: the point is that publishing keys on it, not that the
-        # helper exists.
-        source = inspect.getsource(watch)
-        fp = source[source.index("def fingerprint"):]
-        fp = fp[:fp.index("def render_version")]
-        self.assertIn("render_version()", fp)
-
-
 class SearchConfigRepublishTests(unittest.TestCase):
     """Saving a search has to reach the board without waiting fifteen minutes.
 
@@ -1709,7 +1643,7 @@ class SearchConfigRepublishTests(unittest.TestCase):
     def test_the_fingerprint_carries_it(self):
         source = inspect.getsource(watch)
         fp = source[source.index("def fingerprint"):]
-        fp = fp[:fp.index("def render_version")]
+        fp = fp[:fp.index("def profile_signature")]
         self.assertIn("search_config_version()", fp)
 
 
@@ -2061,7 +1995,7 @@ class NoSessionWordingIsOneContract(unittest.TestCase):
 
 
 class R2SyncSweepTests(unittest.TestCase):
-    """The catch-all R2 sweep publish.py used to run, now on the watcher.
+    """The catch-all R2 sweep the old board publish used to run, now on the watcher.
 
     Due against the sweep's own log, refused while its lock is held, and its
     output kept in the log rather than discarded.

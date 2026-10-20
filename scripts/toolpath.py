@@ -184,7 +184,8 @@ def queue_env(env=None):
         raise SystemExit(
             "job-application: the board queue is not configured. Missing "
             + ", ".join(missing)
-            + " in deploy/.env.local. See references/hosting.md."
+            + " in ~/.job-application/config.env (or deploy/.env.local)."
+              " See README.md, Setting it up."
         )
     return out
 

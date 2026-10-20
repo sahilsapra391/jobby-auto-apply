@@ -26,16 +26,18 @@ import v2_lanes  # noqa: E402
 class FilterPredicateShapeTests(unittest.TestCase):
     """No database needed, and these are the ones that catch a silent filter."""
 
-    def test_the_windows_come_from_the_boards_own_list(self):
-        import found_lane
+    def test_the_windows_are_the_ones_a_saved_search_can_hold(self):
+        """A saved search naming a window the board has no chip for falls
+        back silently, so the two vocabularies are one. `all` is the saved
+        search's own "no window" and is not a chip."""
+        import search_config
         self.assertEqual(sorted(v2_lanes.WINDOWS),
-                         sorted(v for v, _ in found_lane.DATE_WINDOWS),
-                         "the two boards offer different date windows")
+                         sorted(k for k in search_config.POSTED_WITHIN if k != "all"),
+                         "the board and the saved search offer different windows")
 
-    def test_the_sorts_come_from_the_boards_own_list(self):
-        import found_lane
-        self.assertEqual(sorted(v2_lanes.SORT_LABELS),
-                         sorted(v for v, _ in found_lane.SORT_OPTIONS))
+    def test_the_sorts_are_the_ones_a_saved_search_can_hold(self):
+        import search_config
+        self.assertEqual(sorted(v2_lanes.SORT_LABELS), sorted(search_config.SORTS))
 
     def test_every_lane_takes_a_keyword_and_only_found_takes_the_rest(self):
         """Each lane offers the search its own header offers.

@@ -81,9 +81,27 @@ def load(name):
 
 
 store = load("store")
-dashboard = load("dashboard")
 watch = load("watch")
-profile_panel = load("profile_panel")
+
+
+def bank_counts(answers):
+    """The Needs you arithmetic, from the store's own predicates.
+
+    Three reasons an entry carries no value and only one of them is
+    outstanding: `remembered is False` was filled and not kept, and a
+    dismissed one the user has refused. Counting either would badge the nav
+    with a number nothing can clear, which is what dismissal exists to end.
+    """
+    entries = [e for e in (answers.values() if isinstance(answers, dict) else answers)
+               if isinstance(e, dict)]
+    return {
+        "total": len(entries),
+        "unanswered": sum(1 for e in entries
+                          if not store.answered(e)
+                          and e.get("remembered") is not False
+                          and not store.dismissed(e)),
+        "dismissed": sum(1 for e in entries if store.dismissed(e)),
+    }
 
 # The five that were really sitting there, verbatim, so the fixture is the
 # corpus rather than a tidied version of it.
@@ -179,8 +197,7 @@ class TheLoopStopsPlantingIt(BankCase):
         self.assertEqual(self.counts()["unanswered"], 0)
 
     def counts(self):
-        state = {"answers": store.cmd_answer_list(self.ns())}
-        return dashboard.bank_counts(dashboard._memory_bank(state))
+        return bank_counts(store.cmd_answer_list(self.ns()))
 
 
 class ARefusedQuestionNeverFillsAForm(BankCase):
@@ -415,18 +432,6 @@ class TheBoardIsToldWhichRowsAreDismissed(BankCase):
         self.assertEqual(counts["dismissed"], 1)
         self.assertEqual(counts["total"], 2)
 
-    def test_the_state_reaches_the_page(self):
-        """The allowlist in the API route drops a new field silently, and did.
-
-        `kind`, `category` and `groupKey` were published, read by the page and
-        invisible for a release because this list had not been told. So the two
-        fields a dismissed row needs are checked against the list itself.
-        """
-        route = (ROOT / "deploy" / "api" / "board.js").read_text(encoding="utf-8")
-        fields = route.split("const ANSWER_FIELDS = ")[1].split("];")[0]
-        self.assertIn("'state'", fields)
-        self.assertIn("'dismissedAt'", fields)
-
     def test_the_route_accepts_both_actions_and_wants_the_key(self):
         """Both boards plan an edit the same way, and the planner is run.
 
@@ -453,133 +458,4 @@ class TheBoardIsToldWhichRowsAreDismissed(BankCase):
         self.assertIn("error", plan({"editId": "e1", "action": "invent"}))
 
     def counts(self):
-        state = {"answers": store.cmd_answer_list(self.ns())}
-        return dashboard.bank_counts(dashboard._memory_bank(state))
-
-
-class ThePageOffersItWhereTheQuestionIs(unittest.TestCase):
-    def test_the_dismiss_control_is_on_the_page(self):
-        self.assertIn("Never ask this", profile_panel.SCRIPT)
-        self.assertIn("'dismiss'", profile_panel.SCRIPT)
-
-    def test_the_way_back_is_too(self):
-        self.assertIn("Put it back", profile_panel.SCRIPT)
-        self.assertIn("'restore'", profile_panel.SCRIPT)
-
-    def test_the_filter_exists_and_starts_hidden(self):
-        """A filter for an empty set is an invitation to wonder what is missing.
-
-        It ships hidden and the script unhides it once something is in it, so
-        a bank nobody has dismissed anything from looks exactly as it did.
-        """
-        markup = profile_panel.panel({"total": 3, "unanswered": 1})
-        chip = markup.split('data-bank-kind="dismissed"')[1].split(">")[0]
-        self.assertIn("hidden", chip)
-        self.assertIn("dismissChip.hidden = counts.dismissed === 0",
-                      profile_panel.SCRIPT)
-
-    def test_the_confirmation_takes_two_clicks(self):
-        self.assertIn("Confirm, never ask", profile_panel.SCRIPT)
-        self.assertIn("Confirm, ask again", profile_panel.SCRIPT)
-
-    def test_a_failure_names_the_reason_rather_than_shrugging(self):
-        """Five days of a dead Apply button were spent on a toast that did not.
-
-        The server answers with the reason on every refusal, and the Found lane
-        threw it away for five days while fifteen sessions read code instead.
-        """
-        self.assertIn("result.payload && result.payload.error", profile_panel.SCRIPT)
-
-
-class TheFilterRunInAnEngine(unittest.TestCase):
-    """The half Python cannot see: what those three predicates actually do.
-
-    A dismissed row leaving Needs you and leaving the question list is the
-    visible half of this feature, and it lives entirely in the browser. Python
-    can assert the functions are on the page. Only node can show that a
-    dismissed entry falls out of every filter but its own, which is the
-    difference between the click working and the click appearing to do nothing.
-
-    The functions are cut out of the shipped SCRIPT rather than restated here,
-    so this cannot pass against a copy that has drifted from the page.
-    """
-
-    ENTRIES = {
-        "outstanding": {"key": "a", "value": None, "kind": "question"},
-        "answered": {"key": "b", "value": "Two weeks", "kind": "question"},
-        "dismissed": {"key": "c", "value": None, "kind": "question",
-                      "state": "dismissed"},
-        "not-kept": {"key": "d", "value": None, "kind": "question",
-                     "remembered": False},
-        "policy": {"key": "e", "value": "Never before an offer", "kind": "policy"},
-        "dismissed-policy": {"key": "f", "value": None, "kind": "policy",
-                             "state": "dismissed"},
-    }
-
-    def test_a_dismissed_row_appears_under_its_own_filter_and_no_other(self):
-        seen = self.run_filters()
-        # `not-kept` stays in the question list and out of Needs you, which is
-        # what it did before this change. A value filled once and deliberately
-        # not stored is still a question the bank recognises.
-        self.assertEqual(seen["question"], ["outstanding", "answered", "not-kept"])
-        self.assertEqual(seen["open"], ["outstanding"])
-        self.assertEqual(seen["policy"], ["policy"])
-        self.assertEqual(seen["dismissed"], ["dismissed", "dismissed-policy"])
-
-    def test_needs_you_holds_neither_a_dismissal_nor_a_declined_value(self):
-        """Three reasons a row carries no value, and only one is outstanding."""
-        seen = self.run_filters()
-        self.assertNotIn("dismissed", seen["open"])
-        self.assertNotIn("not-kept", seen["open"])
-
-    def run_filters(self):
-        node = self.node_or_skip()
-        script = profile_panel.SCRIPT
-        pieces = []
-        for name in ("function answered(", "function isDismissed(",
-                     "function isOpen(", "function matches_kind("):
-            self.assertIn(name, script, f"{name} is gone from the page")
-            body = script.split(name, 1)[1]
-            # Balance the braces from the function's own opening one, so the
-            # cut is the whole function and not a line count that ages.
-            start = body.index("{")
-            depth, end = 0, None
-            for i, ch in enumerate(body[start:], start):
-                depth += (ch == "{") - (ch == "}")
-                if depth == 0:
-                    end = i + 1
-                    break
-            self.assertIsNotNone(end, f"{name} does not close")
-            pieces.append(name + body[:end])
-        driver = """
-var kind = null;
-var out = {};
-var ENTRIES = %s;
-['question', 'open', 'policy', 'dismissed'].forEach(function (k) {
-  kind = k;
-  out[k] = Object.keys(ENTRIES).filter(function (name) {
-    return matches_kind(ENTRIES[name]);
-  });
-});
-console.log(JSON.stringify(out));
-""" % json.dumps(self.ENTRIES)
-        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
-                                         encoding="utf-8") as fh:
-            fh.write("'use strict';\n" + "\n".join(pieces) + driver)
-            path = fh.name
-        try:
-            result = subprocess.run([node, path], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-            return json.loads(result.stdout)
-        finally:
-            pathlib.Path(path).unlink()
-
-    def node_or_skip(self):
-        spec = importlib.util.spec_from_file_location(
-            "toolpath", ROOT / "scripts" / "toolpath.py")
-        toolpath = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(toolpath)
-        found = toolpath.find("node", required=False)
-        if found is None:
-            self.skipTest("node is not installed")
-        return found
+        return bank_counts(store.cmd_answer_list(self.ns()))

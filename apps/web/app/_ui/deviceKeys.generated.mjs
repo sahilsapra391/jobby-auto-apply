@@ -7,10 +7,10 @@
 // The KV keys the device writes for a board to read, and the rule for when a
 // status it wrote is too old to believe.
 //
-// **One file, because there are two readers and one writer.** The device
-// writes these through `local-status.mjs` and `owner-wording.mjs`; the retired
-// Python board read them through `kvcontent.mjs`, and v2 reads them through a
-// generated copy of this file (`apps/web/app/_ui/deviceKeys.generated.mjs`).
+// **One file, because the writer and the reader live apart.** The device
+// writes these through `local-status.mjs` and `owner-wording.mjs`, and v2
+// reads them through a generated copy of this file
+// (`apps/web/app/_ui/deviceKeys.generated.mjs`).
 // A key spelled twice is a key that drifts, and a drifted key reads as "never
 // written", which is the one answer that looks like a quiet device rather
 // than a broken board.

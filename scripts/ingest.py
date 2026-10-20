@@ -293,7 +293,7 @@ def select_channels(names=None, tier="1"):
 
 
 def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
-        settings=None, publish=False):
+        settings=None):
     started = time.time()
     now = now or datetime.now(timezone.utc)
     # (source, company) -> ids that board returned this sweep. Feeds
@@ -616,8 +616,6 @@ def run(root, channels=None, limit=None, dry_run=False, now=None, fetcher=None,
         if limit is None:
             write_sweep_runs(root, ledger)
         write_last_ingest(root, report)
-        if publish:
-            report["published"] = _publish()
     return report, jobs
 
 
@@ -792,12 +790,6 @@ def write_last_ingest(root, report):
         Path(tmp).unlink(missing_ok=True)
 
 
-def _publish():
-    result = subprocess.run([sys.executable, str(REPO / "scripts" / "publish.py")],
-                            capture_output=True, text=True, env=toolpath.enriched_env())
-    return result.returncode == 0
-
-
 def main():
     ap = argparse.ArgumentParser(description="Run one Tier-1 sourcing pass.")
     ap.add_argument("--add", metavar="FILE",
@@ -810,8 +802,6 @@ def main():
     ap.add_argument("--limit", type=int, help="stop each channel after N postings")
     ap.add_argument("--channel", action="append", help="only this channel (repeatable)")
     ap.add_argument("--dry-run", action="store_true", help="report, write nothing")
-    ap.add_argument("--publish", action="store_true",
-                    help="push the board afterwards; the watcher does this itself")
     args = ap.parse_args()
 
     root = jobs_store.root_dir(args.store)
@@ -852,7 +842,7 @@ def _run_cli(args, root):
 
     try:
         report, _ = run(root, channels=args.channel, limit=args.limit,
-                        dry_run=args.dry_run, publish=args.publish)
+                        dry_run=args.dry_run)
     except (IngestError, jobs_store.JobsStoreError, search_config.ConfigError) as exc:
         # The run failed, so the board must say so rather than keep showing the
         # last good numbers.

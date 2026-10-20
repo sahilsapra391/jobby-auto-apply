@@ -3,7 +3,23 @@
 // Provider credentials never enter KV. This record says only whether a CLI is
 // installed, logically connected, and healthy enough to accept document work.
 import { readFileSync } from 'node:fs';
-import { getWorkerStatus, putWorkerStatus } from './kvcontent.mjs';
+import { kvGet, kvPut } from './kv.mjs';
+
+export const WORKER_STATUS_KEY = 'jobby:worker:documents:status';
+
+async function getWorkerStatus(env) {
+  const raw = await kvGet(env, WORKER_STATUS_KEY);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function putWorkerStatus(env, status) {
+  return kvPut(env, WORKER_STATUS_KEY, JSON.stringify(status));
+}
 
 const [command, path] = process.argv.slice(2);
 const env = process.env;

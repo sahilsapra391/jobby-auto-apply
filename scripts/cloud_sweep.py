@@ -18,8 +18,8 @@ reads `scan` and not this -- and takes `scan` only around the merge.
 
 **The merge is the existing path, unchanged.** `ingest.run` is called with
 `sources.ALL` swapped for connectors that return what the container staged, so
-the gate, the pool merge, all five closure brakes, the prune and the publish
-are the same code that runs today. That is deliberate rather than clever: the
+the gate, the pool merge, all five closure brakes and the prune are the
+same code that runs today. That is deliberate rather than clever: the
 alternative was splitting `run()` into a fetch half and a merge half, and the
 merge half is the most consequential function in this repository. This is also
 exactly the shape `tests/test_ingest.py` already drives.
@@ -332,12 +332,12 @@ def _slugs(value):
     return base.board_slugs(value)
 
 
-def merge(root, results, now=None, publish=False, lock_seconds=None):
+def merge(root, results, now=None, lock_seconds=None):
     """Run the existing pipeline over staged results, under the pool lock.
 
     The connectors are replaced with ones that return what was staged and make
     no request. Everything after that -- the gate, the merge, all five closure
-    brakes, the prune, the publish -- is the code that runs today.
+    brakes, the prune -- is the code that runs today.
     """
     import ingest
     from sources import base
@@ -371,8 +371,7 @@ def merge(root, results, now=None, publish=False, lock_seconds=None):
             held_at = time.time()
             try:
                 return ingest.run(root, now=now, settings={},
-                                  fetcher=base.Fetcher(root=root, opener=None),
-                                  publish=publish)
+                                  fetcher=base.Fetcher(root=root, opener=None))
             finally:
                 lock_seconds.append(round(time.time() - held_at, 1))
     finally:
@@ -412,7 +411,6 @@ def run_local_sweep(run=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Start the cloud fetch, wait, and merge what it staged.")
-    ap.add_argument("--publish", action="store_true")
     ap.add_argument(
         "--merge-only", action="store_true",
         help=("merge the newest finished staged sweep without starting a "
@@ -496,8 +494,7 @@ def main(argv=None):
     # `ingest.run` returns `(report, jobs)`. Treating it as a report raised
     # after the merge had already written the pool, which is the worst place
     # for a reporting bug to be: the work was done and the run looked failed.
-    ingest_report, _jobs = merge(root, results, publish=args.publish,
-                                 lock_seconds=lock_seconds)
+    ingest_report, _jobs = merge(root, results, lock_seconds=lock_seconds)
     report["mergeSeconds"] = round(time.time() - merge_started, 1)
     # The span the pool was actually locked for, which is a subset of
     # `mergeSeconds` and is the figure Phase 3 is judged on.

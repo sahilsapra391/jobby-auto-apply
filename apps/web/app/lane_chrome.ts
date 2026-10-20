@@ -1,7 +1,6 @@
-// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.
-// The lane subtitles and empty states, from dashboard.py's own
-// EMPTY dict and hint lines. Copy that names the control which
-// fills a lane is data, and a retyped copy drifts.
+// The lane subtitles and empty states. This file is the source: edit it
+// directly. Each empty state names the control that fills its lane, so a
+// blank panel never reads as broken.
 
 export const LANE_HINTS: Record<string, string> = {
   "act": "Each opens straight to where it is blocked.",

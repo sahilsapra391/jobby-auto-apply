@@ -2,16 +2,16 @@
 //
 // Copied verbatim from deploy/r2.mjs. Change that file.
 //
-// SigV4 is written twice, for the device and for the board's
-// function, and tests/test_r2_contract.py holds those two to one
+// SigV4 is written twice, in Python for the device and here in
+// JavaScript, and tests/test_r2_contract.py holds those two to one
 // contract. This is a copy rather than a third implementation so
 // that stays true.
 // Read Class 1 artifacts out of R2, server side, for the board to serve.
 //
 // The bucket is private and has no public access and no CDN in front of it. The
-// board's document links come here, the same Basic-auth gate every other route
-// checks has already run, and the function then reads the object and returns
-// the bytes. Nothing signed ever reaches the browser.
+// board's document links come here, the route's own checks have already run,
+// and the function then reads the object and returns the bytes. Nothing signed
+// ever reaches the browser.
 //
 // It used to redirect to a presigned URL, which is what the architecture plan
 // first specified, and the measurement is why it does not any more: the

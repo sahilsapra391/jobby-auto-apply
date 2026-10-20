@@ -15,7 +15,7 @@
  * anything, so a client that ignores this gets a 503 and a card that goes back
  * where it was.
  */
-import { COMPONENTS, OUTCOME_CHIPS, WEIGHTS } from "../rubric.generated";
+import { COMPONENTS, OUTCOME_CHIPS, WEIGHTS } from "../rubric";
 import { CardDetails } from "./CardDetails";
 import { Act, ActionIcon, ApplyWithConfirm } from "./actions";
 import { droppedFromLabel } from "./droppedLanes";
@@ -369,10 +369,10 @@ function Ring({ score }: { score: unknown }) {
 /**
  * Why that percentage: one bar per rubric component, earned over possible.
  *
- * COMPONENTS and WEIGHTS are generated from `found_lane.COMPONENTS` and
- * `match_score.WEIGHTS` rather than retyped, because "possible" is the weight
- * and a board that disagrees about what a title match is worth disagrees
- * silently, in a bar that still renders.
+ * COMPONENTS and WEIGHTS live in `rubric.ts` and must equal
+ * `match_score.WEIGHTS` (`tests/test_v2_rubric_matches_the_score.py`), because
+ * "possible" is the weight and a board that disagrees about what a title match
+ * is worth disagrees silently, in a bar that still renders.
  */
 function Facts({ score, parts, why, tags }: {
   score: unknown; parts: unknown;

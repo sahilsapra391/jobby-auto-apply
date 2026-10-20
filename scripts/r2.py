@@ -329,9 +329,8 @@ class Client:
 
         ListObjectsV2 is a Class A operation, the expensive kind, with a million
         a month free. That is fine for a sweep run by hand and is exactly why
-        nothing on the publish path lists: the manifest exists so the common
-        case costs no operations at all. references/hosting.md says the same
-        thing about KV, in different units.
+        nothing on the upload path lists: the manifest exists so the common
+        case costs no operations at all.
         """
         keys, token = [], None
         while True:
@@ -396,7 +395,7 @@ def client(env=None, user_id=DEFAULT_USER_ID):
     if absent:
         raise R2Error(
             "R2 is not configured. Missing " + ", ".join(absent)
-            + " in ~/.job-application/config.env. See references/hosting.md.")
+            + " in ~/.job-application/config.env. See README.md, Setting it up.")
     return Client(values["R2_ACCOUNT_ID"], values["R2_BUCKET"],
                   values["R2_ACCESS_KEY_ID"], values["R2_SECRET_ACCESS_KEY"],
                   user_id=user_id)

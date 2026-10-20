@@ -77,9 +77,8 @@ def append_event(payload):
 def set_phase(aid, phase, detail=""):
     """Update the phase, carrying the store root through.
 
-    phase.py republishes the board whenever --root is absent, so leaving it off
-    meant a run against a test store rendered that store's fixtures over the
-    real board. The sync_board guard below did not cover this second path out.
+    Without --root, phase.py writes the device's own store, so a run against a
+    test store would set a phase on a real session.
     """
     args = [REPO / "scripts" / "phase.py", "--id", aid, "--phase", phase,
             "--detail", detail]
@@ -90,31 +89,20 @@ def set_phase(aid, phase, detail=""):
 
 
 def sync_board():
-    """Tidy the store and republish, unless we are pointed at a test store.
+    """Reconcile the store after a submission: retire the Watching session.
 
-    sync_board.py publishes by default. With JOB_APPLICATION_DIR redirected, the
-    board built from that store describes a handful of fixture rows, and
-    publishing it would overwrite the real one. That has happened once already
-    and it looked exactly like every application vanishing, so the guard is
-    structural rather than a note telling people to be careful.
+    Nothing is published. The board reads Postgres, which the mirrors write as
+    the store changes, so this only has to run `sync_board.py`, which honours
+    JOB_APPLICATION_DIR like every other store reader.
     """
-    args = [REPO / "scripts" / "sync_board.py"]
-    if os.environ.get("JOB_APPLICATION_DIR"):
-        args.append("--no-publish")
-    r = call(args)
+    r = call([REPO / "scripts" / "sync_board.py"])
     if r.returncode != 0:
         return {"synced": False, "error": (r.stderr or "").strip()[:200] or "sync failed"}
     try:
-        out = json.loads((r.stdout or "").strip() or "{}")
+        json.loads((r.stdout or "").strip() or "{}")
     except json.JSONDecodeError:
         return {"synced": False, "error": "sync_board gave no readable result"}
-    if "--no-publish" in [str(a) for a in args]:
-        return {"synced": True, "published": False, "reason": "test store"}
-    # sync_board.py exits 0 even when the publish fails and only says so in its
-    # output. Reporting success off the exit code hid a dead board behind a
-    # cheerful result.
-    return {"synced": True, "published": bool(out.get("published")),
-            **({"error": out.get("error")} if out.get("error") else {})}
+    return {"synced": True}
 
 
 def session(aid):

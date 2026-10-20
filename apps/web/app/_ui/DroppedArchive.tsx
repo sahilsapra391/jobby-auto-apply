@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { LANE_SEARCH_PLACEHOLDER } from "../lane_chrome.generated";
+import { LANE_SEARCH_PLACEHOLDER } from "../lane_chrome";
 import { LaneList } from "./LaneList";
 import { droppedFromLabel, droppedHaystack } from "./droppedLanes";
 import type { Cursor, Row } from "./db";

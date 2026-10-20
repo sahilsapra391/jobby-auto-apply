@@ -13,6 +13,5 @@ export const LOGO_HOSTS: ReadonlySet<string> =
 ]);
 
 // `alt=1` means try the other TLDs of the same label. A constant
-// here rather than in each URL, which is what kept the Python
-// board's Found payload inside its cap.
+// here rather than in each URL.
 export const CANDIDATE_TLDS = [".com", ".io", ".ai", ".co"] as const;

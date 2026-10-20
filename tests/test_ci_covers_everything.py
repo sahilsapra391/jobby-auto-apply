@@ -124,7 +124,8 @@ class TheWorkflowRunsEveryModule(unittest.TestCase):
     def test_the_v2_build_is_checked_against_its_deployed_shape(self):
         """A build step that only builds proves the code compiles. It was a
         compiling, passing, locally-correct renderer that read a favicon out of
-        deploy/public/ and 502'd every deployed request for two days.
+        a static directory the function bundle never carried, and 502'd every
+        deployed request for two days.
 
         Matched against the command lines rather than the file, and that is not
         tidiness. The first version searched the whole text for "npm ci", and
@@ -152,7 +153,7 @@ class TheStalenessCheckNamesEveryGeneratedFile(unittest.TestCase):
 
     They were three: `sync_v2_styles --check` named three of the four files it
     wrote, and the workflow's `git status --porcelain` named three of the five.
-    `rubric.generated.ts` could be stale and both said current, which is this
+    One generated file could be stale and both said current, which is this
     repository's oldest shape in a new place. `--check` now walks
     `sync_v2_styles.outputs()`, and this compares the workflow against the
     same function rather than against a list written here.
@@ -163,11 +164,10 @@ class TheStalenessCheckNamesEveryGeneratedFile(unittest.TestCase):
         import sync_v2_styles
         self.generator = sync_v2_styles
         self.text = WORKFLOW.read_text()
-        # There are two `git status --porcelain` gates: the renderer bundle's
-        # and this one. Anchored on the step name, because taking the first
-        # match found the wrong gate and the assertion then measured a list
-        # that has nothing to do with v2.
-        step = self.text.index("The v2 stylesheet matches the board")
+        # Anchored on the step name, because taking the first `--porcelain`
+        # in the file once found a different gate and the assertion then
+        # measured a list that had nothing to do with v2.
+        step = self.text.index("v2's generated files match their sources")
         block = self.text[step:]
         start = block.index("--porcelain")
         self.block = block[start:start + block[start:].index(')"')]
@@ -210,15 +210,14 @@ class TheStalenessCheckNamesEveryGeneratedFile(unittest.TestCase):
         self.assertEqual(
             missing, [],
             "these are regenerated on every CI run and not diffed, so a stale "
-            "one merges silently and v2 stops matching the board it replaces")
+            "one merges silently and v2 parts from the source it copies")
 
     def test_the_reader_would_notice_an_empty_block(self):
         """The control. A slice that matched nothing would pass the above."""
-        self.assertIn("board.css", self.block,
+        self.assertIn("lanes.generated.ts", self.block,
                       "the slice above stopped containing the file list")
-        self.assertNotIn("deploy/renderer", self.block,
-                         "that is the other gate; taking the first match "
-                         "found it and measured the wrong list")
+        self.assertNotIn("Python tests", self.block,
+                         "the slice ran past its own step into the next one")
 
     def test_the_check_flag_walks_the_same_list(self):
         import inspect

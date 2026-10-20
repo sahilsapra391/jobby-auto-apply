@@ -8,9 +8,9 @@
 // card, and the watcher never learned anything had happened.
 //
 // What is worth testing here is the half a live click cannot check cheaply:
-// that the queue names agree with the board's, that the generated copy really
-// is the board's queue, and that a failing enqueue refuses loudly rather than
-// falling through to a commit.
+// that every queue v2 names is one the device polls, that the generated copy
+// really is the device's queue module, and that a failing enqueue refuses
+// loudly rather than falling through to a commit.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,17 +21,8 @@ import { dirname, join } from 'node:path';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(REPO, p), 'utf8');
 
-/** The board's own endpoint-to-queue map, parsed rather than restated. */
-function boardQueues() {
-  const src = read('deploy/api/board.js');
-  const block = src.slice(src.indexOf('const QUEUES = {'));
-  const body = block.slice(block.indexOf('{'), block.indexOf('};') + 1);
-  const out = {};
-  for (const m of body.matchAll(/'(\/api\/[a-z]+)':\s*'([a-z]+)'/g)) {
-    out[m[1].replace('/api/', '')] = m[2];
-  }
-  return out;
-}
+/** The queues the device polls, from the queue module both halves share. */
+const { QUEUES: DEVICE_QUEUES } = await import('../deploy/kvqueue.mjs');
 
 /** v2's maps, parsed out of the TypeScript for the same reason. */
 function v2Queues(name) {
@@ -44,21 +35,21 @@ function v2Queues(name) {
   return out;
 }
 
-test('every queue v2 sends to is one the board already sends to', () => {
-  const board = new Set(Object.values(boardQueues()));
-  assert.ok(board.size >= 8, `parsed only ${board.size} board queues; the ` +
-                             `matcher has stopped matching`);
+test('every queue v2 sends to is one the device polls', () => {
+  const device = new Set(DEVICE_QUEUES);
+  assert.ok(device.size >= 8, `only ${device.size} device queues; the ` +
+                              `queue module has lost its list`);
   for (const [decision, queue] of Object.entries(v2Queues('DECISION_QUEUE'))) {
-    assert.ok(board.has(queue),
-              `v2 sends ${decision} to a queue the board never uses: ${queue}. ` +
+    assert.ok(device.has(queue),
+              `v2 sends ${decision} to a queue the device never polls: ${queue}. ` +
               `The watcher has no case for it and the click would sit there.`);
   }
   for (const [status, queue] of Object.entries(v2Queues('STATUS_QUEUE'))) {
-    assert.ok(board.has(queue), `v2 sends status ${status} to ${queue}`);
+    assert.ok(device.has(queue), `v2 sends status ${status} to ${queue}`);
   }
 });
 
-test('the three decisions the board offers on a Found card are all bridged', () => {
+test('the three decisions a Found card offers are all bridged', () => {
   const v2 = v2Queues('DECISION_QUEUE');
   // Named, because the omission that matters is silent: a decision with no
   // queue records an opinion and orders no work, which is the state this
@@ -93,13 +84,13 @@ test('a status the daemon owns is deliberately not enqueued', () => {
   // And every queue it does name is one the device claims, so a work order
   // cannot be sent to a queue nothing reads.
   for (const [status, queue] of Object.entries(v2)) {
-    assert.ok(Object.values(boardQueues()).includes(queue),
-              `${status} is sent to the ${queue} queue, which the board does ` +
-              `not have and the watcher therefore never claims`);
+    assert.ok(DEVICE_QUEUES.includes(queue),
+              `${status} is sent to the ${queue} queue, which the device ` +
+              `does not poll and the watcher therefore never claims`);
   }
 });
 
-test('the generated queue is the board queue, but for its kv import', () => {
+test('the generated queue is the device queue, but for its kv import', () => {
   const source = read('deploy/kvqueue.mjs');
   const copy = read('apps/web/app/_ui/kvqueue.generated.mjs');
   const body = copy.slice(copy.indexOf('// The board\'s click queue'));

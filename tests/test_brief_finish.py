@@ -482,25 +482,6 @@ class DocumentOwnershipTests(unittest.TestCase):
         self.assertTrue(docs["ambiguous"])
 
 
-class PublishGuardTests(unittest.TestCase):
-    def test_a_redirected_store_never_publishes(self):
-        # Publishing a board built from a test store would overwrite the real
-        # one, which has happened once and looked exactly like every
-        # application disappearing.
-        finish = load("finish")
-        seen = {}
-        def fake_call(args, capture=True):
-            seen["args"] = args
-            return subprocess.CompletedProcess(args, 0, "", "")
-        finish.call = fake_call
-        os.environ["JOB_APPLICATION_DIR"] = "/tmp/whatever"
-        try:
-            finish.sync_board()
-        finally:
-            os.environ.pop("JOB_APPLICATION_DIR", None)
-        self.assertIn("--no-publish", [str(a) for a in seen["args"]])
-
-
 class BriefTests(unittest.TestCase):
     def test_an_existing_company_folder_is_reused_whatever_its_case(self):
         # A retry must write into the folder the first attempt made, not create

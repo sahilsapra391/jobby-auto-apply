@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { SELECT_SCRIPT } from "../chrome.generated";
+import { SELECT_SCRIPT } from "../chrome";
 
 /**
  * Runs the board's own select-face script.

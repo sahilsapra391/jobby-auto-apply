@@ -151,7 +151,7 @@ class TheGuardCannotFireInProductionTests(unittest.TestCase):
     """
 
     APPLY_PATH = ("run_apply", "document_worker", "watch", "providers",
-                  "provider_usage", "publish", "ingest")
+                  "provider_usage", "sync_board", "ingest")
 
     def test_importing_the_apply_path_leaves_no_test_runner_behind(self):
         program = (

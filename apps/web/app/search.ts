@@ -1,9 +1,9 @@
-// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.
+// Advanced search's options and the location taxonomy. This file is the
+// source: edit it directly.
 //
-// Advanced search's options and the location taxonomy, from
-// scripts/found_lane.py. The picker is the storage contract as
-// much as a control: empty `locations` means Worldwide and a
-// partial selection stores explicit country codes.
+// The picker is the storage contract as much as a control: empty `locations`
+// means Worldwide, a partial selection stores explicit country codes, and
+// CONTINENT_COUNTRIES assigns each country to exactly one display group.
 
 export type Option = [string, string];
 

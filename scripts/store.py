@@ -164,10 +164,11 @@ def _observe_write_path():
 def _mirror_class_b(path, payload):
     """Imported lazily, and failing quietly on purpose.
 
-    Lazy because `store` travels in the Vercel renderer bundle, which carries
-    no packages/schema and no psycopg: a top-level import here 502s every
-    deployed request while every local test passes, which is the failure
-    tests/test_renderer_sync.py caught once already.
+    Lazy because `store` is imported by processes that may carry no
+    packages/schema and no psycopg, and a top-level import here would fail
+    them at import rather than at the one write that needs the mirror. (The
+    original board shipped `store` in a Vercel bundle without either, and a
+    top-level import there 502'd every request.)
 
     Quiet because a class B write must never fail on the mirror's account. The
     loudness lives inside `class_b.after_write`, which writes to stderr and to
@@ -1756,9 +1757,7 @@ def resume_content(root):
     try:
         return json.loads(RESUME_TEMPLATE_CONTENT.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        # The deployed renderer carries no templates directory. It never calls
-        # this, but an import-time surprise there is expensive and a missing
-        # base is simply nothing to edit.
+        # A missing template is simply nothing to edit, never a crash.
         return {}
 
 

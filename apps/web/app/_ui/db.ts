@@ -4,7 +4,7 @@ import { configured as r2Configured, listKeys } from "./r2.generated.mjs";
 // @ts-expect-error -- plain JS with no types, so node can test it directly.
 import { basename as docBasename, servableNames } from "./documents.mjs";
 import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
-import { COUNTRY_NAMES } from "../search.generated";
+import { COUNTRY_NAMES } from "../search";
 
 /**
  * Read-only access to the board's Postgres.

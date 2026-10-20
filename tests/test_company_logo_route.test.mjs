@@ -7,9 +7,8 @@
 //
 // The allowlist is generated from `company_logos.TRUSTED_SOURCE_HOSTS`, and
 // this file compares the generated copy with the Python one rather than
-// reading either and agreeing: `deploy/api/board.js` already restates it by
-// hand, so a third hand-written copy is the one that drifts, and drift here is
-// an open redirect nobody is watching.
+// reading either and agreeing: a hand-written copy is the one that drifts, and
+// drift here is an open redirect nobody is watching.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -28,7 +27,7 @@ const ROUTE = readFileSync(
 const SOURCE = readFileSync(
   join(REPO, "apps", "web", "app", "_ui", "logo_source.ts"), "utf8");
 
-/* ------------------------------------------------- one set, three copies */
+/* --------------------------------------------------- one set, two copies */
 
 test("the generated hosts are Python's, not a retyped list", () => {
   const python = JSON.parse(execFileSync("python3", [
@@ -38,19 +37,6 @@ test("the generated hosts are Python's, not a retyped list", () => {
   ], { cwd: REPO, encoding: "utf8" }));
   assert.deepEqual([...LOGO_HOSTS].sort(), python);
   assert.ok(python.length > 0, "an empty set would satisfy the line above");
-});
-
-test("the deployed board's hand-written copy still agrees", () => {
-  // `deploy/api/board.js` predates the generator and restates the set. It is
-  // the copy most likely to be forgotten, so it is compared rather than
-  // trusted, and this fails on the day somebody edits one of the two.
-  const board = readFileSync(join(REPO, "deploy", "api", "board.js"), "utf8");
-  const block = board.slice(board.indexOf("const LOGO_HOSTS"));
-  const listed = [...block.slice(0, block.indexOf("]"))
-    .matchAll(/'([a-z0-9.-]+\.[a-z0-9.-]+)'/g)].map((m) => m[1]);
-  assert.deepEqual(listed.sort(), [...LOGO_HOSTS].sort(),
-    "three copies of one allowlist, and this is the pair that can drift "
-    + "without any test noticing");
 });
 
 /* ----------------------------------------------------------- the guards */

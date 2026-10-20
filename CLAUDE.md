@@ -41,10 +41,11 @@ documents live in a private R2 bucket and are proxied through the app after its
 own checks. `apps/worker` holds the Cloudflare Worker and the per-account
 `TenantChannel` Durable Object that carries live updates.
 
-The original single-file board (`deploy/api/page.py` rendering KV state, with
-`deploy/renderer/` as its generated copy of the renderer) is retired. Its files
-remain for compatibility, and `scripts/sync_vercel_renderer.py` still has to
-leave `deploy/renderer/` and `deploy/assets/` unchanged for CI to pass.
+The device and the board meet in two places: Postgres, which the device's
+class A and class B mirrors write as its store changes, and a Cloudflare KV
+namespace holding the click queue (`deploy/kvqueue.mjs`) and the few status
+keys the device publishes (`deploy/device_keys.mjs`). The device reaches KV
+through the small node scripts in `deploy/`, which it runs by absolute path.
 
 Sourcing sweeps can also run in a container (`deploy/sourcing/`) that fetches
 from connectors and stages results for the device to merge. The merge, the
@@ -59,7 +60,8 @@ closure sweep and the prune stay on the device, where the pool is.
                          firewall, store, sourcing connectors (scripts/sources/)
     packages/schema/     Postgres migrations, the migration runner, feature flags
     packages/runner/     placeholder for the single device process
-    deploy/              device helpers, the retired v1 board, the sourcing image
+    deploy/              device helpers (KV queue, document jobs, status keys,
+                         R2 signer), the sourcing image, the OCI recovery path
     templates/           resume and cover-letter templates, fictional base content
     references/          reference data the scripts read (questionnaire taxonomy,
                          model prices, source registry, probed tenants)
@@ -233,9 +235,13 @@ been seen firing. Before believing a new check, break the thing it guards and
 watch it fail. A green suite says the code is consistent with itself; running
 the pipeline says it works.
 
-**Generated files are generated.** `deploy/renderer/` and the
-`apps/web/app/*.generated.ts` files come from `scripts/sync_vercel_renderer.py`
-and `scripts/sync_v2_styles.py`. Edit the source and re-run the script.
+**Generated files are generated.** The `apps/web/app/*.generated.ts` and
+`apps/web/app/_ui/*.generated.mjs` files come from `scripts/sync_v2_styles.py`,
+which copies a value the device and the board share out of its one source
+(`v2_lanes.py`, `company_logos.py`, `answer_categories.py`,
+`provider_status.py`, `deploy/*.mjs`). Edit the source and re-run the script.
+`board.css`, `chrome.ts`, `rubric.ts`, `icons.ts`, `lane_chrome.ts`, `search.ts`
+and `apps/web/public/` are ordinary source; edit them directly.
 
 **Migrations are expand-only and checksummed.** Read `docs/migrations.md`
 before writing one, and never edit an applied migration file, comments
@@ -262,8 +268,8 @@ Chrome on a free apply slot and skips when none is available, so check
 applying.
 
 CI (`.github/workflows/checks.yml`) runs the Python and node suites against a
-throwaway Postgres, builds the web app, and fails when the generated renderer
-copy is out of date.
+throwaway Postgres, builds the web app and crawls the traced bundle, and fails
+when a generated file in `apps/web` has drifted from its source.
 
 ## One owner-only surface: the resume wording editor
 

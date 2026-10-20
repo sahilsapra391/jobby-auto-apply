@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
-// The board's own stylesheet and its own head, generated from dashboard.py by
-// scripts/sync_v2_styles.py. Not hand-written and not to be edited: v2 has to
-// look one for one identical to the board it replaces, and a hand-port
-// delivers that once and drifts from then on.
+// The board's stylesheet and its head markup. Both began as copies of the
+// original Python board's and are ordinary source now (board.css, chrome.ts).
 import "./board.css";
 import { cookies } from "next/headers";
-import { HEAD } from "./chrome.generated";
+import { HEAD } from "./chrome";
 import { ThemeControls } from "./_ui/ThemeControls";
 import { CompanyLogos } from "./_ui/CompanyLogos";
 import {

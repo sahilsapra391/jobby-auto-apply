@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SECTION_POINTS } from "../rubric.generated";
+import { SECTION_POINTS } from "../rubric";
 import {
   CLOSED, disclose, readPosting, sectionNote, type Disclosure, type Sections,
 } from "./cardDisclosure";
