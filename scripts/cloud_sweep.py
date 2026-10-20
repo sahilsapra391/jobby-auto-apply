@@ -390,6 +390,25 @@ def discard(conn, account, sweep_id):
     conn.commit()
 
 
+def run_local_sweep(run=None):
+    """The device sweep, for when the cloud one cannot run.
+
+    `ingest.py` takes the `scan` lock itself (`runlock.held`), so a sweep
+    already running is refused there rather than doubled here. Its output goes
+    to this process's stdout, which `watch.spawn` already sends to
+    `ingest-runs.log`, so the local run is logged next to the reason for it.
+    """
+    # Looked up here, not bound as a default: a default binds when the `def`
+    # runs, so a test patching `subprocess.run` would miss it and start a real
+    # sweep. That happened while this was being written.
+    run = run or subprocess.run
+    started = time.time()
+    result = run([sys.executable, str(Path(__file__).resolve().parent / "ingest.py"),
+                  "--tier", "1"])
+    return {"returncode": result.returncode,
+            "seconds": round(time.time() - started, 1)}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Start the cloud fetch, wait, and merge what it staged.")
@@ -454,8 +473,19 @@ def main(argv=None):
                                for v in results.values())
     except CloudSweepUnavailable as exc:
         report["fellBack"] = str(exc)
+        if args.merge_only:
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 3
+        # **The fallback has to happen here, because nobody else does it.**
+        # This docstring promised "the caller runs `ingest.py --tier 1`", and
+        # the caller is `watch.spawn`, which never waits on the child and never
+        # reads its exit code. So `fellBack` was a log entry and nothing more.
+        # Measured 2026-10-20: the Fly CLI lost its login on 2026-10-09, every
+        # sweep since logged "fellBack" and exited 3, and the pool went
+        # unwritten for 315 hours while the board showed Found as current.
+        report["localSweep"] = run_local_sweep()
         print(json.dumps(report, indent=2, sort_keys=True))
-        return 3
+        return 0 if report["localSweep"].get("returncode") == 0 else 3
     except Exception as exc:                              # noqa: BLE001
         report["error"] = f"{type(exc).__name__}: {exc}"[:300]
         print(json.dumps(report, indent=2, sort_keys=True))

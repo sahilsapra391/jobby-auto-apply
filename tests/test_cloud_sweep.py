@@ -692,3 +692,56 @@ class MachineStateTests(unittest.TestCase):
         self.assertIn("machines", seen["argv"])
         self.assertIn("list", seen["argv"])
         self.assertNotIn("status", seen["argv"])
+
+
+class AnUnavailableCloudReallyFallsBackTests(unittest.TestCase):
+    """`fellBack` used to be a log line and nothing else.
+
+    The watcher spawns this script and never reads its exit code, so when the
+    Fly CLI lost its login on 2026-10-09 every sweep logged "fellBack", exited
+    3, and no sweep of any kind ran for 315 hours. The fallback is this
+    script's job now, and these drive `main` rather than read it.
+    """
+
+    def run_main(self, argv, start_raises):
+        calls = []
+        settings = {"JOBBY_FLY_APP": "app", "JOBBY_FLY_MACHINE": "m1",
+                    "JOBBY_ACCOUNT_ID": "acct"}
+        fake_run = lambda args, **kw: (calls.append(args)
+                                       or mock.Mock(returncode=0))
+        with mock.patch.object(cloud_sweep.toolpath, "settings", return_value=settings), \
+             mock.patch.object(cloud_sweep, "start_machine", side_effect=start_raises), \
+             mock.patch.object(cloud_sweep.subprocess, "run", side_effect=fake_run), \
+             mock.patch("builtins.print"):
+            code = cloud_sweep.main(argv)
+        return code, calls
+
+    def test_a_machine_that_will_not_start_runs_the_local_sweep(self):
+        code, calls = self.run_main([], cloud_sweep.CloudSweepUnavailable(
+            "flyctl could not start m1: Error: no access token available"))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(str(calls[0][1]).endswith("ingest.py"))
+        self.assertEqual(calls[0][2:], ["--tier", "1"])
+
+    def test_a_failed_local_sweep_still_exits_non_zero(self):
+        failing = lambda args, **kw: mock.Mock(returncode=2)
+        settings = {"JOBBY_FLY_APP": "app", "JOBBY_FLY_MACHINE": "m1",
+                    "JOBBY_ACCOUNT_ID": "acct"}
+        with mock.patch.object(cloud_sweep.toolpath, "settings", return_value=settings), \
+             mock.patch.object(cloud_sweep, "start_machine",
+                               side_effect=cloud_sweep.CloudSweepUnavailable("down")), \
+             mock.patch.object(cloud_sweep.subprocess, "run", side_effect=failing), \
+             mock.patch("builtins.print"):
+            self.assertEqual(cloud_sweep.main([]), 3)
+
+    def test_merge_only_never_starts_a_sweep_of_its_own(self):
+        settings = {"JOBBY_FLY_APP": "app", "JOBBY_FLY_MACHINE": "m1",
+                    "JOBBY_ACCOUNT_ID": ""}
+        calls = []
+        with mock.patch.object(cloud_sweep.toolpath, "settings", return_value=settings), \
+             mock.patch.object(cloud_sweep.subprocess, "run",
+                               side_effect=lambda a, **k: calls.append(a)), \
+             mock.patch("builtins.print"):
+            self.assertEqual(cloud_sweep.main(["--merge-only"]), 3)
+        self.assertEqual(calls, [])
