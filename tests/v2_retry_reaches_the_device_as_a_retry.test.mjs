@@ -5,8 +5,8 @@
 // `/api/retry` adds `{ retry: true }`, and `watch.do_not_start` waives its
 // parked refusal only for an entry carrying it. v2 sent `status: "inflight"`,
 // the route ordered `apply` with nothing beside the id, and the device refused
-// every Retry on a parked card and claimed it. Observed on 2026-09-12: Davies
-// c9fcfeed85ae12c8, queued by 04:39:44Z, refused at 04:39:48Z with "it is
+// every Retry on a parked card and claimed it. Observed on 2026-09-12: a real
+// parked application, queued by 04:39:44Z, refused at 04:39:48Z with "it is
 // parked in Needs you, waiting on the user", while v2 redrew the card in In
 // flight as Queued with nothing behind it.
 //

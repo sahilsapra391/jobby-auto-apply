@@ -213,8 +213,8 @@ class BrowserMcpSecurityTests(unittest.TestCase):
 class AFailedToolCallNamesWhatWentWrong(unittest.TestCase):
     """`except Exception: raise ToolExecutionError("...failed")` discards it.
 
-    **Observed on a real run rather than imagined.** 2026-09-07, the live
-    Chainguard application: 75 MCP calls, and `set_phase` failed once. The
+    **Observed on a real run rather than imagined.** 2026-09-07, a live
+    application: 75 MCP calls, and `set_phase` failed once. The
     whole record of it was "the local application operation failed". The phase
     reached "Filling the form" a moment later so nothing stopped, and what
     happened is not knowable, because `raise ... from exc` keeps the chain for
@@ -259,7 +259,7 @@ class AFailedToolCallNamesWhatWentWrong(unittest.TestCase):
     def test_the_detail_reaches_the_runners_sidecar(self):
         """The provider CLI drops this server's stderr, so stderr alone is lost.
 
-        The Davies run of 2026-09-12 failed exactly this way: a `set_phase`
+        A real run on 2026-09-12 failed exactly this way: a `set_phase`
         timeout, and nothing in the run log.
         """
         import subprocess
@@ -316,4 +316,4 @@ class AFailedToolCallNamesWhatWentWrong(unittest.TestCase):
                       "is about seven characters of it")
         self.assertNotIn('"the local application operation failed")', body,
                          "a branch again returns the sentence that named "
-                         "nothing on the Chainguard run")
+                         "nothing on the 2026-09-07 run")

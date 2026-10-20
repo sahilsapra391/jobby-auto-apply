@@ -201,7 +201,7 @@ function PostedCell({ posted }: { posted: unknown }) {
  * **Above five years is worth seeing at a glance**, which is what `.yrs.over`
  * is for and what nothing was setting. The board reads `yearsMin` from the
  * session; v2 reads the posting's own `years_min`, which is the fuller of the
- * two -- measured 2026-09-02, CoreWeave and Turing both carry `5+ years` on
+ * two -- measured 2026-09-02, two real applications both carry `5+ years` on
  * the posting and nothing at all on the session, so the board says "not
  * stated" for two roles whose descriptions state it.
  */
@@ -804,7 +804,7 @@ export function ActCard(row: Row) {
             relaunches the slot with a window (`browser.show`) before opening
             the page, because the slots run `--headless=new`.
 
-            Found by a real block rather than by review: a Chainguard run
+            Found by a real block rather than by review: a real run
             parked on a Greenhouse verification code on 2026-09-07 and there
             was no way to reach the form. */}
         <Act className="btn ghost finish" subject={row.id} rowId={row.id} keep
@@ -1011,14 +1011,14 @@ function NameCell({ row, plain, discipline }: {
  * **The map is keyed by the basename and this was looking it up by the whole
  * recorded value.** `documentSiblings` groups on
  * `lower(split_part(payload->>'resumeVariant', '/', -1))`, and 18 of the 100
- * recorded `resumeVariant` values are paths -- `applications/Ramp/
- * Alex_Example_Ramp_Resume.pdf` rather than the bare name. Every one of those
+ * recorded `resumeVariant` values are paths -- `applications/Acme/
+ * Alex_Example_Acme_Resume.pdf` rather than the bare name. Every one of those
  * missed, `shared` fell back to 1, and the row dropped through to "not
  * stored".
  *
- * Measured on production 2026-09-10: **3** rows are keyed wrongly (Cohere,
- * Datadog, Ramp) and **2** of them visibly change state, because the
- * `stored.has(key)` branch above catches Cohere before this is reached. Both
+ * Measured on production 2026-09-10: **3** rows are keyed wrongly and **2**
+ * of them visibly change state, because the `stored.has(key)` branch above
+ * catches one of the three before this is reached. Both
  * counts are true and they answer different questions: how many lookups are
  * wrong, and how many readers see a wrong word.
  *

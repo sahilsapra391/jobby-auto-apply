@@ -158,7 +158,7 @@ But the résumé upload widget is a **cross-origin iframe**, so the file input i
 
 Some Greenhouse boards now render with no `<select>` elements at all: every dropdown is a `react-select` combobox. Two things follow, and the first one has already cost a real application.
 
-- **Never press Enter to confirm a react-select option.** Enter is the only reliable keyboard confirm, and it works right up until it doesn't: on the DataGrail form it confirmed six dropdowns and then, on the seventh, propagated to the form and submitted the application outright. Click the focused `[role="option"]` node directly instead, then read the control wrapper's text back to confirm the selection registered.
+- **Never press Enter to confirm a react-select option.** Enter is the only reliable keyboard confirm, and it works right up until it doesn't: on one employer's form it confirmed six dropdowns and then, on the seventh, propagated to the form and submitted the application outright. Click the focused `[role="option"]` node directly instead, then read the control wrapper's text back to confirm the selection registered.
 - **`form_input` does not work on a react-select.** It writes the visible text while the control's underlying value stays empty, so the field looks filled and submits blank. Every combobox needs the click-the-option treatment plus a read-back.
 - File inputs disappear from the DOM after a successful upload; the filename appears in the form's `innerText`, which is the reliable way to confirm an attachment landed.
 

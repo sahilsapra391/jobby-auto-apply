@@ -809,7 +809,7 @@ AWAITING_COLUMNS = ("session.status", "session.phase")
 #: re-derive it from once there are enough of them.
 #:
 #: **The case this bound exists for is not the one that motivated the marker.**
-#: Scale Media 49dac26ae2c5c6ef has no marker at all: it predates the column,
+#: The application that motivated it has no marker at all: it predates the column,
 #: so it stays a plain divergence, which is correct. The case here is live and
 #: post-#206: v2 orders an apply, the device receives it, `do_not_start`
 #: refuses because the application is parked or its latest event is

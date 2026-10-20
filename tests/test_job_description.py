@@ -112,12 +112,12 @@ class RouteTests(unittest.TestCase):
         # The older boards.greenhouse.io links in the pool arrive carrying
         # ?gh_jid=. Splitting the raw URL on "/" welds that to the job id and
         # the API answers 404, which is a fetch failure that looks like a dead
-        # posting. Two of the six parked applications had that shape.
-        api = "https://boards-api.greenhouse.io/v1/boards/robinhood/jobs/8131181"
+        # posting. Some real parked applications had that shape.
+        api = "https://boards-api.greenhouse.io/v1/boards/acme/jobs/1000001"
         for posting in (
-            "https://job-boards.greenhouse.io/robinhood/jobs/8131181",
-            "https://job-boards.greenhouse.io/robinhood/jobs/8131181/",
-            "https://boards.greenhouse.io/robinhood/jobs/8131181?gh_jid=8131181&t=x",
+            "https://job-boards.greenhouse.io/acme/jobs/1000001",
+            "https://job-boards.greenhouse.io/acme/jobs/1000001/",
+            "https://boards.greenhouse.io/acme/jobs/1000001?gh_jid=1000001&t=x",
         ):
             with self.subTest(posting=posting):
                 fetcher = FakeFetcher({api: {"content": f"<p>{BODY}</p>"}})

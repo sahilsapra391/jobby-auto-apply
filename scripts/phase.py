@@ -33,7 +33,7 @@ STORE = REPO / "scripts" / "store.py"
 #: `submitting` (`watch.do_not_start`), so the pending item names the two
 #: controls that resolve it instead. Measured 2026-09-12: seven applications in
 #: the real store sat at a latest `submitting` with nothing after it, and
-#: Davies c9fcfeed85ae12c8 sat in In flight at phase "Submitting" offering a
+#: one of them sat in In flight at phase "Submitting" offering a
 #: Retry the device refused and a Stop that resolved nothing.
 UNCONFIRMED_PHASE = "Submit unconfirmed"
 UNCONFIRMED_DETAIL = ("a submit was attempted and no confirmation was seen; "
@@ -82,7 +82,7 @@ def main():
 
     # **A dropped application keeps its status, whatever asked.** Every branch
     # below sets a status and only the phase branch used to check. Observed
-    # 2026-09-12 on Tabby cf038ad790a47994: drop.py ran at 05:52:51Z inside a
+    # 2026-09-12 on a real application: drop.py ran at 05:52:51Z inside a
     # tick that had already passed `do_not_start`, the tick spawned
     # `run_apply.py`, the runner refused the start as dropped, and its refusal
     # handler called `--restore`. That branch set the status from

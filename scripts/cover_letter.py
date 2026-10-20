@@ -141,7 +141,7 @@ def clean_paragraph(value, field):
 # "Dear Dear ..." because the model put "Dear" inside the salutation field
 # the template already prefixes, and 5 ended the closing paragraph with
 # "Sincerely, <name>" above the template's own signature block. Real
-# employers received these, Justworks and Robinhood among them.
+# employers received these.
 LEADING_DEAR = re.compile(r"^(?:dear\b[\s,]*)+", re.I)
 # Longer forms first, so "Sincerely yours" is not half-matched by
 # "sincerely" and left standing. Sign-off words never legitimately end a

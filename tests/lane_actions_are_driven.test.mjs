@@ -1,7 +1,7 @@
 // A lane's primary action is wired, not rendered.
 //
 // **"Open & finish" sat disabled on every Needs You card since cutover.** The
-// lane exists to hand a blocked application back to the person; the Chainguard
+// lane exists to hand a blocked application back to the person; a real
 // run parked on "enter the 8-character code emailed to you" and there was no
 // way to reach the form. The card rendered perfectly. Every class was right,
 // every guard about markup passed, and the lane could not do its one job.

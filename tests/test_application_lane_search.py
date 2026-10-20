@@ -2,9 +2,9 @@
 
 **#235 made `q` a list for every caller and moved only Found's predicate.**
 The five application lanes went on casting it to `::text`, node-pg sent
-`["Scale Media"]` as the array literal `{"Scale Media"}`, and the `ilike`
+`["Umbrella Corp"]` as the array literal `{"Umbrella Corp"}`, and the `ilike`
 pattern carried the braces and the quotes. It matched nothing and raised
-nothing. Measured on production: Watching held 19 rows and `&q=Scale%20Media`
+nothing. Measured on production: Watching held 19 rows and a two-word company search
 returned 0, and the same on In flight, Needs you, Submitted and Dropped.
 
 Every check that existed passed, because each one either read the SQL as text

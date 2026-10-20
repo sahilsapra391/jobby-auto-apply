@@ -71,8 +71,8 @@ export default async function Board({
     ? (asked as Lane)
     : "found";
 
-  // **Match %, not Newest.** The old board leads with Okta 97, Axon 96,
-  // Cohere 96; v2 led with whatever a sweep found in the last hour, which on a
+  // **Match %, not Newest.** The old board leads with matches of 97, 96
+  // and 96; v2 led with whatever a sweep found in the last hour, which on a
   // corpus that ingests everything is warehouse shifts and accountancy. The
   // ordering by date is still one click away and still puts undated postings
   // last, which `nulls last` in the generated SQL already guarantees.

@@ -54,7 +54,7 @@ Three cases, and only the third is forbidden:
 2. **True but worded differently.** Adopt the posting's phrasing. If the base says "test coverage from 62% to 81%" and the posting says "automated quality assurance", both describe the same work, so use theirs. This is where nearly all real gains live, and it costs no honesty at all. Same story, same numbers, their vocabulary.
 3. **Not true.** Cut it. A posting asking for Kubernetes and Terraform does not make those appear on a resume that never had them.
 
-**On a 95% target.** Coverage against a posting's *entire* keyword set is not truthfully reachable, because postings list requirements the candidate does not have. Measured against the Ridgeline posting, the tailored resume scored 57%, and the missing terms included Kubernetes and Terraform. Forcing those to 95% would mean claiming both.
+**On a 95% target.** Coverage against a posting's *entire* keyword set is not truthfully reachable, because postings list requirements the candidate does not have. Measured against one real posting, the tailored resume scored 57%, and the missing terms included Kubernetes and Terraform. Forcing those to 95% would mean claiming both.
 
 So the target is **95% of the keywords the candidate can truthfully claim**, and the residue is reported rather than closed. That residue is useful on its own: a posting where half the unmatched keywords are real requirements he lacks is a fit signal, not a resume problem.
 

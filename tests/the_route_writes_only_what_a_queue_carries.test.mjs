@@ -161,8 +161,8 @@ test('the id the probe used is refused, and real ids are not', () => {
     assert.equal(re.test(bad), false, `the route would take ${JSON.stringify(bad)}`);
   }
   // Both shapes the store actually holds: 16-hex and slug. 37 of 187 are hex.
-  for (const good of ['f5f07564fbae4ffc', '31c8aa9c1e988c56', 'acme-pm',
-                      'scale-media_49dac26', 'a.b-c_d']) {
+  for (const good of ['000000000000000f', '0000000000000002', 'acme-pm',
+                      'umbrella-corp_0000004', 'a.b-c_d']) {
     assert.equal(re.test(good), true, `the route would refuse the real id ${good}`);
   }
 });

@@ -327,7 +327,7 @@ class MessageTests(unittest.TestCase):
     def entry(self, **overrides):
         entry = {"slot": "apply-3", "running": OLD, "installed": INSTALLED,
                  "reasons": ["version"], "missingFlags": [],
-                 "holder": "parked", "applicationId": "bc839847c93d9e46"}
+                 "holder": "parked", "applicationId": "0000000000000009"}
         entry.update(overrides)
         return [entry]
 
@@ -346,7 +346,7 @@ class MessageTests(unittest.TestCase):
 
     def test_a_held_slot_names_itself_its_holder_and_its_application(self):
         message = watch.chrome_drift_message(self.entry())
-        for expected in ("apply-3", "parked", "bc839847c93d9e46", INSTALLED, OLD):
+        for expected in ("apply-3", "parked", "0000000000000009", INSTALLED, OLD):
             self.assertIn(expected, message)
 
     def test_an_idle_slot_is_labelled_idle_rather_than_left_blank(self):

@@ -9,7 +9,7 @@
 // `filtersFrom`, `filterValues` and `argsFor` are compiled out of `db.ts`, the
 // SQL and its parameter lists come from `lanes.generated.ts`, and the driver
 // is the `pg` the app ships, which is what serialises a JS array into the
-// array literal `{"Scale Media"}`. A test that hands psycopg a Python list
+// array literal `{"Umbrella Corp"}`. A test that hands psycopg a Python list
 // skips exactly that serialisation, and that is where #235 broke.
 //
 //   node tests/lane_query_runner.mjs <database-url> <schema> <account> <query>

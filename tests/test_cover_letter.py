@@ -97,8 +97,8 @@ class GreetingAndSignOffOnceTests(unittest.TestCase):
         return cover_letter.validate_content(merged)
 
     def test_a_salutation_that_already_says_dear_loses_it(self):
-        got = self.content(salutation="Dear Justworks Hiring Team")
-        self.assertEqual(got["salutation"], "Justworks Hiring Team")
+        got = self.content(salutation="Dear Acme Hiring Team")
+        self.assertEqual(got["salutation"], "Acme Hiring Team")
 
     def test_even_a_double_dear_from_the_model_collapses(self):
         got = self.content(salutation="Dear Dear Hiring Team,")

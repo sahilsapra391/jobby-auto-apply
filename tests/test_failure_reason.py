@@ -67,7 +67,7 @@ class WorkerErrorReasonTests(unittest.TestCase):
             "coverLetter has an invalid shape: role is too short", exc.reason())
 
     def test_unsupported_terms_names_the_terms_for_the_local_log(self):
-        """The count alone cost a day on application 7923ca442c573811.
+        """The count alone cost a day on one real application.
 
         These are words from the employer's public posting, not document text.
         `NodeTransport.fail` still sends a code and nothing else, which is what

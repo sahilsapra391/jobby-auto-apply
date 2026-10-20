@@ -156,8 +156,8 @@ class ADropIsNotUndoneTests(unittest.TestCase):
 
     watch.log, 2026-08-27T22:53:44, one tick and one line:
 
-        {"dropped": ["a052ab8427c12dfb", "7923ca442c573811"],
-         "queued":  ["a052ab8427c12dfb", "7923ca442c573811"]}
+        {"dropped": ["000000000000000d", "0000000000000006"],
+         "queued":  ["000000000000000d", "0000000000000006"]}
 
     Drops are processed first, then the tick walks the apply queue and sets a
     phase on each tail item, and setting a phase set the status to inflight. So

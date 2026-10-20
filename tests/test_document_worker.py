@@ -1674,7 +1674,7 @@ class ArtifactValidationTests(unittest.TestCase):
 class AtsProvenanceTests(unittest.TestCase):
     """What the gate must refuse, and what it must never refuse.
 
-    The second half is the one that was missing. Application 7923ca442c573811
+    The second half is the one that was missing. One real application
     failed four times on the word "aligned": the render starts from the base
     resume content, the evidence came only from the base resume PDF, and the
     two say "aligned" and "align". Stripping the model's overrides fell back to
@@ -1723,7 +1723,7 @@ class AtsProvenanceTests(unittest.TestCase):
             return worker._ats_checks(self.runtime, self.resume)
 
     def test_base_wording_is_evidence_so_a_stripped_retry_can_converge(self):
-        """The exact Robinhood failure: base content "aligned", base PDF "align"."""
+        """The exact real failure: base content "aligned", base PDF "align"."""
         jd = (
             "Aligned partners drive the advisor platform. Aligned teams own "
             "aligned outcomes across the aligned roadmap."
@@ -1895,21 +1895,21 @@ class TrustedFieldNormalisationTests(unittest.TestCase):
     left it able to fail only on formatting, which is a false positive by
     construction.
 
-    Robinhood's stored title is the real one: "Staff Product Manager-  " with a
+    One real posting's stored title ended "Manager-  " with a
     double space. Four document jobs died on it, two on Anthropic and one on
     OpenAI with its strict schema, all at this gate. 68 of the 6,389 postings in
     the pool normalise to something different from what is stored.
     """
 
-    DOUBLE_SPACED = "Staff Product Manager-  Integrations & Advisor Platform"
+    DOUBLE_SPACED = "Senior Product Manager-  Payments & Ledger Platform"
 
     def test_a_double_spaced_role_is_accepted_and_normalised(self):
-        runtime = {"company": "Robinhood", "role": self.DOUBLE_SPACED,
+        runtime = {"company": "Vandelay", "role": self.DOUBLE_SPACED,
                    "storeRoot": wording_store(self)}
         clean = worker.validate_provider_content(provider_payload(), runtime)
         self.assertEqual(
             clean["coverLetter"]["role"],
-            "Staff Product Manager- Integrations & Advisor Platform")
+            "Senior Product Manager- Payments & Ledger Platform")
 
     def test_an_employer_whose_spacing_normalises_is_accepted(self):
         runtime = {"company": "Acme  Corporation", "role": "Private Role",

@@ -1012,7 +1012,7 @@ class ProviderNeutralApplyTests(TickHarnessMixin, unittest.TestCase):
         self.assertEqual(argv[argv.index("--id") + 1], "acme-pm")
 
     def test_a_drop_after_the_guard_stops_the_spawn(self):
-        # Tabby cf038ad790a47994, 2026-09-12: dropped inside a tick that had
+        # A real application, 2026-09-12: dropped inside a tick that had
         # already passed do_not_start, and the runner it spawned undid the drop
         # in its refusal handler. The tick reads the session again once the
         # slot is reserved, and a dropped one spawns nothing.
@@ -1521,12 +1521,12 @@ class ParkedSlotDeadlockTests(unittest.TestCase):
     def test_a_tail_holding_its_own_parked_slot_goes_first_when_the_head_cannot(self):
         # Every slot parked, none free, and the head owns none of them.
         self.free = []
-        self.parked = {"apply-1": "gitlab", "apply-2": "versant"}
-        self.owned = {"gitlab": "apply-1", "versant": "apply-2"}
-        items = [{"applicationId": "axon"},
-                 {"applicationId": "swiggy"},
-                 {"applicationId": "gitlab"}]
-        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "gitlab")
+        self.parked = {"apply-1": "globex", "apply-2": "initech"}
+        self.owned = {"globex": "apply-1", "initech": "apply-2"}
+        items = [{"applicationId": "hooli"},
+                 {"applicationId": "umbrella"},
+                 {"applicationId": "globex"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "globex")
 
     def test_a_tail_without_a_slot_of_its_own_does_not_jump_the_queue(self):
         # A free slot would have served the head too, so this is not a reason
@@ -1534,16 +1534,16 @@ class ParkedSlotDeadlockTests(unittest.TestCase):
         self.free = []
         self.parked = {"apply-1": "someone-else"}
         self.owned = {}
-        items = [{"applicationId": "axon"}, {"applicationId": "swiggy"}]
-        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "axon")
+        items = [{"applicationId": "hooli"}, {"applicationId": "umbrella"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "hooli")
 
     def test_a_slot_parked_by_a_different_application_is_not_borrowed(self):
         # The tab holds another application's half-filled form.
         self.free = []
-        self.parked = {"apply-1": "gitlab"}
-        self.owned = {"swiggy": "apply-1"}
-        items = [{"applicationId": "axon"}, {"applicationId": "swiggy"}]
-        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "axon")
+        self.parked = {"apply-1": "globex"}
+        self.owned = {"umbrella": "apply-1"}
+        items = [{"applicationId": "hooli"}, {"applicationId": "umbrella"}]
+        self.assertEqual(watch.choose_apply_head(items)["applicationId"], "hooli")
 
     def test_an_empty_queue_has_no_head(self):
         self.assertIsNone(watch.choose_apply_head([]))

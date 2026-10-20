@@ -3,7 +3,7 @@
 **Seven consecutive green runs compared 11 of 28 posting columns and one of
 four session columns.** `applications.status` was the whole of what parity knew
 about a session; `phase` was never looked at, and on the first run that did
-look, it found a real one: Harvey `17121dc2523fec5e` held `Queued` in Postgres
+look, it found a real one: a session held `Queued` in Postgres
 against a session file with no `phase` key at all.
 
 The field set was a subset nobody had written down, which is why nobody noticed
@@ -244,7 +244,7 @@ class OneTransformNotTwo(unittest.TestCase):
     def test_an_absent_field_is_none_not_a_missing_key(self):
         """The session file is the authority on its own state, including when
         it says nothing: a missing key has to reach the column as NULL, or a
-        cleared value is kept forever. That is the Harvey phase bug."""
+        cleared value is kept forever. That is the stale-phase bug."""
         built = class_b.session_row({"status": "x"})
         self.assertEqual(set(built), set(class_b.session_row({})),
                          "the key set must not depend on what the file has")
@@ -254,11 +254,11 @@ class OneTransformNotTwo(unittest.TestCase):
             self.assertIsNone(value, f"{name} should be None, got {value!r}")
 
     def test_the_role_builder_owns_the_name_and_nothing_else(self):
-        built = class_b.role_row({"company": " Hex ", "role": "PM",
+        built = class_b.role_row({"company": " Acme ", "role": "PM",
                                   "url": "https://x/1", "region": "US",
                                   "source": "greenhouse", "ats": "greenhouse",
                                   "status": "watch"})
-        self.assertEqual(built["company"], "Hex")
+        self.assertEqual(built["company"], "Acme")
         self.assertNotIn("status", built,
                          "roles.json is an index of roles seen, not a record "
                          "of state: passing a status from here once overwrote "

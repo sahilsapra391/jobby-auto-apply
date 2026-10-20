@@ -4,7 +4,7 @@ The Memory Bank grows on its own: every application that parks on a question it
 could not answer plants that question here, unanswered, so it can be answered
 somewhere calmer than a form at 11pm. Nothing took one back out. Measured on the
 real store on 2026-08-28, all five outstanding questions were Korean-language
-fields from one Coupang application the user had already dropped -- nationality,
+fields from one application the user had already dropped -- nationality,
 a Korea work visa, the Public Officials Ethics Act, veterans' affairs, a data
 consent -- badging the nav with a 5 that could not reach zero, because the only
 way to clear a row was to answer it and the user was never going to answer any
@@ -184,8 +184,8 @@ class TheLoopStopsPlantingIt(BankCase):
         self.assertEqual(self.entry(key)["askedBy"], ["app-1", "app-2", "app-3"])
         self.assertEqual(self.entry(key)["state"], "dismissed")
 
-    def test_the_whole_coupang_set_clears_and_stays_clear(self):
-        keys = [self.open_question(q, "5db8c78d6b4e50bc")["key"] for q in KOREAN]
+    def test_the_whole_dropped_set_clears_and_stays_clear(self):
+        keys = [self.open_question(q, "000000000000000a")["key"] for q in KOREAN]
         self.assertEqual(self.counts()["unanswered"], 5)
         for key in keys:
             self.dismiss(key)
@@ -193,7 +193,7 @@ class TheLoopStopsPlantingIt(BankCase):
         self.assertEqual(self.counts()["dismissed"], 5)
         # The application is retried and parks on the same five.
         for question in KOREAN:
-            self.open_question(question, "5db8c78d6b4e50bc")
+            self.open_question(question, "000000000000000a")
         self.assertEqual(self.counts()["unanswered"], 0)
 
     def counts(self):

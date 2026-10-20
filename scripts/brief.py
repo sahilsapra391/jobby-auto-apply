@@ -125,14 +125,14 @@ def run_identity(profile, base):
     # The profile links, for the same reason. A LinkedIn URL field is required
     # on a large share of forms and the profile has carried the URL the whole
     # time; the prompt just never showed it to an agent. Measured on
-    # 2026-08-25: the Justworks application parked on a required LinkedIn field
+    # 2026-08-25: a real application parked on a required LinkedIn field
     # while profile.links.linkedin was set.
     links = {k: v for k, v in ((profile or {}).get("links") or {}).items() if v}
     if links and not identity.get("links"):
         identity["links"] = links
     # And the education, for the same reason again. Greenhouse asks for School,
     # Degree and Discipline as three required dropdowns, and on 2026-08-25 the
-    # Workato application parked on the degree one while the profile carried
+    # another application parked on the degree one while the profile carried
     # the school, the degree, the major, the minor and both dates.
     education = [entry for entry in ((profile or {}).get("education") or [])
                  if isinstance(entry, dict) and entry]
@@ -165,7 +165,7 @@ def find_documents(folder, role, expected=None):
 
         Exactly one candidate means one role has been worked at this company, so
         it is this one. That is the retry case, and it matters because filenames
-        often carry only the company: "Alex_Example_Plaid_Resume.pdf" names no
+        often carry only the company: "Alex_Example_Acme_Resume.pdf" names no
         role at all.
 
         More than one and we decline, every time. Ranking by role words and
@@ -242,7 +242,7 @@ def build(aid):
     jd_text = extraction if isinstance(extraction, str) else json.dumps(extraction, indent=2) \
         if extraction else ""
     # Named per application, not per company. Ten companies here already hold
-    # more than one role in a single folder (Google holds three), and five
+    # more than one role in a single folder (one holds three), and five
     # applications run at once. A shared jd.txt means two concurrent runs at one
     # company overwrite each other's posting, and the loser tailors a resume
     # against the wrong job and sends it.

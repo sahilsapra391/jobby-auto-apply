@@ -324,7 +324,7 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
         """The provider CLI drops the jobby server's stderr, so the runner folds
         the server's sidecar into the run log itself.
 
-        Measured 2026-09-12: a Davies run's `set_phase` timed out and its run
+        Measured 2026-09-12: a real run's `set_phase` timed out and its run
         log held no `application_mcp` line anywhere. This drives the real
         server, as a real process, from the argv the runner builds, and makes
         `set_phase` fail against an empty store. No provider is spawned: the

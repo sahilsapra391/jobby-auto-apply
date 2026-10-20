@@ -4,7 +4,7 @@
 whole design. The obvious marker is a provenance flag saying v2 wrote the row,
 and a provenance flag is permanent: it would excuse every v2 row for ever, and
 the only v2 finding this project has ever had is precisely a row nothing acted
-on. Scale Media `49dac26ae2c5c6ef` holds `inflight` in Postgres against a
+on. One real application holds `inflight` in Postgres against a
 session file that has read `watch` since 2026-09-05T21:36:21Z, because v2 wrote
 it at 2026-09-07T00:18:36Z and #206, which added the enqueue, landed two hours
 later. A "v2 wrote this" exemption deletes that finding.
@@ -63,7 +63,7 @@ class ClassifyTests(unittest.TestCase):
         self.assertGreater(age, verify_parity.AWAITING_SECONDS)
 
     def test_a_row_with_no_order_is_untouched(self):
-        """The Scale Media case. It predates the column, so it has no marker,
+        """The motivating case. It predates the column, so it has no marker,
         so it stays a plain divergence -- which is the correct answer and the
         one every row-level exemption gets wrong."""
         self.assertIsNone(verify_parity.classify_awaiting(mismatch(), {}, now=NOW))

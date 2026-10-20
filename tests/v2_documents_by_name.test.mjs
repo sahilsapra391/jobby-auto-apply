@@ -93,7 +93,7 @@ test.beforeEach(() => {
 test('an indexed document is read from R2 under the key the index names', async () => {
   // The shared-name shape: three applications recorded one name, the file sits
   // under one of them, and the other two have nothing at their own key.
-  const key = 'u/account-1/app/04f960acfe932252/resume.pdf';
+  const key = 'u/account-1/app/000000000000000c/resume.pdf';
   objects.set(key, Buffer.from('%PDF the stored resume'));
   index({ 'Alex_Example_Acme_Resume.pdf': { key, contentType: 'application/pdf' } });
   const read = await docs.readByName(env, 'Alex_Example_Acme_Resume.pdf');
@@ -204,7 +204,7 @@ test('a name that is not a plain filename is refused before anything is read', a
 
 test('a filename with spaces in it is served, not refused', async () => {
   const name = 'Alex Example - Resume - Senior Project Manager.pdf';
-  const key = 'u/account-1/app/bd7c44165d98d10a/resume.pdf';
+  const key = 'u/account-1/app/000000000000000e/resume.pdf';
   objects.set(key, Buffer.from('%PDF spaced'));
   index({ [name]: { key } });
   assert.equal(await body(await docs.readByName(env, name)), '%PDF spaced');

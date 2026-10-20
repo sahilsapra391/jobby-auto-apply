@@ -377,8 +377,8 @@ class UnsupportedTerms(ResultInvalid):
     def reason(self) -> str:
         """The terms, bounded, in the local log only.
 
-        This used to be the count alone, and the count cost a day. Application
-        7923ca442c573811 failed this gate four times saying "1 unsupported
+        This used to be the count alone, and the count cost a day. One real
+        application failed this gate four times saying "1 unsupported
         term(s)", and finding out which word it was meant rebuilding the whole
         check offline against the real store. It was "aligned".
 
@@ -872,7 +872,7 @@ def _ats_checks(runtime: Mapping[str, Any], resume_path: Path) -> dict[str, Any]
     # any word the two say differently was scored as unsourced even with every
     # override stripped. Measured against the real store on 2026-08-28: 47
     # tokens in the base-only render were absent from the PDF and the facts,
-    # and application 7923ca442c573811 (Robinhood) died on one of them, the
+    # and one real application died on one of them, the
     # base content's "aligned" against the base PDF's "align". A posting whose
     # keywords land on one of those 47 could never be built, whatever the
     # provider returned, because the retry falls back to exactly the wording
@@ -1370,7 +1370,7 @@ def _base_resume_content(runtime):
     and `story-facts.txt` into it, so the file was never there and every resume
     and cover letter fell back to the repository's `templates/resume-content.json`
     instead. Measured on 2026-08-28 against a real materialized bundle for
-    application 7923ca442c573811: the task store held those two files and
+    one application: the task store held those two files and
     nothing else, and this returned the shipped template while the store copy on
     the same machine said something different.
 
@@ -1589,8 +1589,8 @@ def validate_provider_content(
     # the model's own values are already gone by the time this runs and no
     # amount of drift can reach it. What it compared instead was the store's
     # spacing against normalised spacing, and clean_line collapses runs of
-    # whitespace. Robinhood's title carries a double space, so the check could
-    # never pass for it: four runs across both providers died here. 68 of the
+    # whitespace. One real posting's title carries a double space, so the check
+    # could never pass for it: four runs across both providers died here. 68 of the
     # 6,389 postings in the pool have a title or employer that normalises to
     # something different, so this was 1.1% of every future promotion.
     expected_employer = cover_letter.clean_line(company, "employer", 2, 160)

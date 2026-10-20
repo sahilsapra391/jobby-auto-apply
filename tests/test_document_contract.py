@@ -57,8 +57,8 @@ class BundleTests(unittest.TestCase):
         All 205 applications in the store produce 205 distinct names, so this
         contract has never collided in production. That is a property of the
         corpus, not of the rule -- and the rule had already failed once, before
-        it owned naming: three Glance applications to three different roles all
-        claim `Alex_Example_Glance_Resume.pdf`, so KV holds one object for three
+        it owned naming: three applications to one employer for three different roles
+        all claim `Alex_Example_Acme_Resume.pdf`, so KV holds one object for three
         tailored resumes and nothing can say which application received which.
         """
         profile = {"firstName": "Alex", "lastName": "Example"}
@@ -81,8 +81,8 @@ class BundleTests(unittest.TestCase):
     def test_the_id_tag_separates_every_one_of_them(self):
         profile = {"firstName": "Alex", "lastName": "Example"}
         made = [contract.output_names(profile, "Acme", "Product Manager", aid)
-                for aid in ("glance-product-analyst-ii", "dc9c8137b240216e",
-                            "04f960acfe932252")]
+                for aid in ("acme-product-analyst-ii", "000000000000000b",
+                            "000000000000000c")]
         for key in ("resumePdf", "coverPdf", "resumeHtml", "coverHtml"):
             names = [m[key] for m in made]
             self.assertEqual(len(set(names)), len(names),

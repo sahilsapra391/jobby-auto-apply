@@ -118,7 +118,7 @@ def _application_id(conn, account_id, legacy_id, session=None):
                  -- including when it has none: the coalesce made an absent
                  -- phase mean "keep whatever you had", so a phase could be
                  -- written once and never cleared. Found by widening parity,
-                 -- on its first run: Harvey 17121dc2523fec5e had no `phase`
+                 -- on its first run: one real session had no `phase`
                  -- key at all, status `dropped`, and Postgres held `Queued`.
                  -- The caller that genuinely knows nothing about phase is a
                  -- history event, and it takes the `do nothing` branch above.

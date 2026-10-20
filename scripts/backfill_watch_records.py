@@ -170,7 +170,7 @@ def main():
                 break
         if match is None:
             # Absence is only evidence on the board the posting actually lives
-            # on. Glean's registry entry is SmartRecruiters and the watched
+            # on. One employer's registry entry is SmartRecruiters and the watched
             # posting is on Greenhouse: fetching the wrong board and reading
             # its silence as closure would have retired a live role. So the
             # session's own URL has to sit on the board we listed.

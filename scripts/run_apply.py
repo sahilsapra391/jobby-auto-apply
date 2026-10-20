@@ -547,8 +547,8 @@ the browser tools are unavailable, call `jobby.park_application` with that block
 
    Do not park a question you have not put through that second call. Parking sends
    the user a question they have already answered, which is worse than useless: it
-   asks them to do the one job they set this up to avoid. On 2026-08-28 the
-   Robinhood application parked on seven questions and the store held an answer for
+   asks them to do the one job they set this up to avoid. On 2026-08-28 a
+   real application parked on seven questions and the store held an answer for
    every one of them.
 
 4. Fill supported fields in one batch per page, then verify the full batch once. Attach the
@@ -640,8 +640,8 @@ def hand_back_unconfirmed_submit(application_id, outcome):
     nobody saw a confirmation, and nothing restores it, because the form may
     well have gone in. What was missing was the move: the session stayed
     `inflight` at phase "Submitting", so the card sat in In flight offering a
-    Retry the device refuses and a Stop that resolves nothing. Davies
-    c9fcfeed85ae12c8 on 2026-09-12.
+    Retry the device refuses and a Stop that resolves nothing. Observed on a
+    real application on 2026-09-12.
 
     `phase.py --unconfirmed` moves it to Needs you with one pending item asking
     the user to check their email or the employer's portal, and refuses a
@@ -668,8 +668,8 @@ def restore_preflight_refusal(application_id, slot, reason):
 
     A start refused because the user dropped the application stays dropped:
     `phase.py --restore` refuses every dropped session, which is what keeps
-    this handler from undoing the drop it is honouring (Tabby
-    cf038ad790a47994, 2026-09-12).
+    this handler from undoing the drop it is honouring (observed on a real
+    application, 2026-09-12).
     """
     _set_phase(
         application_id,
@@ -1169,7 +1169,7 @@ def _run(argv=None):
             # and it reads identically to an ordinary park unless it is named.
             #
             # Measured over the 88 real applications on 2026-08-28: three parked
-            # exactly this way, Rekise Marine, Chainguard and JPMorganChase, all
+            # exactly this way, three different employers, all
             # on ordinary ATS hosts. Both halves are required, so a code mailed
             # to an address Jobby cannot read stays the user's to clear.
             if outcome.get("terminal") == "parked" and activity.get("totalCalls"):

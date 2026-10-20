@@ -26,8 +26,8 @@ a gap in it.
 Two ways to get this wrong, both measured and both refused here:
 
 **Never match on a normalised URL.** `norm_url` strips queries and 4,202 of
-14,569 pool jobs carry their identity in the query; one recorded Stripe role
-already made `seen.check` call every other Stripe job known. Only exact
+14,569 pool jobs carry their identity in the query; one recorded role at one
+employer already made `seen.check` call every other job there known. Only exact
 `apply_url` equality is used.
 
 **Never guess the source.** Deriving a board key requires knowing which board's
