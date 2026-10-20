@@ -838,6 +838,19 @@ def main():
                          "would overwrite the live board.")
     args = ap.parse_args()
 
+    # **v1 is retired, as of 2026-10-20.** jobby.fyi serves v2 (apps/web, the
+    # jobby-v2 project), which reads Postgres; the jobby-board project is paused
+    # and its KV state has no reader. Writing it now would only spend a KV write
+    # and a minute of store reads, so every route in here refuses rather than
+    # each caller remembering not to call. `--local` and `--dry-run` still work,
+    # because looking at the old renderer writes nothing.
+    if not args.local and not args.dry_run:
+        print(json.dumps({
+            "published": False, "retired": True,
+            "error": "the v1 board is retired; jobby.fyi is v2 and reads Postgres. "
+                     "Nothing to publish."}))
+        return 0
+
     # Refuse to publish a store that is not the one this board belongs to.
     #
     # The KV namespace comes from deploy/.env.local, never from the store, so a

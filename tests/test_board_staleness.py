@@ -65,7 +65,7 @@ class BoardStalenessTest(unittest.TestCase):
         self.assertIn("22.0 hours", warning)
         # It has to say the board looks fine, because that is the trap.
         self.assertIn("looks fine and is not", warning)
-        self.assertIn("publish.py", warning)
+        self.assertIn("sync_board.py --no-publish", warning)
 
     def test_a_board_that_has_never_published_is_not_an_alarm(self):
         # A fresh machine has nothing to be stale about, and crying wolf on

@@ -1,5 +1,8 @@
 """`set_phase` must not be able to fail because the board is slow to refresh.
 
+As of 2026-10-20 the board it refreshed (v1) is retired and phase.py
+publishes nothing; the history below is why that matters.
+
 **A phase pill reading "Filling the form" over a parked application is worse
 than no pill.** It says work is happening. It is the only progress a person
 sees between pressing Apply and an outcome, and on 2026-09-09 it sat frozen for
@@ -49,26 +52,18 @@ def _publish_calls(tree):
 
 
 class ThePhaseWriteIsNotHostageToThePublishTests(unittest.TestCase):
-    def test_the_publish_is_spawned_and_never_waited_on(self):
-        tree = ast.parse(PHASE.read_text())
-        calls = _publish_calls(tree)
-        self.assertTrue(calls, "phase.py no longer refreshes the board at all; "
-                               "if that is deliberate, delete this test rather "
-                               "than letting it pass vacuously")
-        for call in calls:
-            self.assertEqual(
-                call, "subprocess.Popen",
-                "phase.py waits for publish.py. `_set_phase` kills this script "
-                "at 90 seconds and a publish routinely exceeds 120, so the "
-                "phase write succeeds and the tool reports failure. The agent "
-                "then stops calling set_phase and the pill freezes.")
+    def test_phase_launches_no_publish_at_all(self):
+        """Since 2026-10-20 there is no v1 board to refresh.
 
-    def test_it_says_what_happened_to_the_publish(self):
-        """Never silent. A board that will not refresh is worth one line."""
-        source = PHASE.read_text()
-        self.assertIn('"publish"', source,
-                      "the result does not report whether the refresh was "
-                      "started, so a spawn that fails is invisible")
+        v2 reads Postgres, which the session save already reaches through the
+        class B mirror, so the strongest form of "never waits on a publish" is
+        "never starts one". A publish creeping back in would be the old v1 path,
+        and it would bring the 90-second budget hazard with it.
+        """
+        tree = ast.parse(PHASE.read_text())
+        self.assertEqual(_publish_calls(tree), [],
+                         "phase.py launches publish.py again. The v1 board it "
+                         "refreshed is retired; nothing reads what it writes.")
 
     def test_a_slow_publish_does_not_delay_the_phase_write(self):
         """The property, driven rather than read off the source.
