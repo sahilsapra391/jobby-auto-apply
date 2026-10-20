@@ -105,6 +105,16 @@ export async function POST(request: NextRequest) {
       { error: `kind must be one of ${Object.keys(PLANNERS).join(", ")}` },
       { status: 400 });
   }
+  // **The wording is owner-only and this route is not.** `planResumeEdit`
+  // accepts a `content` edit, so without this a visitor could overwrite the
+  // owner's resume wording through the public write path. It has its own
+  // route, `/api/profile/wording`, behind `isOwner()`.
+  if (body.kind === "resume" && body.action === "content") {
+    return NextResponse.json(
+      { error: "the resume wording is saved through /api/profile/wording, "
+             + "which only the signed-in owner can use" },
+      { status: 403 });
+  }
   const planned = plan(body);
   if (planned.error) {
     return NextResponse.json({ error: planned.error },

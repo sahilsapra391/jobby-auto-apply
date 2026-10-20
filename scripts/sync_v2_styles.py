@@ -521,7 +521,7 @@ def icons_module():
 
 
 def providers_module():
-    """What each provider is called, from `settings_panel.PROVIDERS`.
+    """What each provider is called, from `provider_status.PROVIDERS`.
 
     **The label travels and the model does not**, and the reason is a real
     disagreement between two files. `settings_panel.PROVIDERS` says
@@ -536,15 +536,15 @@ def providers_module():
     disagrees with the other board.
     """
     import json
-    import settings_panel
+    import provider_status
     import providers as provider_registry
     labels = {pid: {"name": name, "agent": agent}
-              for pid, name, agent, _ in settings_panel.PROVIDERS}
-    shown = {pid: model for pid, _, _, model in settings_panel.PROVIDERS}
+              for pid, name, agent, _ in provider_status.PROVIDERS}
+    shown = {pid: model for pid, _, _, model in provider_status.PROVIDERS}
     pinned = dict(provider_registry.MODEL_IDS)
     disagree = sorted(k for k in shown if shown[k] != pinned.get(k))
     return ("// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
-            "// Provider display names, from settings_panel.PROVIDERS.\n"
+            "// Provider display names, from provider_status.PROVIDERS.\n"
             "// The model is NOT here: it comes through the mirror from\n"
             "// providers.MODEL_IDS, which is the pin that actually runs.\n"
             f"// The two disagree today for: {', '.join(disagree) or 'nothing'}.\n\n"
@@ -703,6 +703,8 @@ KVQUEUE_SOURCE = REPO / "deploy" / "kvqueue.mjs"
 KVQUEUE_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "kvqueue.generated.mjs"
 EDITS_SOURCE = REPO / "deploy" / "profile_edits.mjs"
 EDITS_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "profileEdits.generated.mjs"
+DEVICE_KEYS_SOURCE = REPO / "deploy" / "device_keys.mjs"
+DEVICE_KEYS_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "deviceKeys.generated.mjs"
 R2_SOURCE = REPO / "deploy" / "r2.mjs"
 R2_TARGET = REPO / "apps" / "web" / "app" / "_ui" / "r2.generated.mjs"
 
@@ -775,6 +777,22 @@ def profile_edits_module():
     ) + EDITS_SOURCE.read_text(encoding="utf-8")
 
 
+def device_keys_module():
+    """`deploy/device_keys.mjs` verbatim: the KV keys the device writes.
+
+    The device writes provider status and the owner's resume wording under
+    these names, and v2 reads them. A key spelled in two places is a key that
+    drifts, and a drifted key reads as "never written", which looks like a
+    quiet device rather than a broken board. No imports, so nothing is
+    rewritten.
+    """
+    return _generated_header(
+        "device_keys.mjs",
+        "Verbatim. The device writes these keys and v2 reads them, so the\n"
+        "names are written once.",
+    ) + DEVICE_KEYS_SOURCE.read_text(encoding="utf-8")
+
+
 def r2_module():
     """`deploy/r2.mjs` verbatim, so v2 does not become the third SigV4.
 
@@ -820,6 +838,7 @@ def outputs():
         (KV_TARGET, kv_module),
         (KVQUEUE_TARGET, kvqueue_module),
         (EDITS_TARGET, profile_edits_module),
+        (DEVICE_KEYS_TARGET, device_keys_module),
     ]
 
 

@@ -264,3 +264,23 @@ applying.
 CI (`.github/workflows/checks.yml`) runs the Python and node suites against a
 throwaway Postgres, builds the web app, and fails when the generated renderer
 copy is out of date.
+
+## One owner-only surface: the resume wording editor
+
+The site is public. The resume wording editor is the single exception, because
+the wording is the owner's employment history. `isOwner()`
+(`apps/web/app/_ui/owner.ts`) gates its page section, `GET /api/profile/wording`
+and `POST /api/profile/wording`, and nothing else;
+`tests/wording_stays_owner_only.test.mjs` fails if a new caller appears. The
+session is an HMAC-signed HttpOnly, Secure, SameSite=Lax cookie, 30 days, keyed
+on `JOBBY_SESSION_SECRET` and bound to `JOBBY_OWNER_PASSWORD`, so rotating either
+ends every session. With either variable unset (or shorter than 12 and 32
+characters) the editor says how to turn it on.
+
+The wording never enters Postgres. The device publishes it, with its rendered
+preview, to the KV key `jobby:owner:resume-wording` (`scripts/wording_publish.py`,
+spawned by `watch.refresh_owner_wording` when its inputs change and forced after
+an accepted wording edit), and only the owner route reads that key. Saves go
+through `resumeEdits`. The public `/api/profile` refuses a `content` edit, and a
+wording edit's outcome records no `submitted`, because `edit_outcomes` reaches
+the public Profile page.

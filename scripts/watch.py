@@ -2085,7 +2085,13 @@ def _edit_subject(queue, item):
         return item.get("key"), item.get("value", item.get("answer"))
     action = item.get("action")
     if action == "content":
-        return None, item.get("content")
+        # **Never the wording itself.** An outcome is mirrored to
+        # `edit_outcomes`, and that table reaches v2's public Profile page and
+        # its public `GET /api/profile`. The wording is owner-only and kept out
+        # of Postgres (`class_b._PROFILE_EXCLUDED`), so recording it here would
+        # publish through the side door exactly what the front door refuses.
+        # The editor that sent it already holds what it sent.
+        return None, None
     return item.get("key"), {k: item[k] for k in
                              ("label", "countries", "copyFrom", "priority")
                              if item.get(k) is not None} or None
@@ -2180,6 +2186,85 @@ def close_answered_blockers(answered_keys):
     return cleared, freed
 
 
+#: The files whose change means the owner's wording copy is out of date.
+#: Kept in step with `wording_publish.inputs`, which a test compares this
+#: against rather than trusting the two lists to agree.
+def owner_wording_inputs(root=None):
+    root = Path(os.environ.get("JOB_APPLICATION_DIR") or STATE_DIR) if root is None else Path(root)
+    return [root / "resume-content.json", REPO / "templates" / "resume-content.json",
+            REPO / "templates" / "resume.html", root / "profile.json"]
+
+
+#: What the inputs looked like when the copy was last published, or None
+#: before the first publish of this process, which is what makes a restart
+#: publish once.
+_owner_wording_signature = None
+_owner_wording_retry_at = 0.0
+#: A failed publish is retried, but not every five seconds: KV allows 1,000
+#: writes a day and a broken credential would otherwise spend them all.
+OWNER_WORDING_RETRY_SECONDS = 5 * 60
+
+
+def _owner_wording_stamp(root=None):
+    stamp = []
+    for path in owner_wording_inputs(root):
+        try:
+            st = path.stat()
+            stamp.append((str(path), st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append((str(path), None, None))
+    return tuple(stamp)
+
+
+def refresh_owner_wording(force=False, now=None, runner=None):
+    """Republish the owner-only wording copy when its inputs moved.
+
+    Spawned, not imported: `wording_publish.py` renders through the template and
+    shells out for the profile, which has no business in the watcher's own
+    process, and a spawned script is live on pull. Cheap when nothing moved: a
+    stat of four files and no process at all. `owner-wording.mjs` skips the KV
+    write when the digest already there matches, so the publish after a restart
+    is one KV read.
+
+    Returns a dict for the tick's `changed` only when something happened worth
+    a log line: a publish, or a failure with its reason. Never raises.
+    """
+    global _owner_wording_signature, _owner_wording_retry_at
+    if runner is None and ("unittest" in sys.modules or "pytest" in sys.modules):
+        # **A test that drives `tick()` must not publish a real store's
+        # wording to the real KV namespace.** The spawned child cannot tell it
+        # was started by a test (its `sys.modules` is clean, which is the
+        # 2026-08-30 lesson), so the refusal has to happen here, in the process
+        # that can. Tests of this function pass `runner`.
+        return {}
+    checked_at = time.monotonic() if now is None else float(now)
+    stamp = _owner_wording_stamp()
+    if not force and stamp == _owner_wording_signature:
+        return {}
+    if not force and _owner_wording_retry_at and checked_at < _owner_wording_retry_at:
+        return {}
+    run_it = runner or subprocess.run
+    try:
+        result = run_it([sys.executable, str(REPO / "scripts" / "wording_publish.py")],
+                        capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _owner_wording_retry_at = checked_at + OWNER_WORDING_RETRY_SECONDS
+        return {"ownerWording": {"failed": repr(exc)[:200]}}
+    if result.returncode != 0:
+        _owner_wording_retry_at = checked_at + OWNER_WORDING_RETRY_SECONDS
+        return {"ownerWording": {
+            "failed": (result.stderr or "").strip()[:300] or f"exit {result.returncode}"}}
+    _owner_wording_signature = stamp
+    _owner_wording_retry_at = 0.0
+    try:
+        verdict = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        verdict = {}
+    if verdict.get("state") == "published":
+        return {"ownerWording": {"published": verdict.get("digest")}}
+    return {}
+
+
 def apply_profile_edits(q):
     """Memory Bank and base-resume edits, claimed off the queue and applied.
 
@@ -2259,6 +2344,12 @@ def apply_profile_edits(q):
                                  "reason": why, "held": out.get("value", out.get("held"))})
                 continue
             _record_outcome({"editId": edit_id, "state": "accepted"})
+            if queue == "resumeEdits" and item.get("action") == "content":
+                # The owner's editor shows the copy in KV, so the edit it just
+                # made is not visible there until this runs. Forced rather
+                # than left to the stamp, because two saves inside one
+                # second can leave the modification time where it was.
+                changed.update(refresh_owner_wording(force=True))
             done.append(out.get("key") or out.get("default") or out.get("removed") or True)
             if queue == "answerEdits" and out.get("stored"):
                 answered_keys.append(out.get("key"))
@@ -2929,6 +3020,9 @@ def tick(force_publish=False):
 
     changed.update(apply_found_decisions(q))
     changed.update(apply_profile_edits(q))
+    # The owner-only wording copy. After the edits, so an accepted wording edit
+    # this tick is already on disk, and cheap when nothing moved.
+    changed.update(refresh_owner_wording())
 
     if q.get("marked"):
         r = run([sys.executable, str(REPO / "scripts" / "apply_marks.py"), "--no-publish"])

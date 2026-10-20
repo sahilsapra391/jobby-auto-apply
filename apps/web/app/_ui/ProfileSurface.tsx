@@ -233,15 +233,43 @@ export function ResumeCard({ resume, fallback, children }: {
 }
 
 /**
- * Add a base resume, by copying one that exists.
+ * Add a base resume: copy one that exists, and optionally upload its PDF.
  *
- * **No file input, and the reason is stated rather than left as an absence.**
- * The board uploads a PDF into its own KV key and `watch.install_uploaded_
- * resume` takes it from there; v2 has no route that writes that key, so a file
- * control here would be a button with nothing behind it. Copying is the whole
- * of what v2 can do today and it is most of what the form is for: the contact
- * block and the document both come from the base being copied.
+ * **The PDF goes first and travels by name.** The board's rule
+ * (`profile_panel.py`): the document is posted to `/api/resume-upload`, which
+ * parks it in a KV key of its own, and only then is the `add` edit sent,
+ * carrying the upload's id rather than the document. A base pointing at a
+ * document that failed to arrive is worse than no base at all, so a refused
+ * upload sends no edit. The device takes the key when it applies the edit
+ * (`watch.install_uploaded_resume`) and deletes it.
+ *
+ * Contact details always come from the base being copied. An uploaded PDF
+ * becomes what the base is *based on*; the wording still starts from the
+ * copied base, because the layout a resume renders through is the template's.
  */
+
+/** The board's ceiling, checked here so a 9 MB scan fails before it uploads. */
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+
+function readAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("That file could not be read."));
+    reader.onload = () => {
+      const url = String(reader.result ?? "");
+      resolve(url.slice(url.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/** A random upload id the queue and KV both accept. */
+function mintUploadId(): string {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return "doc-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
   const { enabled, send } = useEdits();
   const [open, setOpen] = useState(false);
@@ -249,6 +277,8 @@ export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
   const [label, setLabel] = useState("");
   const [countries, setCountries] = useState("");
   const [copyFrom, setCopyFrom] = useState(resumes[0]?.key ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [local, setLocal] = useState<string | null>(null);
   // **Frozen when the form is sent, not read from the field.** The key is what
   // names the slot, and a reader who clears the box after pressing Create
@@ -282,22 +312,72 @@ export function AddBaseResume({ resumes }: { resumes: BaseResume[] }) {
                   {(r.key ?? "").toUpperCase() || "Base"}
                 </option>))}
             </select></label>
+          <label>Document
+            <span className="base-file">
+              <input type="file" name="document" accept="application/pdf,.pdf"
+                     onChange={(e) => { setFile(e.target.files?.[0] ?? null); setLocal(null); }} />
+              <span className="bank-note">
+                {file ? `${file.name}, ${Math.round(file.size / 1024)} KB`
+                  : "Using the copied base's PDF. Choose a file to use your own instead."}
+              </span>
+            </span>
+          </label>
           <div className="bank-act">
             <button className="btn ghost" type="button"
                     onClick={() => setOpen(false)}>Cancel</button>
-            <button className="btn" type="button" onClick={async () => {
+            <button className="btn" type="button" disabled={busy !== null}
+                    onClick={async () => {
               const sending = slotOf("resumeEdits", key);
               setSlot(sending);
+              setLocal(null);
+              let uploadId: string | undefined;
+              if (file) {
+                if (file.size > MAX_UPLOAD_BYTES) {
+                  setLocal(`That file is ${Math.round(file.size / 1024)} KB. The limit is 2 MB.`);
+                  return;
+                }
+                setBusy("Uploading the document…");
+                try {
+                  const id = mintUploadId();
+                  const res = await fetch("/api/resume-upload", {
+                    method: "POST",
+                    headers: {
+                      "content-type": "application/json",
+                      "x-jobby-request": "1",
+                      "idempotency-key": id,
+                    },
+                    body: JSON.stringify({ uploadId: id, pdf: await readAsBase64(file) }),
+                  });
+                  if (!res.ok) {
+                    const said = await res.json().catch(() => ({}));
+                    setLocal(String(said.error ?? `the upload was refused (${res.status})`)
+                             + ". No base was created.");
+                    setBusy(null);
+                    return;
+                  }
+                  uploadId = id;
+                } catch (err) {
+                  setLocal((err instanceof Error ? err.message : "That upload did not reach the board")
+                           + " No base was created.");
+                  setBusy(null);
+                  return;
+                }
+              }
+              setBusy(null);
               setOpen(false);
               setLocal(await send({ kind: "resume", slot: sending,
                                     action: "add", key, label,
-                                    countries: codes, copyFrom }));
-            }}>Create</button>
+                                    countries: codes, copyFrom,
+                                    ...(uploadId ? { uploadId } : {}) }));
+            }}>{busy ?? "Create"}</button>
           </div>
           <p className="bank-note">
-            Contact details and the document both come from the base you copy.
-            The countries are what decides which postings use it; a posting
-            matching none of them falls to the default.
+            Contact details always come from the base you copy. A PDF you
+            upload becomes what this base is <em>based on</em>: the text a
+            tailored resume is written against. The wording still starts from
+            the copied base, because the layout a resume renders through is
+            the template&apos;s. The countries decide which postings use it; a
+            posting matching none of them falls to the default.
           </p>
         </div>
       ) : null}
