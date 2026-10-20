@@ -1371,12 +1371,6 @@ def found_signature():
     return f"{new_jobs}:{(meta_value('lastIngest') or {}).get('at') or 'none'}"
 
 
-COOLDOWN = STATE_DIR / "publish-cooldown"
-# Vercel's free plan allows 100 deployments a day. A board that redeploys the
-# whole site on every change burns that in an afternoon, and then nothing
-# publishes at all. When the quota is gone, stop trying until it resets rather
-# than spending every tick on a request that cannot succeed.
-QUOTA_COOLDOWN_SECONDS = 60 * 60
 
 
 # publish.py writes this whenever a publish reaches KV, whichever route ran it.
@@ -1490,10 +1484,11 @@ def stale_board_warning():
     if age is None or age <= PUBLISH_STALE_SECONDS:
         return ""
     hours = age / 3600
-    return (f"the board has not published for {hours:.1f} hours, against a "
-            f"{PUBLISH_STALE_SECONDS / 60:.0f} minute limit. It is still serving "
-            "its last snapshot, so it looks fine and is not. Run "
-            "`python3 scripts/publish.py` to see the reason.")
+    return (f"the board reconcile has not succeeded for {hours:.1f} hours, "
+            f"against a {PUBLISH_STALE_SECONDS / 60:.0f} minute limit, so "
+            "submitted roles stay in Watching and closed postings are not "
+            "archived. The board still renders, so it looks fine and is not. "
+            "Run `python3 scripts/sync_board.py --no-publish` to see the reason.")
 
 
 # A parked slot is a designed state: an agent filled what it could and left the
@@ -1766,51 +1761,39 @@ def chrome_flag_warning():
     return chrome_drift_message(held)
 
 
-def publishing_paused():
-    if not COOLDOWN.exists():
-        return None
-    left = QUOTA_COOLDOWN_SECONDS - (time.time() - COOLDOWN.stat().st_mtime)
-    if left <= 0:
-        COOLDOWN.unlink(missing_ok=True)
-        return None
-    return int(left)
-
-
 LAST_DEPLOY = STATE_DIR / "last-deploy"
-# A floor between deployments, on top of the fingerprint check. A burst of
-# activity, three applications finishing within a minute of each other, would
-# otherwise spend three of a hundred daily deployments to show the same board
-# three times.
-MIN_DEPLOY_GAP_SECONDS = 120
 
 
 def publish():
-    left = publishing_paused()
-    if left is not None:
-        return {"published": False, "pausedForSeconds": left,
-                "why": "the deployment quota is spent; the store is still up to date"}
-    if LAST_DEPLOY.exists():
-        since = time.time() - LAST_DEPLOY.stat().st_mtime
-        if since < MIN_DEPLOY_GAP_SECONDS:
-            return {"published": False, "deferredForSeconds": int(MIN_DEPLOY_GAP_SECONDS - since),
-                    "why": "too soon after the last deployment; it will go out on a later tick"}
-    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
+    """Reconcile the store against the pool and the history. Pushes nothing.
+
+    **The v1 board was retired on 2026-10-20.** This used to run
+    `sync_board.py`, which reconciled and then ran `publish.py`: a full store
+    read, an R2 sweep and a KV write of `jobby:board-state` for the
+    `jobby-board` project. jobby.fyi is v2 now, and v2 reads Postgres, which
+    the class A and class B mirrors write on every change, so there is nothing
+    left to push. The publish was also the slow half of the tick: measured
+    2026-09-12, one publishing tick took 43 seconds against nine for every
+    other, and the watcher claimed nothing while it waited.
+
+    **The reconcile is not v1's and it stays.** It moves pool records to match
+    sessions, retires submitted sessions from Watching and archives watched
+    roles whose posting closed. v2 draws from the store those writes land in.
+
+    `LAST_DEPLOY` is still stamped on success, so `stale_board_warning` keeps
+    meaning "the reconcile has stopped succeeding".
+    """
+    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py"), "--no-publish"],
             timeout=PUBLISH_TIMEOUT_SECONDS)
     try:
         out = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:
         raise TickError(f"sync_board produced no result: {(r.stderr or '')[:300]}")
-    blob = ((r.stderr or "") + json.dumps(out)).lower()
-    if "api-deployments-free-per-day" in blob or "resource is limited" in blob:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        COOLDOWN.write_text(now_stamp())
-        return {"published": False, "quotaSpent": True,
-                "why": "Vercel allows 100 deployments a day and today's are gone"}
-    if r.returncode != 0 or out.get("published") is False:
-        raise TickError(f"publish failed: {(r.stderr or out.get('error') or '')[:300]}")
-    COOLDOWN.unlink(missing_ok=True)
+    if r.returncode != 0:
+        raise TickError(f"board reconcile failed: {(r.stderr or out.get('error') or '')[:300]}")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LAST_DEPLOY.write_text(now_stamp())
+    out["reconciled"] = True
     return out
 
 
@@ -3176,10 +3159,8 @@ def tick(force_publish=False):
     if force_publish or fp != last or age > PUBLISH_FLOOR_SECONDS:
         result = publish()
         changed["board"] = result
-        # Only remember the fingerprint once it has actually gone out. Recording
-        # it after a deferred or quota-blocked publish would mark the change as
-        # published and it would never be sent.
-        if result.get("published"):
+        # Only remember the fingerprint once the reconcile has actually run.
+        if result.get("reconciled"):
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             statefile.write_text(fp)
     return changed

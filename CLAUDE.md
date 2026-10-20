@@ -6,6 +6,19 @@ rebuild them under a second abstraction.
 
 ## Current product decisions
 
+**v1 is retired, as of 2026-10-20, and jobby.fyi is v2.** `www.jobby.fyi` and
+`jobby.fyi` (which 308s to www) belong to the `jobby-v2` Vercel project, rooted
+at `apps/web`, and `v2.jobby.fyi` 308s to www so old links land. The
+`jobby-board` project (rooted at `deploy/`) is paused and its build step is
+`exit 0`, so a push to main does not rebuild it. Nothing on the device publishes
+to it: the watcher's `publish()` runs `sync_board.py --no-publish`, phase updates
+spawn no publish, and `publish.py` refuses everything except `--local` and
+`--dry-run`. The KV keys it wrote (`jobby:board-state` and friends) were left in
+place, unread; deleting them is a separate, deliberate step. Much of this file
+still describes v1's renderer, `deploy/api/board.js` and the publish path. Read
+those sections as history: the device side they describe (queue, documents,
+form runs, R2) is still live, the board they describe is not.
+
 Jobby runs all agent work on the user's Mac. Resume tailoring, cover-letter
 creation, sourcing scans, form filling, submission, and confirmation checking
 are local processes. The Oracle deployment is retired and outside the active
