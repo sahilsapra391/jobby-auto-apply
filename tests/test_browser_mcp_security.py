@@ -253,8 +253,28 @@ class AFailedToolCallNamesWhatWentWrong(unittest.TestCase):
                               "'the store rejected it' and 'the disk did' are "
                               "the same sentence")
                 self.assertIn("set_phase", buf.getvalue(),
-                              "the detail did not reach stderr, which the "
-                              "proxy drains and the run log keeps")
+                              "the detail did not reach stderr, which a hand "
+                              "run in a terminal reads")
+
+    def test_the_detail_reaches_the_runners_sidecar(self):
+        """The provider CLI drops this server's stderr, so stderr alone is lost.
+
+        The Davies run of 2026-09-12 failed exactly this way: a `set_phase`
+        timeout, and nothing in the run log.
+        """
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            sidecar = pathlib.Path(folder) / "run.application-mcp.log"
+            with contextlib.redirect_stderr(io.StringIO()):
+                said = application_mcp.ApplicationTools._named(
+                    "set_phase", subprocess.TimeoutExpired(["phase.py"], 90),
+                    sidecar)
+            self.assertIn("TimeoutExpired", said)
+            written = sidecar.read_text()
+            self.assertIn("set_phase failed with TimeoutExpired", written)
+            self.assertIn("90 seconds", written)
+            self.assertEqual(sidecar.stat().st_mode & 0o777, 0o600)
 
     def test_the_message_carries_no_detail_from_the_exception(self):
         """A path or a stored value must not ride into a provider's context."""

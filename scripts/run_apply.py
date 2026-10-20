@@ -184,6 +184,45 @@ def run_log_path(application_id, now=None, pid=None):
     return LOG_DIR / f"apply-{_safe_log_token(application_id)}-{stamp}-{process_id}.log"
 
 
+def mcp_diagnostic_path(log):
+    """The file `application_mcp` appends its failures to, next to the run log.
+
+    The provider CLI launches that server and does not forward its stderr, so
+    a failed `set_phase` used to leave nothing in the run log at all. The
+    server writes here instead and `fold_mcp_diagnostics` copies it in.
+    """
+    return log.with_name(log.stem + ".application-mcp.log")
+
+
+def fold_mcp_diagnostics(handle, path, offset=0):
+    """Append what the server recorded since ``offset`` to the run log.
+
+    Returns the new offset, so a second attempt folds only its own lines. The
+    sidecar is left on disk: it is the copy that survives a runner killed
+    before it got here. Never raises, and an unreadable sidecar is said out
+    loud rather than read as "nothing failed".
+    """
+    try:
+        with open(path, "rb") as source:
+            source.seek(offset)
+            data = source.read()
+    except FileNotFoundError:
+        return offset  # created on the first failure; a clean run has none
+    except OSError as exc:
+        handle.write(f"\n[application_mcp]\nthe diagnostic file could not be "
+                     f"read: {exc}\n")
+        handle.flush()
+        return offset
+    if data:
+        text = data.decode("utf-8", errors="replace")
+        handle.write("\n[application_mcp]\n")
+        handle.write(text)
+        if not text.endswith("\n"):
+            handle.write("\n")
+        handle.flush()
+    return offset + len(data)
+
+
 def _latest_event(application_id):
     result = store(["history-list"])
     if result.returncode != 0:
@@ -757,6 +796,13 @@ def _run(argv=None):
     # The cause is still not reproduced; the proxy answers correctly on every
     # hand probe. This does not wait for it. The handshake is captured on the
     # way past, so several occurrences should name the cause for free.
+    # The run log's name is fixed here rather than where it is opened, because
+    # the application server's argv has to carry the sidecar beside it.
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(LOG_DIR, 0o700)
+    log = run_log_path(application_id)
+    mcp_diagnostics = mcp_diagnostic_path(log)
+    mcp_diagnostics_offset = 0
     application_context = {
         "applicationId": application_id,
         "resume": artifacts["resume"]["path"],
@@ -768,6 +814,7 @@ def _run(argv=None):
         # courtesy: what enforces it is `pre_submit` not being in the tool set
         # this line produces.
         "fillOnly": bool(args.fill_only),
+        "diagnosticLog": str(mcp_diagnostics),
     }
     # A Google posting in a signed-out browser cannot be filled, and finding
     # that out after the agent has worked the form costs a park addressed to
@@ -853,9 +900,6 @@ def _run(argv=None):
         }, indent=2))
         return 2
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(LOG_DIR, 0o700)
-    log = run_log_path(application_id)
     descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
     provider_exit = 3
@@ -1002,6 +1046,8 @@ def _run(argv=None):
                 handle.write(f"provider process could not start: {exc}\n")
             finally:
                 agent_workspace.cleanup()
+                mcp_diagnostics_offset = fold_mcp_diagnostics(
+                    handle, mcp_diagnostics, mcp_diagnostics_offset)
 
             if candidate == "gemini" and provider_exit == 0 and proc is not None:
                 try:

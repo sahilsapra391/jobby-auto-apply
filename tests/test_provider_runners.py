@@ -315,8 +315,133 @@ class ApplyArtifactTests(ApplyFixtureMixin, unittest.TestCase):
             "uploadResume": str(self.resume.resolve()),
             "uploadCover": str(self.cover.resolve()),
             "fillOnly": False,
+            "diagnosticLog": str(run_apply.mcp_diagnostic_path(
+                next(log_dir.glob("apply-acme-pm-*[0-9].log")))),
         })
         invalidate.assert_not_called()
+
+    def test_an_application_server_failure_reaches_the_run_log(self):
+        """The provider CLI drops the jobby server's stderr, so the runner folds
+        the server's sidecar into the run log itself.
+
+        Measured 2026-09-12: a Davies run's `set_phase` timed out and its run
+        log held no `application_mcp` line anywhere. This drives the real
+        server, as a real process, from the argv the runner builds, and makes
+        `set_phase` fail against an empty store. No provider is spawned: the
+        bounded-run stand-in plays the CLI, calling one tool the way it would.
+        """
+        observed = {}
+
+        def build_invocation(provider, task, prompt, **kwargs):
+            observed["context"] = kwargs.get("application_context")
+            return providers.RunInvocation(
+                provider, task, ["/agents/openai"], {"PATH": "/usr/bin"},
+                pathlib.Path(kwargs["workspace"]), prompt,
+            )
+
+        empty_store = self.resume.parent / "empty-store"
+        empty_store.mkdir()
+        replies = []
+
+        def provider_calls_set_phase(*_args, **_kwargs):
+            config = run_apply.browser.application_server_config(observed["context"])
+            # `--root` keeps the server and the `phase.py` it spawns off the
+            # device's own store; `HOME` keeps every `Path.home()` constant off
+            # it too.
+            env = dict(config["env"], HOME=str(empty_store),
+                       JOB_APPLICATION_DIR=str(empty_store))
+            request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": "set_phase",
+                                  "arguments": {"phase": "Filling the form"}}}
+            server = subprocess.Popen(
+                [config["command"], *config["args"], "--root", str(empty_store)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, env=env,
+            )
+            out, _err = server.communicate(json.dumps(request) + "\n", timeout=60)
+            replies.extend(json.loads(line) for line in out.splitlines() if line)
+            # And the CLI says nothing about it, which is the whole fault.
+            return run_apply.provider_process.BoundedProcessResult(0, "", "")
+
+        log_dir = self.resume.parent / "logs"
+        cleared = all_tasks_cleared(); cleared.start()
+        self.addCleanup(cleared.stop)
+        with mock.patch.object(
+                sys, "argv", ["run_apply.py", "--id", "acme-pm",
+                              "--provider", "openai", "--slot", "apply-2"]), \
+                mock.patch.object(run_apply, "load_brief", return_value=self.summary), \
+                mock.patch.object(run_apply, "_refuse_duplicate", return_value=False), \
+                mock.patch.object(
+                    run_apply.agent, "resolve_provider", return_value="openai"), \
+                mock.patch.object(
+                    run_apply.agent, "authenticated", return_value=(True, "")), \
+                mock.patch.object(run_apply.browser, "serve", return_value={}), \
+                mock.patch.object(
+                    run_apply.browser, "open_application",
+                    return_value={"opened": True, "url": self.summary["url"]},
+                ), \
+                mock.patch.object(
+                    run_apply.browser,
+                    "stage_application_uploads",
+                    return_value=run_apply.artifact_snapshot(self.summary),
+                ), \
+                mock.patch.object(
+                    run_apply.providers, "build_run_invocation",
+                    side_effect=build_invocation), \
+                mock.patch.object(run_apply, "_set_phase", return_value=completed()), \
+                mock.patch.object(run_apply, "LOG_DIR", log_dir), \
+                mock.patch.object(
+                    run_apply.provider_process, "run_bounded",
+                    side_effect=provider_calls_set_phase), \
+                mock.patch.object(run_apply.provider_usage, "record"), \
+                mock.patch.object(run_apply.agent, "invalidate"), \
+                mock.patch.object(run_apply.mcp_preflight, "check",
+                                  return_value={"browser": [], "jobby": []}), \
+                mock.patch.object(run_apply, "store", return_value=completed()), \
+                mock.patch.object(
+                    run_apply, "verify_terminal_outcome",
+                    return_value={"ok": True, "terminal": "parked"}), \
+                mock.patch("builtins.print"):
+            run_apply.main()
+
+        # The server really refused, so the subject of the check exists.
+        self.assertEqual(len(replies), 1)
+        self.assertTrue(replies[0]["result"]["isError"])
+        said_to_agent = json.dumps(replies[0])
+        self.assertNotIn("no such application", said_to_agent,
+                         "what phase.py printed reached the agent's context")
+
+        logs = [p for p in log_dir.glob("apply-acme-pm-*.log")
+                if not p.name.endswith(".application-mcp.log")]
+        self.assertEqual(len(logs), 1)
+        text = logs[0].read_text()
+        self.assertIn("[application_mcp]", text)
+        self.assertIn("application_mcp: set_phase failed", text)
+        self.assertIn("no such application", text,
+                      "the run log has the heading and not the cause")
+
+    def test_folding_an_unreadable_sidecar_says_so(self):
+        import io
+        sink = io.StringIO()
+        missing = self.resume.parent / "absent.application-mcp.log"
+        self.assertEqual(run_apply.fold_mcp_diagnostics(sink, missing, 0), 0)
+        self.assertEqual(sink.getvalue(), "", "a clean run has no sidecar")
+        directory = self.resume.parent / "a-directory.application-mcp.log"
+        directory.mkdir()
+        run_apply.fold_mcp_diagnostics(sink, directory, 0)
+        self.assertIn("could not be read", sink.getvalue())
+
+    def test_a_second_attempt_folds_only_its_own_lines(self):
+        import io
+        sidecar = self.resume.parent / "run.application-mcp.log"
+        sidecar.write_text("first\n")
+        sink = io.StringIO()
+        offset = run_apply.fold_mcp_diagnostics(sink, sidecar, 0)
+        with sidecar.open("a") as handle:
+            handle.write("second\n")
+        run_apply.fold_mcp_diagnostics(sink, sidecar, offset)
+        self.assertEqual(sink.getvalue().count("first"), 1)
+        self.assertEqual(sink.getvalue().count("second"), 1)
 
     def test_log_names_are_unique_per_process(self):
         moment = datetime(2026, 8, 23, tzinfo=timezone.utc)
