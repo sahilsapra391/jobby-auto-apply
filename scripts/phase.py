@@ -8,6 +8,10 @@ Called by the agent doing the work, after each stage it finishes.
   python3 scripts/phase.py --id <app-id> --phase "Building resume and cover letter"
   python3 scripts/phase.py --id <app-id> --phase "Filling the form" --detail "12 of 18 fields"
   python3 scripts/phase.py --id <app-id> --done          # clear in-flight state
+  python3 scripts/phase.py --id <app-id> --unconfirmed   # a submit with no confirmation
+  python3 scripts/phase.py --id <app-id> --not-sent      # the user says it never went in
+
+No path through this file changes the status of a dropped application.
 """
 
 import argparse
@@ -22,6 +26,35 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
 
+#: Where an application lands when a run clicked Submit and saw no
+#: confirmation. **Needs you, not In flight**, because nothing is running and
+#: only a person can find out what happened: the employer's email or portal is
+#: the only witness left. Retry is refused while the latest event is
+#: `submitting` (`watch.do_not_start`), so the pending item names the two
+#: controls that resolve it instead. Measured 2026-09-12: seven applications in
+#: the real store sat at a latest `submitting` with nothing after it, and
+#: Davies c9fcfeed85ae12c8 sat in In flight at phase "Submitting" offering a
+#: Retry the device refused and a Stop that resolved nothing.
+UNCONFIRMED_PHASE = "Submit unconfirmed"
+UNCONFIRMED_DETAIL = ("a submit was attempted and no confirmation was seen; "
+                      "check your email or the employer's portal")
+UNCONFIRMED_ITEM = {
+    "question": ("A submit was attempted and no confirmation was seen. Check "
+                 "your email or the employer's portal."),
+    "action": ("Press Confirm submitted if it went through, or It did not go "
+               "through if it did not."),
+}
+
+#: Where it lands once the user says the submit never went in. The `abandoned`
+#: event is already on the history by then, so `do_not_start` no longer
+#: refuses, and the one pending item says Retry is now a fresh run.
+NOT_SENT_PHASE = "Not sent"
+NOT_SENT_DETAIL = "you confirmed nothing was sent; Retry starts a fresh run"
+NOT_SENT_ITEM = {
+    "question": "You confirmed the submit did not go through, so nothing was sent.",
+    "action": "Press Retry to start a fresh run, or Drop it.",
+}
+
 
 def main():
     ap = argparse.ArgumentParser(description="Set the phase of an in-flight application.")
@@ -31,6 +64,10 @@ def main():
     ap.add_argument("--done", action="store_true", help="return it to the watch list")
     ap.add_argument("--restore", action="store_true",
                     help="hand it back to the lane it came from, for a run that failed")
+    ap.add_argument("--unconfirmed", action="store_true",
+                    help="a run clicked Submit and saw no confirmation: hand it to Needs you")
+    ap.add_argument("--not-sent", action="store_true",
+                    help="the user says the submit did not go through: hand it to Needs you")
     ap.add_argument("--root", help="store directory (default ~/.job-application)")
     args = ap.parse_args()
 
@@ -41,6 +78,26 @@ def main():
         print(json.dumps({"error": "no such application", "id": args.id}))
         return 2
     d = json.loads(loaded.stdout)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # **A dropped application keeps its status, whatever asked.** Every branch
+    # below sets a status and only the phase branch used to check. Observed
+    # 2026-09-12 on Tabby cf038ad790a47994: drop.py ran at 05:52:51Z inside a
+    # tick that had already passed `do_not_start`, the tick spawned
+    # `run_apply.py`, the runner refused the start as dropped, and its refusal
+    # handler called `--restore`. That branch set the status from
+    # `previousStatus` with no dropped check, so the application came back as
+    # `review`, phase "Stopped", `droppedAt` still set, and Retry worked on it
+    # from Needs you. The refusal that existed to honour the drop undid it.
+    #
+    # Refused here rather than at each caller. The runner is one of several,
+    # and the next would find the same hole; the phase branch learned that on
+    # 2026-08-27 when a stale apply put a dropped application back in flight
+    # ninety seconds after the user dropped it.
+    if (d.get("status") or "").lower() == "dropped":
+        print(json.dumps({"applicationId": args.id, "refused": "dropped",
+                          "why": "the user dropped this application"}))
+        return 0
 
     if args.done:
         d["status"] = "watch"
@@ -53,27 +110,28 @@ def main():
         d["status"] = d.pop("previousStatus", None) or "watch"
         d["phase"] = args.phase or "Stopped"
         d["phaseDetail"] = args.detail
-        d["phaseAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d["phaseAt"] = stamp
+    elif args.unconfirmed or args.not_sent:
+        # Needs you in both cases, with one pending item saying which. Nothing
+        # here writes an event: the `submitting` that put it in this state and
+        # the `abandoned` that takes it out are history, appended by the code
+        # that witnessed them (`finish.py`, and `apply_marks.py` for the user's
+        # own answer).
+        d.pop("previousStatus", None)
+        d["status"] = "review"
+        if args.unconfirmed:
+            d["phase"] = UNCONFIRMED_PHASE
+            d["phaseDetail"] = args.detail or UNCONFIRMED_DETAIL
+            d["pendingFields"] = [dict(UNCONFIRMED_ITEM)]
+        else:
+            d["phase"] = NOT_SENT_PHASE
+            d["phaseDetail"] = args.detail or NOT_SENT_DETAIL
+            d["pendingFields"] = [dict(NOT_SENT_ITEM)]
+        d["phaseAt"] = stamp
     else:
         if not args.phase:
             print(json.dumps({"error": "--phase required unless --done"}))
             return 2
-        # A dropped application is never promoted back into flight by a phase
-        # update. This is what made Drop look like it did nothing: the tick
-        # processes drops first and then walks the apply queue, and a stale
-        # apply for the same id set the phase, which set the status, which put
-        # the application straight back in flight ninety seconds after the user
-        # dropped it. Observed on 2026-08-27, one tick, same two ids in both
-        # `dropped` and `queued`.
-        #
-        # Refused here rather than by filtering the queue, because the queue is
-        # one of several callers and the next one would find the same hole. It
-        # also explains a session carrying droppedAt with a live status: the
-        # drop wrote its record and this overwrote the one field that mattered.
-        if (d.get("status") or "").lower() == "dropped":
-            print(json.dumps({"applicationId": args.id, "refused": "dropped",
-                              "why": "the user dropped this application"}))
-            return 0
         # Remember the lane once, on the way in. Recording it on every phase
         # update would overwrite it with "inflight" after the first one and the
         # role could never be handed back.
@@ -82,7 +140,7 @@ def main():
         d["status"] = "inflight"
         d["phase"] = args.phase
         d["phaseDetail"] = args.detail
-        d["phaseAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d["phaseAt"] = stamp
 
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(d, f)
@@ -94,51 +152,13 @@ def main():
         print(json.dumps({"error": (r.stderr or "").strip()[:150]}))
         return 2
 
-    # Refresh the board so the phase is visible while the work is still
-    # running -- **detached, because waiting on it made this tool fail.**
-    #
-    # `publish.py` reads the whole store, runs `r2_sync.sync(apply=True)` and
-    # writes KV. `watch.py` bounds it at 120 seconds and has still recorded
-    # "publish failed: gave no result within 120s and was killed" more than
-    # once. `application_mcp._set_phase` spawns this script with `timeout=90`,
-    # so a synchronous publish could not fit in the budget on a bad day and the
-    # whole call died with `TimeoutExpired`.
-    #
-    # **The phase was already saved when that happened, and the damage was
-    # downstream of that.** The agent got an error from a tool that had in fact
-    # worked, stopped calling it, and the card sat on whatever phase it had
-    # managed to write while the run carried on underneath. Observed on the
-    # Spotify run of 2026-09-09: `set_phase` to "Filling the form" reported
-    # `TimeoutExpired`, no phase was ever set again, and the board still read
-    # "Filling the form" hours after the application had parked. That pill is
-    # the only progress a person sees, so a stuck one is worse than a missing
-    # one: it says work is happening.
-    #
-    # The board still gets its refresh; nothing here waits for it. The output
-    # goes to a log rather than to `DEVNULL`, because the failure that matters
-    # explains itself once, at the moment it happens.
-    published = "skipped"
-    if not args.root:
-        log = Path.home() / ".job-application" / "logs" / "publish-phase.log"
-        try:
-            log.parent.mkdir(parents=True, exist_ok=True)
-            handle = open(log, "a")
-        except OSError:
-            handle = subprocess.DEVNULL
-        try:
-            subprocess.Popen([sys.executable, str(REPO / "scripts" / "publish.py")],
-                             stdout=handle, stderr=subprocess.STDOUT,
-                             start_new_session=True)
-            published = "spawned"
-        except OSError as exc:
-            # Never silent. A board that will not refresh is worth one line.
-            published = f"could not spawn: {exc}"
-        finally:
-            if handle is not subprocess.DEVNULL:
-                handle.close()
+    # **Nothing is published from here, and nothing needs to be.** This spawned
+    # `publish.py` so the v1 board would show the phase while the run was still
+    # going. v1 was retired on 2026-10-20; v2 reads Postgres, and the
+    # session-save above already reaches it through the class B mirror.
     print(json.dumps({"id": args.id, "status": d["status"],
                       "previousStatus": d.get("previousStatus"),
-                      "phase": d.get("phase"), "publish": published}))
+                      "phase": d.get("phase")}))
     return 0
 
 

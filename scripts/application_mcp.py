@@ -392,6 +392,8 @@ class ApplicationContext:
     root: Path | None = None
     #: Whether this run may reach Submit. See `SUBMISSION_TOOLS`.
     fill_only: bool = False
+    #: Where a tool failure's detail is appended. See `record_failure`.
+    diagnostic_log: Path | None = None
 
     @classmethod
     def create(
@@ -402,6 +404,7 @@ class ApplicationContext:
         resume_html: str | None = None,
         root: str | None = None,
         fill_only: bool = False,
+        diagnostic_log: str | None = None,
     ) -> "ApplicationContext":
         fixed_resume = _pdf(resume, "resume")
         fixed_cover = _pdf(cover, "cover letter")
@@ -434,7 +437,62 @@ class ApplicationContext:
             source,
             fixed_root,
             fill_only is True,
+            _diagnostic_log(diagnostic_log),
         )
+
+
+def _diagnostic_log(value: str | None) -> Path | None:
+    """The trusted runner's sidecar for this run, checked like the store root.
+
+    The file itself need not exist yet: it is created on the first failure, so
+    a clean run leaves nothing behind. Its directory must, because a server
+    that cannot write its diagnostics should refuse to start rather than fail
+    quietly at the one moment the file matters.
+    """
+    if value is None:
+        return None
+    if (not isinstance(value, str) or not value.strip() or "\x00" in value
+            or "\r" in value or "\n" in value):
+        raise ToolInputError("diagnostic log must be an absolute path")
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute() or not candidate.parent.is_dir():
+        raise ToolInputError("diagnostic log must be an absolute path in an existing directory")
+    return candidate
+
+
+def record_failure(line: str, log_path: Path | None = None) -> None:
+    """Write one failure line where the run log can collect it.
+
+    **The provider CLI does not forward this process's stderr.** codex, claude
+    and agy each launch this server from the config `providers.py` builds, and
+    what it writes on stderr has never reached the runner's log. Measured 2026-09-12: a Davies run's `set_phase` timed out and its run log
+    held no `application_mcp` line at all; Chainguard on 2026-09-07 was the
+    same. So stderr is kept, for a hand run in a terminal, and the line also
+    goes to the file `run_apply` named on this server's argv, which it folds
+    into the run log under `[application_mcp]` when the attempt ends.
+
+    Never raises. A diagnostic that takes the tool call down with it would
+    trade the fault it describes for a worse one.
+    """
+    text = line.rstrip("\n") + "\n"
+    try:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass  # a closed stderr is exactly the case the file below exists for
+    if log_path is None:
+        return
+    try:
+        descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            handle.write(text)
+    except OSError as exc:
+        try:
+            sys.stderr.write(
+                f"application_mcp: the diagnostic log could not be written: {exc}\n")
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            pass
 
 
 class ApplicationTools:
@@ -472,12 +530,14 @@ class ApplicationTools:
             raise ToolExecutionError(message[:300] or "the local operation failed") from exc
         except (OSError, subprocess.SubprocessError, ValueError,
                 json.JSONDecodeError) as exc:
-            raise ToolExecutionError(self._named(name, exc)) from exc
+            raise ToolExecutionError(
+                self._named(name, exc, self.context.diagnostic_log)) from exc
         except Exception as exc:                                 # noqa: BLE001
-            raise ToolExecutionError(self._named(name, exc)) from exc
+            raise ToolExecutionError(
+                self._named(name, exc, self.context.diagnostic_log)) from exc
 
     @staticmethod
-    def _named(tool, exc):
+    def _named(tool, exc, log_path=None):
         """A failure the reader can act on, without leaking what the store holds.
 
         **These two branches returned "the local application operation failed"
@@ -496,7 +556,13 @@ class ApplicationTools:
         path while a `ValueError` from the store can carry a value. The type
         says which of the four kinds of thing went wrong, which is what
         separates "the store rejected it" from "the disk did"; the detail goes
-        to stderr, which `browser_mcp_proxy` drains and the run log keeps.
+        through `record_failure`, to stderr and to the runner's sidecar file.
+
+        **This used to say `browser_mcp_proxy` drains that stderr into the run
+        log. It never did**: the proxy drains its own Playwright child, and this
+        server is a sibling of the proxy launched by the provider CLI, which
+        drops what it writes. A real `set_phase` timeout on 2026-09-12 left
+        nothing in the run log, which is how the sentence was found out.
         """
         kind = type(exc).__name__
         # `str`, not `repr`: `repr(OSError(2, "no such file", path))` drops the
@@ -505,9 +571,8 @@ class ApplicationTools:
         # line claiming the detail is recoverable while dropping it is worse
         # than no line. Caught by the test asserting recoverability rather than
         # by reading this.
-        sys.stderr.write(
-            f"application_mcp: {tool} failed with {kind}: {exc}\n")
-        sys.stderr.flush()
+        record_failure(f"application_mcp: {tool} failed with {kind}: {exc}",
+                       log_path)
         return (f"the local application operation failed with {kind}; "
                 f"the detail is in this run's log")
 
@@ -530,15 +595,30 @@ class ApplicationTools:
         if self.context.root is not None:
             command.extend(["--root", str(self.context.root)])
         result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+        # These three refusals told the agent a fixed sentence and kept nothing
+        # of what `phase.py` said, so a phase that would not move was as
+        # unexplained as the timeout `_named` covers. What `phase.py` printed
+        # goes to the sidecar only; the agent still gets the fixed sentence.
         if result.returncode != 0:
+            self._phase_failure(f"exited {result.returncode}", result)
             raise ToolExecutionError("the application phase could not be updated")
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
+            self._phase_failure("printed something that is not JSON", result)
             raise ToolExecutionError("the application phase returned no result") from exc
         if not isinstance(payload, dict) or payload.get("error"):
+            self._phase_failure("reported an error", result)
             raise ToolExecutionError("the application phase could not be updated")
         return payload
+
+    def _phase_failure(self, what, result):
+        said = " | ".join(
+            part.strip()[-300:] for part in (result.stdout, result.stderr)
+            if part and part.strip()
+        ) or "nothing"
+        record_failure(f"application_mcp: set_phase failed: phase.py {what}; "
+                       f"it said: {said}", self.context.diagnostic_log)
 
     def _resolve_answers(self, args: dict[str, Any]) -> dict[str, Any]:
         _closed(args, {"questions"})
@@ -894,6 +974,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--fill-only", action="store_true",
         help="withhold the submission tools; this run fills and hands back")
     parser.add_argument("--root", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--diagnostic-log",
+        help="file the trusted runner folds into the run log; see record_failure")
     return parser
 
 
@@ -907,6 +990,7 @@ def main() -> int:
             args.resume_html,
             args.root,
             args.fill_only,
+            args.diagnostic_log,
         )
     except ToolInputError as exc:
         print(f"jobby application MCP: {exc}", file=sys.stderr)

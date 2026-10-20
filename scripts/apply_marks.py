@@ -22,6 +22,17 @@ password and can run unattended.
   python3 scripts/apply_marks.py            # apply everything queued
   python3 scripts/apply_marks.py --check    # exit 0 if anything is waiting
   python3 scripts/apply_marks.py --no-publish
+  python3 scripts/apply_marks.py --unsent   # apply "It did not go through" clicks
+
+**`--unsent` is the other answer to an unresolved submit.** A run that clicked
+Submit and saw no confirmation leaves a latest `submitting` event, and only a
+person can say what happened. Confirm submitted is one answer and writes
+`completed`. "It did not go through" is the other and writes `abandoned`, with
+`confirmedBy: user` and a note, then hands the application back to Needs you
+saying a fresh Retry is now possible. It is accepted only while the latest
+event is `submitting`: an `abandoned` written over a `completed` retracts a
+submission, which is a different claim from "this submit never went in", and a
+click on a stale card must not make it.
 """
 
 import argparse
@@ -37,6 +48,7 @@ import toolpath  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "scripts" / "store.py"
+PHASE = REPO / "scripts" / "phase.py"
 DEPLOY = REPO / "deploy"
 
 
@@ -125,11 +137,105 @@ def apply_one(aid):
     return {"applicationId": aid, "company": event["company"], "role": event["role"]}
 
 
+def latest_events(history):
+    """The latest event for each application, by its own timestamp."""
+    latest = {}
+    for event in sorted(history, key=lambda e: e.get("at") or ""):
+        if isinstance(event, dict) and event.get("applicationId"):
+            latest[event["applicationId"]] = event
+    return latest
+
+
+#: What the `abandoned` event says about itself. A person said so, and nobody
+#: read a page, so it carries `confirmedBy` and a note and never a
+#: `confirmation`, on the same rule `apply_one` follows for `completed`.
+NOT_SENT_NOTE = "the user confirmed the submit did not go through; nothing was sent"
+
+
+def apply_unsent(aid, latest):
+    """Record the user's answer that an unresolved submit never went in.
+
+    Refused unless `latest` is a `submitting` event. Returns a result with
+    `applied` or `skipped` set, and `error` when the store refused a write.
+    """
+    if not latest or latest.get("event") != "submitting":
+        was = (latest or {}).get("event") or "nothing"
+        return {"applicationId": aid, "skipped": True,
+                "why": f"the latest event is {was}, not an unresolved submit"}
+    detail = {}
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode == 0:
+        try:
+            detail = json.loads(loaded.stdout or "{}")
+        except json.JSONDecodeError:
+            detail = {}
+    # A session still in flight may be a run between `pre_submit` and
+    # `record_completed`, and an `abandoned` under it would fail the agent's
+    # own confirmation. The board offers this only in Needs you and the route
+    # refuses it in flight; this is the same rule on the machine that writes.
+    if detail.get("status") == "inflight":
+        return {"applicationId": aid, "skipped": True,
+                "why": "it is still in flight, so a run may yet confirm the submit"}
+    event = {
+        "event": "abandoned",
+        "applicationId": aid,
+        "company": detail.get("company") or latest.get("company", ""),
+        "role": detail.get("role") or latest.get("role", ""),
+        "ats": detail.get("ats") or latest.get("ats", ""),
+        "source": "board",
+        "confirmedBy": "user",
+        "note": NOT_SENT_NOTE,
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(event, f)
+        path = f.name
+    r = store(["history-append", "--input", path])
+    os.unlink(path)
+    if r.returncode != 0:
+        return {"applicationId": aid, "error": (r.stderr or "").strip()[:120]}
+    # The event is the fact; the lane move is the board catching up with it.
+    # A dropped session is left dropped (phase.py refuses), and that is fine:
+    # the submit is resolved either way.
+    moved = subprocess.run([sys.executable, str(PHASE), "--id", aid, "--not-sent"],
+                           capture_output=True, text=True)
+    result = {"applicationId": aid, "applied": True, "company": event["company"],
+              "role": event["role"]}
+    if moved.returncode != 0:
+        result["laneNotMoved"] = (moved.stderr or moved.stdout or "").strip()[:160]
+    return result
+
+
+def apply_unsent_queue():
+    """Claim every "It did not go through" click and apply each one."""
+    # History before the claim, for the reason `main` gives: a failure after
+    # claiming throws the user's clicks away.
+    hist = store(["history-list"])
+    if hist.returncode != 0:
+        raise SystemExit(f"apply_marks: cannot read history: {(hist.stderr or '').strip()[:200]}")
+    latest = latest_events(json.loads(hist.stdout or "[]"))
+    claimed = queue("claim", "unsent/")
+    seen, applied, skipped = set(), [], []
+    for mark in claimed:
+        aid = mark.get("applicationId")
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        result = apply_unsent(aid, latest.get(aid))
+        (skipped if result.get("skipped") else applied).append(result)
+    return {"claimed": len(claimed), "applied": applied, "skipped": skipped}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Apply board 'Mark submitted' clicks.")
     ap.add_argument("--check", action="store_true", help="exit 0 if marks are waiting")
     ap.add_argument("--no-publish", action="store_true")
+    ap.add_argument("--unsent", action="store_true",
+                    help="apply 'It did not go through' clicks instead")
     args = ap.parse_args()
+
+    if args.unsent:
+        print(json.dumps(apply_unsent_queue(), indent=2, sort_keys=True))
+        return 0
 
     if args.check:
         pending = queue("list")

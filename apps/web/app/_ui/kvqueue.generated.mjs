@@ -63,13 +63,17 @@ const DEDICATED_KEYS = {
 // watch and pass carry job ids from the Found lane rather than application
 // ids, but they are the same shape and the same idempotency rule, so they ride
 // the existing array machinery instead of growing a second copy of it.
+// unsent is "It did not go through" on an unresolved submit, the other answer
+// beside `marked`. Its own queue rather than a flag on `marked`, because
+// enqueue dedupes by application id and two opposite answers to the same
+// question must not collapse into whichever arrived first.
 // answerEdits and resumeEdits carry a Profile-page edit rather than an
 // application, and their id is the edit's own id rather than an application id.
 // Same array, same dedupe, same single key: the board re-sends edits it
 // remembers exactly as it re-sends clicks, and an edit id that is already in
 // the queue is the same edit arriving twice.
 export const QUEUES = [
-  'apply', 'scan', 'marked', 'drop', 'restore', 'focus', 'watch', 'pass',
+  'apply', 'scan', 'marked', 'unsent', 'drop', 'restore', 'focus', 'watch', 'pass',
   'answerEdits', 'resumeEdits',
   'providerLocal', 'providerDocuments',
 ];
@@ -80,7 +84,7 @@ export const CONFIG_FIELD = 'searchConfig';
 export { configured };
 
 const empty = () => ({
-  apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
+  apply: [], scan: [], marked: [], unsent: [], drop: [], restore: [], focus: [],
   watch: [], pass: [], answerEdits: [], resumeEdits: [],
   providerLocal: [], providerDocuments: [],
   [CONFIG_FIELD]: null,

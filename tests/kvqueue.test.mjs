@@ -50,7 +50,7 @@ test('missing configuration is detected rather than guessed at', () => {
 test('a key that was never written is an empty queue, not an error', async () => {
   fakeKV({ body: null });
   assert.deepEqual(await readQueue(ENV), {
-    apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
+    apply: [], scan: [], marked: [], unsent: [], drop: [], restore: [], focus: [],
     watch: [], pass: [], answerEdits: [], resumeEdits: [],
     providerLocal: [], providerDocuments: [],
     searchConfig: null,
@@ -144,7 +144,7 @@ test('dropping does not disturb the other queues', async () => {
 // that to an old one, and an old one must not be able to do it to a new one.
 
 const FULL = () => ({
-  apply: [], scan: [], marked: [], drop: [], restore: [], focus: [],
+  apply: [], scan: [], marked: [], unsent: [], drop: [], restore: [], focus: [],
   watch: [], pass: [], answerEdits: [], resumeEdits: [],
   providerLocal: [], providerDocuments: [],
   searchConfig: null,

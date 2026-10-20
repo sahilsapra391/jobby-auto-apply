@@ -127,11 +127,10 @@ class PublishReportsTheTimeoutTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.state = pathlib.Path(self.tmp.name)
-        for name in ("STATE_DIR", "LAST_DEPLOY", "COOLDOWN"):
+        for name in ("STATE_DIR", "LAST_DEPLOY"):
             self.addCleanup(setattr, watch, name, getattr(watch, name))
         watch.STATE_DIR = self.state
         watch.LAST_DEPLOY = self.state / "last-deploy"
-        watch.COOLDOWN = self.state / "cooldown"
 
     def test_a_publish_that_times_out_says_so_instead_of_blocking(self):
         calls = {}

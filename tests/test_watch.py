@@ -1011,6 +1011,38 @@ class ProviderNeutralApplyTests(TickHarnessMixin, unittest.TestCase):
         self.assertEqual(argv[argv.index("--provider") + 1], "openai")
         self.assertEqual(argv[argv.index("--id") + 1], "acme-pm")
 
+    def test_a_drop_after_the_guard_stops_the_spawn(self):
+        # Tabby cf038ad790a47994, 2026-09-12: dropped inside a tick that had
+        # already passed do_not_start, and the runner it spawned undid the drop
+        # in its refusal handler. The tick reads the session again once the
+        # slot is reserved, and a dropped one spawns nothing.
+        ready = {"state": "ready", "provider": "openai"}
+        with self.tick_harness("openai", ready) as calls:
+            with mock.patch.object(watch, "session_dropped", return_value=True) as again:
+                changed = watch.tick()
+        again.assert_called_once_with("acme-pm")
+        calls["reserve"].assert_called_once()
+        # Claimed, so a dropped head does not sit at the front of the queue.
+        calls["claim"].assert_called_once_with("apply/", application_id="acme-pm")
+        calls["spawn"].assert_not_called()
+        calls["serve"].assert_not_called()
+        self.assertNotIn("applyStarted", changed)
+        self.assertIn({"applicationId": "acme-pm",
+                       "why": "the user dropped it after the tick cleared it to start"},
+                      changed.get("notStarted", []))
+        self.assertFalse(watch.lock_path("apply-1").exists(),
+                         "the reserved slot was left held for a run that never started")
+
+    def test_a_session_that_is_not_dropped_still_spawns(self):
+        # The control for the test above: the re-read is consulted and a live
+        # session goes through.
+        ready = {"state": "ready", "provider": "openai"}
+        with self.tick_harness("openai", ready) as calls:
+            with mock.patch.object(watch, "session_dropped", return_value=False) as again:
+                watch.tick()
+        again.assert_called_once_with("acme-pm")
+        calls["spawn"].assert_called_once()
+
     def test_resolved_document_failure_is_removed_before_form_handoff(self):
         loaded = self.result(json.dumps({
             "applicationId": "acme-pm",
@@ -2026,3 +2058,97 @@ class NoSessionWordingIsOneContract(unittest.TestCase):
             capture_output=True, text=True, env=self.env, timeout=120)
         self.assertTrue(watch.drop_found_no_session(result),
                         (result.returncode, result.stdout[-300:], result.stderr[-300:]))
+
+
+class R2SyncSweepTests(unittest.TestCase):
+    """The catch-all R2 sweep publish.py used to run, now on the watcher.
+
+    Due against the sweep's own log, refused while its lock is held, and its
+    output kept in the log rather than discarded.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.patches = [mock.patch.object(watch, "LOG_DIR", root / "logs"),
+                        mock.patch.object(watch, "LOCK_DIR", root / "locks")]
+        for patch in self.patches:
+            patch.start()
+        self.log = root / "logs" / watch.R2_SYNC_LOG
+
+    def tearDown(self):
+        for patch in reversed(self.patches):
+            patch.stop()
+        self.tmp.cleanup()
+
+    def _log_written(self, seconds_ago):
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        self.log.write_text("=== spawn r2-sync earlier ===\n")
+        stamp = time.time() - seconds_ago
+        os.utime(self.log, (stamp, stamp))
+
+    def test_a_sweep_that_never_ran_here_is_due(self):
+        self.assertTrue(watch.r2_sync_due())
+
+    def test_a_sweep_inside_the_interval_is_not_due(self):
+        self._log_written(watch.R2_SYNC_INTERVAL_SECONDS - 60)
+        self.assertFalse(watch.r2_sync_due())
+
+    def test_a_sweep_past_the_interval_is_due(self):
+        self._log_written(watch.R2_SYNC_INTERVAL_SECONDS + 60)
+        self.assertTrue(watch.r2_sync_due())
+
+    def test_the_interval_is_thirty_minutes(self):
+        self.assertEqual(watch.R2_SYNC_INTERVAL_SECONDS, 30 * 60)
+        self.assertLess(watch.R2_SYNC_DEADLINE_SECONDS, watch.R2_SYNC_INTERVAL_SECONDS)
+
+    def test_due_spawns_the_apply_sweep_under_its_own_lock(self):
+        with mock.patch.object(watch, "spawn", return_value=4242) as spawn:
+            self.assertEqual(watch.maybe_spawn_r2_sync(), 4242)
+        name, argv, logname = spawn.call_args.args
+        self.assertEqual(name, "r2-sync")
+        self.assertNotIn(name, ("scan", "corpus", watch.CLOUD_SWEEP_LOCK, *watch.APPLY_LOCKS))
+        self.assertEqual(logname, "r2-sync.log")
+        self.assertEqual(pathlib.Path(argv[1]).name, "r2_sync.py")
+        self.assertIn("--apply", argv)
+        self.assertEqual(argv[argv.index("--deadline") + 1],
+                         str(watch.R2_SYNC_DEADLINE_SECONDS))
+
+    def test_a_held_lock_starts_nothing_even_when_due(self):
+        # Our own pid is alive, so this is a sweep still running.
+        watch.take_lock("r2-sync", os.getpid(), note="r2 catch-all sweep")
+        self.assertTrue(watch.r2_sync_due())
+        with mock.patch.object(watch, "spawn") as spawn:
+            self.assertIsNone(watch.maybe_spawn_r2_sync())
+        spawn.assert_not_called()
+
+    def test_not_due_starts_nothing(self):
+        self._log_written(10)
+        with mock.patch.object(watch, "spawn") as spawn:
+            self.assertIsNone(watch.maybe_spawn_r2_sync())
+        spawn.assert_not_called()
+
+    def test_the_sweep_runs_in_the_loop_after_the_tick_not_inside_it(self):
+        # In the tick it would sit in the path every Apply waits on.
+        self.assertNotIn("maybe_spawn_r2_sync", inspect.getsource(watch.tick))
+        self.assertIn("maybe_spawn_r2_sync()", inspect.getsource(watch.main))
+
+    def test_its_stderr_lands_in_the_log_and_the_spawn_resets_the_clock(self):
+        # Through the real spawn, with a child that fails the way an upload
+        # does: a reason on stderr and a non-zero exit. DEVNULL would leave the
+        # log holding only the spawn marker.
+        argv = [sys.executable, "-c",
+                "import sys; print('r2-sync: R2 answered 403', file=sys.stderr); sys.exit(2)"]
+        with mock.patch.object(watch.toolpath, "enriched_env", return_value=dict(os.environ)):
+            pid = watch.spawn("r2-sync", argv, watch.R2_SYNC_LOG, note="test")
+        deadline = time.time() + 30
+        while watch.pid_alive(pid) and time.time() < deadline:
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                break
+            time.sleep(0.05)
+        text = self.log.read_text()
+        self.assertIn("=== spawn r2-sync", text)
+        self.assertIn("r2-sync: R2 answered 403", text)
+        self.assertFalse(watch.r2_sync_due())

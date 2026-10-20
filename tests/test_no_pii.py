@@ -172,10 +172,25 @@ class TheApplicationsRuleIsAnchored(unittest.TestCase):
         return out.returncode == 0
 
     def test_the_delivered_documents_are_still_ignored(self):
-        self.assertTrue(
-            self.ignored("applications"),
-            "applications/ at the repo root holds resumes carrying a real "
-            "name, phone and street address, and must never be tracked")
+        """Asked about paths that do not need to exist.
+
+        `/applications/` is a directory-only rule, and `git check-ignore
+        applications` with no trailing slash matches it only when a directory
+        of that name is on disk. So this used to pass in the production
+        checkout and fail in a fresh worktree, which says something about the
+        checkout and nothing about the rule. The trailing slash and a file
+        inside it both answer without the directory. The file is a `.json`
+        answer record rather than a PDF, because `*.pdf` is ignored everywhere
+        and would keep a PDF path ignored with this rule deleted.
+        """
+        for path in ("applications/",
+                     "applications/Example Co/answers-0123456789abcdef.json"):
+            with self.subTest(path=path):
+                self.assertTrue(
+                    self.ignored(path),
+                    "applications/ at the repo root holds resumes carrying a "
+                    "real name, phone and street address, and must never be "
+                    "tracked")
 
     def test_a_nested_directory_of_that_name_is_not(self):
         self.assertFalse(

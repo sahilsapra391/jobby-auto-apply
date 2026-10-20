@@ -18,6 +18,7 @@
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
 import { CardDetails } from "./CardDetails";
 import { Act, ActionIcon, ApplyWithConfirm } from "./actions";
+import { droppedFromLabel } from "./droppedLanes";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -219,12 +220,12 @@ const day = (v: unknown) => isoDay(v) ?? "";
  * `.go` and the north-east arrow are the board's own, and the Watching column
  * is sized for exactly that string.
  */
-function Posting({ url }: { url: unknown }) {
+function Posting({ url, label = "View posting" }: { url: unknown; label?: string }) {
   const href = s(url);
   if (!href) return <span className="muted">no link</span>;
   return (
     <a className="go" href={href} target="_blank" rel="noopener">
-      View posting &#8599;
+      {label} &#8599;
     </a>
   );
 }
@@ -414,11 +415,16 @@ export function WatchRow(row: Row) {
               and the column is sized for exactly that. */}
           <Posting url={row.apply_url} />
           <div className="rowacts-btns">
-            <Act className="btn apply" subject={row.id} rowId={row.id}
-                 title="Start work on this one"
-                 body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
-              Apply
-            </Act>
+            {/* An application parked in Watching with a submit nobody has
+                answered gets the answers rather than Apply, which the device
+                refuses in that state for the same reason it refuses Retry. */}
+            {row.unresolved_submit === true ? <SubmitAnswers row={row} /> : (
+              <Act className="btn apply" subject={row.id} rowId={row.id}
+                   title="Start work on this one"
+                   body={{ applicationId: s(row.legacy_id), status: "inflight" }}>
+                Apply
+              </Act>
+            )}
             <Act className="xbtn drop" subject={row.id} rowId={row.id}
                  label="Drop this role"
                  body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
@@ -591,8 +597,9 @@ export function DroppedRow(row: Row) {
   return (
     <tr data-id={row.id} data-state={s(row.status) ?? ""}>
       <td><NameCell row={row} /></td>
-      <td><span className="chip lane">
-        {s(row.dropped_from) ?? s(row.status) ?? ""}</span></td>
+      {/* Named the way the board names lanes, whichever spelling the store
+          recorded: the board's own archive held both "Watching" and "watch". */}
+      <td><span className="chip lane">{droppedFromLabel(row.dropped_from)}</span></td>
       {/* The stage, and under it the reason when one was given -- which is
           how the board draws this cell. Only 2 of 58 dropped roles carry a
           reason, and those two are the ones worth being able to look up. */}
@@ -611,6 +618,10 @@ export function DroppedRow(row: Row) {
       <td className="when">{day(row.dropped_at) || <Muted>not recorded</Muted>}</td>
       <td>
         <div className="rowacts-inline">
+          {/* The board's `link(posting_url(entry), "Posting")`, beside
+              Restore: deciding whether to bring a role back usually starts
+              with looking at it again. */}
+          <Posting url={row.apply_url} label="Posting" />
           <Act className="btn ghost undrop" subject={row.id} rowId={row.id}
                body={{ applicationId: s(row.legacy_id), status: "watch" }}>
             Restore
@@ -676,6 +687,13 @@ export function ActCard(row: Row) {
         })()}
       </ul>
       <div className="act">
+        {/* **A submit nobody has answered gets the two answers and no Retry.**
+            The device refuses Retry while the latest event is `submitting`, so
+            an enabled Retry here is a button that does nothing. Open & finish
+            goes too: its re-fill is fill-only, which `do_not_start` lets past
+            a `submitting`, and putting the same form back in front of a person
+            who may already have sent it is how it goes in twice. */}
+        {row.unresolved_submit === true ? <SubmitAnswers row={row} /> : (<>
         <Act className="btn retry" subject={row.id} rowId={row.id} keep
              body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
           Retry
@@ -702,6 +720,7 @@ export function ActCard(row: Row) {
              body={{ applicationId: s(row.legacy_id), event: "completed" }}>
           Confirm submitted
         </Act>
+        </>)}
         <Act className="btn drop" subject={row.id} rowId={row.id}
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Drop
@@ -715,6 +734,33 @@ export function ActCard(row: Row) {
         <span className="ats">{s(row.ats) ?? ""}</span>
       </div>
     </article>
+  );
+}
+
+/**
+ * The two honest answers to an unresolved submit: it went in, or it did not.
+ *
+ * Confirm submitted writes `completed` through `apply_marks.py`, the path
+ * Needs you has always used. "It did not go through" writes `abandoned` with
+ * `confirmedBy: user` through the same script's `--unsent`, and hands the
+ * application back to Needs you, where Retry starts a fresh run because the
+ * latest event is no longer `submitting`. Stop is not one of them: it is a
+ * drop, it writes no event, and the submit stays unresolved for ever.
+ */
+function SubmitAnswers({ row }: { row: Row }) {
+  return (
+    <>
+      <Act className="btn mark" subject={row.id} rowId={row.id}
+           title="Record that this one went in"
+           body={{ applicationId: s(row.legacy_id), event: "completed" }}>
+        Confirm submitted
+      </Act>
+      <Act className="btn ghost" subject={row.id} rowId={row.id} keep
+           title="Nothing arrived, so nothing was sent; Retry can start a fresh run"
+           body={{ applicationId: s(row.legacy_id), event: "abandoned" }}>
+        It did not go through
+      </Act>
+    </>
   );
 }
 
@@ -745,10 +791,20 @@ export function FlightCard(row: Row) {
         {s(row.phase_detail)
           ? <span className="why">{s(row.phase_detail)}</span> : null}</p>
       <div className="act">
-        <Act className="btn retry" subject={row.id} rowId={row.id} keep
-             body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
-          Retry
-        </Act>
+        {/* **No Retry while a submit is unanswered**, because the device
+            refuses it. Nor the two answers: an In flight card with a latest
+            `submitting` is usually a run between `pre_submit` and
+            `record_completed`, and an `abandoned` written under it would make
+            the agent's own confirmation fail its nonce check. The device moves
+            the card to Needs you, where the answers are, the moment no runner
+            holds it (`run_apply.hand_back_unconfirmed_submit`, and
+            `watch.sweep_stuck` for a runner that died). */}
+        {row.unresolved_submit === true ? null : (
+          <Act className="btn retry" subject={row.id} rowId={row.id} keep
+               body={{ applicationId: s(row.legacy_id), status: "inflight", retry: true }}>
+            Retry
+          </Act>
+        )}
         <Act className="btn drop" subject={row.id} rowId={row.id}
              body={{ applicationId: s(row.legacy_id), status: "dropped" }}>
           Stop
@@ -925,6 +981,35 @@ function DocLink({ row, kind, label, value }: {
     );
   }
   const shared = siblings.get(basename(name)) ?? 1;
+  // **Not at its own key is not the same as not openable.** The documents
+  // written before the id went into the filename were indexed by name, and v1
+  // opened every one of them through `jobby:doc-index` or its KV copy.
+  // `/api/artifact` falls back to that same lookup when the fixed key is
+  // absent, so a name `servable_names` lists gets the link. Measured on
+  // production 2026-10-20: 14 cells drew "not attributable" over a document
+  // the index resolves.
+  //
+  // A shared name still says it is shared. One file exists under it and the
+  // link opens that file, which is what v1 opened; the label and the title are
+  // what keep "this is the file under that name" from reading as "this is
+  // exactly what this application sent".
+  const byName = row.servable_names as string[] | null | undefined;
+  const servable = Array.isArray(byName) && byName.includes(name.slice(name.lastIndexOf("/") + 1));
+  if (servable) {
+    return (
+      <a className="go" href={`/api/artifact?app=${encodeURIComponent(app)}&kind=${kind}`}
+         target="_blank" rel="noopener"
+         title={shared > 1
+           ? `${name} is recorded by ${shared} applications to different roles at this company. One file is stored under that name and this opens it; nothing records which application received it.`
+           : `${name}: stored under its filename from before documents were keyed by application`}
+         aria-label={`${label}: ${name}`}>
+        {shared > 1 ? <>shared PDF &#8599;</> : <>PDF &#8599;</>}
+      </a>
+    );
+  }
+  if (byName === null) {
+    return <span className="muted" title={`${name}: the document index could not be read, so whether this document can be opened is unknown`}>unknown</span>;
+  }
   if (shared > 1) {
     return (
       <span className="chip hold"

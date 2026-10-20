@@ -503,6 +503,58 @@ def spawn(name, argv, logname, note=""):
     return proc.pid
 
 
+# --- the R2 catch-all sweep -------------------------------------------------
+
+#: The sweep's own lock, so two never overlap and nothing else waits on it.
+R2_SYNC_LOCK = "r2-sync"
+#: At most one sweep started per this many seconds.
+R2_SYNC_INTERVAL_SECONDS = 30 * 60
+#: How long one sweep may run before it gives up and says so.
+R2_SYNC_DEADLINE_SECONDS = 20 * 60
+R2_SYNC_LOG = "r2-sync.log"
+
+
+def r2_sync_due(now=None):
+    """Whether a catch-all R2 sweep should start now.
+
+    `publish.py` ran `r2_sync.sync(root, apply=True)` on every publish, which
+    caught any artifact the per-application uploads (`document_job`,
+    `finish.py`) missed. The device stopped publishing when v1 was retired, so
+    nothing ran that sweep any more; this puts it back on the watcher.
+
+    Paced by the sweep's own log. `spawn` writes a `=== spawn` line into it
+    before the child starts, so its mtime is never older than the last start,
+    and a missing log is a sweep that has never run here. That keeps the
+    schedule out of the store and survives a watcher restart, which an
+    in-memory timestamp would not: every deploy restarts the watcher and would
+    otherwise start a sweep.
+    """
+    now = time.time() if now is None else now
+    try:
+        last = (LOG_DIR / R2_SYNC_LOG).stat().st_mtime
+    except FileNotFoundError:
+        return True
+    return now - last >= R2_SYNC_INTERVAL_SECONDS
+
+
+def maybe_spawn_r2_sync(now=None):
+    """Start the sweep when it is due and not already running. The pid, or None.
+
+    Detached and never waited on, like every runner here, and called after the
+    tick rather than inside it, so a slow bucket cannot hold up an Apply. Its
+    stdout and stderr go to `logs/r2-sync.log`, never `/dev/null`: an upload
+    that fails says why there or nowhere. `--deadline` bounds it in the child,
+    which is the only place a bound can be enforced without the watcher
+    waiting on it.
+    """
+    if lock_holder(R2_SYNC_LOCK) is not None or not r2_sync_due(now):
+        return None
+    return spawn(R2_SYNC_LOCK,
+                 [sys.executable, str(REPO / "scripts" / "r2_sync.py"), "--apply",
+                  "--deadline", str(R2_SYNC_DEADLINE_SECONDS)],
+                 R2_SYNC_LOG, note="r2 catch-all sweep")
+
+
 # --- queues -----------------------------------------------------------------
 
 # Three applications at once, each owned start to finish by one agent. More than
@@ -1371,12 +1423,6 @@ def found_signature():
     return f"{new_jobs}:{(meta_value('lastIngest') or {}).get('at') or 'none'}"
 
 
-COOLDOWN = STATE_DIR / "publish-cooldown"
-# Vercel's free plan allows 100 deployments a day. A board that redeploys the
-# whole site on every change burns that in an afternoon, and then nothing
-# publishes at all. When the quota is gone, stop trying until it resets rather
-# than spending every tick on a request that cannot succeed.
-QUOTA_COOLDOWN_SECONDS = 60 * 60
 
 
 # publish.py writes this whenever a publish reaches KV, whichever route ran it.
@@ -1490,10 +1536,11 @@ def stale_board_warning():
     if age is None or age <= PUBLISH_STALE_SECONDS:
         return ""
     hours = age / 3600
-    return (f"the board has not published for {hours:.1f} hours, against a "
-            f"{PUBLISH_STALE_SECONDS / 60:.0f} minute limit. It is still serving "
-            "its last snapshot, so it looks fine and is not. Run "
-            "`python3 scripts/publish.py` to see the reason.")
+    return (f"the board reconcile has not succeeded for {hours:.1f} hours, "
+            f"against a {PUBLISH_STALE_SECONDS / 60:.0f} minute limit, so "
+            "submitted roles stay in Watching and closed postings are not "
+            "archived. The board still renders, so it looks fine and is not. "
+            "Run `python3 scripts/sync_board.py --no-publish` to see the reason.")
 
 
 # A parked slot is a designed state: an agent filled what it could and left the
@@ -1766,51 +1813,39 @@ def chrome_flag_warning():
     return chrome_drift_message(held)
 
 
-def publishing_paused():
-    if not COOLDOWN.exists():
-        return None
-    left = QUOTA_COOLDOWN_SECONDS - (time.time() - COOLDOWN.stat().st_mtime)
-    if left <= 0:
-        COOLDOWN.unlink(missing_ok=True)
-        return None
-    return int(left)
-
-
 LAST_DEPLOY = STATE_DIR / "last-deploy"
-# A floor between deployments, on top of the fingerprint check. A burst of
-# activity, three applications finishing within a minute of each other, would
-# otherwise spend three of a hundred daily deployments to show the same board
-# three times.
-MIN_DEPLOY_GAP_SECONDS = 120
 
 
 def publish():
-    left = publishing_paused()
-    if left is not None:
-        return {"published": False, "pausedForSeconds": left,
-                "why": "the deployment quota is spent; the store is still up to date"}
-    if LAST_DEPLOY.exists():
-        since = time.time() - LAST_DEPLOY.stat().st_mtime
-        if since < MIN_DEPLOY_GAP_SECONDS:
-            return {"published": False, "deferredForSeconds": int(MIN_DEPLOY_GAP_SECONDS - since),
-                    "why": "too soon after the last deployment; it will go out on a later tick"}
-    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py")],
+    """Reconcile the store against the pool and the history. Pushes nothing.
+
+    **The v1 board was retired on 2026-10-20.** This used to run
+    `sync_board.py`, which reconciled and then ran `publish.py`: a full store
+    read, an R2 sweep and a KV write of `jobby:board-state` for the
+    `jobby-board` project. jobby.fyi is v2 now, and v2 reads Postgres, which
+    the class A and class B mirrors write on every change, so there is nothing
+    left to push. The publish was also the slow half of the tick: measured
+    2026-09-12, one publishing tick took 43 seconds against nine for every
+    other, and the watcher claimed nothing while it waited.
+
+    **The reconcile is not v1's and it stays.** It moves pool records to match
+    sessions, retires submitted sessions from Watching and archives watched
+    roles whose posting closed. v2 draws from the store those writes land in.
+
+    `LAST_DEPLOY` is still stamped on success, so `stale_board_warning` keeps
+    meaning "the reconcile has stopped succeeding".
+    """
+    r = run([sys.executable, str(REPO / "scripts" / "sync_board.py"), "--no-publish"],
             timeout=PUBLISH_TIMEOUT_SECONDS)
     try:
         out = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:
         raise TickError(f"sync_board produced no result: {(r.stderr or '')[:300]}")
-    blob = ((r.stderr or "") + json.dumps(out)).lower()
-    if "api-deployments-free-per-day" in blob or "resource is limited" in blob:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        COOLDOWN.write_text(now_stamp())
-        return {"published": False, "quotaSpent": True,
-                "why": "Vercel allows 100 deployments a day and today's are gone"}
-    if r.returncode != 0 or out.get("published") is False:
-        raise TickError(f"publish failed: {(r.stderr or out.get('error') or '')[:300]}")
-    COOLDOWN.unlink(missing_ok=True)
+    if r.returncode != 0:
+        raise TickError(f"board reconcile failed: {(r.stderr or out.get('error') or '')[:300]}")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LAST_DEPLOY.write_text(now_stamp())
+    out["reconciled"] = True
     return out
 
 
@@ -2260,17 +2295,53 @@ def apply_profile_edits(q):
 
 # --- watchdog ---------------------------------------------------------------
 
+#: What a stuck run with an unresolved submit is told. Never "press Retry".
+UNCONFIRMED_STUCK_DETAIL = ("a submit was attempted, no confirmation was seen and "
+                            "the run ended without reporting; check your email or "
+                            "the employer's portal, then press Confirm submitted "
+                            "or It did not go through")
+
 def sweep_stuck(queued=()):
     """Rescue applications abandoned by a runner that died.
 
     Without this a card sits at 'Queued' forever, which is exactly what the user
     saw: the runner was never able to start, and nothing ever said so.
+
+    **A stuck run whose latest event is `submitting` is not told to press
+    Retry**, because Retry is refused for exactly that state (`do_not_start`).
+    This used to write "press Retry" on every stuck run without reading the
+    history, so a submit with no confirmation got an instruction the device
+    would then refuse. Those go to Needs you through `phase.py --unconfirmed`,
+    whose pending item names the two controls that do resolve it, as soon as
+    no runner holds them rather than after the stuck timeout. The history is
+    read at most once a call, and only when an inflight session is unowned.
     """
     owned = running_applications()
     s = store(["session-list"])
     if s.returncode != 0:
         raise TickError("store is unreadable")
     rescued = []
+    latest = None
+
+    def latest_events():
+        # One read for the whole sweep, taken the first time it matters.
+        # Unreadable is a failure rather than an empty history: an empty one
+        # would send an unresolved submit the "press Retry" this exists to stop.
+        nonlocal latest
+        if latest is None:
+            h = store(["history-list"])
+            if h.returncode != 0:
+                raise TickError("history is unreadable, so a stuck run cannot be classified")
+            try:
+                events = json.loads(h.stdout or "[]")
+            except json.JSONDecodeError:
+                raise TickError("history returned junk, so a stuck run cannot be classified")
+            latest = {}
+            for event in sorted(events, key=lambda e: e.get("at") or ""):
+                if isinstance(event, dict) and event.get("applicationId"):
+                    latest[event["applicationId"]] = event.get("event")
+        return latest
+
     for x in json.loads(s.stdout or "[]"):
         if x.get("status") != "inflight":
             continue
@@ -2282,6 +2353,16 @@ def sweep_stuck(queued=()):
         # move until a runner picks it up, and with a backlog deeper than three
         # that wait can easily outlast the stuck timeout.
         if x["applicationId"] in queued:
+            continue
+        # Without the hour's grace. Nothing holds it and nothing is queued for
+        # it, so no runner is left that could still confirm the submit, and
+        # the hour would be an hour of a card in In flight that no control on
+        # it can resolve.
+        if latest_events().get(x["applicationId"]) == "submitting":
+            run([sys.executable, str(REPO / "scripts" / "phase.py"),
+                 "--id", x["applicationId"], "--unconfirmed",
+                 "--detail", UNCONFIRMED_STUCK_DETAIL])
+            rescued.append(x["applicationId"])
             continue
         at = x.get("phaseAt") or x.get("updatedAt") or ""
         try:
@@ -2415,8 +2496,13 @@ def do_not_start(aid, fill_only=False, retry=False):
     if latest and latest.get("event") == "completed":
         return "it is already submitted"
     if latest and latest.get("event") == "submitting" and not fill_only:
+        # Names the two controls that resolve it. It used to say "or Stop if it
+        # did not", and Stop is a drop: it writes no event, so the submit stayed
+        # unresolved for ever and the application left the board with it.
         return ("a submit was already attempted and no confirmation was recorded. "
-                "Press Confirm submitted if it went through, or Stop if it did not.")
+                "Check your email or the employer's portal, then press Confirm "
+                "submitted if it went through, or It did not go through if it "
+                "did not.")
 
     # **Last, so the most consequential fact wins the message.** An application
     # can be several of these at once, and Chainguard was two: parked on an
@@ -2476,6 +2562,28 @@ def session_absent(result):
     failure stays a failure.
     """
     return result.returncode != 0 and NO_SESSION in (result.stderr or "")
+
+
+def session_dropped(aid):
+    """True when the application's session says the user dropped it.
+
+    The tick's last look before it spawns a runner. A session that cannot be
+    read raises rather than answering False: "could not look" is not "not
+    dropped", and the caller releases the slot and leaves the click on the
+    queue for the next tick. A session that does not exist is not dropped;
+    the head reached here through `ensure_application_session`, so absence
+    means something else removed it and the runner's own load will say so.
+    """
+    loaded = store(["session-load", "--id", aid])
+    if loaded.returncode != 0:
+        if session_absent(loaded):
+            return False
+        raise TickError(f"could not re-read the session for {aid} before starting it")
+    try:
+        entry = json.loads(loaded.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise TickError(f"application session is unreadable for {aid}") from exc
+    return (entry.get("status") or "").lower() == "dropped"
 
 
 def set_phase_if_changed(aid, phase, detail, missing_ok=False):
@@ -2841,6 +2949,24 @@ def tick(force_publish=False):
                     changed.setdefault("browserSlotsReleased", []).append(
                         {"applicationId": aid, "slot": slot})
 
+    # "It did not go through": the other honest answer to an unresolved
+    # submit, and the one that frees a Retry. Before the apply queue is walked,
+    # so a Retry pressed straight after it in the same tick finds the
+    # `abandoned` already on the history rather than being refused.
+    if q.get("unsent"):
+        r = run([sys.executable, str(REPO / "scripts" / "apply_marks.py"),
+                 "--unsent", "--no-publish"])
+        if r.returncode != 0:
+            raise TickError(f"apply_marks --unsent failed: {(r.stderr or '').strip()[:300]}")
+        try:
+            unsent = json.loads(r.stdout or "{}")
+        except json.JSONDecodeError:
+            raise TickError("apply_marks --unsent produced no result")
+        if unsent.get("applied"):
+            changed["notSent"] = [a.get("applicationId") for a in unsent["applied"]]
+        if unsent.get("skipped"):
+            changed["notSentSkipped"] = unsent["skipped"]
+
     apply_items = q.get("apply") or []
     # A drop that executed this tick beats the applies left for the same
     # application. split_superseded_drops already gave the win to any apply
@@ -3113,37 +3239,59 @@ def tick(force_publish=False):
     if apply_ok and apply_head and candidate_slots and not blocking_scan:
         slot = candidate_slots[0]
         retained = affinity_slot == slot
+        late_drop = False
         if reserve(slot, note=head_id):
             try:
+                # **Asked again, after the slot is ours and before anything
+                # starts.** `do_not_start` ran near the top of a tick that can
+                # take minutes in the document and provider stages, and a Drop
+                # pressed in between used to reach a spawned runner instead:
+                # Tabby cf038ad790a47994 was dropped at 05:52:51Z on 2026-09-12
+                # inside such a tick. The runner refuses a dropped start too,
+                # and `phase.py` now keeps it dropped whatever the runner's
+                # handler asks, but the cheapest refusal is the one that never
+                # spawns. One session read; the window that remains is the
+                # time between this read and `spawn`.
+                late_drop = session_dropped(head_id)
                 claimed = claim_one("apply/", application_id=head_id)
                 if not claimed or claimed[0].get("applicationId") != head_id:
                     raise TickError("the Apply queue changed before the form runner started")
                 q["apply"] = apply_tail
-                persist_browser_slot(head_id, slot)
-                browser.serve(slot)
-                argv = [sys.executable, str(REPO / "scripts" / "run_apply.py"),
-                        "--id", head_id, "--slot", slot,
-                        "--provider", selected_provider]
-                # The queue entry decides the mode and the runner's argv
-                # carries it the rest of the way, into the MCP server's own
-                # command line. Nothing between here and there reads a model's
-                # output. `is True` because the entry came off KV as JSON.
-                if apply_head.get("fillOnly") is True:
-                    argv.append("--fill-only")
-                pid = spawn(slot, argv, f"{slot}.log", note=head_id)
+                if not late_drop:
+                    persist_browser_slot(head_id, slot)
+                    browser.serve(slot)
+                    argv = [sys.executable, str(REPO / "scripts" / "run_apply.py"),
+                            "--id", head_id, "--slot", slot,
+                            "--provider", selected_provider]
+                    # The queue entry decides the mode and the runner's argv
+                    # carries it the rest of the way, into the MCP server's own
+                    # command line. Nothing between here and there reads a
+                    # model's output. `is True` because the entry came off KV
+                    # as JSON.
+                    if apply_head.get("fillOnly") is True:
+                        argv.append("--fill-only")
+                    pid = spawn(slot, argv, f"{slot}.log", note=head_id)
             except Exception:
                 if retained:
                     park_slot(slot, head_id)
                 else:
                     lock_path(slot).unlink(missing_ok=True)
                 raise
-            changed.setdefault("applyStarted", []).append({
-                "slot": slot,
-                "pid": pid,
-                "applicationId": head_id,
-                "provider": selected_provider,
-                "fillOnly": apply_head.get("fillOnly") is True,
-            })
+            if late_drop:
+                # Not parked even when the slot was this application's own: a
+                # dropped application has nothing to come back to.
+                lock_path(slot).unlink(missing_ok=True)
+                changed.setdefault("notStarted", []).append(
+                    {"applicationId": head_id,
+                     "why": "the user dropped it after the tick cleared it to start"})
+            else:
+                changed.setdefault("applyStarted", []).append({
+                    "slot": slot,
+                    "pid": pid,
+                    "applicationId": head_id,
+                    "provider": selected_provider,
+                    "fillOnly": apply_head.get("fillOnly") is True,
+                })
     elif apply_ok and apply_head and candidate_slots and blocking_scan:
         # Say so. An Apply that waits is a legitimate outcome; an Apply that
         # waits without a word is indistinguishable from one that was dropped,
@@ -3176,10 +3324,8 @@ def tick(force_publish=False):
     if force_publish or fp != last or age > PUBLISH_FLOOR_SECONDS:
         result = publish()
         changed["board"] = result
-        # Only remember the fingerprint once it has actually gone out. Recording
-        # it after a deferred or quota-blocked publish would mark the change as
-        # published and it would never be sent.
-        if result.get("published"):
+        # Only remember the fingerprint once the reconcile has actually run.
+        if result.get("reconciled"):
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             statefile.write_text(fp)
     return changed
@@ -3592,6 +3738,13 @@ def main():
                 spawn("corpus", [sys.executable, str(corpus_check.RUNNER),
                                  "--run"],
                       "corpus-check.log", note="corpus tests")
+            # The R2 catch-all that publish used to run. A spawn that cannot
+            # start is reported and does not take the loop down with it.
+            try:
+                maybe_spawn_r2_sync()
+            except OSError as exc:
+                print(f"{now_stamp()} r2-sync could not start: {exc}",
+                      file=sys.stderr, flush=True)
             stale = unhealthy_reason()
             if stale:
                 # Fails the dead-man check rather than pinging healthy. A quiet

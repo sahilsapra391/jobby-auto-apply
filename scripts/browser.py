@@ -513,7 +513,7 @@ def application_server_config(application_context):
     unknown = sorted(
         set(application_context) - {
             "applicationId", "resume", "cover", "resumeHtml",
-            "uploadResume", "uploadCover", "fillOnly",
+            "uploadResume", "uploadCover", "fillOnly", "diagnosticLog",
         }
     )
     if unknown:
@@ -550,6 +550,16 @@ def application_server_config(application_context):
         raise ValueError("fillOnly must be a boolean")
     if fill_only:
         args.append("--fill-only")
+    # The server's stderr never reaches the run log, because the provider CLI
+    # that launches it does not forward it. So the runner names a file next to
+    # its own log and folds it in when the attempt ends. See
+    # `application_mcp.record_failure`.
+    diagnostic_log = application_context.get("diagnosticLog")
+    if diagnostic_log is not None:
+        diagnostic_log = _application_value(application_context, "diagnosticLog")
+        if not Path(diagnostic_log).expanduser().is_absolute():
+            raise ValueError("diagnosticLog must be an absolute path")
+        args.extend(["--diagnostic-log", diagnostic_log])
     return {
         "command": str(Path(sys.executable).resolve()),
         "args": args,

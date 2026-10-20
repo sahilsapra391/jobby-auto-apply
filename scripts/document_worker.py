@@ -10,6 +10,7 @@ contain a job UUID and fixed event names, never application content.
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import html
 import json
@@ -286,6 +287,56 @@ def failure_reason(value: object) -> str:
     return " ".join(_REASON_DISALLOWED.sub(" ", value).split())[:MAX_FAILURE_REASON]
 
 
+#: How far down a `__cause__` chain `failure_chain` walks. Four covers every
+#: chain this worker builds (ours, wrapping a library's, wrapping the OS's).
+MAX_CHAIN = 4
+
+
+def failure_chain(exc: BaseException) -> str:
+    """The exception chain behind a failure, root cause first, safe to log.
+
+    Observed 2026-09-12, job 7762a006: the per-job log went "content validated"
+    straight to "generated artifacts failed validation", and nothing anywhere
+    said whether the render or a gate had refused, or why. The cause was on
+    `__cause__` the whole time and nothing read it.
+
+    **Class names, never messages.** The repository's exceptions interpolate
+    freely: `cover_letter` puts a doubled word from the letter into its
+    message, `resume_pdf` puts Chrome's stderr and a file path into its own,
+    and even this file's `ResultInvalid` carries a `VoiceError`'s text for the
+    cover-letter voice gate. So not even a `WorkerError` message is safe by
+    type, and `test_validator_failure_gets_result_code_and_scrubs` already
+    holds that line. The step the caller names plus the classes, root first,
+    is what separates "Chrome made no PDF" from "the integrity gate refused".
+    An `OSError` adds its errno name and a `SystemExit` an integer code, both
+    fixed vocabulary. Module names are hyphenated because `failure_reason`
+    scrubs underscores to spaces.
+    """
+    links = []
+    seen = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(links) < MAX_CHAIN:
+        seen.add(id(current))
+        links.append(current)
+        nxt = current.__cause__
+        if nxt is None and not current.__suppress_context__:
+            nxt = current.__context__
+        current = nxt
+    parts = []
+    for link in reversed(links):
+        kind = type(link)
+        name = kind.__name__
+        module = kind.__module__
+        if module not in ("builtins", "__main__", __name__):
+            name = f"{module.rsplit('.', 1)[-1].replace('_', '-')}.{name}"
+        if isinstance(link, OSError) and isinstance(link.errno, int):
+            name += f" {errno.errorcode.get(link.errno, link.errno)}"
+        elif isinstance(link, SystemExit) and isinstance(link.code, int):
+            name += f" {link.code}"
+        parts.append(name)
+    return ", raised as ".join(parts)
+
+
 class WorkerError(RuntimeError):
     """A worker failure represented by one fixed public code.
 
@@ -464,6 +515,7 @@ class JobLog:
         "response parsed",
         "content validated",
         "artifacts rendered",
+        "artifact step failed",
         "artifact files rejected",
         "artifact ATS rejected",
         "unsupported ATS overrides removed",
@@ -2721,26 +2773,41 @@ class DocumentWorker:
                 provider_usage.parse(provider_output),
             )
 
+            # Which step is running, so a failure can say so. Every step
+            # below used to fail into the one sentence "generated artifacts
+            # failed validation", whether it was the parser, the render or a
+            # gate that refused.
+            step = "parse"
             try:
                 parsed = self.response_parser(provider_output)
                 log.record("response parsed")
+                step = "content validation"
                 generated = self.content_validator(parsed, runtime)
                 log.record("content validated")
+                step = "render"
                 self.artifact_renderer(runtime, generated)
                 log.record("artifacts rendered")
                 try:
+                    step = "artifact validation"
                     runtime["checks"] = self.artifact_validator(runtime)
                 except UnsupportedTerms as exc:
                     corrected = remove_unsupported_overrides(generated, exc.terms)
                     if corrected == generated:
                         raise
+                    step = "render"
                     self.artifact_renderer(runtime, corrected)
                     log.record(
                         "unsupported ATS overrides removed", reason=exc.reason()
                     )
+                    step = "artifact validation"
                     runtime["checks"] = self.artifact_validator(runtime)
+                step = "pack"
                 packed = self.pack_result(runtime)
             except Exception as exc:
+                # Local log only. `NodeTransport.fail` sends a fixed code and
+                # never this line; `failure_chain` decides what is safe in it.
+                log.record("artifact step failed",
+                           reason=f"{step}: {failure_chain(exc)}")
                 stage_event = {
                     "files": "artifact files rejected",
                     "ats": "artifact ATS rejected",

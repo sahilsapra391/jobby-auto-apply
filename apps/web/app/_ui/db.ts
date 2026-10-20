@@ -1,6 +1,8 @@
 import { Pool, types } from "pg";
 // @ts-expect-error -- generated from deploy/r2.mjs, plain JS with no types.
 import { configured as r2Configured, listKeys } from "./r2.generated.mjs";
+// @ts-expect-error -- plain JS with no types, so node can test it directly.
+import { basename as docBasename, servableNames } from "./documents.mjs";
 import { LANES, WINDOWS, type Lane, type Sort } from "../lanes.generated";
 import { COUNTRY_NAMES } from "../search.generated";
 
@@ -313,11 +315,29 @@ export async function page(lane: Lane, after: Cursor, limit = 50,
   // enriching in `page.tsx` would give page one four honest states and page
   // two the old two.
   if (lane === "done" && rows.length) {
-    const [stored, siblings] = await Promise.all(
-      [storedArtifacts(), documentSiblings()]);
+    const recorded = new Set<string>();
+    for (const row of rows) {
+      const p = (row.completed_payload ?? {}) as Record<string, unknown>;
+      for (const value of [p.resumeVariant, p.coverLetter]) {
+        const name = docBasename(value ?? "");
+        if (name.toLowerCase().endsWith(".pdf")) recorded.add(name);
+      }
+    }
+    const [stored, siblings, byName] = await Promise.all(
+      [storedArtifacts(), documentSiblings(),
+       servableNames(process.env, [...recorded]) as Promise<Set<string> | null>]);
     for (const row of rows) {
       row.stored_artifacts = stored === null ? null : [...stored];
       row.document_siblings = Object.fromEntries(siblings);
+      // Which of this row's recorded filenames `/api/artifact` can still open
+      // by name when the fixed key is absent: the index and KV copy v1 served
+      // them from. `null` is "could not look", which the cell draws as
+      // unknown rather than as a missing document.
+      const p = (row.completed_payload ?? {}) as Record<string, unknown>;
+      row.servable_names = byName === null ? null
+        : [p.resumeVariant, p.coverLetter]
+            .map((value) => docBasename(value ?? ""))
+            .filter((name: string) => byName.has(name));
     }
   }
   const last = rows[rows.length - 1];
