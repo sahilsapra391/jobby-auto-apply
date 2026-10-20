@@ -181,9 +181,18 @@ export const ACTION_QUEUE: Record<string, string> = {
  * clicked anything. A person did. `finish.py --completed` stays nonce-gated
  * for the agent path and this path never touches it.
  *
- * `submitting` and `abandoned` are in the route's `EVENTS` set and no control
- * sends either, so neither is here. `needs_you` is the same. Adding a control
- * that sends one means adding its queue, and the guard fails until it does.
+ * **`abandoned` is "It did not go through", the other answer to an unresolved
+ * submit.** A run that clicked Submit and saw no confirmation leaves a latest
+ * `submitting` event, the device refuses Retry until something answers it, and
+ * Stop is a drop that answers nothing. So the card offers the two honest
+ * answers, and this one goes to `unsent`, which `apply_marks.py --unsent`
+ * claims: it writes `abandoned` with `confirmedBy: user` through
+ * `store.py history-append` and hands the application back to Needs you, where
+ * a fresh Retry is no longer refused. Its own queue rather than a flag on
+ * `marked`, because the queue dedupes by application id and two opposite
+ * answers must not collapse into whichever arrived first.
+ *
+ * `submitting` is still absent: only the agent's own `pre_submit` writes it.
  */
 /**
  * Where a provider control lands. One queue rather than a map, because there is
@@ -198,6 +207,7 @@ export const PROVIDER_QUEUE = "providerLocal";
 
 export const EVENT_QUEUE: Record<string, string> = {
   completed: "marked",
+  abandoned: "unsent",
 };
 
 function env() {
