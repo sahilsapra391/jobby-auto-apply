@@ -87,7 +87,7 @@ const TABLES: Partial<Record<Lane, { head: string[]; cols?: string[] }>> = {
  */
 export function LaneList({
   lane, initial, initialCursor, done: initiallyDone, shape, query,
-  writesEnabled = false,
+  writesEnabled = false, keep, onShown, whole = false,
 }: {
   lane: Lane;
   initial: Row[];
@@ -121,6 +121,28 @@ export function LaneList({
    * gets a 503 and a card that goes back where it was.
    */
   writesEnabled?: boolean;
+  /**
+   * Which of the rows that have arrived to draw, for a list that filters in
+   * place rather than by URL. The Dropped dialog is the one caller: it is an
+   * archive on top of whichever lane is open, so its search cannot be a
+   * navigation without taking that lane's filters and closing the dialog.
+   *
+   * Applied over the held rows rather than to a copy handed in, so a live
+   * update, a Restore and a Load more all land in the same list the filter
+   * reads.
+   */
+  keep?: (row: Row) => boolean;
+  /** Told how many rows pass `keep`, of how many have arrived. */
+  onShown?: (shown: number, held: number) => void;
+  /**
+   * Draw every row that arrived instead of a window of them.
+   *
+   * The window follows the page's scroll, and a list inside a modal dialog
+   * scrolls the dialog rather than the page, so `first` never moves there:
+   * past the first 84 rows the archive would simply stop drawing. The archive
+   * is tens of rows, which is the case windowing was never for.
+   */
+  whole?: boolean;
 }) {
   const Row = ROWS[shape];
   const [rows, setRows] = useState<Row[]>(initial);
@@ -260,11 +282,18 @@ export function LaneList({
     }
   }, [query, lane, cursor, done, loading]);
 
-  const last = Math.min(rows.length, first + WINDOW + OVERSCAN * 2);
-  const slice = rows.slice(first, last);
+  const visible = useMemo(() => (keep ? rows.filter(keep) : rows), [rows, keep]);
+  useEffect(() => {
+    onShown?.(visible.length, rows.length);
+  }, [onShown, visible.length, rows.length]);
+  // A filter that shrinks the list can leave the window starting past its end.
+  const start = whole ? 0 : Math.min(first, Math.max(0, visible.length - 1));
+  const last = whole ? visible.length
+                     : Math.min(visible.length, start + WINDOW + OVERSCAN * 2);
+  const slice = visible.slice(start, last);
   const table = TABLES[shape];
-  const above = first * ROW_PX;
-  const below = Math.max(0, rows.length - last) * ROW_PX;
+  const above = start * ROW_PX;
+  const below = Math.max(0, visible.length - last) * ROW_PX;
 
   // A table lane cannot take the spacer divs: a <div> between <tbody> and <tr>
   // is dropped by the parser, the rows reparent, and the windowing silently
@@ -366,7 +395,9 @@ export function LaneList({
         </p>
       ) : done ? (
         <p className="hint">
-          {rows.length.toLocaleString()} shown, and that is all of them.
+          {visible.length === rows.length
+            ? `${rows.length.toLocaleString()} shown, and that is all of them.`
+            : `${visible.length.toLocaleString()} of ${rows.length.toLocaleString()} shown.`}
         </p>
       ) : (
         <button className="btn" type="button" onClick={more} disabled={loading}>
