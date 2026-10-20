@@ -37,6 +37,10 @@ export const dynamic = "force-dynamic";
 
 const TAB_ORDER: Lane[] = ["found", "watch", "flight", "act", "done"];
 
+/** How much of the Dropped archive the page carries for the dialog to filter.
+ *  A ceiling, not a page: past it the dialog still pages with Load more. */
+const ARCHIVE_LIMIT = 500;
+
 export default async function Board({
   searchParams,
 }: {
@@ -57,6 +61,10 @@ export default async function Board({
     v === undefined ? undefined : (Array.isArray(v) ? v : [v]);
   /** The keywords, as a list, whether one arrived or several. */
   const words = many(q);
+  /** What the search box shows, and undefined when nothing real was typed:
+   *  an empty box still submits `q=`. */
+  const searched = words?.map((w) => w.trim()).filter(Boolean).join(" ")
+    || undefined;
   const active: Lane = (TAB_ORDER as string[]).includes(asked ?? "")
     ? (asked as Lane)
     : "found";
@@ -101,12 +109,21 @@ export default async function Board({
     await Promise.all([
     counts(active, filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
-    // The unfiltered pool, so the count can say what it matched against.
-    active === "found" && filters ? counts(active).then((t) => t.found) : undefined,
+    // The unfiltered lane, so the count can say what it matched against. On
+    // an application lane it is also what tells "the search matched nothing"
+    // apart from "the lane is empty".
+    filters ? counts(active).then((t) => t[active]) : undefined,
     active === "found" ? savedSearch() : undefined,
-    // The archive's first page. It is a dialog on this document rather than a
-    // route, so it renders with the board or not at all.
-    page("dropped", null, 50, "new", words ? { q: words } : undefined),
+    // The archive. It is a dialog on this document rather than a route, so it
+    // renders with the board or not at all.
+    //
+    // **Unfiltered, and the whole of it.** It took the active lane's `q`, so a
+    // search typed into Watching also narrowed a dialog that was not open,
+    // and the dialog's own search could only reach it by navigating. The
+    // dialog filters what it holds in place now, like the board, so it holds
+    // the archive rather than its first 50: 58 rows on the board, and
+    // `ARCHIVE_LIMIT` is a ceiling far above that rather than a page size.
+    page("dropped", null, ARCHIVE_LIMIT, "new"),
     readerName(),
   ]);
   const stamp = boardStamp(meta?.updatedAt ?? null);
@@ -236,12 +253,17 @@ export default async function Board({
           {active !== "found" ? (
             <>
               <LaneHint lane={active} count={tally[active]} />
-              <LaneSearch lane={active} q={words?.join(" ")}
-                          shown={first.rows.length} total={tally[active]} />
+              <LaneSearch lane={active} q={searched}
+                          shown={first.rows.length} total={tally[active]}
+                          whole={pool ?? tally[active]} />
             </>
           ) : null}
           {first.rows.length === 0 ? (
-            <LaneEmpty lane={active} />
+            // **"Nothing on the watch list. Press Scan now" is false under a
+            // search that matched nothing**, and it was what every application
+            // lane said while #235 had every search matching nothing.
+            <LaneEmpty lane={active}
+                       searched={active === "found" ? undefined : searched} />
           ) : (
             <LaneList
               lane={active}
@@ -259,14 +281,14 @@ export default async function Board({
         </div>
       </div>
 
-      {/* `query` is built by `laneQuery` like every other lane URL. It was
-          string-concatenated and carried only `q`, which is the one that will
-          be wrong the day Dropped grows a filter. A JSX comment cannot sit
-          between attributes, which is the second time today that construct has
-          compiled in my head and not in the build. */}
+      {/* `query` is built by `laneQuery` like every other lane URL, and
+          carries no filter: the dialog searches what it holds in place, so a
+          page past the first is the next slice of the whole archive. A JSX
+          comment cannot sit between attributes, which is the second time
+          today that construct has compiled in my head and not in the build. */}
       <DroppedDock count={tally.dropped} rows={archive.rows}
                    cursor={archive.next} done={archive.done}
-                   query={laneQuery("dropped", "new", words ? { q: words } : undefined)}
+                   query={laneQuery("dropped", "new")}
                    writesEnabled={writes} />
       <SelectFace />
       <DroppedOpen />

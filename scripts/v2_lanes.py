@@ -552,7 +552,7 @@ select {APPLICATION_COLUMNS}{extra}
   left join employers e on e.id = p.employer_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
-   and {keyset(column, cast, "a")}{APPLICATION_SEARCH}
+   and {keyset(column, cast, "a")}{application_search(lane)}
  {order_by(column, "a")}
  limit %(limit)s
 """.strip()
@@ -618,13 +618,37 @@ select {APPLICATION_COLUMNS}
 #: `core_skills` is joined into the haystack rather than searched as an array,
 #: because a partial word should still hit: "product" matching
 #: `product-management` is the point of a skill search.
-APPLICATION_SEARCH = """
-   and (%(q)s::text is null
-        or concat_ws(' ', coalesce(e.canonical_name, a.company),
+#:
+#: **`q` is a list, and this predicate used to cast it to one string.** #235
+#: made the keyword a list for every caller and moved only Found's predicate to
+#: `::text[]`. node-pg sends `["Scale Media"]` as the array literal
+#: `{"Scale Media"}`, so `%(q)s::text` read the braces and quotes as part of
+#: the word, the pattern matched nothing, and every application lane answered
+#: a search with zero rows and no error. Measured on production: Watching held
+#: 19 rows and `&q=Scale%20Media` returned 0, and the same on all five lanes.
+#:
+#: Found's semantics, on purpose: each keyword is one literal substring, so a
+#: two-word keyword is a phrase, and keywords are OR'd. Empty means off rather
+#: than "match nothing", for the reason Found's comment gives.
+#:
+#: **Dropped also searches where a role came from and why it left.** The
+#: board's archive haystack is company, role, the lane it was dropped from, the
+#: stage it had reached and the reason (`dashboard.py` `dropped_row`). On the
+#: board "posting closed" found 2 of 58 and "watch" found 49; v2 found 0 for
+#: both, because none of those three columns was in the text it searched. They
+#: stay out of the other lanes, where a restored application can still carry
+#: its old reason and "posting closed" would then match a role in Watching.
+def application_search(lane):
+    dropped = ("\n                          a.dropped_from, a.dropped_stage,"
+               " a.dropped_reason,") if lane == "dropped" else ""
+    return f"""
+   and (coalesce(array_length(%(q)s::text[], 1), 0) = 0 or exists (
+          select 1 from unnest(%(q)s::text[]) as kw
+           where concat_ws(' ', coalesce(e.canonical_name, a.company),
                           coalesce(p.title, a.role),
-                          p.location_raw, a.region,
+                          p.location_raw, a.region,{dropped}
                           array_to_string(a.core_skills, ' '))
-            ilike '%%' || %(q)s::text || '%%')"""
+                 ilike '%%' || kw || '%%'))"""
 
 
 def count_sql(lane):
@@ -650,7 +674,7 @@ select count(*)
   from applications a
   left join postings p on p.id = a.posting_id
   left join employers e on e.id = p.employer_id
- where a.account_id = %(account)s and {LANES[lane]["where"]}{APPLICATION_SEARCH}
+ where a.account_id = %(account)s and {LANES[lane]["where"]}{application_search(lane)}
 """.strip()
 
 

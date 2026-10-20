@@ -18,6 +18,7 @@
 import { COMPONENTS, WEIGHTS } from "../rubric.generated";
 import { CardDetails } from "./CardDetails";
 import { Act, ActionIcon, ApplyWithConfirm } from "./actions";
+import { droppedFromLabel } from "./droppedLanes";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -219,12 +220,12 @@ const day = (v: unknown) => isoDay(v) ?? "";
  * `.go` and the north-east arrow are the board's own, and the Watching column
  * is sized for exactly that string.
  */
-function Posting({ url }: { url: unknown }) {
+function Posting({ url, label = "View posting" }: { url: unknown; label?: string }) {
   const href = s(url);
   if (!href) return <span className="muted">no link</span>;
   return (
     <a className="go" href={href} target="_blank" rel="noopener">
-      View posting &#8599;
+      {label} &#8599;
     </a>
   );
 }
@@ -596,8 +597,9 @@ export function DroppedRow(row: Row) {
   return (
     <tr data-id={row.id} data-state={s(row.status) ?? ""}>
       <td><NameCell row={row} /></td>
-      <td><span className="chip lane">
-        {s(row.dropped_from) ?? s(row.status) ?? ""}</span></td>
+      {/* Named the way the board names lanes, whichever spelling the store
+          recorded: the board's own archive held both "Watching" and "watch". */}
+      <td><span className="chip lane">{droppedFromLabel(row.dropped_from)}</span></td>
       {/* The stage, and under it the reason when one was given -- which is
           how the board draws this cell. Only 2 of 58 dropped roles carry a
           reason, and those two are the ones worth being able to look up. */}
@@ -616,6 +618,10 @@ export function DroppedRow(row: Row) {
       <td className="when">{day(row.dropped_at) || <Muted>not recorded</Muted>}</td>
       <td>
         <div className="rowacts-inline">
+          {/* The board's `link(posting_url(entry), "Posting")`, beside
+              Restore: deciding whether to bring a role back usually starts
+              with looking at it again. */}
+          <Posting url={row.apply_url} label="Posting" />
           <Act className="btn ghost undrop" subject={row.id} rowId={row.id}
                body={{ applicationId: s(row.legacy_id), status: "watch" }}>
             Restore
