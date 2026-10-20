@@ -26,10 +26,20 @@ export function LaneHint({ lane, count }: { lane: Lane; count: number }) {
  * board's `data-search` attributes drive a client-side filter over an embedded
  * payload; v2 pages from Postgres, so the honest equivalent is a predicate.
  */
-export function LaneSearch({ lane, q, shown, total }: {
+export function LaneSearch({ lane, q, shown, total, whole }: {
   lane: Lane; q?: string; shown: number; total: number;
+  /**
+   * The lane's size with no search applied, which decides whether this row is
+   * drawn at all.
+   *
+   * `total` is the searched count, so hiding on it took the search box away
+   * the moment a search matched nothing, and the term and Clear went with it:
+   * the only way back was editing the URL.
+   */
+  whole?: number;
 }) {
-  if (!total) return null;
+  const laneSize = whole ?? total;
+  if (!laneSize) return null;
   return (
     <form className="filters" method="get" action="/" data-scope={lane}>
       <input type="hidden" name="lane" value={lane} />
@@ -38,14 +48,35 @@ export function LaneSearch({ lane, q, shown, total }: {
              aria-label={`Search ${lane}`} />
       {q ? <a className="btn ghost" href={`/?lane=${lane}`}>Clear</a> : null}
       <span className="fcount" data-count={lane}>
-        {shown === total ? `${total.toLocaleString()} shown`
-                         : `${shown.toLocaleString()} of ${total.toLocaleString()} shown`}
+        {q && total !== laneSize
+          ? `${total.toLocaleString()} of ${laneSize.toLocaleString()} match`
+          : shown === total ? `${total.toLocaleString()} shown`
+          : `${shown.toLocaleString()} of ${total.toLocaleString()} shown`}
       </span>
     </form>
   );
 }
 
-export function LaneEmpty({ lane }: { lane: Lane }) {
+export function LaneEmpty({ lane, searched }: {
+  lane: Lane;
+  /**
+   * The search the reader typed, when there is one.
+   *
+   * **An empty result under a search is not an empty lane.** The lane's own
+   * copy says "Nothing on the watch list" and names the button that fills it,
+   * which is false here and sends the reader off to press Scan now while the
+   * rows sit behind a search that matched none of them.
+   */
+  searched?: string;
+}) {
+  if (searched) {
+    return (
+      <p className="empty">
+        <strong>No rows match “{searched}”.</strong>
+        <span>The lane is not empty; nothing in it matched the search. Clear the search to see all of it.</span>
+      </p>
+    );
+  }
   const said = LANE_EMPTY[lane];
   if (!said) {
     // Named rather than defaulted. A lane with no empty state is a lane that
