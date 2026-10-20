@@ -197,6 +197,17 @@ def session_row(payload):
         "dropped_at": text("droppedAt"),
         "dropped_reason": text("droppedReason"),
         "seen_on_boards": number("seenOnBoards"),
+        # Migration 0025. When the run last moved, stamped by `phase.py`
+        # beside the phase itself; In flight orders by it and prints it.
+        # `updated_at` stood in for it and is the mirror's own write time.
+        "phase_at": text("phaseAt"),
+        # `capability` while a park with no browser call is live, absent
+        # otherwise: `run_apply.tag_session` pops the key when a later run
+        # reaches the form, so absent here is "not Jobby's fault".
+        "park_class": text("parkClass"),
+        # The Watching filter's third facet, beside the region the role
+        # index already carries.
+        "discipline": text("discipline"),
     }
 
 

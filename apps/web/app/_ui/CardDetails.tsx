@@ -35,7 +35,11 @@ import {
 const cache = new Map<string, Sections>();
 
 export function CardDetails(
-  { id, unknowns }: { id: string; unknowns?: unknown },
+  { id, unknowns, sightings = [] }: {
+    id: string; unknowns?: unknown;
+    /** Every other board this posting was seen on, already labelled. */
+    sightings?: { label: string; url: string }[];
+  },
 ) {
   const [disclosure, setDisclosure] = useState<Disclosure>(CLOSED);
   const [everOpened, setEverOpened] = useState(false);
@@ -194,6 +198,23 @@ export function CardDetails(
                 Scored neutral because the posting does not say:{" "}
                 {missing.join(", ")}.
               </p>
+            ) : null}
+            {/* **"see more on", the board's last line in the panel**
+                (`found_lane.py` `detailPanel`). Every sighting with a usable
+                link, opening somebody else's site in a new tab and saying so
+                with `.jb-out`. `postings.sources` held these the whole time
+                and the Found query selected none of it. */}
+            {sightings.length ? (
+              <div className="jb-sight">
+                <span className="jb-chip">see more on</span>
+                {sightings.map((sight, i) => (
+                  <a className="go" href={sight.url} target="_blank"
+                     rel="noopener" title={`Open on ${sight.label || "its board"}`}
+                     key={i}>
+                    {sight.label || "link"}<span className="jb-out">&#8599;</span>
+                  </a>
+                ))}
+              </div>
             ) : null}
           </div>
         ) : null}

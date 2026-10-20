@@ -45,8 +45,11 @@ import migrate  # noqa: E402
 #: rather than restating the strings, because a marker list written twice is
 #: the class this repository has now paid for six times.
 MARKERS = {
-    "/": ["Shape Fixture Employer", "Shape Fixture Posting"],
-    "/profile": ["Shape fixture question?", "Shape fixture answer"],
+    "/": ["Shape Fixture Employer", "Shape Fixture Posting",
+          "Shape Fixture Tag", "On 2 boards", "Shape fixture stop reason"],
+    "/profile": ["Shape fixture question?", "Shape fixture answer",
+                 "Shape fixture stop reason"],
+    "/settings": ["Shape fixture stop reason"],
 }
 
 EMPLOYER = "Shape Fixture Employer"
@@ -54,6 +57,21 @@ POSTING = "Shape Fixture Posting"
 QUESTION = "Shape fixture question?"
 ANSWER = "Shape fixture answer"
 APPLICATION = "shape-fixture-application"
+
+#: Two sightings on two boards, one ATS-direct and one aggregator, so the card
+#: draws "On 2 boards", the purple direct source chip and two "see more on"
+#: links. The second URL is on a reserved example domain.
+SOURCES = [
+    {"sourceClass": "ats", "source": "greenhouse",
+     "url": "https://boards.greenhouse.io/shapefixture/jobs/1"},
+    {"sourceClass": "aggregator", "source": "reed",
+     "url": "https://jobs.example.org/shape-fixture/1"},
+]
+#: A tag the card draws on its facts row. Mixed case, so `tidy_tag` leaves it.
+TAGS = ["Shape Fixture Tag", "full-time"]
+#: The page-wide stopped banner and the In flight capacity line.
+STOPPED = "Shape fixture stop reason"
+PARKED = "Shape fixture parked slots"
 
 
 def _refuse_the_device_database(url):
@@ -133,17 +151,18 @@ def seed(conn, url):
             """insert into postings (employer_id, legacy_id, source, board_slug,
                                      external_id, title, apply_url, posted_at,
                                      first_seen_at, last_seen_at, country,
-                                     remote, summary, years_min, sources)
+                                     remote, summary, years_min, sources, tags)
                values (%s, 'shape-fixture-posting', 'greenhouse', 'shapefixture',
                        'shape-fixture-posting', %s,
                        'https://boards.greenhouse.io/shapefixture/jobs/1',
                        now() - interval '1 day', now(), now(), 'US', true,
                        'A posting that exists so the crawl renders a card.',
-                       3, '[{"sourceClass":"ats"}]'::jsonb)
+                       3, %s::jsonb, %s)
                on conflict (legacy_id) do update set title = excluded.title,
-                     posted_at = excluded.posted_at, last_seen_at = now()
+                     posted_at = excluded.posted_at, last_seen_at = now(),
+                     sources = excluded.sources, tags = excluded.tags
                returning id""",
-            (employer, POSTING))
+            (employer, POSTING, json.dumps(SOURCES), TAGS))
         posting = cur.fetchone()[0]
 
         cur.execute(
@@ -168,6 +187,66 @@ def seed(conn, url):
                    on conflict (account_id, legacy_id) do update
                      set status = excluded.status, updated_at = now()""",
                 (account, f"{APPLICATION}-{suffix}", status, posting))
+
+        # What each lane's own features read. On the four rows above rather
+        # than beside them, because `test_application_lane_search` expects
+        # exactly one fixture-employer row per lane.
+        #
+        #   watch     a region and a discipline, the select's two read facets
+        #   inflight  a phase, its sentence, and when it moved
+        #   review    one blocker, so the card is "1 to do"
+        #   done      a completion and an interview after it
+        cur.execute(
+            """update applications set region = 'GB',
+                      discipline = 'Shape Fixture Discipline'
+                where account_id = %s and legacy_id = %s""",
+            (account, f"{APPLICATION}-watch"))
+        cur.execute(
+            """update applications set phase = 'Filling the form',
+                      phase_detail = 'Shape fixture phase detail',
+                      phase_at = now() - interval '5 minutes'
+                where account_id = %s and legacy_id = %s""",
+            (account, f"{APPLICATION}-inflight"))
+        cur.execute(
+            """update applications
+                  set blockers = '[{"question": "Shape fixture blocker"}]'::jsonb
+                where account_id = %s and legacy_id = %s""",
+            (account, f"{APPLICATION}-review"))
+        for kind, ago in (("completed", "2 days"), ("interview", "1 day")):
+            cur.execute(
+                f"""insert into application_events (account_id, application_id,
+                                                    kind, payload, at)
+                    select a.account_id, a.id, %s, '{{}}'::jsonb,
+                           now() - interval '{ago}'
+                      from applications a
+                     where a.account_id = %s and a.legacy_id = %s
+                       and not exists (select 1 from application_events h
+                                        where h.application_id = a.id
+                                          and h.kind = %s)""",
+                (kind, account, f"{APPLICATION}-done", kind))
+
+        # A capability park: the red "system fault" card. Its own company,
+        # with no posting, so a search for the fixture employer still finds
+        # one row in Needs you.
+        cur.execute(
+            """insert into applications (account_id, legacy_id, status,
+                                         company, role, park_class,
+                                         created_at, updated_at)
+               values (%s, %s, 'review', 'Shape Fixture Faulted',
+                       'Shape Fixture Role', 'capability', now(), now())
+               on conflict (account_id, legacy_id) do update
+                 set park_class = excluded.park_class, updated_at = now()""",
+            (account, f"{APPLICATION}-fault"))
+
+        # Why automation is stopped, and the parked-slots line.
+        cur.execute(
+            """insert into board_meta (account_id, blocked, slots_parked,
+                                       updated_at)
+               values (%s, %s, %s, now())
+               on conflict (account_id) do update
+                 set blocked = excluded.blocked,
+                     slots_parked = excluded.slots_parked""",
+            (account, STOPPED, PARKED))
 
         # One bank entry per kind, so every tab has a row and every row draws
         # its controls. `question` is the kind that carries a category chip.

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -177,6 +178,29 @@ class ItMirrorsIntoTheRightTables(pgtest.SchemaCase):
         with self.conn.cursor() as cur:
             cur.execute("select legacy_id, status from applications")
             self.assertEqual(cur.fetchone(), ("app1", "completed"))
+
+    def test_the_lane_fields_of_migration_0025_reach_their_columns(self):
+        # When the run moved, a capability park and the discipline. Then a
+        # later save without them: the session is the authority on its own
+        # fields, so a cleared `parkClass` must clear the column, which is what
+        # takes a red card back to an ordinary one.
+        class_b.mirror(self.conn, self.account, "session",
+                       {"applicationId": "app1", "status": "review",
+                        "phaseAt": "2026-10-20T16:00:07Z",
+                        "parkClass": "capability", "discipline": "PM"})
+        with self.conn.cursor() as cur:
+            cur.execute("select phase_at, park_class, discipline "
+                        "from applications")
+            at, park, discipline = cur.fetchone()
+        self.assertEqual(at, datetime(2026, 10, 20, 16, 0, 7,
+                                      tzinfo=timezone.utc))
+        self.assertEqual((park, discipline), ("capability", "PM"))
+        class_b.mirror(self.conn, self.account, "session",
+                       {"applicationId": "app1", "status": "review"})
+        with self.conn.cursor() as cur:
+            cur.execute("select phase_at, park_class, discipline "
+                        "from applications")
+            self.assertEqual(cur.fetchone(), (None, None, None))
 
     def test_a_session_is_upserted_not_duplicated(self):
         """Sessions are rewritten on every phase change. 88 files today, each

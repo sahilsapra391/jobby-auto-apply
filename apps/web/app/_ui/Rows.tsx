@@ -15,10 +15,11 @@
  * anything, so a client that ignores this gets a 503 and a card that goes back
  * where it was.
  */
-import { COMPONENTS, WEIGHTS } from "../rubric.generated";
+import { COMPONENTS, OUTCOME_CHIPS, WEIGHTS } from "../rubric.generated";
 import { CardDetails } from "./CardDetails";
 import { Act, ActionIcon, ApplyWithConfirm } from "./actions";
 import { droppedFromLabel } from "./droppedLanes";
+import { cardTags, sourceLabel, tidyDays } from "./cardWords";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -245,10 +246,17 @@ export function PostingRow(row: Row) {
   chips.push(when ? [when, ""] : ["Posted date unknown", "unknown"]);
   const pay = s(row.salary_raw);
   if (pay) chips.push([pay, "pay"]);
-  // Green, like the board: the source is where the posting was found and an
-  // ATS-direct one is worth more than an aggregator, which the colour says.
-  chips.push([s(row.source) ?? "Unknown source", "boards"]);
-  for (const label of gateLabels(row.score_gates)) chips.push([label, "gate"]);
+  // **How many boards, and whether the source is the employer's own form, are
+  // two chips and two colours.** v2 drew the source with `boards`, the green
+  // "On N boards" treatment, on every card, so an aggregator copy and an
+  // ATS-direct listing looked the same and the count never appeared. The
+  // board (`found_lane.py`, the card's chip row) draws "On N boards" green
+  // above one board, and the source purple when the best sighting is rank 0
+  // or 1 -- ATS-direct or the employer's careers site -- and plain otherwise.
+  const boards = typeof row.boards === "number" ? row.boards : 0;
+  const rank = typeof row.direct_rank === "number" ? row.direct_rank : 3;
+  const source = s(row.source);
+  const gates = gateLabels(row.score_gates);
 
   return (
     <article className="jb-card" data-id={row.id}>
@@ -275,8 +283,21 @@ export function PostingRow(row: Row) {
       <div className="jb-chips">
         {chips.map(([text, kind], i) =>
           <span className={kind ? `jb-chip ${kind}` : "jb-chip"} key={i}>{text}</span>)}
+        {/* Whole literals rather than through the array above, so the two
+            classes this card decides on are classes the reachability check
+            can see it set. */}
+        {boards > 1
+          // One text node, so the words are one string in the HTML.
+          ? <span className="jb-chip boards">{"On " + boards + " boards"}</span>
+          : null}
+        <span className={rank <= 1 ? "jb-chip direct" : "jb-chip"}>
+          {source ? sourceLabel(source) : "Unknown source"}
+        </span>
+        {gates.map((label, i) =>
+          <span className="jb-chip gate" key={`g${i}`}>{label}</span>)}
       </div>
-      <Facts score={row.score} parts={row.score_parts} />
+      <Facts score={row.score} parts={row.score_parts} why={row.score_why}
+             tags={row.tags} />
       <div className="jb-acts">
         {/* The subject is the posting: nothing has an application id yet, and
             the decision is what takes the card out of Found. */}
@@ -319,7 +340,8 @@ export function PostingRow(row: Row) {
           gives `.jb-det` its own row and `.jb-slot` the full width beneath it
           (`board.css` rows 3 and 4 of the card grid), so the markup lands
           where the stylesheet has been expecting it since the day it arrived. */}
-      <CardDetails id={row.id} unknowns={row.score_unknowns} />
+      <CardDetails id={row.id} unknowns={row.score_unknowns}
+                   sightings={sightings(row.sightings)} />
     </article>
   );
 }
@@ -352,20 +374,36 @@ function Ring({ score }: { score: unknown }) {
  * and a board that disagrees about what a title match is worth disagrees
  * silently, in a bar that still renders.
  */
-function Facts({ score, parts }: { score: unknown; parts: unknown }) {
-  if (typeof score !== "number") return null;
+function Facts({ score, parts, why, tags }: {
+  score: unknown; parts: unknown;
+  /** `job_scores.why`: the rubric's own sentence for each component. */
+  why?: unknown;
+  /** `postings.tags`, which the board draws after the bars. */
+  tags?: unknown;
+}) {
+  const labels = cardTags(tags);
+  const scored = typeof score === "number";
+  if (!scored && !labels.length) return null;
   const earnedBy = (parts && typeof parts === "object" ? parts : {}) as
     Record<string, number>;
+  const reasons = (why && typeof why === "object" ? why : {}) as
+    Record<string, unknown>;
   return (
     <div className="jb-facts">
-      {COMPONENTS.map((name) => {
+      {scored ? COMPONENTS.map((name) => {
         const possible = WEIGHTS[name] ?? 0;
         if (!possible) return null;
         const earned = Number(earnedBy[name] ?? 0);
         const width = Math.round((100 * earned) / possible);
+        // **The reason is the point of the tooltip.** "title: 0 of 35" says
+        // a component scored nothing; "title: 0 of 35 - no titles in the
+        // saved search" says why, which is what the board's title carries
+        // (`row.title = name + ': ' + earned + ' of ' + possible + (why ? ' - '
+        // + why : '')`). `job_scores.why` has been mirrored the whole time.
+        const reason = tidyDays(reasons[name]);
         return (
           <div className="jb-fact" key={name}
-               title={`${name}: ${earned} of ${possible}`}>
+               title={`${name}: ${earned} of ${possible}${reason ? ` - ${reason}` : ""}`}>
             <span className="jb-fact-name">{name}</span>
             <span className="jb-fact-track">
               <span className={earned === 0 ? "jb-fact-fill none" : "jb-fact-fill"}
@@ -374,9 +412,30 @@ function Facts({ score, parts }: { score: unknown; parts: unknown }) {
             <span className="jb-fact-num">{earned}/{possible}</span>
           </div>
         );
-      })}
+      }) : null}
+      {/* The posting's own tags, up to four, after the bars: the board's
+          `(job.tg || []).slice(0, 4)`, tidied the way `tidy_tag` tidies
+          them. They were selected by nothing until now. */}
+      {labels.map((tag, i) => <span className="jb-chip" key={`t${i}`}>{tag}</span>)}
     </div>
   );
+}
+
+/**
+ * The sightings the details panel links to, from the generated column.
+ *
+ * Anything that is not a `{s, u}` pair with an http(s) link is dropped here as
+ * well as in the SQL, because this is the last thing between a stored string
+ * and an `href`.
+ */
+function sightings(value: unknown): { label: string; url: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v) => {
+    const entry = (v ?? {}) as Record<string, unknown>;
+    const url = String(entry.u ?? "").trim();
+    if (!/^https?:\/\//.test(url)) return [];
+    return [{ label: sourceLabel(entry.s), url }];
+  });
 }
 
 /** A gate is a disqualifier the rubric found, and the board chips it. */
@@ -392,7 +451,10 @@ function gateLabels(gates: unknown): string[] {
 export function WatchRow(row: Row) {
   return (
     <tr data-id={row.id}>
-      <td><NameCell row={row} /></td>
+      {/* The discipline under the role, as the board draws it
+          (`discipline_tag`): it is also one of this lane's filter options, so
+          a reader who filters on it can see which rows carry it. */}
+      <td><NameCell row={row} discipline={s(row.discipline)} /></td>
       <td className="when"><PostedCell posted={row.posted_at} /></td>
       <td><YearsCell row={row} /></td>
       <td className="loc">{s(row.location_raw) ?? ""}</td>
@@ -441,15 +503,23 @@ export function WatchRow(row: Row) {
 
 export function DoneRow(row: Row) {
   return (
-    <tr data-id={row.id} data-state="completed">
+    <tr data-id={row.id} data-state={s(row.outcome) ?? "completed"}>
       <td><NameCell row={row} plain /></td>
       <td>{s(row.role) ?? <Muted>posting not linked</Muted>}</td>
       {/* **The lane is the status here, and that is item 2.** This column used
           to draw applications.status, which for the newest submitted row reads
           "active" -- a session's last-known state, not an outcome. Membership
           of this lane already means a completed event with no later abandoned,
-          so the cell says what the lane means. */}
-      <td><span className="chip">submitted</span></td>
+          so the cell says what the lane means: "submitted", until the
+          employer answers.
+
+          **And then it says what they answered.** A response, an interview,
+          an offer or a rejection is a history event the store records and the
+          mirror writes into `application_events`; `outcome` is the latest of
+          them. The chip and its colour are `dashboard.py`'s `outcome_chip`,
+          generated rather than retyped. Whole literals per colour so the
+          reachability check can see each one set. */}
+      <td><OutcomeChip outcome={row.outcome} /></td>
       {/* **`completed_at`, never `updated_at`.** The mirror writes
           `updated_at` as `now()` on every pass, so it is the backfill time:
           measured over all 104 submitted applications it differs from the
@@ -591,6 +661,17 @@ export function DoneRow(row: Row) {
   );
 }
 
+/** The Submitted Status chip: `submitted`, or what the employer answered. */
+function OutcomeChip({ outcome }: { outcome: unknown }) {
+  const kind = s(outcome) ?? "completed";
+  const [tone, label] = OUTCOME_CHIPS[kind] ?? ["", kind];
+  return (
+    <span className={tone === "warm" ? "chip warm" : tone === "ready" ? "chip ready" : "chip"}>
+      {label}
+    </span>
+  );
+}
+
 /* --------------------------------------------------------- Dropped (table) */
 
 export function DroppedRow(row: Row) {
@@ -638,8 +719,28 @@ const PHASES = ["Queued", "Building documents", "Filling the form",
                 "Submitting", "Verifying"];
 
 export function ActCard(row: Row) {
+  const pending = Array.isArray(row.blockers) ? (row.blockers as unknown[]) : [];
+  // **A park the agent never started is Jobby's fault, and the card says so.**
+  // `run_apply.py` tags a park that made no browser call at all
+  // `parkClass: capability`, and clears the tag when a later run reaches the
+  // form. The board draws that card red, chipped "system fault", with a note
+  // saying the step is not the reader's (`dashboard.py`, the Needs you
+  // cards).
+  //
+  // v2 left this out on the grounds that 0 of 97 sessions carried the key, and
+  // that was a true measurement of the wrong thing. The key exists only while
+  // the fault is live -- the same run that would clear it is the one that
+  // proves the browser works -- so zero is the healthy reading, and the
+  // writer is four call sites in `run_apply.py`. The branch runs the next time
+  // the browser server dies, which is the one moment a reader needs the card
+  // to say whose problem it is. Migration 0025 mirrors it.
+  const fault = row.park_class === "capability";
+  // `ready` and `hold` are the board's card classes as well as its chips: a
+  // card with nothing pending is green, not orange.
+  const state = fault ? "fault" : pending.length ? "hold" : "ready";
   return (
-    <article className="card hold" data-id={row.id} data-state="hold">
+    <article className={fault ? "card fault" : pending.length ? "card hold" : "card ready"}
+             data-id={row.id} data-state={state}>
       <header>
         <CardTitle row={row} />
         {/* **What is left to do, not where the agent stopped.** The pill drew
@@ -649,20 +750,16 @@ export function ActCard(row: Row) {
             nothing is pending, and `parkClass: capability` overrides both
             because a park with no browser is Jobby's fault rather than work
             for the reader. */}
-        {/* The board also draws a red "system fault" pill from
-            `parkClass: capability`, and that is deliberately absent here:
-            measured, 0 of 97 sessions carry `parkClass` at all, because the
-            loop that writes it only started recording on a signal and none has
-            fired since. A branch over a field nothing populates is a branch
-            that can never run, which is worse than not having it. */}
-        {(() => {
-          const held = Array.isArray(row.blockers)
-            ? (row.blockers as unknown[]) : [];
-          return held.length
-            ? <span className="chip hold">{held.length} to do</span>
-            : <span className="chip ready">ready</span>;
-        })()}
+        {fault ? <span className="chip fault">system fault</span>
+          : pending.length
+            ? <span className="chip hold">{pending.length} to do</span>
+            : <span className="chip ready">ready</span>}
       </header>
+      {fault ? (
+        <p className="fault-note">Nothing was filled: the agent started
+          without browser tools. This is a fault in Jobby, not a step for
+          you. Retry once the browser server is healthy.</p>
+      ) : null}
       {/* One <li> per pending field, the board's own shape. Migration 0009
           mirrors them; before it this list said "blockers are not mirrored
           yet" on every card, which is the lane's entire purpose missing.
@@ -791,6 +888,14 @@ export function FlightCard(row: Row) {
         {s(row.phase_detail)
           ? <span className="why">{s(row.phase_detail)}</span> : null}</p>
       <div className="act">
+        {/* The posting first, as the board's card has it
+            (`dashboard.py`'s `flight_card`): a reader watching a run usually
+            wants to see what it is applying to. Absent rather than a dead
+            link when nothing recorded one. */}
+        {s(row.apply_url) ? (
+          <a className="btn ghost" href={s(row.apply_url)!} target="_blank"
+             rel="noopener">Posting &#8599;</a>
+        ) : null}
         {/* **No Retry while a submit is unanswered**, because the device
             refuses it. Nor the two answers: an In flight card with a latest
             `submitting` is usually a run between `pre_submit` and
@@ -810,24 +915,24 @@ export function FlightCard(row: Row) {
           Stop
         </Act>
         {/* The other fact: when this run last moved, not which ATS it is on.
-            **v1 renders nothing here either, and that is a v1 bug rather than
-            a decision.** `dashboard.py:774` passes `clock_label` the slice
+            **v1 rendered nothing here, and that was a v1 bug rather than a
+            decision.** `dashboard.py:774` passes `clock_label` the slice
             `(entry.get("phaseAt") or "")[11:19]`, a bare `"16:00:07"` that
-            `clock.parse` cannot read, so `local()` is None and the label is
-            "". Measured by running it, not by reading it.
+            `clock.parse` cannot read, so the label was always "".
 
-            `phase_at` is not a column on `applications` and is not mirrored,
-            so the stamp v2 has for "when did this last move" is
-            `updated_at`, which the lane already selects. */}
-        <span className="ats">{clockLabel(row.updated_at)}</span>
+            **`phase_at`, never `updated_at`.** Migration 0025 mirrors the
+            stamp `phase.py` writes on every `set_phase`. `updated_at` is the
+            mirror's own write time, stamped `now()` on every pass, so a card
+            showing it says a run moved when only the mirror did. A run with
+            no stamp yet shows nothing, which is what an unread stamp has
+            always drawn here. */}
+        <span className="ats">{clockLabel(row.phase_at)}</span>
       </div>
     </article>
   );
 }
 
 /* ------------------------------------------------------------------ shared */
-
-  "control moves with it.";
 
 /**
  * The company cell both table lanes share.
@@ -869,7 +974,9 @@ function CardTitle({ row }: { row: Row }) {
 }
 
 
-function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
+function NameCell({ row, plain, discipline }: {
+  row: Row; plain?: boolean; discipline?: string | null;
+}) {
   // **The name and the link are two different facts, and conflating them is
   // why rows 3 and beyond rendered their session id.** `company` and `role`
   // come from the posting when one is linked and from `applications` when it
@@ -891,6 +998,7 @@ function NameCell({ row, plain }: { row: Row; plain?: boolean }) {
           <strong>{heading}</strong><br />
           {role ? <span className="muted">{role}</span>
                 : <Muted>posting not linked</Muted>}
+          {discipline ? <><br /><span className="chip-sm">{discipline}</span></> : null}
         </span>
       )}
     </div>

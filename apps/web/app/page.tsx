@@ -12,7 +12,8 @@ import { AnswersModal } from "./_ui/AnswersModal";
 import { LaneList } from "./_ui/LaneList";
 import { LaneEmpty, LaneHint, LaneSearch } from "./_ui/LaneChrome";
 import {
-  accountId, boardMeta, counts, filtersFrom, laneQuery, openQuestions, page,
+  accountId, boardMeta, counts, filtersFrom, laneFacets, laneQuery, openQuestions,
+  page,
   readerName, savedSearch,
 } from "./_ui/db";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "./_ui/theme";
@@ -48,7 +49,7 @@ export default async function Board({
   searchParams: Promise<{ lane?: string; sort?: string; q?: string | string[];
                           within?: string; direct?: string; not?: string;
                           scope?: string; cos?: string; conames?: string;
-                          exp?: string;
+                          exp?: string; facet?: string;
                           // Checkbox groups: one name, many values, so Next
                           // hands back a string when one is ticked and an
                           // array when several are. Treating the string case
@@ -56,7 +57,7 @@ export default async function Board({
                           loc?: string | string[]; wp?: string | string[] }>;
 }) {
   const { lane: asked, sort: askedSort, q, within, direct,
-          not: not_, scope: searchIn, cos, conames, exp, loc, wp } =
+          not: not_, scope: searchIn, cos, conames, exp, loc, wp, facet } =
     await searchParams;
   const many = (v?: string | string[]) =>
     v === undefined ? undefined : (Array.isArray(v) ? v : [v]);
@@ -101,12 +102,13 @@ export default async function Board({
   const wide = window === ANY_WINDOW;
   const filters = active === "found"
     ? { ...carried, within: wide ? undefined : window }
-    // Every other lane offers the keyword search only, which is what its own
-    // search row draws.
-    : (words ? { q: words } : undefined);
+    // Every other lane offers the keyword search and its select, which is
+    // what its own search row draws. `facet=` is the select's "All".
+    : (words || facet?.trim() ? { q: words, facet: facet?.trim() || undefined }
+                              : undefined);
   const jar = await cookies();
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
-  const [tally, first, writes, meta, pool, scope, archive, reader, open] =
+  const [tally, first, writes, meta, pool, scope, archive, reader, options, open] =
     await Promise.all([
     counts(active, filters), page(active, null, 50, sort, filters),
     accountId().then(writesEnabled), boardMeta(),
@@ -126,11 +128,14 @@ export default async function Board({
     // `ARCHIVE_LIMIT` is a ceiling far above that rather than a page size.
     page("dropped", null, ARCHIVE_LIMIT, "new"),
     readerName(),
+    // The lane's select, read off the lane like the board's.
+    active === "found" ? [] : laneFacets(active),
     // The Profile nav badge. A failed count draws no badge rather than a
     // failed board: it is a pointer to another page, not this page's data.
     openQuestions().catch(() => null),
   ]);
   const stamp = boardStamp(meta?.updatedAt ?? null);
+  const waiting = active === "act" && pool !== undefined ? pool : tally.act;
 
   /**
    * A tab's link, carrying everything the reader had set.
@@ -156,15 +161,17 @@ export default async function Board({
       {/* The logo returns to the board, and the board means the lane the
           reader was last on rather than whichever one is first. */}
       <AppBar here="home" theme={theme} home={tabHref(active)}
-              openQuestions={open} />
+              stopped={meta?.blocked} openQuestions={open} />
       <RememberLane lane={active} />
       <div className="wrap">
         <div className="top">
           <div className="hero-copy">
             <h1>Jobby is a free agent.</h1>
             <p className="lede">
-              {tally.act === 0 ? "Nothing blocked"
-                               : `${tally.act} waiting on you`}
+              {/* The whole lane, not the filtered badge: narrowing Needs
+                  you to "Ready to submit" does not make the rest stop
+                  waiting. */}
+              {waiting === 0 ? "Nothing blocked" : `${waiting} waiting on you`}
             </p>
             {/* **The board's own stamp, which is `dashboard.py:1482`.** It
                 said "Reading Postgres directly", which is a note about the
@@ -257,8 +264,17 @@ export default async function Board({
           ) : null}
           {active !== "found" ? (
             <>
+              {/* **Capacity gone is not automation stopped, so it is its
+                  own line rather than the alarm banner** (`dashboard.py`'s
+                  `parked_banner`). It sits where the question gets asked: the
+                  last time the fleet filled up, it surfaced as somebody asking
+                  how many applications were in flight. */}
+              {active === "flight" && meta?.slotsParked ? (
+                <p className="capacity" role="status">{meta.slotsParked}</p>
+              ) : null}
               <LaneHint lane={active} count={tally[active]} />
               <LaneSearch lane={active} q={searched}
+                          facet={facet?.trim() || undefined} options={options}
                           shown={first.rows.length} total={tally[active]}
                           whole={pool ?? tally[active]} />
             </>
@@ -268,7 +284,11 @@ export default async function Board({
             // search that matched nothing**, and it was what every application
             // lane said while #235 had every search matching nothing.
             <LaneEmpty lane={active}
-                       searched={active === "found" ? undefined : searched} />
+                       searched={active === "found" ? undefined
+                         : (searched ?? (facet?.trim()
+                           ? (options.find(([v]) => v === facet.trim())?.[1]
+                              ?? facet.trim())
+                           : undefined))} />
           ) : (
             <LaneList
               lane={active}

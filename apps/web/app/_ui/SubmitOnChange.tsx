@@ -111,7 +111,10 @@ export function SubmitOnChange() {
         "input[name=not], input[name=conames]");
       if (!control) return;
       const form = control.form ?? control.closest("form");
-      if (!form || !form.classList.contains("jb-filter-form")) return;
+      // Found's filter form, or an application lane's search row, whose one
+      // select is the board's `filter_bar` option list.
+      if (!form || !(form.classList.contains("jb-filter-form")
+                     || form.hasAttribute("data-lane-filter"))) return;
 
       // A continent box owns its children rather than a value of its own. Its
       // markup already said so ("selects and clears its children") while it was

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { configFromSnapshot, noLocationPicked, readFilterForm } from "./searchConfig";
 
 /** Every board mutation carries these. A POST without `x-jobby-request` is
  *  refused as cross-site, which is how Watch, Pass and Apply from Found 403'd
@@ -68,80 +69,6 @@ export function FindSources({ enabled }: { enabled: boolean }) {
 }
 
 
-/**
- * Read the filter form and build the config `search_config.py` accepts.
- *
- * **A wired button posting `{}` is a stranded control one hop later**, which is
- * what this existed as for one commit. The payload is read off the form at
- * click time rather than held in React state, because the filter surface is a
- * server component rendering 199 countries inside a `<form method="get">` and
- * lifting all of it into state to build one object would be a rewrite for the
- * sake of the payload.
- *
- * v2's field names are its own (`q`, `not`, `within`, `wp`, `cos`) and the
- * config's are the store's (`keywords`, `excludeKeywords`, `postedWithin`,
- * `workplace`, `companiesMode`). The mapping between them lives here, once.
- * Anything the form does not carry is simply absent: `search_config.validate`
- * fills its own defaults, and inventing a value here would be this board
- * asserting a filter the reader never set.
- */
-function configFromForm(root: HTMLElement | Document): Record<string, unknown> {
-  const scope = root instanceof Document ? root : root;
-  const one = (name: string) =>
-    scope.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`);
-  const value = (name: string) => (one(name)?.value ?? "").trim();
-  const many = (name: string) => Array.from(
-    scope.querySelectorAll<HTMLInputElement>(`[name="${name}"]:checked`))
-    .map((n) => n.value).filter(Boolean);
-
-  const config: Record<string, unknown> = {};
-
-  const q = value("q");
-  if (q) config.keywords = q.split(/\s+/).filter(Boolean);
-  const not = value("not");
-  if (not) config.excludeKeywords = [not];
-  const scopeValue = value("scope");
-  if (scopeValue) config.searchScope = scopeValue;
-  const within = value("within");
-  if (within) config.postedWithin = within;
-  const sort = value("sort");
-  if (sort) config.sort = sort;
-
-  const workplaces = many("wp");
-  if (workplaces.length) config.workplace = workplaces;
-
-  const cos = value("cos");
-  if (cos) config.companiesMode = cos;
-  const names = value("conames");
-  if (names) {
-    config.companies = names.split(",").map((c) => c.trim()).filter(Boolean);
-  }
-
-  const exp = value("exp");
-  // "" is "Open to all", which the store spells `null`, and that is a real
-  // value rather than an absent one: leaving it out would keep whatever the
-  // last save set.
-  if (one("exp")) config.maxExperienceYears = exp === "" ? null : Number(exp);
-
-  const direct = scope.querySelector<HTMLInputElement>('[name="direct"]');
-  if (direct) config.directOnly = direct.checked;
-
-  // Empty means every country, which is the storage contract. A partial
-  // selection stores explicit codes, so an unchecked picker and a fully
-  // checked one are the same saved value and both mean Worldwide.
-  const boxes = Array.from(
-    scope.querySelectorAll<HTMLInputElement>("input[data-country-name]"));
-  if (boxes.length) {
-    const picked = boxes.filter((b) => b.checked);
-    config.locations = picked.length === boxes.length
-      ? []
-      : picked.map((b) => ({ country: b.value }));
-  }
-  return config;
-}
-
-/** Save search. Parked in the queue; `search_config.py` validates it, because
- *  a board that could write an invalid config would break every later scan. */
 /*
  * **`SaveFilters` is deleted, not disabled, and this is why.**
  *
@@ -165,55 +92,145 @@ function configFromForm(root: HTMLElement | Document): Record<string, unknown> {
  * the sweep's input.
  */
 
+/**
+ * What the status line says after a save, and the class it wears.
+ *
+ * **Whole literals, one branch per state**, for the reason the old version of
+ * this line recorded: a template literal with the state interpolated is the
+ * shape the reachability check cannot see and the invented-class check
+ * mis-tokenises, in opposite directions, about the identical string.
+ */
+type SaveState =
+  | { kind: "idle" } | { kind: "sending" }
+  | { kind: "waiting"; text: string }
+  | { kind: "landed"; text: string }
+  | { kind: "lost"; text: string };
+
+/** How long a parked save may sit before it is called lost: the board's ten
+ *  minutes (`SAVE_GRACE_MS`), generous enough that a slow tick never reads as
+ *  a loss. */
+const SAVE_GRACE_MS = 10 * 60 * 1000;
+/** How often to ask while a save is parked. The watcher polls every few
+ *  seconds, so most saves resolve on the first or second ask. */
+const SAVE_POLL_MS = 4000;
+
+type SaveStatus = {
+  pending?: boolean; version?: number | null; refused?: string | null;
+  error?: string;
+};
+
+async function saveStatus(): Promise<SaveStatus> {
+  const res = await fetch("/api/search-config", { cache: "no-store" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: String(body.error ?? `HTTP ${res.status}`) };
+  return body as SaveStatus;
+}
+
+/**
+ * Save search: the filters on screen become the search the sweep runs.
+ *
+ * **An explicit press, and nothing else, because this is not a view
+ * preference.** `ingest.run` reads the saved search to decide which jobs to
+ * fetch and keep, so a save narrows sourcing. The version of this that saved
+ * on every change rewrote the account's search from whatever URL somebody
+ * navigated to; it is gone, and `tests/the_saved_search_needs_a_press.test.mjs`
+ * keeps it gone.
+ *
+ * **"Saved" is two facts and the line says which one is true.** A 202 means the
+ * config is parked in the queue; it is applied when the device claims it and
+ * `search_config.py` accepts it, which bumps the version the mirror carries
+ * into Postgres. So after posting, this asks `GET /api/search-config` until the
+ * version moves (applied), the device refuses it (its own sentence), or ten
+ * minutes pass with nothing parked and nothing moved (lost: the queue key has
+ * no compare-and-swap, and a save landing in the same instant as a claim can
+ * vanish). That is the board's `reconcileSave`, asked from the press rather
+ * than from page load, so no effect ever touches this route.
+ */
 export function SaveSearch({ enabled }: { enabled: boolean }) {
-  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
-  const [why, setWhy] = useState("");
+  const [state, setState] = useState<SaveState>({ kind: "idle" });
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Only a cleanup: a poll scheduled by a press stops with the component.
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const follow = (prior: number | null, since: number) => {
+    timer.current = setTimeout(async () => {
+      let status: SaveStatus;
+      try { status = await saveStatus(); }
+      catch { status = { error: "the board could not be reached" }; }
+      if (status.error) {
+        setState({ kind: "waiting",
+                   text: `Saved. Whether it was applied could not be read: ${status.error}` });
+        return;
+      }
+      // Version first: a refusal can outlive the save it was about, because
+      // the device clears `blocked` on its next healthy tick rather than on
+      // the next accepted save, so a moved version outranks it.
+      if (status.pending) {
+        setState({ kind: "waiting",
+                   text: "Saved. Waiting for your device to pick it up." });
+      } else if (typeof status.version === "number"
+                 && (prior === null || status.version > prior)) {
+        setState({ kind: "landed",
+                   text: `Saved, as search v${status.version}. It applies to the next scan.` });
+        return;
+      } else if (status.refused) {
+        setState({ kind: "lost", text: status.refused });
+        return;
+      } else if (Date.now() - since > SAVE_GRACE_MS) {
+        setState({ kind: "lost",
+                   text: "That save did not land. Press Save search again." });
+        return;
+      } else {
+        setState({ kind: "waiting",
+                   text: "Saved. Waiting for the board to catch up." });
+      }
+      follow(prior, since);
+    }, SAVE_POLL_MS);
+  };
+
   return (
     <>
       <button className="jb-btn primary" type="button"
-              disabled={!enabled || state === "sending"}
+              disabled={!enabled || state.kind === "sending"}
               title={enabled ? undefined : READ_ONLY}
               onClick={async (e) => {
-                setState("sending"); setWhy("");
+                if (timer.current) clearTimeout(timer.current);
+                const card = (e.currentTarget as HTMLElement)
+                  .closest(".jb-filters") ?? document;
+                const form = readFilterForm(card);
+                if (noLocationPicked(form)) {
+                  // The board refused this rather than saving Worldwide by
+                  // accident: an empty picker and a full one store the same
+                  // value, so a reader who unchecked everything is told.
+                  setState({ kind: "lost",
+                             text: "Choose a location, or select Worldwide." });
+                  return;
+                }
+                setState({ kind: "sending" });
+                // The version before this save, so "applied" means this save
+                // moved it rather than that some save once did.
+                const before = await saveStatus().catch(() => ({} as SaveStatus));
+                const prior = typeof before.version === "number" ? before.version : null;
                 try {
-                  const form = (e.currentTarget as HTMLElement)
-                    .closest(".jb-filters") ?? document;
-                  const config = configFromForm(form as HTMLElement);
-                  const locations = config.locations;
-                  if (Array.isArray(locations) && locations.length === 0
-                      && document.querySelector("input[data-country-name]:checked") === null) {
-                    // The old board refused this rather than saving Worldwide
-                    // by accident: an empty picker and a full one store the
-                    // same value, so a reader who unchecked everything has to
-                    // be told rather than silently given the world.
-                    setWhy("Choose a location, or select Worldwide.");
-                    setState("failed");
-                    return;
-                  }
-                  await send("/api/search-config", config);
-                  setState("sent");
+                  await send("/api/search-config", configFromSnapshot(form));
+                } catch (err) {
+                  setState({ kind: "lost",
+                             text: err instanceof Error ? err.message : String(err) });
+                  return;
                 }
-                catch (err) {
-                  setWhy(err instanceof Error ? err.message : String(err));
-                  setState("failed");
-                }
+                setState({ kind: "waiting",
+                           text: "Saved. Waiting for your device to pick it up." });
+                follow(prior, Date.now());
               }}>
-        {state === "sending" ? "Saving…" : "Save search"}
+        {state.kind === "sending" ? "Saving…" : "Save search"}
       </button>
-      {/* **Whole literals, one branch per state.** The computed version of
-          this line -- a template literal with the state interpolated -- is the
-          exact shape CLAUDE.md records twice: the reachability check cannot
-          see `waiting` inside it and calls the rule dead CSS, and the
-          invented-class check tokenises the same text and reports `?`, `:`,
-          `===` and `waiting"` as classes v2 made up. Both guards were wrong
-          about the identical string, in opposite directions, and neither is
-          fixable with a better pattern because the name does not exist until
-          the expression runs. */}
-      <span className={state === "sending" ? "jb-savestate waiting" : "jb-savestate"}
-            role={state === "failed" ? "alert" : "status"}>
-        {state === "sent" ? "Saved. The next sweep uses it."
-         : state === "failed" ? why : ""}
-      </span>
+      {state.kind === "waiting"
+        ? <span className="jb-savestate waiting" role="status">{state.text}</span>
+        : state.kind === "landed"
+          ? <span className="jb-savestate landed" role="status">{state.text}</span>
+          : state.kind === "lost"
+            ? <span className="jb-savestate lost" role="alert">{state.text}</span>
+            : <span className="jb-savestate" role="status" />}
     </>
   );
 }

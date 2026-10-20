@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { AppBar } from "../_ui/Chrome";
 import { LANE_COOKIE, THEME_COOKIE, themeFrom } from "../_ui/theme";
-import { accountId, openQuestions, profile } from "../_ui/db";
+import { accountId, boardMeta, openQuestions, profile } from "../_ui/db";
 import { writesEnabled } from "../_ui/writes";
 import { BANK_KINDS } from "../bank.generated";
 import { EditsProvider } from "../_ui/ProfileEdits";
@@ -67,10 +67,12 @@ export default async function Profile({ searchParams }: {
   const theme = themeFrom(jar.get(THEME_COOKIE)?.value);
   const home = `/?lane=${jar.get(LANE_COOKIE)?.value ?? "found"}`;
   const ownerCfg = ownerConfig();
-  const [{ resumes, bank, outcomes }, writes, owner, open] = await Promise.all([
+  const [{ resumes, bank, outcomes }, writes, owner, open, meta] = await Promise.all([
     profile(), accountId().then(writesEnabled),
     ownerCfg.ok ? isOwner() : Promise.resolve(false),
     openQuestions().catch(() => null),
+    // Only for the page-wide stopped banner; a board with no meta has none.
+    boardMeta().catch(() => null),
   ]);
   // What a removed base's postings fall back to, named rather than described,
   // because "the default" is not a thing a reader can check against the cards
@@ -120,7 +122,8 @@ export default async function Profile({ searchParams }: {
 
   return (
     <>
-      <AppBar here="profile" theme={theme} home={home} openQuestions={open} />
+      <AppBar here="profile" theme={theme} home={home}
+              stopped={meta?.blocked} openQuestions={open} />
       <EditsProvider enabled={writes} outcomes={outcomes}>
       <div className="wrap">
         <section className="profile-page">

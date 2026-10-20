@@ -33,18 +33,35 @@ function themeSegment(theme: Theme) {
  * a moon is how two boards end up with different suns, and the icons are the
  * only part of a theme control anybody looks at.
  */
-export function AppBar({ here, theme = "system", home = "/", openQuestions = null }: {
+export function AppBar({ here, theme = "system", home = "/", stopped,
+                         openQuestions = null }: {
   here: "home" | "profile" | "settings";
   theme?: Theme;
   /** Where the logo and Home go. The board's rule is that the logo returns to
    *  the board, and the board means the lane the reader was last on. */
   home?: string;
+  /**
+   * `board_meta.blocked`: why automation is stopped, when it is.
+   *
+   * **Page-wide and red, above the app bar, on every route**, which is the
+   * board's `blocked_banner`. v2 printed the same sentence in bold inside the
+   * Found ingest line, so a stopped device read the same as a sweep note and
+   * was invisible from every other lane, Settings and Profile. The device
+   * writes it when something needs a person -- a saved search the schema
+   * refused names itself here -- and clears it when that passes.
+   */
+  stopped?: string | null;
   /** Memory Bank questions still waiting on an answer, from `db.openQuestions`.
    *  `null` when the count could not be read, which draws no badge. */
   openQuestions?: number | null;
 }) {
   return (
     <>
+      {stopped ? (
+        <div className="sysbanner" role="alert">
+          <strong>Automation is stopped.</strong> {stopped}
+        </div>
+      ) : null}
       {/* The board is one document whose panels are toggled by a class on
           <body>; v2 serves them as separate routes, so each route declares
           which view it is or the page renders blank. The inline script covers

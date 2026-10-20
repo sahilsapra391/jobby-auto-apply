@@ -33,6 +33,11 @@ a storable value and the schema refuses it.
 import argparse
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import jobs_store  # noqa: E402
+import store  # noqa: E402
 
 #: Every lane, its predicate, and whether it needs the decisions join.
 #:
@@ -117,12 +122,61 @@ LANES = {
     "dropped": {"label": "Dropped",  "where": "a.status = 'dropped'"},
 }
 
-POSTING_COLUMNS = """p.id, p.legacy_id, p.title, p.location_raw, p.remote,
+#: How close a posting is to the employer's own form, from its sightings.
+#:
+#: **`found_lane.direct_rank`, in SQL, built from the same table.** The card
+#: draws its source chip purple (`direct`) when the best sighting is ATS-direct
+#: or the employer's careers site, rank 0 or 1, and plain otherwise. v2 drew
+#: every source chip as `boards`, the green "On N boards" treatment, so an
+#: aggregator copy and the employer's own Greenhouse page looked identical.
+#: The CASE is generated from `jobs_store.CANONICAL_RANK` rather than typed,
+#: because a second copy of that table is a second ranking the day a class is
+#: added. A sighting with no class is "other", which is `canonical_rank`'s own
+#: default, and a posting with no sightings is "other" too (`default="other"`).
+DIRECT_RANK = (
+    "coalesce((select min(case x->>'sourceClass' "
+    + " ".join(f"when '{k}' then {v}"
+               for k, v in jobs_store.CANONICAL_RANK.items() if k != "other")
+    + f" else {jobs_store.CANONICAL_RANK['other']} end)"
+    " from jsonb_array_elements(p.sources) x), "
+    f"{jobs_store.CANONICAL_RANK['other']})")
+
+#: The other places this posting was seen, as `[{s: source, u: url}]`.
+#:
+#: **`found_lane.compact`'s `sg`, one row per sighting with a usable link.**
+#: `safe_url` keeps only http and https, so a sighting carrying a relative path
+#: or a `javascript:` URL is dropped here rather than drawn as a link. The
+#: label is the source slug; the card names it through the generated
+#: `SOURCE_LABELS`, which is the board's own table. Order is the stored order,
+#: which is the order the pool recorded them in.
+#:
+#: Selected on the page rather than fetched with the sections, and measured:
+#: 21,322 of 23,868 open postings carry one sighting and the average `sources`
+#: value is 226 bytes, so fifty cards cost a few kilobytes. The sections are
+#: fetched because they are prose; this is a handful of links.
+SIGHTINGS = """(select coalesce(jsonb_agg(jsonb_build_object(
+                         's', coalesce(x->>'source', ''),
+                         'u', btrim(x->>'url')) order by o), '[]'::jsonb)
+                from jsonb_array_elements(p.sources) with ordinality as t(x, o)
+               where btrim(x->>'url') like 'https://%%'
+                  or btrim(x->>'url') like 'http://%%')"""
+
+#: How many distinct boards carry this posting: `compact`'s `bd`. The card
+#: says "On N boards" above one. `::int` because `count` is a bigint and
+#: node-postgres hands a bigint back as a string.
+BOARDS = """(select count(distinct x->>'source')
+                from jsonb_array_elements(p.sources) x
+               where coalesce(x->>'source', '') <> '')::int"""
+
+POSTING_COLUMNS = f"""p.id, p.legacy_id, p.title, p.location_raw, p.remote,
              p.workplace, p.posted_at, p.apply_url, p.years_min, p.years_max,
              p.summary, p.source, p.salary_raw, e.canonical_name as employer,
              e.domain as employer_domain, e.logo_url as employer_logo,
              s.total as score, s.parts as score_parts, s.gates as score_gates,
-             s.unknowns as score_unknowns,
+             s.unknowns as score_unknowns, s.why as score_why, p.tags,
+             {SIGHTINGS} as sightings,
+             {BOARDS} as boards,
+             {DIRECT_RANK} as direct_rank,
              p.logo_src, p.logo_domain, p.logo_alt"""
 
 #: **The posting first, the application's own mirrored name second.** A linked
@@ -196,8 +250,31 @@ UNRESOLVED_SUBMIT = """coalesce((select h.kind from application_events h
                where h.application_id = a.id
                order by h.at desc nulls last limit 1) = 'submitting', false)"""
 
+#: What the employer said after the application went in, if anything.
+#:
+#: **The board's Status column, which v2 hardcoded to "submitted".** The store
+#: records a post-submission outcome as a history event -- `response`,
+#: `interview`, `offer`, `rejected`, in `store.HISTORY_EVENTS` -- and the
+#: mirror writes every history line into `application_events` with the event
+#: as its `kind`, so the outcome is already in Postgres the moment one is
+#: logged. The kinds are read off `store.FUNNEL_ORDER`, everything after
+#: `completed`, rather than listed, so an outcome the store learns is one this
+#: lane draws.
+#:
+#: The latest outcome wins, which is what the board draws: its row is the
+#: application's latest event. `completed` when there is none, because that
+#: is what membership of this lane already says.
+OUTCOMES = tuple(store.FUNNEL_ORDER[store.FUNNEL_ORDER.index("completed") + 1:])
+OUTCOME = ("""coalesce((select h.kind from application_events h
+               where h.application_id = a.id
+                 and h.kind in (""" + ", ".join(f"'{k}'" for k in OUTCOMES)
+           + """)
+               order by h.at desc nulls last limit 1), 'completed')""")
+
 APPLICATION_COLUMNS = f"""a.id, a.legacy_id, a.status, a.phase, a.phase_detail,
+             a.phase_at, a.park_class, a.discipline, a.region,
              {UNRESOLVED_SUBMIT} as unresolved_submit,
+             {OUTCOME} as outcome,
              a.updated_at,
              a.created_at, a.posting_id,
              a.posting_id is not null as linked,
@@ -339,6 +416,11 @@ APPLICATION_ORDER = {
     #: differs from it on every one of the 104 submitted applications, by three
     #: days to two weeks.
     "done": (COMPLETED_AT, "completed_at", "timestamptz"),
+    #: **In flight is ordered by when the run last moved** (`dashboard.py:779`,
+    #: `phaseAt` descending). Migration 0025 carries it; before that the lane
+    #: fell to `updated_at`, the mirror's own write time, which orders by
+    #: nothing a reader can see. A run with no stamp yet sorts last.
+    "flight": ("a.phase_at", "phase_at", "timestamptz"),
 }
 
 #: What every other application lane uses: most recently touched first.
@@ -552,7 +634,7 @@ select {APPLICATION_COLUMNS}{extra}
   left join employers e on e.id = p.employer_id
  where a.account_id = %(account)s
    and {LANES[lane]["where"]}
-   and {keyset(column, cast, "a")}{application_search(lane)}
+   and {keyset(column, cast, "a")}{application_search(lane)}{application_facet(lane)}
  {order_by(column, "a")}
  limit %(limit)s
 """.strip()
@@ -651,6 +733,100 @@ def application_search(lane):
                  ilike '%%' || kw || '%%'))"""
 
 
+#: The select beside each application lane's search: `dashboard.py`'s
+#: `filter_bar` options, as a predicate.
+#:
+#: **One parameter, `facet`, whose value names the option.** The board filters
+#: an embedded payload in the browser on `data-fresh`, `data-region`,
+#: `data-disc` and `data-state`; v2 pages from Postgres, so each option is a
+#: clause and the URL carries which one. The values are the board's own:
+#: `fresh`, `region:<code>`, `disc:<name>`, `ready`, `hold`, and the history
+#: event names on Submitted.
+#:
+#: **Every arm is written so NULL cannot decide it.** `'region:' || a.region`
+#: is NULL for a role with no region, and an `=` against it is NULL rather
+#: than false, which inside an `or` is harmless only until somebody negates
+#: it. Each arm is coalesced to false, and `%(facet)s is null` short-circuits
+#: first, so an absent facet is "every row" and never "no row". That is the
+#: three-valued trap CLAUDE.md has an entry on, closed rather than relied on.
+#:
+#: The static labels are the board's, from `dashboard.py` (`watch_filters`
+#: and the Needs you `filter_bar` call); `tests/test_application_lane_facets.py`
+#: reads them back out of that file so a reworded board fails there.
+FACET_STATIC = {
+    "watch": [("fresh", "Posted in last 7 days")],
+    "act": [("ready", "Ready to submit"), ("hold", "Still blocked")],
+}
+
+#: The board's `data-fresh`: `postedDays <= 7`, calendar days.
+_FRESH = ("coalesce((current_date - (coalesce(p.posted_at, a.posted_at)"
+          " at time zone 'UTC')::date) <= 7, false)")
+
+#: Needs you's two states are the card's own chip, so a capability park is
+#: neither: the board stamps it `data-state="fault"` and both options pass it
+#: by. `is distinct from` because `park_class` is NULL on almost every row.
+_NOT_A_FAULT = "a.park_class is distinct from 'capability'"
+_PENDING = "coalesce(jsonb_array_length(a.blockers), 0)"
+
+FACET_ARMS = {
+    "watch": [
+        f"(%(facet)s::text = 'fresh' and {_FRESH})",
+        "coalesce(%(facet)s::text = 'region:' || a.region, false)",
+        "coalesce(%(facet)s::text = 'disc:' || a.discipline, false)",
+    ],
+    "act": [
+        f"(%(facet)s::text = 'ready' and {_PENDING} = 0 and {_NOT_A_FAULT})",
+        f"(%(facet)s::text = 'hold' and {_PENDING} > 0 and {_NOT_A_FAULT})",
+    ],
+    "done": [f"%(facet)s::text = {OUTCOME}"],
+}
+
+
+def application_facet(lane):
+    """The facet clause for one application lane, or nothing."""
+    arms = FACET_ARMS.get(lane)
+    if not arms:
+        return ""
+    joined = "\n        or ".join(arms)
+    return f"""
+   and (%(facet)s::text is null
+        or {joined})"""
+
+
+def facets_sql(lane):
+    """The options a lane's select offers beyond its static ones, or None.
+
+    **Read from the lane, not listed**, because that is what the board does:
+    `regions = sorted({s.get("region") for s in watch ...})`, and Submitted
+    offers only the states its rows are in. Each row is `(value, label)` in the
+    order the select draws them.
+    """
+    base = f"""
+  from applications a
+  left join postings p on p.id = a.posting_id
+ where a.account_id = %(account)s
+   and {LANES[lane]["where"]}"""
+    if lane == "watch":
+        return f"""
+select value, label from (
+  select distinct 1 as k, 'region:' || a.region as value, a.region as label{base}
+     and coalesce(a.region, '') <> ''
+  union
+  select distinct 2 as k, 'disc:' || a.discipline as value, a.discipline as label{base}
+     and coalesce(a.discipline, '') <> ''
+) x
+ order by k, label""".strip()
+    if lane == "done":
+        # `initcap` is Python's `.title()` for one word, which is what the
+        # board's `(o, o.title())` produces.
+        return f"""
+select value, initcap(value) as label from (
+  select distinct {OUTCOME} as value{base}
+) x
+ order by value""".strip()
+    return None
+
+
 def count_sql(lane):
     """The lane's size. Separate from the page so a count never drags a page
     of columns across the wire with it."""
@@ -674,7 +850,7 @@ select count(*)
   from applications a
   left join postings p on p.id = a.posting_id
   left join employers e on e.id = p.employer_id
- where a.account_id = %(account)s and {LANES[lane]["where"]}{application_search(lane)}
+ where a.account_id = %(account)s and {LANES[lane]["where"]}{application_search(lane)}{application_facet(lane)}
 """.strip()
 
 
@@ -711,7 +887,10 @@ PARAMS = ["account", "after_at", "after_id", "limit", "q", "within",
           #                scoped search. The board keeps genuinely
           #                location-free remote work when this is ticked, and
           #                only then.
-          "unk_posted", "unk_wp", "unk_exp", "inc_remote"]
+          "unk_posted", "unk_wp", "unk_exp", "inc_remote",
+          # The application lanes' select (`FACET_ARMS`). Found never names
+          # it, so `positional` leaves it out of every Found query.
+          "facet"]
 
 #: The four that are not a filter: who is asking, where the page starts, and
 #: how much of it. Everything else in `PARAMS` narrows the lane, so
@@ -795,6 +974,13 @@ def as_typescript():
                        else application_order(k)[1]),
             "cursorType": CURSOR_TYPES[SORTS["new"][2] if k in POSTING_LANES
                                        else application_order(k)[2]],
+            # The lane's select: the options always offered, and the query
+            # for the ones read off the lane. Absent on a lane with no select.
+            "facets": ({
+                "static": [list(o) for o in FACET_STATIC.get(k, [])],
+                **(dict(zip(("sql", "params"), positional(facets_sql(k))))
+                   if facets_sql(k) else {}),
+            } if k in FACET_ARMS else None),
         }
     return (
         "// GENERATED. Do not edit. `python3 scripts/sync_v2_styles.py`.\n"
@@ -825,7 +1011,9 @@ def as_typescript():
         "pageParams: string[]; count: string; countParams: string[]; "
         "row: string; rowParams: string[]; cursor: string; "
         "cursorType: \"date\" | \"number\"; "
-        "sorts: Record<string, LaneQuery> }> =\n"
+        "sorts: Record<string, LaneQuery>; "
+        "facets: { static: string[][]; sql?: string; params?: string[] } "
+        "| null }> =\n"
         + json.dumps(lanes, indent=2) + " as const;\n")
 
 
