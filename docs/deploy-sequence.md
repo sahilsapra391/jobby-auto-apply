@@ -67,7 +67,7 @@ direction is half a check.
 Exit 0, one line per service, no `STALE`, no `reflog` line, and the last line:
 
 ```
-checkout  /Users/sahilsapra/Documents/Development.nosync/jobby-auto-apply
+checkout  <the production checkout>
           branch main, HEAD <new>, origin/main <new>, behind 0
 ai.jobby.watch       pid <n>   started <after the pull>
 ai.jobby.documents   pid <n>   started <after the pull>
@@ -91,7 +91,7 @@ This is the important one, and it does not need imagining, because production
 is in exactly that state as this is written. Run on 2026-09-03, exit 1:
 
 ```
-checkout  /Users/sahilsapra/Documents/Development.nosync/jobby-auto-apply
+checkout  <the production checkout>
           branch main, HEAD 633b421, origin/main f37dd7c, behind 8
 ai.jobby.watch       pid 92892   started 2026-09-01T20:49:57Z
                        STALE         scripts/class_b.py     modified 2026-09-02T22:09:56Z

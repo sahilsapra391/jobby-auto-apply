@@ -29,7 +29,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-UA = "jobby/1.0 (+job search for one person; contact admin@spechawk.ai)"
+UA = "jobby/1.0 (+https://github.com/sahilsapra391/jobby-auto-apply)"
 PER_HOST_DELAY = 1.0
 # Big enough to parse an ordinary board, small enough that twelve threads
 # holding one each is not a problem. Anything larger falls back to the marker.

@@ -60,11 +60,11 @@ class TheStoreRecordsWhatHappened(unittest.TestCase):
         and is not restated. Dropping it leaves a refusal that cannot show them
         their own text, which is the whole point of the state."""
         put(self.root, {"editId": "e1", "queue": "answerEdits", "state": "pending",
-                        "target": "salary", "submitted": "120000"})
+                        "target": "salary", "submitted": "135000"})
         put(self.root, {"editId": "e1", "state": "refused", "held": "110000",
                         "reason": "the entry moved to version 4"})
         row = self.held()["e1"]
-        self.assertEqual(row["submitted"], "120000")
+        self.assertEqual(row["submitted"], "135000")
         self.assertEqual(row["held"], "110000")
         self.assertEqual(row["reason"], "the entry moved to version 4")
         self.assertEqual(row["state"], "refused")

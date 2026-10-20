@@ -231,7 +231,7 @@ class DegradedRenderGuardTests(unittest.TestCase):
         publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
         try:
             with self.assertRaises(publish.PublishError) as ctx:
-                publish.guard_render({"submitted": 0, "greeting": "Sahil"}, None)
+                publish.guard_render({"submitted": 0, "greeting": "Alex"}, None)
             self.assertIn("mid-write", str(ctx.exception))
         finally:
             publish.expected_counts = original
@@ -250,7 +250,7 @@ class DegradedRenderGuardTests(unittest.TestCase):
         original = publish.expected_counts
         publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
         try:
-            publish.guard_render({"submitted": 34, "greeting": "Sahil"}, None)
+            publish.guard_render({"submitted": 34, "greeting": "Alex"}, None)
         finally:
             publish.expected_counts = original
 
@@ -259,7 +259,7 @@ class DegradedRenderGuardTests(unittest.TestCase):
         original = publish.expected_counts
         publish.expected_counts = lambda root: {"submitted": 34, "hasProfile": True}
         try:
-            publish.guard_render({"submitted": 35, "greeting": "Sahil"}, None)
+            publish.guard_render({"submitted": 35, "greeting": "Alex"}, None)
         finally:
             publish.expected_counts = original
 
@@ -408,7 +408,7 @@ class ArtifactUploadTests(unittest.TestCase):
         publish.sync_renderer = lambda: []
         publish.fit_state = lambda root, cap=None: {
             "blocked": 0, "inflight": 0, "submitted": 3, "embedCap": 3400,
-            "html": "<html></html>", "state": {"jobs": {}}, "greeting": "Sahil"}
+            "html": "<html></html>", "state": {"jobs": {}}, "greeting": "Alex"}
         publish.build_documents = lambda root: {
             "documents": 2, "bytes": 10, "docs": {"A.pdf": "eA=="}}
         publish.guard_render = lambda summary, root: None

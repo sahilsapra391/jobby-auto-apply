@@ -437,7 +437,7 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(sorted(kept), ["old"], "80 days survives a 90-day window")
 
     def test_the_agreed_volume_knobs_are_what_ships(self):
-        """Both numbers are Sahil's calls, not defaults anyone may drift.
+        """Both numbers are the owner's calls, not defaults anyone may drift.
 
         STORED_CAP went 3000 to 50000 on 2026-08-25, after the store was found
         sitting exactly on the old cap with 316 companies represented against

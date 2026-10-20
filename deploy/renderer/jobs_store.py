@@ -44,7 +44,7 @@ import store  # noqa: E402  (write_private, read_json: same atomicity, one copy)
 # an unbounded jobs.json eventually makes every ingest read slower than the
 # fetch that fed it.
 #
-# Raised from 3000 on 2026-08-25, on Sahil's call, after the store was found
+# Raised from 3000 on 2026-08-25, on the owner's call, after the store was found
 # pinned exactly at the old cap: 3000 held, 316 companies represented against
 # 546 known. A ring buffer at its ceiling is not a pool, it is a window, and
 # every sweep was evicting to make room. The ingest cost is real and was

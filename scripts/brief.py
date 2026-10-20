@@ -165,7 +165,7 @@ def find_documents(folder, role, expected=None):
 
         Exactly one candidate means one role has been worked at this company, so
         it is this one. That is the retry case, and it matters because filenames
-        often carry only the company: "Sahil_Sapra_Plaid_Resume.pdf" names no
+        often carry only the company: "Alex_Example_Plaid_Resume.pdf" names no
         role at all.
 
         More than one and we decline, every time. Ranking by role words and

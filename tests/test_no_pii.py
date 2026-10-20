@@ -1,4 +1,4 @@
-"""Nothing tracked in this repository carries Sahil's personal data.
+"""Nothing tracked in this repository carries the owner's personal data.
 
 This exists because 39 screenshots of filled application forms were tracked at
 the repo root and pushed, 7.8MB of them, including a completed EEO section with
@@ -78,7 +78,25 @@ def markers():
     email = str(profile.get("email") or "").strip().lower()
     if "@" in email:
         found.append((email, "personal email"))
+    # The full name, in both spellings it takes in a document filename. A
+    # first name alone matches too much prose to be a signal; the pair does not.
+    first = str(profile.get("firstName") or "").strip().lower()
+    last = str(profile.get("lastName") or "").strip().lower()
+    if first and last:
+        found.append((f"{first} {last}", "full name"))
+        found.append((f"{first}_{last}", "full name"))
+    linkedin = str((profile.get("links") or {}).get("linkedin") or "").strip().lower()
+    linkedin = re.sub(r"^https?://(www\.)?", "", linkedin).rstrip("/")
+    if "/in/" in linkedin:
+        found.append((linkedin, "LinkedIn profile"))
     return found
+
+
+#: Files allowed to carry one kind of marker, each with the reason.
+MARKER_ALLOWED = {
+    # The copyright holder's name is what a licence is for.
+    ("LICENSE", "full name"),
+}
 
 
 def digits_only(text):
@@ -116,7 +134,8 @@ class TrackedTextTests(unittest.TestCase):
         hits = []
         for rel in tracked():
             path = ROOT / rel
-            if path.suffix.lower() not in TEXT_SUFFIXES or not path.exists():
+            if (path.suffix.lower() not in TEXT_SUFFIXES and rel != "LICENSE") \
+                    or not path.exists():
                 continue
             try:
                 body = path.read_text(errors="replace")
@@ -126,7 +145,7 @@ class TrackedTextTests(unittest.TestCase):
             packed = digits_only(body)
             for marker, label in self.markers:
                 present = (marker in packed) if marker.isdigit() else (marker in low)
-                if present:
+                if present and (rel, label) not in MARKER_ALLOWED:
                     hits.append(f"{rel}: {label}")
         self.assertEqual(hits, [], "tracked files carrying profile data:\n"
                          + "\n".join(sorted(set(hits))))

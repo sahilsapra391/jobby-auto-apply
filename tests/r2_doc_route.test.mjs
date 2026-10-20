@@ -105,7 +105,7 @@ test('a document link is served to anyone, with no credentials', async () => {
   // which is the whole change: /doc/ hands the rendered resume and cover letter
   // PDFs to any request that knows a filename. 404 here rather than 200 only
   // because nothing is indexed yet in this test; the point is that it is not 401.
-  const response = await handler.fetch(get('/doc/Sahil_Sapra_Acme_Resume.pdf', false));
+  const response = await handler.fetch(get('/doc/Alex_Example_Acme_Resume.pdf', false));
   assert.notEqual(response.status, 401);
   assert.equal(response.headers.get('www-authenticate'), null);
 });
@@ -114,15 +114,15 @@ test('an indexed artifact is read from R2 and returned as bytes', async () => {
   const key = 'u/account-1/app/bc839847c93d9e46/resume.pdf';
   objects.set(key, Buffer.from('%PDF-1.4 the real resume'));
   await index({
-    'Sahil_Sapra_Acme_Resume.pdf': {
+    'Alex_Example_Acme_Resume.pdf': {
       key, sha256: 'a'.repeat(64), bytes: 24, contentType: 'application/pdf',
     },
   });
-  const response = await handler.fetch(get('/doc/Sahil_Sapra_Acme_Resume.pdf'));
+  const response = await handler.fetch(get('/doc/Alex_Example_Acme_Resume.pdf'));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'application/pdf');
   assert.equal(response.headers.get('content-disposition'),
-    'inline; filename="Sahil_Sapra_Acme_Resume.pdf"');
+    'inline; filename="Alex_Example_Acme_Resume.pdf"');
   assert.equal(await response.text(), '%PDF-1.4 the real resume');
   // One round trip for the reader. The redirect this replaced cost two.
   assert.equal(response.headers.get('location'), null);
@@ -232,7 +232,7 @@ test('a filename with spaces in it is served, not refused', async () => {
   // Ten of the 426 stored artifacts are named this way and two of them are
   // documents an employer received. The old guard rejected the name before
   // anything was looked up, so those two links have always been dead.
-  const name = 'Sahil Sapra - Resume - Senior Project Manager.pdf';
+  const name = 'Alex Example - Resume - Senior Project Manager.pdf';
   const key = 'u/account-1/app/bd7c44165d98d10a/resume.pdf';
   objects.set(key, Buffer.from('%PDF spaced'));
   await index({ [name]: { key, contentType: 'application/pdf' } });

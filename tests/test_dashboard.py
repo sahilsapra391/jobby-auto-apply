@@ -334,7 +334,7 @@ class DocumentLinkTests(unittest.TestCase):
     """Links to the resume and cover letter an employer received.
 
     Runs record the document either way: some as a bare filename, some as
-    "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf". Documents are published
+    "applications/Cohere/Alex_Example_Cohere_Resume.pdf". Documents are published
     under the basename and the route rejects a name containing slashes, so the
     path-recorded ones produced links that resolved to "No such document" while
     the files themselves were published and fine.
@@ -364,16 +364,16 @@ class DocumentLinkTests(unittest.TestCase):
         return re.findall(r'href="/doc/([^"]+)"', out.read_text(encoding="utf-8"))
 
     def test_a_path_recorded_document_links_by_basename(self):
-        self.completed("cohere", "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf",
-                       "applications/Cohere/Sahil_Sapra_Cohere_CoverLetter.pdf")
+        self.completed("cohere", "applications/Cohere/Alex_Example_Cohere_Resume.pdf",
+                       "applications/Cohere/Alex_Example_Cohere_CoverLetter.pdf")
         self.assertEqual(sorted(self.links()),
-                         ["Sahil_Sapra_Cohere_CoverLetter.pdf",
-                          "Sahil_Sapra_Cohere_Resume.pdf"])
+                         ["Alex_Example_Cohere_CoverLetter.pdf",
+                          "Alex_Example_Cohere_Resume.pdf"])
 
     def test_a_filename_recorded_document_is_unchanged(self):
-        self.completed("criteo", "Sahil_Sapra_Criteo_Resume.pdf",
-                       "Sahil_Sapra_Criteo_CoverLetter.pdf")
-        self.assertIn("Sahil_Sapra_Criteo_Resume.pdf", self.links())
+        self.completed("criteo", "Alex_Example_Criteo_Resume.pdf",
+                       "Alex_Example_Criteo_CoverLetter.pdf")
+        self.assertIn("Alex_Example_Criteo_Resume.pdf", self.links())
 
     def test_no_link_ever_contains_a_path_separator(self):
         # The route only accepts [A-Za-z0-9._-], so a slash is a guaranteed 404.

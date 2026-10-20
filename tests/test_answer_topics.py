@@ -23,6 +23,35 @@ spec = importlib.util.spec_from_file_location("store", ROOT / "scripts" / "store
 store = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(store)
 
+# A fictional user's work-authorisation table. The real one lives in the
+# store (`work-authorization.json`), never in the repository, so every test
+# here that reaches a sponsorship answer reads this instead of a file.
+_HOME_NOTE = ("New Zealand: a citizen, authorised without sponsorship. Answer for "
+              "the country the posting is in.")
+_US_NOTE = ("United States: authorised to work now, and sponsorship WILL be "
+            "required in the future. " + _HOME_NOTE)
+_OTHER_NOTE = ("Elsewhere: no work authorisation, so sponsorship would be "
+               "required. " + _HOME_NOTE)
+WORK_AUTH = {
+    "home": {"label": "New Zealand", "pattern": r"\bnew zealand\b|\bkiwi\b"},
+    "answers": {
+        "sponsorship": {
+            "home": {"value": "No", "note": _HOME_NOTE},
+            "us": {"value": "Yes", "note": _US_NOTE},
+            "other": {"value": "Yes", "note": _OTHER_NOTE}},
+        "authorised-now": {
+            "home": {"value": "Yes, citizen", "note": _HOME_NOTE},
+            "us": {"value": "Yes, authorised to work now", "note": _US_NOTE},
+            "other": {"value": "No", "note": _OTHER_NOTE}},
+        "without-sponsorship": {
+            "home": {"value": "Yes, citizen", "note": _HOME_NOTE},
+            "us": {"value": "No, authorised to work now but sponsorship will be "
+                            "required in the future", "note": _US_NOTE},
+            "other": {"value": "No", "note": _OTHER_NOTE}},
+    },
+}
+store.work_authorization = lambda root=None: WORK_AUTH
+
 
 ANSWERS = {
     "post-emp": {"question": "post-employment obligations?", "value": "No",
@@ -31,7 +60,7 @@ ANSWERS = {
                   "tags": ["legal-declaration", "political-contributions"]},
     "conflicts": {"question": "related to a client officer?", "value": "No",
                   "tags": ["legal-declaration", "relationships-conflicts"]},
-    "comp": {"question": "expected compensation", "value": "$120,000",
+    "comp": {"question": "expected compensation", "value": "$135,000",
              "state": "sensitive", "tags": ["compensation"]},
     "notice": {"question": "notice period", "value": "15 days", "tags": ["logistics"]},
 }
@@ -178,7 +207,7 @@ class SignatureAndCertificationTests(unittest.TestCase):
     """
 
     ANSWERS = {
-        "sig": {"question": "type your name", "value": "Sahil Sapra",
+        "sig": {"question": "type your name", "value": "Alex Example",
                 "tags": ["signature", "signature-name"]},
         "cert": {"question": "certify true and correct", "value": "Agree, match the field",
                  "tags": ["attestation", "accuracy-attestation"]},
@@ -186,7 +215,7 @@ class SignatureAndCertificationTests(unittest.TestCase):
                   "tags": ["compensation", "salary-range-acknowledgement"]},
         "excl": {"question": "excluded or debarred", "value": "No",
                  "tags": ["legal-declaration", "exclusion-debarment"]},
-        "comp": {"question": "expected salary for US roles", "value": "$120,000",
+        "comp": {"question": "expected salary for US roles", "value": "$135,000",
                  "state": "sensitive", "tags": ["compensation"]},
     }
 
@@ -196,7 +225,7 @@ class SignatureAndCertificationTests(unittest.TestCase):
     def test_a_certification_signature_block_resolves_to_the_name(self):
         q = ("I HAVE READ THE CERTIFICATION ABOVE AND UNDERSTAND AND AGREE TO ITS TERMS. "
              "Please type your name and the date.")
-        self.assertEqual(self.find(q)["value"], "Sahil Sapra")
+        self.assertEqual(self.find(q)["value"], "Alex Example")
 
     def test_an_accuracy_certification_resolves(self):
         q = ("By submitting my application, I certify that the information provided "
@@ -217,7 +246,7 @@ class SignatureAndCertificationTests(unittest.TestCase):
 
     def test_a_sensitive_figure_is_never_reached_by_fuzzy_or_topic_match(self):
         out = self.find("What compensation are you looking for?")
-        self.assertNotEqual(out.get("value"), "$120,000")
+        self.assertNotEqual(out.get("value"), "$135,000")
 
     def test_exclusion_and_debarment_resolves_to_no(self):
         q = ("Are you currently, or have you ever been, excluded from, debarred or otherwise "
@@ -274,7 +303,7 @@ class AnyCountryWorkAuthorisationTests(unittest.TestCase):
     standing instruction could contradict each other. One topic for all
     countries fixed that, and then became wrong the other way on 2026-08-25,
     when the true answer stopped being the same everywhere: sponsorship is
-    required in the US, required in the UK, and not required in India. The
+    required in the US, required in the UK, and not required in the home country. The
     question is still recognised wherever it is asked; the country in it now
     picks the answer.
     """
@@ -324,7 +353,7 @@ STANDING_ANSWERS = {
                "tags": ["sourcing", "source-how-heard"]},
     "conflicts": {"question": "related to an employee?", "value": "No",
                   "tags": ["legal-declaration", "relationships-conflicts"]},
-    "comp": {"question": "expected compensation", "value": "$120,000",
+    "comp": {"question": "expected compensation", "value": "$135,000",
              "state": "sensitive", "tags": ["compensation"]},
 }
 
@@ -431,19 +460,19 @@ class StandingAnswerOverMatchTests(unittest.TestCase):
 EDUCATION_AND_PAY = {
     "degree": {"question": "Degree", "value": "Bachelor's Degree",
                "tags": ["education", "education-degree"]},
-    "school": {"question": "School", "value": "Miami University",
+    "school": {"question": "School", "value": "Example State University",
                "tags": ["education", "education-school"]},
     "discipline": {"question": "Discipline", "value": "Economics",
                    "tags": ["education", "education-discipline"]},
-    "pay-us": {"question": "expected salary for US roles", "value": "$120,000",
+    "pay-us": {"question": "expected salary for US roles", "value": "$135,000",
                "state": "sensitive", "tags": ["compensation", "expected-compensation"]},
-    "pay-in": {"question": "expected CTC for India roles", "value": "Rs. 30,00,000 (30 LPA)",
+    "pay-in": {"question": "expected CTC for India roles", "value": "Rs. 25,00,000 (25 LPA)",
                "state": "sensitive", "tags": ["compensation", "expected-compensation-india"]},
     # Keyed the way the real store keys it, so the exact-key path is the one
     # under test: this question has its own answer and must never take the
     # expected figure.
     "current-base-salary": {"question": "What is your current base salary?",
-                            "value": "$90,000", "state": "sensitive",
+                            "value": "$95,000", "state": "sensitive",
                             "tags": ["compensation"]},
     "range": {"question": "agree this range aligns", "value": "Yes",
               "tags": ["compensation", "salary-range-acknowledgement"]},
@@ -465,12 +494,12 @@ class EducationTopicTests(unittest.TestCase):
 
     def test_the_three_bare_dropdown_labels_each_resolve(self):
         self.assertEqual(self.find("Degree")["value"], "Bachelor's Degree")
-        self.assertEqual(self.find("School")["value"], "Miami University")
+        self.assertEqual(self.find("School")["value"], "Example State University")
         self.assertEqual(self.find("Discipline")["value"], "Economics")
 
     def test_the_longer_wordings_resolve_too(self):
         self.assertEqual(self.find("Highest degree earned")["value"], "Bachelor's Degree")
-        self.assertEqual(self.find("Which school did you attend?")["value"], "Miami University")
+        self.assertEqual(self.find("Which school did you attend?")["value"], "Example State University")
         self.assertEqual(self.find("What was your field of study?")["value"], "Economics")
 
     def test_a_yes_no_question_that_says_degree_is_not_answered_with_one(self):
@@ -495,11 +524,11 @@ class ExpectedCompensationTopicTests(unittest.TestCase):
     def test_the_us_figure_resolves_in_the_wordings_employers_use(self):
         for q in ("Expected compensation", "What are your salary expectations?",
                   "Desired salary", "Expected base salary", "Salary requirements"):
-            self.assertEqual(self.find(q)["value"], "$120,000", q)
+            self.assertEqual(self.find(q)["value"], "$135,000", q)
 
     def test_a_ctc_question_gets_the_rupee_figure_not_the_dollar_one(self):
         self.assertEqual(self.find("What is your expected CTC?")["value"],
-                         "Rs. 30,00,000 (30 LPA)")
+                         "Rs. 25,00,000 (25 LPA)")
 
     def test_acknowledging_a_posted_range_is_still_a_yes_not_a_number(self):
         # One word apart from the question above it, and the worst mis-fill
@@ -509,7 +538,7 @@ class ExpectedCompensationTopicTests(unittest.TestCase):
         self.assertEqual(self.find(q)["value"], "Yes")
 
     def test_the_current_salary_question_is_not_answered_with_the_expected_one(self):
-        self.assertEqual(self.find("What is your current base salary?")["value"], "$90,000")
+        self.assertEqual(self.find("What is your current base salary?")["value"], "$95,000")
 
     def test_the_currency_the_field_is_in_decides_which_figure(self):
         # A phrase list cannot express this: "Expected Salary (INR)" contains
@@ -520,7 +549,7 @@ class ExpectedCompensationTopicTests(unittest.TestCase):
             self.assertTrue(self.find(q)["value"].startswith("Rs."), q)
         for q in ("Expected salary", "What are your salary expectations?",
                   "Expected Salary (USD)", "Desired compensation"):
-            self.assertEqual(self.find(q)["value"], "$120,000", q)
+            self.assertEqual(self.find(q)["value"], "$135,000", q)
 
     def test_a_currency_he_has_no_figure_for_goes_to_the_user(self):
         # Two figures are stored and neither is in pounds. Converting one is
@@ -539,13 +568,13 @@ FREE_TEXT = {
         "value": "HIS OWN WORDS: a fast-paced environment building AI-native products.",
         "tags": ["free-text", "story-next-role"]},
     "story-why-looking": {"question": "Why are you looking for a new role?",
-                          "value": "TRUE TIMELINE: CAMP restructured in May 2026.",
+                          "value": "TRUE TIMELINE: Northwind restructured in May 2026.",
                           "tags": ["free-text", "story-why-looking"]},
     "story-ai-changed-work": {"question": "How has AI changed the way you work?",
                               "value": "HIS OWN WORDS, condensed: prototypes rather than oversees.",
                               "tags": ["free-text", "story-ai-in-work"]},
     "story-side-projects": {"question": "Do you have a personal project in AI?",
-                            "value": "SpecHawk, an agentic QA platform.",
+                            "value": "Example Labs, a workflow automation tool.",
                             "tags": ["free-text", "story-side-project"]},
     "story-one-liner": {"question": "Describe yourself in a short phrase",
                         "value": "Technical product manager who builds.",
@@ -553,7 +582,7 @@ FREE_TEXT = {
     "why-this-role": {"question": "Why do you think you will be successful in this role?",
                       "value": "COMPOSE IT for this posting; there is no fixed text.",
                       "tags": ["free-text", "story-why-this-role", "policy"]},
-    "comp": {"question": "expected salary for US roles", "value": "$120,000",
+    "comp": {"question": "expected salary for US roles", "value": "$135,000",
              "state": "sensitive", "tags": ["compensation", "expected-compensation"]},
     "total-years-of-professional-experience": {
         "question": "Total years of professional experience", "value": "4", "tags": []},
@@ -585,9 +614,9 @@ class FreeTextBankTests(unittest.TestCase):
             ("What motivates you?", "motivated by the impact"),
             ("What drives you?", "motivated by the impact"),
             ("What are you looking for in your next role?", "fast-paced environment"),
-            ("Reason for leaving your current job", "CAMP restructured"),
+            ("Reason for leaving your current job", "Northwind restructured"),
             ("How has AI changed the way you approach your work?", "prototypes rather than"),
-            ("Tell us about a side project.", "SpecHawk"),
+            ("Tell us about a side project.", "Example Labs"),
             ("Describe yourself in one sentence", "Technical product manager"),
         ]
         for question, expected in pairs:
@@ -647,7 +676,7 @@ TRAVEL_AND_ACK = {
     "travel": {"question": "Are you able to commit to the travel this role requires?",
                "value": "Yes", "tags": ["travel-willingness", "logistics"]},
     "ack": {"question": "POLICY: may an acknowledgement checkbox be ticked?",
-            "value": "YES, tick it or type 'Sahil Sapra' and today's date.",
+            "value": "YES, tick it or type 'Alex Example' and today's date.",
             "tags": ["acknowledgement-standing", "signature", "policy"]},
     "post-emp": {"question": "post-employment obligations?", "value": "No",
                  "tags": ["legal-declaration", "post-employment-obligations"]},
@@ -715,7 +744,7 @@ EXPORT_CONTROL = {
     "us-person": {"question": "Are you a U.S. person as defined under the EAR and ITAR?",
                   "value": "No",
                   "tags": ["us-person-status", "legal-declaration", "immigration"]},
-    "citizenship": {"question": "What is your country of citizenship?", "value": "India",
+    "citizenship": {"question": "What is your country of citizenship?", "value": "New Zealand",
                     "tags": ["citizenship-country", "immigration"]},
     "work-auth": {"question": "Are you authorized to work in the United States?",
                   "value": "Yes", "tags": ["work-authorisation-any-country"]},
@@ -743,8 +772,8 @@ class UsPersonTests(unittest.TestCase):
             self.assertEqual(self.find(q)["value"], "No", q)
 
     def test_the_follow_up_country_question_resolves(self):
-        self.assertEqual(self.find("What is your country of citizenship?")["value"], "India")
-        self.assertEqual(self.find("Country of nationality")["value"], "India")
+        self.assertEqual(self.find("What is your country of citizenship?")["value"], "New Zealand")
+        self.assertEqual(self.find("Country of nationality")["value"], "New Zealand")
 
     def test_whether_a_licence_is_needed_is_a_different_question_and_parks(self):
         # What he is, and what the role's technology requires, are two
@@ -772,11 +801,11 @@ class UsPersonTests(unittest.TestCase):
 class SponsorshipTruthTests(unittest.TestCase):
     """Three questions that look like one, and they have different answers.
 
-    The store held twelve entries saying sponsorship would never be required
-    anywhere, next to one saying he is on a student visa. Both cannot be true.
-    The user corrected it on 2026-08-25: authorised now, sponsorship required
-    in the future. Conflating any two of these shapes puts a false statement
-    on a form he signs, so each is pinned separately.
+    A store once held twelve entries saying sponsorship would never be
+    required anywhere, next to one saying the user was on a student visa. Both
+    cannot be true. Conflating any two of these shapes puts a false statement
+    on a form the user signs, so each is pinned separately, against the
+    fictional table above.
     """
 
     def status(self, question):
@@ -806,19 +835,19 @@ class SponsorshipTruthTests(unittest.TestCase):
                   "Are you legally authorized to work here without needing sponsorship?"):
             self.assertTrue(self.status(q).startswith("No"), q)
 
-    def test_india_flips_all_three_because_he_is_a_citizen(self):
+    def test_the_home_country_flips_all_three(self):
         self.assertTrue(self.status(
-            "Are you authorized to work in India without sponsorship?").startswith("Yes"))
-        self.assertEqual(self.status("Do you require sponsorship to work in India?"), "No")
+            "Are you authorized to work in New Zealand without sponsorship?").startswith("Yes"))
+        self.assertEqual(self.status("Do you require sponsorship to work in New Zealand?"), "No")
         self.assertTrue(self.status(
-            "Are you legally authorized to work in India?").startswith("Yes"))
+            "Are you legally authorized to work in New Zealand?").startswith("Yes"))
 
-    def test_every_answer_carries_the_india_exception_in_its_note(self):
+    def test_every_answer_carries_the_home_exception_in_its_note(self):
         # resolve_answers has no region argument, so the note is what keeps a
-        # US answer off an India form.
+        # US answer off a home-country form.
         for q in ("Do you require visa sponsorship?",
                   "Are you legally authorized to work in the United States?"):
-            self.assertIn("India", store.sponsorship_status(q)["note"], q)
+            self.assertIn("New Zealand", store.sponsorship_status(q)["note"], q)
 
     def test_an_authorisation_that_is_not_about_working_is_not_claimed(self):
         # "authoris" alone also carries a background-check authorisation and a
@@ -923,7 +952,7 @@ EEO = {
     "gender": {"question": "What is your gender?", "value": "Male",
                "state": "sensitive", "tags": ["gender-identity"]},
     "ethnicity": {"question": "What is your ethnicity?",
-                  "value": "Asian (South Asian / Indian); not Hispanic or Latino",
+                  "value": "Two or more races; not Hispanic or Latino",
                   "state": "sensitive", "tags": ["race-ethnicity"]},
     "veteran": {"question": "Are you a veteran?", "value": "No",
                 "state": "sensitive", "tags": ["military-status"]},
@@ -947,8 +976,8 @@ class EeoTopicTests(unittest.TestCase):
         for question, expected in (
             ("What is your gender identity?", "Male"),
             ("Please select your gender identity from the list below", "Male"),
-            ("What is your race or ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
-            ("What is your race/ethnicity?", "Asian (South Asian / Indian); not Hispanic or Latino"),
+            ("What is your race or ethnicity?", "Two or more races; not Hispanic or Latino"),
+            ("What is your race/ethnicity?", "Two or more races; not Hispanic or Latino"),
             ("What is your military status?", "No"),
             ("Are you a protected veteran?", "No"),
             ("Veteran status (select one)", "No"),
@@ -1066,11 +1095,11 @@ class GovernmentOfficialTopicTests(unittest.TestCase):
 
 
 PROFILE = {
-    "links": {"linkedin": "https://www.linkedin.com/in/sahil-sapra/",
-              "github": "https://github.com/sahilsapra391",
-              "website": "https://sahilsapra.com/"},
+    "links": {"linkedin": "https://www.linkedin.com/in/alex-example/",
+              "github": "https://github.com/alex-example",
+              "website": "https://alex.example.com/"},
     "certifications": ["AWS Certified Cloud Practitioner", "ICAgile Certified Professional"],
-    "education": [{"degree": "BS Quantitative Economics", "end": "2023-05"}],
+    "education": [{"degree": "BS Economics", "end": "2023-05"}],
     "preferences": {
         "relocationNote": "answers yes to all relocation questions; when asked WHERE, "
                           "Austin and Seattle are his stated preferences",
@@ -1100,8 +1129,8 @@ class ProfileAnswerTests(unittest.TestCase):
     def test_linkedin_github_and_portfolio_resolve_from_links(self):
         self.assertIn("linkedin.com", self.answer("LinkedIn profile URL")["value"])
         self.assertIn("github.com", self.answer("GitHub")["value"])
-        self.assertIn("sahilsapra.com", self.answer("Portfolio link (optional)")["value"])
-        self.assertIn("sahilsapra.com", self.answer("Website")["value"])
+        self.assertIn("alex.example.com", self.answer("Portfolio link (optional)")["value"])
+        self.assertIn("alex.example.com", self.answer("Website")["value"])
 
     def test_where_did_you_hear_about_us_is_not_a_website_question(self):
         # "Company website" is an answer about the employer's site; handing

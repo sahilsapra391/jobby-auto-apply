@@ -963,14 +963,27 @@ class FixtureProvenanceTests(unittest.TestCase):
     def test_no_fixture_carries_personal_data(self):
         # §13 item 11: Playwright wrote 33 snapshots into the repo carrying a
         # real name, phone number and home address.
-        banned = ("sahil", "sapra", "216-848", "(216)", "charlotte, nc",
-                  "navi mumbai", "spechawk.ai")
+        # The real values come from the profile at run time, the way
+        # test_no_pii takes them, so this file never has to hold them. The
+        # fictional identity the tests use is banned too: a fixture recorded
+        # while a test profile was loaded would carry it.
+        spec = importlib.util.spec_from_file_location(
+            "no_pii", pathlib.Path(__file__).resolve().parent / "test_no_pii.py")
+        no_pii = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(no_pii)
+        banned = ["alex example", "alex_example", "555-0100"]
+        banned += [marker for marker, _label in no_pii.markers()
+                   if not marker.isdigit()]
+        phones = [marker for marker, _label in no_pii.markers() if marker.isdigit()]
         for path in sorted(FIXTURES.iterdir()):
             if path.name == "practice-form.html":
                 continue                       # pre-existing, not ours
             text = path.read_text(encoding="utf-8", errors="replace").lower()
             for needle in banned:
-                self.assertNotIn(needle, text, f"{path.name} contains {needle!r}")
+                self.assertNotIn(needle, text, f"{path.name} contains a profile value")
+            packed = "".join(ch for ch in text if ch.isdigit())
+            for phone in phones:
+                self.assertNotIn(phone, packed, f"{path.name} contains a phone number")
 
 
 class BoardPlatformTests(unittest.TestCase):
