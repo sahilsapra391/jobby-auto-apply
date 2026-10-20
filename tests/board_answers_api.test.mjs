@@ -153,11 +153,11 @@ test('a PDF still comes back as a PDF from both paths', async () => {
   const pdfKey = 'u/account-1/app/bc839847c93d9e46/resume.pdf';
   objects.set(pdfKey, Buffer.from('%PDF-1.4 resume'));
   await putDocIndex(process.env, {
-    'Sahil_Acme_Resume.pdf': {
+    'Alex_Acme_Resume.pdf': {
       key: pdfKey, sha256: 'b'.repeat(64), bytes: 15, contentType: 'application/pdf',
     },
   }, '2026-08-26T00:00:01Z');
-  const fromR2 = await handler.fetch(get('/doc/Sahil_Acme_Resume.pdf'));
+  const fromR2 = await handler.fetch(get('/doc/Alex_Acme_Resume.pdf'));
   assert.equal(fromR2.headers.get('content-type'), 'application/pdf');
 
   await putDoc(process.env, 'Older_Resume.pdf',

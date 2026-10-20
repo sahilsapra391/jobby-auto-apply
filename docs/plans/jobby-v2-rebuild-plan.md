@@ -760,7 +760,7 @@ What breaks the budget first, in order: Neon storage as the pool grows past 10 G
 
 ---
 
-## 12. Open questions for Sahil
+## 12. Open questions for the owner
 
 These need answers before the phase they gate. Every one has a default so work is not blocked.
 

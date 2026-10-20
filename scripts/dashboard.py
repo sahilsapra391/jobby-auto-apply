@@ -816,8 +816,8 @@ def build(state, generated):
         """A link when a real file went out, an honest note when none did.
 
         Link by basename. Runs record this either way, some as
-        "Sahil_Sapra_Cohere_Resume.pdf" and some as
-        "applications/Cohere/Sahil_Sapra_Cohere_Resume.pdf". Documents are
+        "Alex_Example_Cohere_Resume.pdf" and some as
+        "applications/Cohere/Alex_Example_Cohere_Resume.pdf". Documents are
         published under the basename and the route rejects a name containing
         slashes, so a path-recorded document produced a link that resolved to
         "No such document" while the file itself was published and fine.

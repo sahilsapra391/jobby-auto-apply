@@ -859,9 +859,9 @@ export function artifactKey(legacyId: string, object: string) {
 /**
  * How many completed applications record each document filename.
  *
- * **A count above one is why a document cannot be attributed.** Three Glance
+ * **A count above one is why a document cannot be attributed.** Three
  * applications to three different roles all recorded
- * `Sahil_Sapra_Glance_Resume.pdf`; KV is keyed by filename and holds one
+ * `Alex_Example_Acme_Resume.pdf`; KV is keyed by filename and holds one
  * object, so the old board serves the same PDF for all three and nothing says
  * which application received it. `document_contract` now puts six characters
  * of the application id in the name, so this cannot happen again -- but the

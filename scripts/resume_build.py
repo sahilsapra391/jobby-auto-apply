@@ -421,6 +421,37 @@ def merge(base, overrides):
     return out
 
 
+FRAME_SLOT = re.compile(r"\{\{frame_(\w+)\}\}")
+
+
+def fill_frame(template, content):
+    """Fill the fixed lines: employers, dates, job titles and education.
+
+    These lines are the same on every tailored resume, so no provider may touch
+    them (`frame` is not an override key). They used to be written into
+    `templates/resume.html` itself, which put one person's work history into a
+    public repository and made the template useless to anyone else. They live
+    in the content now, beside the wording, and travel in the bundle with it.
+
+    A missing value refuses by name. Rendering a resume with an employer line
+    blank would send a document with a hole in it under a real name.
+    """
+    wanted = sorted(set(FRAME_SLOT.findall(template)))
+    if not wanted:
+        return template
+    frame = content.get("frame")
+    if not isinstance(frame, dict):
+        raise SystemExit(
+            "resume_build: the template has fixed lines (employers, dates, "
+            "education) and the content carries no `frame` object for them.")
+    missing = [key for key in wanted if not isinstance(frame.get(key), str)]
+    if missing:
+        raise SystemExit(f"resume_build: the content's frame has nothing for {missing}")
+    for key in wanted:
+        template = template.replace("{{frame_%s}}" % key, safe(frame[key]))
+    return template
+
+
 def render(template, content):
     """Put content back into the template, refusing anything that does not fit."""
     def need(key, wanted, got):
@@ -434,6 +465,7 @@ def render(template, content):
     if "{{name}}" in out or "{{contact}}" in out:
         name, contact = identity_block(content.get("region"), content.get("storeRoot"))
         out = out.replace("{{name}}", safe(name)).replace("{{contact}}", contact)
+    out = fill_frame(out, content)
     out = out.replace("{{banner}}", safe(content.get("banner", "")))
     out = out.replace("{{summary}}", safe(content.get("summary", "")))
 

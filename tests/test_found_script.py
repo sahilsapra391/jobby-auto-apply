@@ -886,7 +886,7 @@ class LocationPickerTests(ScriptHarness, unittest.TestCase):
 
 
 class ShippedDefaultTests(ScriptHarness, unittest.TestCase):
-    """The two defaults Sahil asked for, asserted on the rendered controls."""
+    """The two defaults the owner asked for, asserted on the rendered controls."""
 
     def test_the_sort_ships_on_newest(self):
         bar = found_lane.filter_bar([], {})

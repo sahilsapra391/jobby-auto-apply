@@ -102,7 +102,7 @@ class CategoryTests(unittest.TestCase):
 
     def test_a_policy_or_story_has_no_category(self):
         self.assertIsNone(ac.category_of(q("POLICY: acknowledging a posted salary range")))
-        self.assertIsNone(ac.category_of(q("Story: SpecHawk architecture")))
+        self.assertIsNone(ac.category_of(q("Story: Example Labs architecture")))
 
     def test_other_stays_reachable(self):
         """A category set that cannot miss has stopped classifying."""

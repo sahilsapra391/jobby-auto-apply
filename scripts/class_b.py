@@ -398,7 +398,7 @@ def answer_row(entry):
 def resume_row(entry):
     """One base resume, as the registry describes it and no more.
 
-    **The path does not travel.** `/Users/sahilsapra/Documents/Resumes/...` is
+    **The path does not travel.** `/Users/you/Documents/Resumes/...` is
     device-specific, says nothing a card shows, and is the one genuinely
     machine-local fact in the registry; the filename is what a reader reads.
     Neither does any wording: `writingSamples` and the resume content stay

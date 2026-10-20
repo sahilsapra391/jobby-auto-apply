@@ -77,3 +77,37 @@ apps/web/tsconfig.tsbuildinfo
 # holder's email address, which is why the pre-commit guard refused it before
 # this line existed. Nothing here is build output anyone else needs.
 .wrangler/
+
+# Private notes. CLAUDE.local.md is the owner's own working memory for agent
+# sessions: job-search history, real applications and measurements of them.
+# The tracked CLAUDE.md is the public contributor guide.
+CLAUDE.local.md
+AGENTS.md
+# Personal plans and run ledgers kept beside the code but never published.
+/docs/jobby-*.md
+/docs/runstats.jsonl
+/docs/plans/*
+!/docs/plans/jobby-v2-rebuild-plan.md
+/docs/reviews/
+/docs/handoffs/
+
+# Environment files anywhere, not only deploy/.
+.env
+.env.*
+!.env.example
+!**/.env.example
+**/.env.local
+
+# PDFs anywhere except the test fixtures that are deliberately synthetic.
+!tests/fixtures/**/*.pdf
+
+# Scratch scripts and dumps a debugging session leaves in the checkout. They
+# carry captured job pages, API responses and sometimes form answers.
+/scripts/_*.py
+/scripts/_*.json
+/scripts/_*.html
+/.versant-*
+/.sourcing/
+/*.sql
+.pytest_cache/
+.ruff_cache/

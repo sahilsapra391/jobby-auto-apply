@@ -3,7 +3,7 @@
 
 The Watching lane is built from sessions; the staleness sweep works from the
 job pool. 43 of 52 watch sessions had no pool record at all, so 83% of the lane
-Sahil curates by hand was invisible to the feature that removes dead postings
+the owner curates by hand was invisible to the feature that removes dead postings
 from it. This is what closes that gap.
 
 **Why these have no record.** A watched role that does not match today's search

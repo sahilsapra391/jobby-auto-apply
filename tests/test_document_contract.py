@@ -58,10 +58,10 @@ class BundleTests(unittest.TestCase):
         contract has never collided in production. That is a property of the
         corpus, not of the rule -- and the rule had already failed once, before
         it owned naming: three Glance applications to three different roles all
-        claim `Sahil_Sapra_Glance_Resume.pdf`, so KV holds one object for three
+        claim `Alex_Example_Glance_Resume.pdf`, so KV holds one object for three
         tailored resumes and nothing can say which application received which.
         """
-        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        profile = {"firstName": "Alex", "lastName": "Example"}
         name = lambda role: contract.output_names(  # noqa: E731
             profile, "Acme", role)["resumePdf"]
         long_a = ("Senior Product Manager, Platform Infrastructure and "
@@ -79,7 +79,7 @@ class BundleTests(unittest.TestCase):
                                  "carrying less than this test claims")
 
     def test_the_id_tag_separates_every_one_of_them(self):
-        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        profile = {"firstName": "Alex", "lastName": "Example"}
         made = [contract.output_names(profile, "Acme", "Product Manager", aid)
                 for aid in ("glance-product-analyst-ii", "dc9c8137b240216e",
                             "04f960acfe932252")]
@@ -95,12 +95,12 @@ class BundleTests(unittest.TestCase):
         `r2_artifacts` still has to resolve everything written before the tag
         existed.
         """
-        profile = {"firstName": "Sahil", "lastName": "Sapra"}
+        profile = {"firstName": "Alex", "lastName": "Example"}
         once = contract.output_names(profile, "Acme", "PM", "abc123")["resumePdf"]
         twice = contract.output_names(profile, "Acme", "PM", "abc123")["resumePdf"]
         self.assertEqual(once, twice)
         bare = contract.output_names(profile, "Acme", "PM")["resumePdf"]
-        self.assertEqual(bare, "Sahil_Sapra_Acme_PM_Resume.pdf")
+        self.assertEqual(bare, "Alex_Example_Acme_PM_Resume.pdf")
         self.assertNotEqual(bare, once)
 
     def test_output_names_always_include_the_role(self):

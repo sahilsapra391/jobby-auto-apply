@@ -188,7 +188,8 @@ def name_map(applications, profile):
 
     # 3. The naming the generation before it used, for the two PDFs.
     stems = file_docs.plan({aid: (e.get("company"), e.get("role"))
-                            for aid, e in applications.items()})
+                            for aid, e in applications.items()},
+                           file_docs.person_stem(profile))
     for aid, (_company, stem) in sorted(stems.items()):
         claim(f"{stem}_Resume.pdf", aid, "resume", ".pdf")
         claim(f"{stem}_CoverLetter.pdf", aid, "cover", ".pdf")

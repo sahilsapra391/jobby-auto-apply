@@ -25,7 +25,7 @@ spec.loader.exec_module(experience)
 RESUME = """
 <style>.org { font-weight: bold }</style>
 <div class="sec">EXPERIENCE</div>
-<div class="org">CAMP Systems International Inc., Charlotte, NC<span class="when">2024 &ndash; 2026</span></div>
+<div class="org">Northwind Logistics Inc., Springfield, IL<span class="when">2024 &ndash; 2026</span></div>
 <div class="jobtitle">Technical Product Manager &amp; Business Analyst II (2025 &ndash; 2026)</div>
 <div class="body lede">Owned the internal AI tooling.</div>
 <ul>
@@ -39,7 +39,7 @@ RESUME = """
   <li>Led adoption of LaunchDarkly.</li>
 </ul>
 <div class="sec">ADDITIONAL EXPERIENCE</div>
-<div class="jobtitle">Summer Intern, <span style="color:#282828">Keiretsu Forum, San Francisco, CA</span></div>
+<div class="jobtitle">Summer Intern, <span style="color:#282828">Fabrikam Ventures, San Francisco, CA</span></div>
 <ul>
   <li>Built classification models for 250 startups.</li>
 </ul>
@@ -76,14 +76,14 @@ class ParseTests(unittest.TestCase):
         self.assertNotIn("Led adoption of LaunchDarkly.", senior["bullets"])
 
     def test_org_heading_carries_down_to_the_second_role(self):
-        self.assertEqual(self.roles[1]["company"], "CAMP Systems International Inc., Charlotte, NC")
+        self.assertEqual(self.roles[1]["company"], "Northwind Logistics Inc., Springfield, IL")
 
     def test_a_compressed_entry_keeps_its_own_employer(self):
         # The regression: with no org heading of its own it inherited whichever
         # company was listed above it.
         intern = self.roles[2]
-        self.assertEqual(intern["company"], "Keiretsu Forum, San Francisco, CA")
-        self.assertNotIn("CAMP", intern["company"])
+        self.assertEqual(intern["company"], "Fabrikam Ventures, San Francisco, CA")
+        self.assertNotIn("Northwind", intern["company"])
 
     def test_bullets_attach_to_a_role_that_touches_its_list(self):
         # The jobtitle block ends exactly where its <ul> begins, so an
@@ -119,7 +119,7 @@ class LookupTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
 
     def test_a_genuinely_ambiguous_fragment_returns_both(self):
-        self.assertEqual(len(experience.pick(self.roles, "CAMP")), 2)
+        self.assertEqual(len(experience.pick(self.roles, "Northwind")), 2)
 
     def test_unknown_role_returns_nothing(self):
         self.assertEqual(experience.pick(self.roles, "Chief Astronaut"), [])
@@ -169,10 +169,10 @@ class PlanTests(unittest.TestCase):
 
     HISTORY = [
         {"title": "Technical Product Manager & Business Analyst II",
-         "company": "CAMP Systems International Inc.", "city": "Charlotte, NC",
+         "company": "Northwind Logistics Inc.", "city": "Springfield, IL",
          "start": "2025-08", "end": "2026-06-06"},
         {"title": "Product Manager & Business Analyst",
-         "company": "CAMP Systems International Inc.", "city": "Charlotte, NC",
+         "company": "Northwind Logistics Inc.", "city": "Springfield, IL",
          "start": "2024-05", "end": "2025-08"},
     ]
 
@@ -228,4 +228,4 @@ class PlanTests(unittest.TestCase):
     def test_the_location_comes_from_the_profile(self):
         for position in self.plan():
             if position["datesFromProfile"]:
-                self.assertEqual(position["location"], "Charlotte, NC")
+                self.assertEqual(position["location"], "Springfield, IL")

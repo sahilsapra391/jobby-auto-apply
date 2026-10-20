@@ -20,14 +20,14 @@ import voice_lint  # noqa: E402
 
 
 GOOD = (
-    "I owned the migration of 75 enterprise customers onto TFBO Next-Gen. "
+    "I owned the migration of 75 enterprise customers onto Fleet Next-Gen. "
     "Manual onboarding was the bottleneck, so I automated the ETL pipeline and "
     "cut turnaround from two weeks per customer to three hours. I also built a "
     "PowerBI revenue digest and checked every figure against Snowflake before "
     "it reached an executive inbox."
 )
 EVIDENCE = (
-    "CAMP Systems TFBO Next-Gen migration ETL pipeline Snowflake PowerBI "
+    "Northwind Logistics Fleet Next-Gen migration ETL pipeline Snowflake PowerBI "
     "Tableau attrition dashboards aviation"
 )
 POSTING = "We are hiring a program manager for enterprise customers and platforms."

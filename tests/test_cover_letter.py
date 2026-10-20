@@ -58,13 +58,13 @@ PROFILE = {
             "default": True,
             "appliesTo": ["US"],
             "identity": {
-                "location": "Charlotte, NC",
+                "location": "Springfield, IL",
                 "phone": "5550101234",
                 "fullAddress": {
                     "street": "9308 Private Test Street",
-                    "city": "Charlotte",
-                    "state": "NC",
-                    "postalCode": "28202",
+                    "city": "Springfield",
+                    "state": "IL",
+                    "postalCode": "62704",
                 },
             },
         },
@@ -111,7 +111,7 @@ class GreetingAndSignOffOnceTests(unittest.TestCase):
     def test_a_closing_that_signs_off_keeps_its_prose_and_loses_the_signature(self):
         got = self.content(closing=(
             "Thank you for your consideration - I look forward to discussing "
-            "how I can contribute. Sincerely, Sahil Sapra"
+            "how I can contribute. Sincerely, Alex Example"
         ))
         self.assertTrue(got["closing"].endswith("how I can contribute."))
         self.assertNotIn("Sincerely", got["closing"])
@@ -134,7 +134,7 @@ class GreetingAndSignOffOnceTests(unittest.TestCase):
 
     def test_a_closing_that_is_only_a_sign_off_is_refused_by_name(self):
         with self.assertRaises(cover_letter.CoverLetterError) as caught:
-            self.content(closing="Sincerely yours, Sahil Sapra")
+            self.content(closing="Sincerely yours, Alex Example")
         self.assertIn("sign-off", str(caught.exception).lower())
 
     def test_render_refuses_unvalidated_duplicates_even_without_validate(self):
@@ -189,7 +189,7 @@ class DuplicationGateTests(unittest.TestCase):
 
     def test_a_paragraph_written_twice_is_refused(self):
         paragraph = (
-            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "At Northwind Logistics I owned the migration roadmap for seventy five "
             "enterprise customers and landed it with zero downtime."
         )
         with self.assertRaises(cover_letter.CoverLetterError) as caught:
@@ -198,7 +198,7 @@ class DuplicationGateTests(unittest.TestCase):
 
     def test_a_lightly_reworded_copy_is_still_a_repeat(self):
         paragraph = (
-            "At CAMP Systems I owned the migration roadmap for seventy five "
+            "At Northwind Logistics I owned the migration roadmap for seventy five "
             "enterprise customers and landed it with zero downtime."
         )
         tweaked = paragraph.replace("landed", "delivered")
@@ -260,7 +260,7 @@ class IdentityAndHtmlTests(unittest.TestCase):
     def test_default_resume_identity_is_inherited(self):
         candidate = cover_letter.identity_for_region(PROFILE)
         self.assertEqual(candidate.name, "Test Candidate")
-        self.assertEqual(candidate.location, "Charlotte, NC")
+        self.assertEqual(candidate.location, "Springfield, IL")
         self.assertEqual(candidate.phone, "(555) 010-1234")
 
     def test_region_selects_its_own_resume_identity(self):
@@ -271,10 +271,10 @@ class IdentityAndHtmlTests(unittest.TestCase):
     def test_header_keeps_the_street_address_out(self):
         candidate = cover_letter.identity_for_region(PROFILE)
         rendered = cover_letter.render_html(self.template, self.content, candidate)
-        self.assertIn("Charlotte, NC", rendered)
+        self.assertIn("Springfield, IL", rendered)
         self.assertIn("candidate@example.com", rendered)
         self.assertNotIn("9308 Private Test Street", rendered)
-        self.assertNotIn("28202", rendered)
+        self.assertNotIn("62704", rendered)
 
     def test_authored_text_is_html_escaped(self):
         content = cover_letter.validate_content(
